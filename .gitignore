@@ -1,0 +1,19 @@
+build/
+build-release/
+build-release-portable/
+node_modules/
+dist/
+experiments/
+design/
+src-tmp/
+
+# vcpkg local install folder
+vcpkg_installed/
+
+# macos garbage
+.DS_Store
+
+debug.log
+!CMakeUserPresets.example.json
+CMakeUserPresets.json
+.vscode/c_cpp_properties.json
