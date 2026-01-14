@@ -1,27 +1,55 @@
-#include <iostream>
-#include <filesystem>
-#include <thread>
-#include <string>
-#include <unordered_map>
 #include <fmt/core.h>
+#include <csignal>
 
 #include "system/CliArgs.h"
-#include "utils/PathUtils.h"
-#include "lyxbosa.h"
+#include "infrastructure/Terminal.h"
+#include "infrastructure/ResultPrinter.h"
+#include "core/Scanner.h"  // For g_interrupted
+#include "use-cases/ScanUseCase.h"
+#include "use-cases/CheckUseCase.h"
+#include "use-cases/ValidateConfigUseCase.h"
+#include "use-cases/InitConfigUseCase.h"
+
+using namespace lyxbosa;
+
+// Signal handler for graceful shutdown
+extern "C" void signalHandler(int signal) {
+    (void)signal;  // Unused
+    g_interrupted.store(true, std::memory_order_relaxed);
+}
 
 int main(int argc, char* argv[]) {
-    // Parse CLI arguments first
-    auto cliResult = CliArgs::parse(argc, argv);
+    // Setup signal handlers (cross-platform)
+    std::signal(SIGINT, signalHandler);   // Ctrl+C
+    std::signal(SIGTERM, signalHandler);  // Termination request
+    auto args = CliArgs::parse(argc, argv);
 
-    // Compute the "baseDir" where index.html actually lives in dev.
-    std::filesystem::path exe = std::filesystem::canonical(argv[0]);
-    auto rootDir = PathUtils::locateDevRootDir(exe);
-    std::string logFile = (rootDir / "debug.log").string();
+    if (!args.success) {
+        fmt::print(stderr, "{}\n", args.errorMessage);
+        return 1;
+    }
 
+    // Setup infrastructure
+    Terminal terminal(!args.noAnsi);
+    ResultPrinter printer(terminal);
 
-    // fmtprint("Application: {} v{}\n", pkg.name(), pkg.version());
-    fmt::print("Executable path: {}\n", exe.string());
+    // Dispatch to use case
+    switch (args.command) {
+        case Command::Scan:
+            return ScanUseCase(terminal, printer).execute(args);
 
+        case Command::Check:
+            return CheckUseCase(terminal, printer).execute(args);
 
-    return 0;
+        case Command::ValidateConfig:
+            return ValidateConfigUseCase(terminal).execute(args);
+
+        case Command::InitConfig:
+            return InitConfigUseCase().execute();
+
+        case Command::None:
+        default:
+            fmt::print(stderr, "No command specified. Use --help for usage.\n");
+            return 1;
+    }
 }

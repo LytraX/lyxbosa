@@ -26,10 +26,20 @@ find_package(fmt CONFIG REQUIRED)
 find_package(argparse CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(reflectcpp CONFIG REQUIRED)
+find_package(re2 CONFIG REQUIRED)
+find_package(ctre CONFIG REQUIRED)  # Already installed via reflectcpp
 
 # Collect library sources from src-lib
 set(LIB_SOURCES
     src-lib/cpp/infrastructure/Console.cpp
+    src-lib/cpp/config/Config.cpp
+    src-lib/cpp/patterns/StringPattern.cpp
+    src-lib/cpp/patterns/RegexPattern.cpp
+    src-lib/cpp/patterns/HeuristicPattern.cpp
+    src-lib/cpp/core/Rule.cpp
+    src-lib/cpp/core/FileWalker.cpp
+    src-lib/cpp/core/MatchEngine.cpp
+    src-lib/cpp/core/Scanner.cpp
 )
 
 # Create the CLI executable
@@ -49,6 +59,8 @@ target_link_libraries(lyxbosa
     argparse::argparse
     yaml-cpp::yaml-cpp
     reflectcpp::reflectcpp
+    re2::re2
+    ctre::ctre
 )
 
 # Platform-specific settings

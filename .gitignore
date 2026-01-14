@@ -6,6 +6,7 @@ dist/
 experiments/
 design/
 src-tmp/
+trail-data/
 
 # vcpkg local install folder
 vcpkg_installed/

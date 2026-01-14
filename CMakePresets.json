@@ -12,7 +12,7 @@
     },
     {
       "name": "vcpkg-debug",
-      "displayName": "Debug build",
+      "hidden": true,
       "inherits": "vcpkg-base",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
@@ -21,7 +21,7 @@
     },
     {
       "name": "vcpkg-release",
-      "displayName": "Release build",
+      "hidden": true,
       "inherits": "vcpkg-base",
       "binaryDir": "${sourceDir}/build-release",
       "cacheVariables": {

@@ -3,6 +3,8 @@
     "argparse",
     "reflectcpp",
     "yaml-cpp",
-    "fmt"
+    "fmt",
+    "re2",
+    "xxhash"
   ]
 }
