@@ -76,11 +76,19 @@ struct ActionsConfig {
     AlertConfig alert;
 };
 
+// Built-in rules configuration
+struct BuiltinRulesConfig {
+    bool enabled = true;                        // Load built-in rules by default
+    std::vector<std::string> use;               // Specific rules/categories to use (empty = all)
+    std::vector<std::string> disable;           // Specific rules to disable
+};
+
 // Complete configuration
 struct AppConfig {
     int version = 1;
     ScanConfig scan;
-    std::vector<RuleConfig> rules;
+    std::vector<RuleConfig> rules;              // Custom YAML rules
+    BuiltinRulesConfig builtinRules;            // Built-in CTRE rules config
     ActionsConfig actions;
 };
 

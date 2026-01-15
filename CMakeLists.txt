@@ -29,6 +29,21 @@ find_package(reflectcpp CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
 find_package(ctre CONFIG REQUIRED)  # Already installed via reflectcpp
 
+# CTRE rule sources (compiled separately to avoid recompilation)
+set(RULE_SOURCES
+    src-lib/cpp/rules/webshell.cpp
+    src-lib/cpp/rules/code_exec.cpp
+    src-lib/cpp/rules/obfuscation.cpp
+    src-lib/cpp/rules/backdoor.cpp
+    src-lib/cpp/rules/phishing.cpp
+    src-lib/cpp/rules/credential_theft.cpp
+    src-lib/cpp/rules/dropper.cpp
+    src-lib/cpp/rules/exploit.cpp
+    src-lib/cpp/rules/seo_spam.cpp
+    src-lib/cpp/rules/defacement.cpp
+    src-lib/cpp/rules/perl.cpp
+)
+
 # Collect library sources from src-lib
 set(LIB_SOURCES
     src-lib/cpp/infrastructure/Console.cpp
@@ -40,6 +55,7 @@ set(LIB_SOURCES
     src-lib/cpp/core/FileWalker.cpp
     src-lib/cpp/core/MatchEngine.cpp
     src-lib/cpp/core/Scanner.cpp
+    ${RULE_SOURCES}
 )
 
 # Create the CLI executable
@@ -63,11 +79,34 @@ target_link_libraries(lyxbosa
     ctre::ctre
 )
 
-# Platform-specific settings
-if(WIN32)
-  # Windows-specific settings if needed
-elseif(APPLE)
-  # macOS-specific settings if needed
-elseif(UNIX)
-  # Linux-specific settings if needed
+# Testing
+option(BUILD_TESTS "Build unit tests" ON)
+if(BUILD_TESTS)
+  enable_testing()
+  find_package(GTest CONFIG REQUIRED)
+
+  add_executable(lyxbosa_tests
+    tests/rules_test.cpp
+    ${LIB_SOURCES}
+  )
+
+  target_include_directories(lyxbosa_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src-lib/cpp
+    ${CMAKE_SOURCE_DIR}/src-cli
+  )
+
+  target_link_libraries(lyxbosa_tests
+    PRIVATE
+      fmt::fmt
+      argparse::argparse
+      yaml-cpp::yaml-cpp
+      reflectcpp::reflectcpp
+      re2::re2
+      ctre::ctre
+      GTest::gtest
+      GTest::gtest_main
+  )
+
+  include(GoogleTest)
+  gtest_discover_tests(lyxbosa_tests)
 endif()

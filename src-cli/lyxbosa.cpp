@@ -22,6 +22,7 @@ int main(int argc, char* argv[]) {
     // Setup signal handlers (cross-platform)
     std::signal(SIGINT, signalHandler);   // Ctrl+C
     std::signal(SIGTERM, signalHandler);  // Termination request
+
     auto args = CliArgs::parse(argc, argv);
 
     if (!args.success) {

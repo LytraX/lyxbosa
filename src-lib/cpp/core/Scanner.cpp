@@ -1,4 +1,5 @@
 #include "Scanner.h"
+#include "rules/Registry.hpp"
 #include <fstream>
 #include <sstream>
 #include <fmt/core.h>
@@ -7,6 +8,36 @@ namespace lyxbosa {
 
 Scanner::Scanner(const AppConfig& config)
     : config_(config) {
+    // Load built-in CTRE rules first
+    if (config_.builtinRules.enabled) {
+        // First, disable any specified rules
+        for (const auto& code : config_.builtinRules.disable) {
+            engine_.disableBuiltinRule(code);
+        }
+
+        // Then load rules
+        if (config_.builtinRules.use.empty()) {
+            // Load all built-in rules by default
+            engine_.loadAllBuiltinRules();
+        } else {
+            // Load only specified rules/categories
+            for (const auto& spec : config_.builtinRules.use) {
+                if (spec.starts_with("category:")) {
+                    // Load entire category (e.g., "category:webshell")
+                    auto catName = spec.substr(9);
+                    auto cat = rules::parseCategory(catName);
+                    if (cat) {
+                        engine_.loadBuiltinCategory(*cat);
+                    }
+                } else {
+                    // Load specific rule by code (e.g., "WS001")
+                    engine_.loadBuiltinRule(spec);
+                }
+            }
+        }
+    }
+
+    // Load custom YAML rules (in addition to built-in)
     engine_.loadRules(config_.rules);
 }
 

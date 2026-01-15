@@ -5,6 +5,7 @@
     "yaml-cpp",
     "fmt",
     "re2",
-    "xxhash"
+    "xxhash",
+    "gtest"
   ]
 }
