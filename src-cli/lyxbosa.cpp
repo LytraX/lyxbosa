@@ -1,5 +1,7 @@
 #include <fmt/core.h>
 #include <csignal>
+#include <cstdlib>
+#include <iostream>
 
 #include "system/CliArgs.h"
 #include "infrastructure/Terminal.h"
@@ -12,16 +14,35 @@
 
 using namespace lyxbosa;
 
+// Global flag for ANSI support (set after args parsing)
+static bool g_useAnsi = true;
+
+// Restore cursor - can be called from signal handler or atexit
+static void restoreCursor() {
+    if (g_useAnsi) {
+        // Show cursor ANSI sequence
+        fmt::print("\033[?25h");
+        std::cout.flush();
+    }
+}
+
 // Signal handler for graceful shutdown
 extern "C" void signalHandler(int signal) {
-    (void)signal;  // Unused
     g_interrupted.store(true, std::memory_order_relaxed);
+    restoreCursor();
+
+    // Re-raise with default handler for proper exit code
+    std::signal(signal, SIG_DFL);
+    std::raise(signal);
 }
 
 int main(int argc, char* argv[]) {
     // Setup signal handlers (cross-platform)
     std::signal(SIGINT, signalHandler);   // Ctrl+C
     std::signal(SIGTERM, signalHandler);  // Termination request
+
+    // Register atexit handler to restore cursor on normal exit
+    std::atexit(restoreCursor);
 
     auto args = CliArgs::parse(argc, argv);
 
@@ -30,11 +51,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Set global ANSI flag for signal handler
+    g_useAnsi = !args.noAnsi;
+
     // Setup infrastructure
     Terminal terminal(!args.noAnsi);
     ResultPrinter printer(terminal);
 
-    // Dispatch to use case
+    // Dispatch to use case (args passed by ref for potential prompting)
     switch (args.command) {
         case Command::Scan:
             return ScanUseCase(terminal, printer).execute(args);

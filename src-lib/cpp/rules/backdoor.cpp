@@ -7,9 +7,9 @@ namespace lyxbosa::rules::backdoor {
 // Note: Patterns use possessive [^...]*+ to avoid CTRE stack overflow on large files
 namespace detail_BD001 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(wp_insert_user\s*\([^)]*+user_login[^)]*+administrator)">(),
+        { R"(wp_insert_user\s*\([^)]*+user_login[^)]*+administrator)",
           "Hidden WordPress admin creation", false },
-        { makePattern<R"(INSERT\s+INTO\s+\S*users\S*[^;]*+admin)">(),
+        { R"(INSERT\s+INTO\s+\S*users\S*[^;]*+admin)",
           "Direct admin user insertion", false },
     };
 }
@@ -24,7 +24,7 @@ const BuiltinRule BD001 {
 // BD002: Cron-based persistence
 namespace detail_BD002 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(wp_schedule_event\s*\([^)]*+\$_(GET|POST|REQUEST))">(),
+        { R"(wp_schedule_event\s*\([^)]*+\$_(GET|POST|REQUEST))",
           "Cron with user input", false },
     };
 }
@@ -39,7 +39,7 @@ const BuiltinRule BD002 {
 // BD003: Plugin/theme backdoor installer
 namespace detail_BD003 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(file_put_contents\s*\([^,]*+wp-content/(plugins|themes)[^,]*+,\s*base64_decode)">(),
+        { R"(file_put_contents\s*\([^,]*+wp-content/(plugins|themes)[^,]*+,\s*base64_decode)",
           "Plugin/theme file write with base64", false },
     };
 }
@@ -54,9 +54,9 @@ const BuiltinRule BD003 {
 // BD004: Database credential harvester
 namespace detail_BD004 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(file_get_contents\s*\([^)]*+wp-config\.php)">(),
+        { R"(file_get_contents\s*\([^)]*+wp-config\.php)",
           "Reading wp-config", false },
-        { makePattern<R"(file_get_contents\s*\([^)]*+configuration\.php)">(),
+        { R"(file_get_contents\s*\([^)]*+configuration\.php)",
           "Reading Joomla config", false },
     };
 }
@@ -71,9 +71,9 @@ const BuiltinRule BD004 {
 // BD005: Socket-based backdoor
 namespace detail_BD005 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(fsockopen\s*\([^)]+\)\s*.*?fwrite\s*\([^)]*+\$_(GET|POST|REQUEST))">(),
+        { R"(fsockopen\s*\([^)]+\)\s*.*?fwrite\s*\([^)]*+\$_(GET|POST|REQUEST))",
           "Socket with user data", false },
-        { makePattern<R"(socket_create\s*\([^)]+\).*?socket_connect)">(),
+        { R"(socket_create\s*\([^)]+\).*?socket_connect)",
           "Raw socket connection", false },
     };
 }
@@ -88,9 +88,9 @@ const BuiltinRule BD005 {
 // BD006: Reverse shell patterns
 namespace detail_BD006 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(bash\s+-i\s+>&\s*/dev/tcp/)">(),
+        { R"(bash\s+-i\s+>&\s*/dev/tcp/)",
           "Bash reverse shell", false },
-        { makePattern<R"(/bin/sh\s*\|\s*nc\s+)">(),
+        { R"(/bin/sh\s*\|\s*nc\s+)",
           "Netcat shell pipe", false },
     };
 }
@@ -105,7 +105,7 @@ const BuiltinRule BD006 {
 // BD007: Base64-encoded reverse shell
 namespace detail_BD007 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(base64_decode\s*\([^)]*+\).*?(fsockopen|socket_create|pfsockopen))">(),
+        { R"(base64_decode\s*\([^)]*+\).*?(fsockopen|socket_create|pfsockopen))",
           "Decoded socket operation", false },
     };
 }
@@ -120,7 +120,7 @@ const BuiltinRule BD007 {
 // BD008: Hidden file creation
 namespace detail_BD008 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(file_put_contents\s*\(\s*['"][^'"]*+\.htaccess)">(),
+        { R"(file_put_contents\s*\(\s*['"][^'"]*+\.htaccess)",
           ".htaccess modification", false },
     };
 }
@@ -135,7 +135,7 @@ const BuiltinRule BD008 {
 // BD009: Password reset backdoor
 namespace detail_BD009 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(wp_set_password\s*\([^)]*+\$_(GET|POST|REQUEST))">(),
+        { R"(wp_set_password\s*\([^)]*+\$_(GET|POST|REQUEST))",
           "Password reset with user input", false },
     };
 }
@@ -150,7 +150,7 @@ const BuiltinRule BD009 {
 // BD010: Auto-update disable + backdoor
 namespace detail_BD010 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(add_filter\s*\(\s*['"]auto_update_)">(),
+        { R"(add_filter\s*\(\s*['"]auto_update_)",
           "Auto-update filter manipulation", false },
     };
 }
@@ -162,9 +162,119 @@ const BuiltinRule BD010 {
     .patterns = detail_BD010::patterns,
 };
 
+// BD011: Hardcoded password hash backdoor
+// Malware often has a hardcoded SHA1/MD5 hash to verify a secret password
+// Patterns: sha1($var) == 'hash' OR $var = sha1(...); if($var == 'hash')
+namespace detail_BD011 {
+    static constexpr Pattern patterns[] = {
+        // Direct sha1 comparison with 40-char hex hash
+        { R"(sha1\s*\([^)]+\)\s*==\s*['"][0-9a-fA-F]{40}['"])",
+          "SHA1 password hash backdoor", false },
+        // Direct md5 comparison with 32-char hex hash
+        { R"(md5\s*\([^)]+\)\s*==\s*['"][0-9a-fA-F]{32}['"])",
+          "MD5 password hash backdoor", false },
+        // Variable comparison with 40-char hex hash (SHA1)
+        { R"(\$\w+\s*==\s*['"][0-9a-fA-F]{40}['"])",
+          "Variable compared to SHA1 hash", false },
+        // Variable comparison with 32-char hex hash (MD5)
+        { R"(\$\w+\s*==\s*['"][0-9a-fA-F]{32}['"])",
+          "Variable compared to MD5 hash", false },
+    };
+}
+const BuiltinRule BD011 {
+    .code = {Category::Backdoor, 11},
+    .name = "Hardcoded password hash",
+    .description = "Detects backdoor with hardcoded password hash check",
+    .severity = Severity::Critical,
+    .patterns = detail_BD011::patterns,
+};
+
+// BD012: file_put_contents with user input (file write backdoor)
+// Pattern: file_put_contents with $_REQUEST in path or content
+// This allows arbitrary file write - critical backdoor functionality
+namespace detail_BD012 {
+    static constexpr Pattern patterns[] = {
+        // file_put_contents with REQUEST/GET/POST variable in content
+        { R"(file_put_contents\s*\([^,]+,\s*\$_(GET|POST|REQUEST)\s*\[)",
+          "file_put_contents with user-controlled content", false },
+    };
+}
+const BuiltinRule BD012 {
+    .code = {Category::Backdoor, 12},
+    .name = "File write with user input",
+    .description = "Detects file_put_contents() with user-controlled content",
+    .severity = Severity::Critical,
+    .patterns = detail_BD012::patterns,
+};
+
+// BD013: Embedded RSA private key (C2 encrypted communication)
+// Legitimate code doesn't embed actual private keys in PHP files
+// Documentation may mention the format marker, but won't have actual key data
+// Real keys start with MII... (base64 encoded DER)
+namespace detail_BD013 {
+    static constexpr Pattern patterns[] = {
+        // Private key marker followed by actual key data (MII... base64)
+        { R"(-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----\s*MII[A-Za-z0-9+/]{50,})",
+          "Embedded private key with data", false },
+    };
+}
+const BuiltinRule BD013 {
+    .code = {Category::Backdoor, 13},
+    .name = "Embedded private key",
+    .description = "Detects embedded RSA private key (encrypted C2 communication)",
+    .severity = Severity::Critical,
+    .patterns = detail_BD013::patterns,
+};
+
+// BD014: Timestamp manipulation for evasion
+// Malware uses touch() with past timestamps to make files look old
+// Pattern: time() - mt_rand() to generate random past time, then touch()
+namespace detail_BD014 {
+    static constexpr Pattern patterns[] = {
+        // time() minus mt_rand (calculating random past timestamp)
+        { R"(time\s*\(\s*\)\s*-\s*\(?mt_rand)",
+          "Random past timestamp calculation", false },
+        // touch with two identical timestamp args (suspicious)
+        { R"(touch\s*\(\s*\$\w+\s*,\s*\$(\w+)\s*,\s*\$\1\s*\))",
+          "Touch with identical timestamps", false },
+        // filectime followed by touch in same function (timestamp preservation)
+        { R"(filectime\s*\(\s*\$\w+\s*\)[^;]*;[^}]*touch\s*\()",
+          "Timestamp read and modification", false },
+    };
+}
+const BuiltinRule BD014 {
+    .code = {Category::Backdoor, 14},
+    .name = "Timestamp manipulation",
+    .description = "Detects file timestamp manipulation to evade detection",
+    .severity = Severity::High,
+    .patterns = detail_BD014::patterns,
+};
+
+// BD015: Custom HTTP header command channel
+// Malware receives commands via custom HTTP headers (not GET/POST)
+// Pattern: $_SERVER['HTTP_X'] where X is not a standard header
+namespace detail_BD015 {
+    static constexpr Pattern patterns[] = {
+        // Custom single-letter HTTP header (HTTP_P, HTTP_X, etc.)
+        { R"(\$_SERVER\s*\[\s*['"]HTTP_[A-Z]['"])",
+          "Single-letter HTTP header extraction", false },
+        // openssl_private_decrypt with server variable
+        { R"(openssl_private_decrypt\s*\([^,]+\$_SERVER)",
+          "Encrypted HTTP header decryption", false },
+    };
+}
+const BuiltinRule BD015 {
+    .code = {Category::Backdoor, 15},
+    .name = "HTTP header command channel",
+    .description = "Detects command extraction from custom HTTP headers",
+    .severity = Severity::Critical,
+    .patterns = detail_BD015::patterns,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &BD001, &BD002, &BD003, &BD004, &BD005,
-    &BD006, &BD007, &BD008, &BD009, &BD010
+    &BD006, &BD007, &BD008, &BD009, &BD010,
+    &BD011, &BD012, &BD013, &BD014, &BD015
 };
 
 const BuiltinRule* const* getAllRules() {

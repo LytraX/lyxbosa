@@ -27,9 +27,8 @@ find_package(argparse CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(reflectcpp CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
-find_package(ctre CONFIG REQUIRED)  # Already installed via reflectcpp
 
-# CTRE rule sources (compiled separately to avoid recompilation)
+# Rule sources
 set(RULE_SOURCES
     src-lib/cpp/rules/webshell.cpp
     src-lib/cpp/rules/code_exec.cpp
@@ -76,7 +75,6 @@ target_link_libraries(lyxbosa
     yaml-cpp::yaml-cpp
     reflectcpp::reflectcpp
     re2::re2
-    ctre::ctre
 )
 
 # Testing
@@ -102,7 +100,6 @@ if(BUILD_TESTS)
       yaml-cpp::yaml-cpp
       reflectcpp::reflectcpp
       re2::re2
-      ctre::ctre
       GTest::gtest
       GTest::gtest_main
   )

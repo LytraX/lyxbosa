@@ -18,8 +18,17 @@ extern const BuiltinRule OBF011;
 extern const BuiltinRule OBF012;
 extern const BuiltinRule OBF013;
 extern const BuiltinRule OBF014;
+extern const BuiltinRule OBF015;
+extern const BuiltinRule OBF016;
+extern const BuiltinRule OBF017;
+extern const BuiltinRule OBF018;
+extern const BuiltinRule OBF019;
+extern const BuiltinRule OBF020;
+extern const BuiltinRule OBF021;
+extern const BuiltinRule OBF022;
+extern const BuiltinRule OBF023;
 
-inline constexpr size_t RULE_COUNT = 14;
+inline constexpr size_t RULE_COUNT = 23;
 const BuiltinRule* const* getAllRules();
 
 } // namespace lyxbosa::rules::obfuscation

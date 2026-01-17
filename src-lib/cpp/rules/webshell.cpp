@@ -6,9 +6,9 @@ namespace lyxbosa::rules::webshell {
 // WS001: China Chopper
 namespace detail_WS001 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(@eval\s*\(\s*\$_POST\s*\[)">(),
+        { R"(@eval\s*\(\s*\$_POST\s*\[)",
           "eval($_POST[", false },
-        { makePattern<R"(@?assert\s*\(\s*\$_POST\s*\[)">(),
+        { R"(@?assert\s*\(\s*\$_POST\s*\[)",
           "assert($_POST[", false },
     };
 }
@@ -23,9 +23,9 @@ const BuiltinRule WS001 {
 // WS002: Generic one-liner backdoor with z0 parameter
 namespace detail_WS002 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(\$_REQUEST\s*\[\s*['"]z0['"]\s*\])">(),
+        { R"(\$_REQUEST\s*\[\s*['"]z0['"]\s*\])",
           "z0 parameter access", false },
-        { makePattern<R"(\$_POST\s*\[\s*['"]z0['"]\s*\])">(),
+        { R"(\$_POST\s*\[\s*['"]z0['"]\s*\])",
           "z0 POST parameter", false },
     };
 }
@@ -40,7 +40,7 @@ const BuiltinRule WS002 {
 // WS003: Weevely webshell
 namespace detail_WS003 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(\$\w+\s*=\s*str_replace\s*\([^;]+;\s*\$\w+\s*\(\s*\$\w+\s*\(\s*\$_)">(),
+        { R"(\$\w+\s*=\s*str_replace\s*\([^;]+;\s*\$\w+\s*\(\s*\$\w+\s*\(\s*\$_)",
           "Weevely pattern", false },
     };
 }
@@ -55,9 +55,9 @@ const BuiltinRule WS003 {
 // WS004: WSO webshell
 namespace detail_WS004 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(WSO\s+\d+\.\d+)">(),
+        { R"(WSO\s+\d+\.\d+)",
           "WSO version string", false },
-        { makePattern<R"(Web\s*Shell\s*by\s*oRb)">(),
+        { R"(Web\s*Shell\s*by\s*oRb)",
           "WSO author signature", false },
     };
 }
@@ -72,9 +72,9 @@ const BuiltinRule WS004 {
 // WS005: r57/c99 shell signatures
 namespace detail_WS005 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(r57shell|c99shell|c99mad)">(),
+        { R"(r57shell|c99shell|c99mad)",
           "r57/c99 shell name", false },
-        { makePattern<R"(r57\s+shell|c99\s+shell)">(),
+        { R"(r57\s+shell|c99\s+shell)",
           "r57/c99 shell variant", false },
     };
 }
@@ -89,7 +89,7 @@ const BuiltinRule WS005 {
 // WS006: FilesMan webshell
 namespace detail_WS006 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(FilesMan|Fil3sM4n)">(),
+        { R"(FilesMan|Fil3sM4n)",
           "FilesMan signature", false },
     };
 }
@@ -104,7 +104,7 @@ const BuiltinRule WS006 {
 // WS007: b374k shell
 namespace detail_WS007 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(b374k\s*shell|b374k\s+\d+\.\d+)">(),
+        { R"(b374k\s*shell|b374k\s+\d+\.\d+)",
           "b374k signature", false },
     };
 }
@@ -119,7 +119,7 @@ const BuiltinRule WS007 {
 // WS008: Upload shell pattern
 namespace detail_WS008 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(move_uploaded_file\s*\([^,]+,\s*\$_(GET|POST|REQUEST))">(),
+        { R"(move_uploaded_file\s*\([^,]+,\s*\$_(GET|POST|REQUEST))",
           "Upload to user-controlled path", false },
     };
 }
@@ -134,11 +134,11 @@ const BuiltinRule WS008 {
 // WS009: Encoded webshell loader
 namespace detail_WS009 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(eval\s*\(\s*gzinflate\s*\(\s*base64_decode)">(),
+        { R"(eval\s*\(\s*gzinflate\s*\(\s*base64_decode)",
           "gzinflate+base64 eval", false },
-        { makePattern<R"(eval\s*\(\s*gzuncompress\s*\(\s*base64_decode)">(),
+        { R"(eval\s*\(\s*gzuncompress\s*\(\s*base64_decode)",
           "gzuncompress+base64 eval", false },
-        { makePattern<R"(eval\s*\(\s*str_rot13\s*\(\s*base64_decode)">(),
+        { R"(eval\s*\(\s*str_rot13\s*\(\s*base64_decode)",
           "str_rot13+base64 eval", false },
     };
 }

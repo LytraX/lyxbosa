@@ -6,7 +6,7 @@ namespace lyxbosa::rules::credential_theft {
 // CRED001: Database dump
 namespace detail_CRED001 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(SELECT\s+\*\s+FROM\s+\S*users\S*\s+INTO\s+OUTFILE)">(),
+        { R"(SELECT\s+\*\s+FROM\s+\S*users\S*\s+INTO\s+OUTFILE)",
           "User table export", false },
     };
 }
@@ -21,9 +21,9 @@ const BuiltinRule CRED001 {
 // CRED002: Password file read
 namespace detail_CRED002 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(file_get_contents\s*\(\s*['"]/etc/passwd['"])">(),
+        { R"(file_get_contents\s*\(\s*['"]/etc/passwd['"])",
           "passwd file read", false },
-        { makePattern<R"(file_get_contents\s*\(\s*['"]/etc/shadow['"])">(),
+        { R"(file_get_contents\s*\(\s*['"]/etc/shadow['"])",
           "shadow file read", false },
     };
 }
@@ -38,7 +38,7 @@ const BuiltinRule CRED002 {
 // CRED003: FTP credential theft
 namespace detail_CRED003 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(ftp_login\s*\([^)]*+\$_(GET|POST|REQUEST))">(),
+        { R"(ftp_login\s*\([^)]*+\$_(GET|POST|REQUEST))",
           "FTP login with user input", false },
     };
 }
@@ -53,7 +53,7 @@ const BuiltinRule CRED003 {
 // CRED004: Keylogger injection
 namespace detail_CRED004 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(addEventListener\s*\(\s*['"]key(down|press|up)['"])">(),
+        { R"(addEventListener\s*\(\s*['"]key(down|press|up)['"])",
           "Keyboard event listener", false },
     };
 }
@@ -68,7 +68,7 @@ const BuiltinRule CRED004 {
 // CRED005: Credential logging to file
 namespace detail_CRED005 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(file_put_contents\s*\([^,]*+,\s*[^)]*+\$_(POST|GET|REQUEST)\s*\[\s*['"]pass)">(),
+        { R"(file_put_contents\s*\([^,]*+,\s*[^)]*+\$_(POST|GET|REQUEST)\s*\[\s*['"]pass)",
           "Password logged to file", false },
     };
 }
@@ -81,9 +81,10 @@ const BuiltinRule CRED005 {
 };
 
 // CRED006: Suspicious TLD for exfiltration
+// Note: Using non-capturing group (?:...) so RE2 returns the full URL match
 namespace detail_CRED006 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(https?://[a-zA-Z0-9.\-]+\.(ru|cn|tk|ml|ga|cf|gq)/)">(),
+        { R"(https?://[a-zA-Z0-9.\-]+\.(?:ru|cn|tk|ml|ga|cf|gq)/)",
           "Suspicious TLD URL", false },
     };
 }

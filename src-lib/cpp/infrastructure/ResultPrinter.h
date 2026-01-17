@@ -49,7 +49,7 @@ public:
         }
     }
 
-    // Print a file result
+    // Print a file result (verbose mode)
     void printFileResult(const FileResult& result) const {
         if (result.skippedSize) {
             terminal_.print(Terminal::muted(), "[-] {} (skipped - size limit)\n", result.path.string());
@@ -71,6 +71,65 @@ public:
 
         if (result.quarantined) {
             terminal_.print(Terminal::low(), "    moved: {}\n", result.quarantinePath);
+        }
+
+        fmt::print("\n");
+    }
+
+    // Print a file result in compact single-line format
+    // Format: [!] path/to/file.php  C:2 H:5 M:3 L:1
+    void printFileResultCompact(const FileResult& result, size_t termWidth) const {
+        if (result.skippedSize) {
+            terminal_.print(Terminal::muted(), "[-] {} (skipped)\n", truncatePath(result.path.string(), termWidth - 15));
+            return;
+        }
+
+        if (result.matches.empty()) {
+            return;  // Don't print clean files
+        }
+
+        // Count severities
+        size_t critical = 0, high = 0, medium = 0, low = 0;
+        for (const auto& match : result.matches) {
+            switch (match.severity) {
+                case Severity::Critical: ++critical; break;
+                case Severity::High:     ++high; break;
+                case Severity::Medium:   ++medium; break;
+                case Severity::Low:      ++low; break;
+            }
+        }
+
+        // Build severity suffix string to calculate its display length
+        // Format: "  C:N H:N M:N L:N" (only non-zero counts)
+        std::string severitySuffix;
+        size_t suffixLen = 0;
+        if (critical > 0) { severitySuffix += fmt::format("  C:{}", critical); suffixLen += 4 + std::to_string(critical).length(); }
+        if (high > 0)     { severitySuffix += fmt::format("  H:{}", high);     suffixLen += 4 + std::to_string(high).length(); }
+        if (medium > 0)   { severitySuffix += fmt::format("  M:{}", medium);   suffixLen += 4 + std::to_string(medium).length(); }
+        if (low > 0)      { severitySuffix += fmt::format("  L:{}", low);      suffixLen += 4 + std::to_string(low).length(); }
+
+        // Calculate available space for path: termWidth - "[!] " (4) - suffix length
+        size_t prefixLen = 4;  // "[!] "
+        size_t availableForPath = (termWidth > prefixLen + suffixLen) ? termWidth - prefixLen - suffixLen : 20;
+
+        std::string pathStr = truncatePath(result.path.string(), availableForPath);
+
+        // Print the line
+        terminal_.print(Terminal::high(), "[!] ");
+        terminal_.print(Terminal::low(), "{}", pathStr);
+
+        // Print severity counts with colors
+        if (critical > 0) {
+            terminal_.print(Terminal::critical(), "  C:{}", critical);
+        }
+        if (high > 0) {
+            terminal_.print(Terminal::high(), "  H:{}", high);
+        }
+        if (medium > 0) {
+            terminal_.print(Terminal::medium(), "  M:{}", medium);
+        }
+        if (low > 0) {
+            terminal_.print(Terminal::low(), "  L:{}", low);
         }
 
         fmt::print("\n");
@@ -199,6 +258,18 @@ public:
     }
 
 private:
+    // Truncate path from the beginning if too long: "...rest/of/path"
+    static std::string truncatePath(const std::string& path, size_t maxLen) {
+        if (path.length() <= maxLen) {
+            return path;
+        }
+        if (maxLen <= 3) {
+            return "...";
+        }
+        size_t keep = maxLen - 3;  // Reserve space for "..."
+        return "..." + path.substr(path.length() - keep);
+    }
+
     const Terminal& terminal_;
 };
 

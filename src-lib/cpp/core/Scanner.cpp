@@ -97,9 +97,9 @@ ScanResult Scanner::scan() {
             }
         }
 
-        result.files.push_back(std::move(fileResult));
+        result.files.push_back(fileResult);  // Copy before move for match callback
 
-        // Report progress
+        // Report progress FIRST (so display is initialized before match output)
         if (progressCallback_) {
             progress.filesScanned = result.totalFilesScanned;
             progress.filesWithMatches = result.filesWithMatches;
@@ -107,6 +107,11 @@ ScanResult Scanner::scan() {
             progress.currentFile = info.path;
             progress.currentFileSize = info.size;
             progressCallback_(progress);
+        }
+
+        // Notify about match AFTER progress (for real-time output)
+        if (!fileResult.matches.empty() && matchCallback_) {
+            matchCallback_(fileResult);
         }
 
         return true;  // Continue walking
@@ -128,7 +133,8 @@ FileResult Scanner::scanFile(const std::filesystem::path& path) {
         std::string content = readFile(path, config_.scan.maxFileSize);
         result.fileSize = content.size();
 
-        auto matches = engine_.match(content);
+        // Pass file path for context-aware filtering
+        auto matches = engine_.match(content, path.string());
         result.matches = std::move(matches);
 
     } catch (const std::exception&) {
@@ -144,6 +150,10 @@ void Scanner::setProgressCallback(ProgressCallback callback) {
 
 void Scanner::setCountingDoneCallback(CountingCallback callback) {
     countingDoneCallback_ = std::move(callback);
+}
+
+void Scanner::setMatchCallback(MatchCallback callback) {
+    matchCallback_ = std::move(callback);
 }
 
 std::string Scanner::readFile(const std::filesystem::path& path, uint64_t maxSize) {

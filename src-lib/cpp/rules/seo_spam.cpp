@@ -7,9 +7,9 @@ namespace lyxbosa::rules::seo_spam {
 // Note: Patterns use possessive [^...]*+ to avoid CTRE stack overflow on large files
 namespace detail_SEO001 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(<a\s+[^>]*+style\s*=\s*['"][^'"]*+display\s*:\s*none[^'"]*+['"][^>]*+href)">(),
+        { R"(<a\s+[^>]*+style\s*=\s*['"][^'"]*+display\s*:\s*none[^'"]*+['"][^>]*+href)",
           "Hidden link", false },
-        { makePattern<R"(<div\s+[^>]*+style\s*=\s*['"][^'"]*+visibility\s*:\s*hidden[^'"]*+['"][^>]*+>.*?<a\s+)">(),
+        { R"(<div\s+[^>]*+style\s*=\s*['"][^'"]*+visibility\s*:\s*hidden[^'"]*+['"][^>]*+>.*?<a\s+)",
           "Hidden div with links", false },
     };
 }
@@ -25,7 +25,7 @@ const BuiltinRule SEO001 {
 // Note: Pattern uses possessive [^,]*+ to avoid CTRE stack overflow on large files
 namespace detail_SEO002 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(file_put_contents\s*\([^,]*+\.html['"]\s*,.*?(viagra|cialis|casino|poker|pharmacy))">(),
+        { R"(file_put_contents\s*\([^,]*+\.html['"]\s*,.*?(viagra|cialis|casino|poker|pharmacy))",
           "Spam page generation", false },
     };
 }
@@ -40,9 +40,9 @@ const BuiltinRule SEO002 {
 // SEO003: Cloaking via user-agent/referer
 namespace detail_SEO003 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(RewriteCond.*?HTTP_REFERER.*?(google|bing|yahoo).*?\[NC\])">(),
+        { R"(RewriteCond.*?HTTP_REFERER.*?(google|bing|yahoo).*?\[NC\])",
           "Referer-based redirect in htaccess", false },
-        { makePattern<R"(RewriteRule.*?\^.*?https?://[a-zA-Z0-9.\-]+\.(ru|cn|tk))">(),
+        { R"(RewriteRule.*?\^.*?https?://[a-zA-Z0-9.\-]+\.(ru|cn|tk))",
           "Redirect to suspicious TLD", false },
     };
 }
@@ -57,7 +57,7 @@ const BuiltinRule SEO003 {
 // SEO004: Suspicious TLD in htaccess
 namespace detail_SEO004 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(RewriteRule.*?\.(ru|cn|tk|ml|ga|cf|gq)/)">(),
+        { R"(RewriteRule.*?\.(ru|cn|tk|ml|ga|cf|gq)/)",
           "htaccess redirect to suspicious TLD", false },
     };
 }
@@ -73,7 +73,7 @@ const BuiltinRule SEO004 {
 // Note: Pattern uses possessive [^>]*+ to avoid CTRE stack overflow on large files
 namespace detail_SEO005 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(<meta\s+name\s*=\s*['"]keywords['"][^>]*+content\s*=\s*['"][^'"]{500,}['"])">(),
+        { R"(<meta\s+name\s*=\s*['"]keywords['"][^>]*+content\s*=\s*['"][^'"]{500,}['"])",
           "Excessive meta keywords", false },
     };
 }
@@ -89,7 +89,7 @@ const BuiltinRule SEO005 {
 // Note: Pattern uses possessive [^<]*+ to avoid CTRE stack overflow on large files
 namespace detail_SEO006 {
     static constexpr Pattern patterns[] = {
-        { makePattern<R"(<title>[^<]*+[\x{3040}-\x{309F}\x{30A0}-\x{30FF}]{10,}[^<]*+</title>)">(),
+        { R"(<title>[^<]*+[\x{3040}-\x{309F}\x{30A0}-\x{30FF}]{10,}[^<]*+</title>)",
           "Japanese characters in title", false },
     };
 }

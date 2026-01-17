@@ -231,3 +231,35 @@ TEST(MatchPositionTest, MultiLinePosition) {
     ASSERT_GT(results.size(), 0);
     EXPECT_EQ(results[0].line, 3);  // Should be on line 3
 }
+
+// ============================================================================
+// Dropper Rule Tests (DRP)
+// ============================================================================
+
+TEST(DropperTest, DRP007_LargeBase64Staging) {
+    auto* rule = getRuleByCode("DRP007");
+    ASSERT_NE(rule, nullptr);
+
+    // Generate a string with 600+ base64 characters
+    std::string base64_chars;
+    for (int i = 0; i < 600; i++) base64_chars += "A";
+
+    std::string malicious = "$data = base64_decode(\"" + base64_chars + "\");";
+    EXPECT_TRUE(rule->matches(malicious)) << "DRP007 should match large base64 in variable";
+
+    // Should NOT match small base64 strings
+    EXPECT_FALSE(rule->matches("$x = base64_decode(\"SGVsbG8=\");"));
+
+    // Test findMatches (used by scanner)
+    auto results = rule->findMatches(malicious);
+    EXPECT_GT(results.size(), 0) << "DRP007 findMatches should return results";
+}
+
+TEST(DropperTest, DRP008_ArchiveDropper) {
+    auto* rule = getRuleByCode("DRP008");
+    ASSERT_NE(rule, nullptr);
+
+    EXPECT_TRUE(rule->matches("file_put_contents(\"malware.zip\", $data);"));
+    EXPECT_TRUE(rule->matches("file_put_contents('backdoor.tar.gz', $content);"));
+    EXPECT_FALSE(rule->matches("file_put_contents(\"config.php\", $data);"));
+}

@@ -2,6 +2,7 @@
 
 #include "infrastructure/Terminal.h"
 #include "infrastructure/ResultPrinter.h"
+#include "infrastructure/InputPrompt.h"
 #include "config/Config.h"
 #include "core/Scanner.h"
 #include "system/CliArgs.h"
@@ -23,7 +24,21 @@ public:
     ScanUseCase(const Terminal& terminal, const ResultPrinter& printer)
         : terminal_(terminal), printer_(printer) {}
 
-    int execute(const CliArgs& args) {
+    int execute(CliArgs& args) {
+        // Prompt for directory if none provided on CLI and no config file specified
+        // (i.e., using default config which has placeholder directories)
+        if (args.directories.empty() && !args.configFile) {
+            InputPrompt prompt(terminal_);
+            auto dir = prompt.promptDirectory("Directory to scan", ".");
+
+            if (!dir || dir->empty()) {
+                fmt::print("Scan cancelled.\n");
+                return 0;
+            }
+
+            args.directories.push_back(*dir);
+        }
+
         // Load configuration
         AppConfig config;
         if (!loadConfig(args, config)) {
@@ -112,26 +127,70 @@ private:
             std::chrono::steady_clock::time_point lastCountUpdate;
             size_t lastDisplayedCount = 0;
             bool initialized = false;
+            ScanProgress lastProgress;  // Store last progress for re-rendering
         };
         ProgressState progressState;
 
         // Setup progress callback for text output only
         if (args.outputFormat == ReportFormat::Text) {
             scanner.setProgressCallback([this, &progressState](const ScanProgress& progress) {
+                progressState.lastProgress = progress;
                 updateProgress(progress, progressState);
             });
 
-            // Callback when file counting is done
-            scanner.setCountingDoneCallback([this](size_t totalFiles) {
-                // Clear "Globbing files..." line and print empty progress lines
+            // Match callback for real-time result output
+            scanner.setMatchCallback([this, &progressState, &args](const FileResult& fileResult) {
+                // Skip if progress not yet initialized (shouldn't happen but be safe)
+                if (!progressState.initialized) {
+                    return;
+                }
+
+                // Cursor is at end of filepath line (no newline)
+                // Clear all 3 lines: filepath (current), progress (up 1), separator (up 2)
+                terminal_.clearLine();  // Clear filepath
                 terminal_.moveUp(1);
-                terminal_.clearLine();
-                fmt::print("\n\n");  // Two empty lines for progress display
-                terminal_.moveUp(2);
+                terminal_.clearLine();  // Clear progress
+                terminal_.moveUp(1);
+                terminal_.clearLine();  // Clear separator
+
+                // Now at separator line, print the result
+                if (args.verbose) {
+                    printer_.printFileResult(fileResult);
+                } else {
+                    printer_.printFileResultCompact(fileResult, getTerminalWidth());
+                }
+
+                // Re-print the 3-line progress display (separator + progress + filepath)
+                // Result printing ends with newline, so we're on a new line
+                fmt::print("\n");  // Empty line separator
+                printProgressLine(progressState.lastProgress);  // Ends with \n
+                printFilePathNoNewline(progressState.lastProgress.currentFile);  // No newline
                 std::cout.flush();
             });
 
-            fmt::print("\nGlobbing files...\n");
+            // Callback when file counting is done - show initial progress
+            scanner.setCountingDoneCallback([this, &progressState](size_t totalFiles) {
+                // Clear "Globbing files..." line
+                terminal_.moveUp(1);
+                terminal_.clearLine();
+
+                // Initialize progress state and show initial display
+                progressState.lastCountUpdate = std::chrono::steady_clock::now();
+                progressState.lastDisplayedCount = 0;
+                progressState.initialized = true;
+                progressState.lastProgress.totalFiles = totalFiles;
+                progressState.lastProgress.filesScanned = 0;
+                progressState.lastProgress.totalMatchCount = 0;
+
+                // Print initial 3-line display: empty separator + progress + placeholder
+                // Cursor stays at end (after newlines) for subsequent updates
+                fmt::print("\n");  // Empty line separator
+                fmt::print("Scanning 0/{}\n", totalFiles);
+                fmt::print("Starting...");  // No newline - cursor stays on this line
+                std::cout.flush();
+            });
+
+            fmt::print("Globbing files...\n");
             terminal_.hideCursor();
         }
 
@@ -140,13 +199,13 @@ private:
         // Show cursor after scan
         if (args.outputFormat == ReportFormat::Text) {
             terminal_.showCursor();
-            // Clear progress lines
-            terminal_.moveUp(2);
-            terminal_.clearLine();
-            fmt::print("\n");
-            terminal_.clearLine();
-            fmt::print("\n");
-            terminal_.moveUp(2);
+            // Cursor is at end of filepath line (no newline)
+            // Clear all 3 lines and position for summary output
+            terminal_.clearLine();  // Clear filepath
+            terminal_.moveUp(1);
+            terminal_.clearLine();  // Clear progress
+            terminal_.moveUp(1);
+            terminal_.clearLine();  // Clear separator - cursor now here
         }
 
         // Check if interrupted (only show message for text output)
@@ -154,8 +213,12 @@ private:
             terminal_.print(Terminal::warning(), "\nHalted by user\n\n");
         }
 
-        // Output results (including partial results if interrupted)
-        printer_.printResults(result, args.outputFormat);
+        // Output summary only (results already printed in real-time)
+        if (args.outputFormat == ReportFormat::Text) {
+            printer_.printSummary(result);
+        } else {
+            printer_.printResults(result, args.outputFormat);
+        }
 
         // Return 130 on interrupt (standard convention), 2 if matches found, 0 otherwise
         if (scanner.wasInterrupted()) {
@@ -167,14 +230,8 @@ private:
     void updateProgress(const ScanProgress& progress, auto& state) {
         auto now = std::chrono::steady_clock::now();
 
+        // Progress should already be initialized by counting done callback
         if (!state.initialized) {
-            state.lastCountUpdate = now;
-            state.lastDisplayedCount = progress.filesScanned;
-            state.initialized = true;
-
-            printProgressLine(progress);
-            printFilePath(progress.currentFile);
-            std::cout.flush();
             return;
         }
 
@@ -183,50 +240,67 @@ private:
         bool updateCount = countElapsed >= 1000;
         bool updateFile = (progress.filesScanned - state.lastDisplayedCount) >= 10;
 
-        if (!updateCount && !updateFile) {
+        // Force immediate update on very first file to replace "Starting..."
+        bool firstUpdate = (state.lastDisplayedCount == 0 && progress.filesScanned > 0);
+
+        if (!updateCount && !updateFile && !firstUpdate) {
             return;
         }
 
-        terminal_.moveUp(2);
+        // Cursor is at end of filepath line
+        // Move to progress line
+        fmt::print("\r");       // Go to start of current line
+        terminal_.moveUp(1);    // Move to progress line
 
-        if (updateCount) {
-            terminal_.clearLine();
-            printProgressLine(progress);
+        if (updateCount || firstUpdate) {
+            fmt::print("\r");   // Go to start of progress line
+            printProgressLineNoNewline(progress);
+            terminal_.clearToEndOfLine();
+            fmt::print("\n");   // Move to filepath line
             state.lastCountUpdate = now;
         } else {
-            fmt::print("\n");
+            fmt::print("\n");   // Move to filepath line
         }
 
-        if (updateFile) {
-            terminal_.clearLine();
-            printFilePath(progress.currentFile);
+        // Now on filepath line - always update to avoid flicker
+        printFilePathNoNewline(progress.currentFile);  // Includes \r and clearToEndOfLine
+        if (updateFile || firstUpdate) {
             state.lastDisplayedCount = progress.filesScanned;
-        } else {
-            fmt::print("\n");
         }
 
         std::cout.flush();
     }
 
-    void printProgressLine(const ScanProgress& progress) const {
+    void printProgressLineNoNewline(const ScanProgress& progress) const {
         fmt::print("Scanning {}/{}", progress.filesScanned, progress.totalFiles);
         if (progress.totalMatchCount > 0) {
             terminal_.print(Terminal::critical(), " ({} hits)", progress.totalMatchCount);
         }
+    }
+
+    void printProgressLine(const ScanProgress& progress) const {
+        printProgressLineNoNewline(progress);
         fmt::print("\n");
     }
 
     void printFilePath(const std::filesystem::path& path) const {
+        printFilePathNoNewline(path);
+        fmt::print("\n");
+    }
+
+    void printFilePathNoNewline(const std::filesystem::path& path) const {
+        fmt::print("\r");  // Go to start of line
         std::string pathStr = path.string();
         size_t termWidth = getTerminalWidth();
 
         if (pathStr.length() <= termWidth) {
-            fmt::print("{}\n", pathStr);
+            fmt::print("{}", pathStr);
         } else {
             // Truncate from the beginning: "...rest/of/path"
             size_t keep = termWidth - 3;  // Reserve space for "..."
-            fmt::print("...{}\n", pathStr.substr(pathStr.length() - keep));
+            fmt::print("...{}", pathStr.substr(pathStr.length() - keep));
         }
+        terminal_.clearToEndOfLine();  // Clear any leftover chars from previous longer path
     }
 
     static size_t getTerminalWidth() {

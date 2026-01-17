@@ -1,11 +1,13 @@
 #pragma once
 
 #include "RuleCode.hpp"
-#include <ctre.hpp>
+#include <re2/re2.h>
 #include <string_view>
 #include <vector>
-#include <functional>
+#include <memory>
 #include <span>
+#include <mutex>
+#include <unordered_map>
 
 namespace lyxbosa::rules {
 
@@ -16,43 +18,11 @@ struct MatchResult {
     std::string_view matched;
 };
 
-// Pattern matcher function type
-// Returns true if pattern matches, optionally fills results
-using PatternMatcher = bool(*)(std::string_view content, std::vector<MatchResult>* results);
-
-// A single pattern within a rule
+// A single pattern within a rule (stores regex string for RE2 compilation)
 struct Pattern {
-    PatternMatcher matcher;
-    std::string_view description;  // Optional description of what this pattern catches
+    std::string_view regex;          // The regex pattern string
+    std::string_view description;    // Optional description of what this pattern catches
     bool case_insensitive;
-};
-
-// Built-in rule definition
-struct BuiltinRule {
-    RuleCode code;
-    std::string_view name;
-    std::string_view description;
-    Severity severity;
-    std::span<const Pattern> patterns;
-
-    // Check if any pattern matches
-    bool matches(std::string_view content) const {
-        for (const auto& pattern : patterns) {
-            if (pattern.matcher(content, nullptr)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // Get all matches with positions
-    std::vector<MatchResult> findMatches(std::string_view content) const {
-        std::vector<MatchResult> results;
-        for (const auto& pattern : patterns) {
-            pattern.matcher(content, &results);
-        }
-        return results;
-    }
 };
 
 // Helper to calculate line/column from position in content
@@ -70,58 +40,133 @@ inline std::pair<size_t, size_t> positionToLineCol(std::string_view content, siz
     return {line, pos - lastNewline + 1};
 }
 
-// CTRE pattern wrapper - creates a PatternMatcher from a CTRE pattern
-template<ctll::fixed_string Pattern>
-constexpr PatternMatcher makePattern() {
-    return [](std::string_view content, std::vector<MatchResult>* results) -> bool {
-        if (results == nullptr) {
-            // Just check if matches
-            return static_cast<bool>(ctre::search<Pattern>(content));
+// RE2 pattern cache - compiles patterns on first use
+class PatternCache {
+public:
+    static PatternCache& instance() {
+        static PatternCache cache;
+        return cache;
+    }
+
+    // Get or compile a pattern
+    // For findMatches, we need a version that wraps the pattern in a capture group
+    const RE2* get(std::string_view pattern, bool case_insensitive = false, bool wrapCapture = false) {
+        std::string key = makeKey(pattern, case_insensitive);
+        if (wrapCapture) key += "\x02WC";
+
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = cache_.find(key);
+        if (it != cache_.end()) {
+            return it->second.get();
         }
 
-        // Find all matches
-        bool found = false;
-        auto remaining = content;
-        size_t offset = 0;
+        // Compile the pattern
+        RE2::Options opts;
+        opts.set_log_errors(false);
+        opts.set_case_sensitive(!case_insensitive);
+        opts.set_dot_nl(true);  // Let . match newlines for multiline patterns
 
-        while (!remaining.empty()) {
-            auto match = ctre::search<Pattern>(remaining);
-            if (match) {
-                found = true;
+        // Wrap in capture group if requested (for findMatches to get matched text)
+        std::string patternStr(pattern);
+        if (wrapCapture) {
+            patternStr = "(" + patternStr + ")";
+        }
 
-                // Get the matched view
-                auto matchedView = match.template get<0>();
+        auto re = std::make_unique<RE2>(patternStr, opts);
+        if (!re->ok()) {
+            // Pattern failed to compile - return nullptr
+            return nullptr;
+        }
 
+        const RE2* ptr = re.get();
+        cache_[key] = std::move(re);
+        return ptr;
+    }
+
+    // Precompile all patterns (call during initialization)
+    void precompile(std::span<const Pattern> patterns) {
+        for (const auto& p : patterns) {
+            get(p.regex, p.case_insensitive);
+        }
+    }
+
+private:
+    PatternCache() = default;
+
+    std::string makeKey(std::string_view pattern, bool ci) {
+        std::string key(pattern);
+        if (ci) key += "\x01CI";
+        return key;
+    }
+
+    std::mutex mutex_;
+    std::unordered_map<std::string, std::unique_ptr<RE2>> cache_;
+};
+
+// Built-in rule definition
+struct BuiltinRule {
+    RuleCode code;
+    std::string_view name;
+    std::string_view description;
+    Severity severity;
+    std::span<const Pattern> patterns;
+
+    // Check if any pattern matches
+    bool matches(std::string_view content) const {
+        auto& cache = PatternCache::instance();
+
+        for (const auto& pattern : patterns) {
+            const RE2* re = cache.get(pattern.regex, pattern.case_insensitive);
+            if (re && RE2::PartialMatch(re2::StringPiece(content.data(), content.size()), *re)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Get all matches with positions
+    std::vector<MatchResult> findMatches(std::string_view content) const {
+        std::vector<MatchResult> results;
+        auto& cache = PatternCache::instance();
+
+        for (const auto& pattern : patterns) {
+            // Get pattern wrapped in capture group so we can extract matched text
+            const RE2* re = cache.get(pattern.regex, pattern.case_insensitive, true);
+            if (!re) continue;
+
+            re2::StringPiece input(content.data(), content.size());
+            re2::StringPiece match;
+
+            while (RE2::FindAndConsume(&input, *re, &match)) {
                 // Calculate position in original content
-                size_t matchPos = offset + static_cast<size_t>(matchedView.data() - remaining.data());
+                size_t matchPos = static_cast<size_t>(match.data() - content.data());
                 auto [line, col] = positionToLineCol(content, matchPos);
 
                 MatchResult res;
                 res.line = line;
                 res.column = col;
-                res.matched = matchedView;
-                results->push_back(res);
+                res.matched = std::string_view(match.data(), match.size());
+                results.push_back(res);
 
-                // Move past this match
-                size_t advance = static_cast<size_t>(matchedView.data() - remaining.data()) + matchedView.size();
-                if (advance == 0) advance = 1;  // Prevent infinite loop on zero-width match
-                offset += advance;
-                remaining = remaining.substr(advance);
-            } else {
-                break;
+                // Handle zero-width matches to prevent infinite loop
+                if (match.empty() && !input.empty()) {
+                    input.remove_prefix(1);
+                }
             }
         }
 
-        return found;
-    };
-}
+        return results;
+    }
+};
 
-// Case-insensitive pattern wrapper
-// Note: CTRE doesn't support runtime case-insensitivity
-// Use (?i) in pattern if supported, or [Aa][Bb] style
-template<ctll::fixed_string Pattern>
-constexpr PatternMatcher makePatternCI() {
-    return makePattern<Pattern>();
-}
+// Helper macro to define patterns - now just stores the string
+#define PATTERN(regex_str, desc) { regex_str, desc, false }
+#define PATTERN_CI(regex_str, desc) { regex_str, desc, true }
+
+// For backward compatibility with existing rule files
+// This is now a simple identity function since we store strings directly
+template<auto>
+constexpr std::string_view makePattern() = delete;  // Force use of string literals
 
 } // namespace lyxbosa::rules

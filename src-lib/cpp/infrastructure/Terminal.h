@@ -34,6 +34,16 @@ public:
         }
     }
 
+    // Clear from cursor to end of line (doesn't move cursor)
+    void clearToEndOfLine() const {
+        if (useAnsi_) {
+            fmt::print("\033[K");
+        } else {
+            // Fallback: print spaces (assumes ~40 chars remaining)
+            fmt::print("{:40}", "");
+        }
+    }
+
     void moveUp(int lines = 1) const {
         if (useAnsi_) {
             fmt::print("\033[{}A", lines);

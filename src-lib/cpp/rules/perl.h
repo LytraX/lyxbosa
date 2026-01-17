@@ -12,8 +12,9 @@ extern const BuiltinRule PL005;
 extern const BuiltinRule PL006;
 extern const BuiltinRule PL007;
 extern const BuiltinRule PL008;
+extern const BuiltinRule PL009;
 
-inline constexpr size_t RULE_COUNT = 8;
+inline constexpr size_t RULE_COUNT = 9;
 const BuiltinRule* const* getAllRules();
 
 } // namespace lyxbosa::rules::perl

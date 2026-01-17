@@ -29,6 +29,7 @@ struct CliArgs {
     bool quick = false;
     bool dryRun = false;
     bool force = false;
+    bool verbose = false;  // Verbose output (detailed view)
     std::optional<bool> recursive;
 
     // Check command options
@@ -101,6 +102,11 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .default_value(false)
         .implicit_value(true);
 
+    scanCmd.add_argument("--verbose")
+        .help("Verbose output with full match details")
+        .default_value(false)
+        .implicit_value(true);
+
     scanCmd.add_argument("--no-ansi")
         .help("Disable colored output")
         .default_value(false)
@@ -111,8 +117,8 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
     checkCmd.add_description("Check a single file for malicious content");
 
     checkCmd.add_argument("file")
-        .help("File to check")
-        .required();
+        .help("File to check (prompts if not provided)")
+        .nargs(argparse::nargs_pattern::optional);
 
     checkCmd.add_argument("-c", "--config")
         .help("Configuration file path")
@@ -176,11 +182,16 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
             result.recursive = false;
         }
 
+        result.verbose = scanCmd.get<bool>("--verbose");
         result.noAnsi = scanCmd.get<bool>("--no-ansi");
 
     } else if (program.is_subcommand_used("check")) {
         result.command = Command::Check;
-        result.checkFile = checkCmd.get<std::string>("file");
+
+        // File is now optional - will prompt if not provided
+        if (auto file = checkCmd.present<std::string>("file")) {
+            result.checkFile = *file;
+        }
 
         if (auto config = checkCmd.present<std::string>("--config")) {
             result.configFile = *config;
