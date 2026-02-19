@@ -1,6 +1,6 @@
-build/
-build-release/
-build-release-portable/
+/build/
+/build-release/
+/build-release-portable/
 node_modules/
 dist/
 experiments/
