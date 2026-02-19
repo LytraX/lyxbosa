@@ -24,12 +24,14 @@ Write-Host "Using vcpkg at: $env:VCPKG_ROOT"
 $AbsOutputDir = Join-Path (Get-Location) $OutputDir
 New-Item -ItemType Directory -Force -Path $AbsOutputDir | Out-Null
 
-# Configure
+# Configure (static linking for standalone binary)
 $BuildDir = Join-Path $ProjectRoot "build-win-release"
 Write-Host "Configuring..."
 cmake -B $BuildDir -S $ProjectRoot `
     -DCMAKE_BUILD_TYPE=Release `
     -DBUILD_TESTS=OFF `
+    -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+    -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
     -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
 
 # Build
