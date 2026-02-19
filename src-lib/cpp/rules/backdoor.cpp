@@ -69,18 +69,25 @@ const BuiltinRule BD004 {
 };
 
 // BD005: Socket-based backdoor
+// Generic socket_create/socket_connect is used by legitimate libraries (Monolog, etc.)
+// Only flag when combined with user input or shell execution
 namespace detail_BD005 {
     static constexpr Pattern patterns[] = {
+        // fsockopen with user data being written
         { R"(fsockopen\s*\([^)]+\)\s*.*?fwrite\s*\([^)]*+\$_(GET|POST|REQUEST))",
           "Socket with user data", false },
-        { R"(socket_create\s*\([^)]+\).*?socket_connect)",
-          "Raw socket connection", false },
+        // socket operations combined with shell commands
+        { R"(socket_create\s*\([^)]+\).*?(shell_exec|exec|system|passthru|popen))",
+          "Socket with shell execution", false },
+        // socket write with user input
+        { R"(socket_write\s*\([^,]+,\s*\$_(GET|POST|REQUEST))",
+          "Socket write with user input", false },
     };
 }
 const BuiltinRule BD005 {
     .code = {Category::Backdoor, 5},
     .name = "Socket-based backdoor",
-    .description = "Detects socket connections that may be reverse shells",
+    .description = "Detects socket connections with user input or shell execution",
     .severity = Severity::Critical,
     .patterns = detail_BD005::patterns,
 };
@@ -271,10 +278,57 @@ const BuiltinRule BD015 {
     .patterns = detail_BD015::patterns,
 };
 
+// BD016: Include/require with base64-encoded path
+// Malware injects @include base64_decode("...") into legitimate files (e.g. WordPress templates)
+// to load a backdoor from an obfuscated path. There is no legitimate reason to base64-encode
+// an include/require path. Covers all variants: include, include_once, require, require_once,
+// with or without @ error suppression.
+namespace detail_BD016 {
+    static constexpr Pattern patterns[] = {
+        // @include base64_decode("...") — error-suppressed include with encoded path
+        { R"(@\s*(include|include_once|require|require_once)\s*\(?\s*base64_decode\s*\()",
+          "Error-suppressed include with base64-encoded path", true },
+        // include/require base64_decode("...") without @ — still malicious
+        { R"((include|include_once|require|require_once)\s*\(?\s*base64_decode\s*\()",
+          "Include with base64-encoded path", true },
+    };
+}
+const BuiltinRule BD016 {
+    .code = {Category::Backdoor, 16},
+    .name = "Base64 include backdoor",
+    .description = "Detects include/require with base64-encoded file path (template injection backdoor)",
+    .severity = Severity::Critical,
+    .patterns = detail_BD016::patterns,
+};
+
+// BD017: Malicious .htaccess backdoor protection
+// Attackers drop .htaccess files that deny access to all PHP files EXCEPT their specific
+// backdoor scripts. The pattern is: FilesMatch denying *.php combined with a second
+// FilesMatch whitelisting specific filenames. The whitelisted names are often leet-speak
+// variants of WordPress files (wp-l0gin, wp-the1me, wp-scr1pts) or generic shells.
+namespace detail_BD017 {
+    static constexpr Pattern patterns[] = {
+        // FilesMatch block that denies PHP + another FilesMatch that allows specific files
+        { R"(<FilesMatch[^>]*php[^>]*>\s*Order\s[^<]*Deny\s+from\s+all[^<]*</FilesMatch>\s*<FilesMatch[^>]*>\s*Order\s[^<]*Allow\s+from\s+all)",
+          "htaccess backdoor whitelist pattern", true },
+        // FilesMatch whitelisting known backdoor filenames (leet-speak or suspicious names)
+        { R"(<FilesMatch[^>]*(wp-l0gin|wp-the1me|wp-scr1pts|lock360|sh3ll|c99|r57|b374k|alfa|fox|mini|wso|mari)[^>]*>)",
+          "htaccess whitelisting known backdoor names", true },
+    };
+}
+const BuiltinRule BD017 {
+    .code = {Category::Backdoor, 17},
+    .name = "htaccess backdoor whitelist",
+    .description = "Detects .htaccess files that deny PHP access except for specific backdoor scripts",
+    .severity = Severity::Critical,
+    .patterns = detail_BD017::patterns,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &BD001, &BD002, &BD003, &BD004, &BD005,
     &BD006, &BD007, &BD008, &BD009, &BD010,
-    &BD011, &BD012, &BD013, &BD014, &BD015
+    &BD011, &BD012, &BD013, &BD014, &BD015,
+    &BD016, &BD017
 };
 
 const BuiltinRule* const* getAllRules() {

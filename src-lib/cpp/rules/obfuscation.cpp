@@ -48,17 +48,23 @@ const BuiltinRule OBF003 {
     .patterns = detail_OBF003::patterns,
 };
 
-// OBF004: Very long base64 strings
+// OBF004: Very long base64 strings being decoded
+// Plain base64 strings are common in legitimate code (fonts, images, crypto keys)
+// Only flag when combined with base64_decode() - actual obfuscation intent
 namespace detail_OBF004 {
     static constexpr Pattern patterns[] = {
-        { R"(['"][A-Za-z0-9+/]{500,}={0,2}['"])",
-          "Very long base64 string", false },
+        // base64_decode with inline long string
+        { R"(base64_decode\s*\(\s*['"][A-Za-z0-9+/]{500,}={0,2}['"])",
+          "base64_decode with long payload", false },
+        // Variable assigned from base64_decode of long string
+        { R"(\$\w+\s*=\s*base64_decode\s*\(\s*['"][A-Za-z0-9+/]{300,})",
+          "Variable from decoded base64", false },
     };
 }
 const BuiltinRule OBF004 {
     .code = {Category::Obfuscation, 4},
-    .name = "Long base64 encoded payload",
-    .description = "Detects suspiciously long base64-encoded strings",
+    .name = "Long base64 decode",
+    .description = "Detects base64_decode() with long encoded payloads",
     .severity = Severity::Medium,
     .patterns = detail_OBF004::patterns,
 };

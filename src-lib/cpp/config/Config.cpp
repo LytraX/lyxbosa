@@ -259,7 +259,7 @@ scan:
   max_file_size: 5MB
   follow_symlinks: false
 
-  # File filters (matches original wizbosa patterns)
+  # File filters
   include:
     - "!ext"         # Files without extension
     - "*.php"
@@ -268,6 +268,17 @@ scan:
     - "*.js"
     - "*.html"
     - "*.htm"
+    - "*.css"
+    - "*.svg"
+    - "*.gif"
+    - "*.png"
+    - "*.jpg"
+    - "*.jpeg"
+    - "*.ico"
+    - "*.bmp"
+    - "*.webp"
+    - "*.tiff"
+    - "*.tif"
     - "*.c"
     - "*.cpp"
     - "*.h"

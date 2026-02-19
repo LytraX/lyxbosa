@@ -187,33 +187,42 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
     }
 
     // BD005: Socket-based backdoor
-    // False positives: Legitimate FTP/socket classes in CMS
+    // False positives: Legitimate FTP/socket classes in CMS, logging libraries (Monolog)
     // The pattern socket_create...socket_connect is used by WordPress's class-ftp-sockets.php
-    // Only flag if context suggests malicious use (not in FTP class, has suspicious indicators)
+    // Monolog's CubeHandler uses socket_create for UDP logging to Cube analytics
+    // Only flag if context suggests malicious use
     if (ruleCode == "BD005") {
-        // Check if this is a legitimate FTP/socket utility file
-        static const std::vector<std::string_view> legitimateFilenames = {
+        // Check if this is a legitimate FTP/socket/logging utility file
+        static const std::vector<std::string_view> legitimatePaths = {
             "ftp",
             "socket",
             "class-ftp",
             "FTP",
             "Socket",
+            "monolog",               // Monolog logging library
+            "Monolog",
+            "vendor-prefixed",       // CMS vendor-prefixed libraries
+            "Handler.php",           // Logging handlers (CubeHandler, SocketHandler, etc.)
+            "Guzzle",               // HTTP client library
         };
 
-        // Check filename
-        for (const auto& name : legitimateFilenames) {
+        // Check file path
+        for (const auto& name : legitimatePaths) {
             if (ctx.filePath.find(name) != std::string_view::npos) {
-                return false;  // Skip - legitimate socket utility
+                return false;  // Skip - legitimate library
             }
         }
 
-        // Check for FTP-related context
+        // Check for FTP/logging-related context on the matched line
         std::string_view line = getLineAtOffset(ctx.content, ctx.matchOffset);
         if (line.find("ftp") != std::string_view::npos ||
             line.find("FTP") != std::string_view::npos ||
             line.find("_connect") != std::string_view::npos ||
-            line.find("_data_") != std::string_view::npos) {
-            return false;  // Skip - FTP context
+            line.find("_data_") != std::string_view::npos ||
+            line.find("SOCK_DGRAM") != std::string_view::npos ||   // UDP socket (logging)
+            line.find("udp") != std::string_view::npos ||
+            line.find("UDP") != std::string_view::npos) {
+            return false;  // Skip - FTP/logging context
         }
 
         return true;  // Keep - suspicious socket usage
@@ -278,6 +287,80 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return true;  // Keep for PHP files
     }
 
+    // OBF010: gzuncompress with base64
+    // False positives: CMS plugins (RevSlider, etc.) use gzuncompress(base64_decode())
+    // for legitimate data import/export (slider configs, theme options)
+    // Real malware: decoded content is eval'd or written as PHP
+    // Legitimate: decoded content is json_decoded for data processing
+    if (ruleCode == "OBF010") {
+        // Skip in known CMS plugin paths that legitimately use compressed data
+        static const std::vector<std::string_view> legitimatePaths = {
+            "revslider",            // Revolution Slider
+            "revolution-slider",
+            "LayerSlider",
+            "theme-options",
+            "redux-framework",      // Redux Options Framework
+            "vendor/",
+            "vendor-prefixed/",
+        };
+
+        for (const auto& path : legitimatePaths) {
+            if (ctx.filePath.find(path) != std::string_view::npos) {
+                return false;  // Skip - known CMS plugin
+            }
+        }
+
+        // Check if the decoded data is used for data processing (json_decode)
+        // vs code execution (eval). Look within ~300 chars after match.
+        size_t searchEnd = std::min(ctx.matchOffset + 300, ctx.content.size());
+        std::string_view afterMatch = ctx.content.substr(ctx.matchOffset, searchEnd - ctx.matchOffset);
+
+        if (afterMatch.find("json_decode") != std::string_view::npos) {
+            return false;  // Skip - data processing, not code execution
+        }
+
+        return true;
+    }
+
+    // OBF011: rawurldecode with base64
+    // False positives: WPBakery Page Builder (js_composer) stores shortcode content
+    // as rawurldecode(base64_decode(...)) - this is by design for safe HTML storage.
+    // Also used by other CMS builders for content encoding.
+    // Real malware: raw payload decoding followed by eval/exec
+    // Legitimate: content displayed via htmlentities() or used in templates
+    if (ruleCode == "OBF011") {
+        // Skip in known CMS page builder paths
+        static const std::vector<std::string_view> legitimatePaths = {
+            "js_composer",          // WPBakery Page Builder
+            "wpbakery",
+            "visual-composer",
+            "elementor",            // Elementor page builder
+            "divi",                 // Divi theme builder
+            "beaver-builder",
+            "vendor/",
+            "vendor-prefixed/",
+        };
+
+        for (const auto& path : legitimatePaths) {
+            if (ctx.filePath.find(path) != std::string_view::npos) {
+                return false;  // Skip - known CMS builder plugin
+            }
+        }
+
+        // Check line context: if htmlentities or strip_tags is nearby,
+        // this is display/sanitization code, not payload execution
+        std::string_view line = getLineAtOffset(ctx.content, ctx.matchOffset);
+        if (line.find("htmlentities") != std::string_view::npos ||
+            line.find("htmlspecialchars") != std::string_view::npos ||
+            line.find("strip_tags") != std::string_view::npos ||
+            line.find("esc_html") != std::string_view::npos ||
+            line.find("esc_attr") != std::string_view::npos) {
+            return false;  // Skip - output sanitization context
+        }
+
+        return true;
+    }
+
     // OBF005: strrev() function hiding
     // Context filtering removed - rule pattern itself should be specific enough
     // to detect malicious use (strrev building function names via concatenation)
@@ -310,6 +393,63 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         }
 
         return true;  // Keep the match - unknown domain
+    }
+
+    // DRP001: Remote code loader (file_get_contents + eval)
+    // False positives: CMS plugins that fetch data from legitimate APIs
+    // RevSlider fetches Google Fonts from googleapis.com, WordPress core fetches
+    // from api.wordpress.org, etc. The .*?eval regex can span hundreds of lines
+    // matching file_get_contents('https://...') with an unrelated eval() elsewhere.
+    if (ruleCode == "DRP001") {
+        // Whitelist of known legitimate API domains
+        static const std::vector<std::string_view> legitimateDomains = {
+            "googleapis.com",       // Google APIs (Fonts, Maps, etc.)
+            "api.wordpress.org",    // WordPress API
+            "downloads.wordpress.org",
+            "wordpress.org",
+            "github.com",
+            "raw.githubusercontent.com",
+            "api.github.com",
+            "packagist.org",
+            "getcomposer.org",
+            "cdn.jsdelivr.net",
+            "cdnjs.cloudflare.com",
+            "unpkg.com",
+            "fonts.google.com",
+            "fonts.gstatic.com",
+            "api.jquery.com",
+            "registry.npmjs.org",
+        };
+
+        // Check if the matched URL contains a whitelisted domain
+        for (const auto& domain : legitimateDomains) {
+            if (ctx.matchedText.find(domain) != std::string_view::npos) {
+                return false;  // Skip - legitimate API call
+            }
+        }
+
+        // Also skip if this is in a known CMS plugin doing API calls
+        static const std::vector<std::string_view> legitimatePaths = {
+            "revslider",
+            "googlefonts",
+            "google-fonts",
+            "vendor/",
+            "vendor-prefixed/",
+        };
+
+        for (const auto& path : legitimatePaths) {
+            if (ctx.filePath.find(path) != std::string_view::npos) {
+                // Even in known paths, check if eval is close to the URL fetch
+                // If eval is >500 chars away, it's likely a coincidental match
+                size_t searchEnd = std::min(ctx.matchOffset + 500, ctx.content.size());
+                std::string_view nearContext = ctx.content.substr(ctx.matchOffset, searchEnd - ctx.matchOffset);
+                if (nearContext.find("eval") == std::string_view::npos) {
+                    return false;  // Skip - eval is far from the fetch, likely unrelated
+                }
+            }
+        }
+
+        return true;
     }
 
     // No filter for this rule - keep the match

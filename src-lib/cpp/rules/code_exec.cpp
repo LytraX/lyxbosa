@@ -34,9 +34,14 @@ const BuiltinRule RCE002 {
 };
 
 // RCE003: Dynamic function call with user input
+// Pattern $func($_GET[...]) is malicious - direct user input to dynamic call
+// But $this->$method($_GET['ID']) is common in WordPress admin tables (safe context)
+// Match patterns at statement boundaries to exclude method calls
 namespace detail_RCE003 {
     static constexpr Pattern patterns[] = {
-        { R"(\$\w+\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
+        // $var( at statement start (after newline, semicolon, brace, or space)
+        // This excludes ->$method( patterns because -> is not in the char class
+        { R"([\n;{(\s]\$\w+\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
           "Dynamic call with user input", false },
     };
 }

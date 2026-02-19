@@ -51,16 +51,26 @@ const BuiltinRule CRED003 {
 };
 
 // CRED004: Keylogger injection
+// Plain addEventListener('keydown') is very common in legitimate code
+// Malicious keyloggers capture keys AND send them to external URL
+// Look for keyboard events combined with data exfiltration
 namespace detail_CRED004 {
     static constexpr Pattern patterns[] = {
-        { R"(addEventListener\s*\(\s*['"]key(down|press|up)['"])",
-          "Keyboard event listener", false },
+        // Keyboard event + XMLHttpRequest/fetch in close proximity (exfiltration)
+        { R"(addEventListener\s*\(\s*['"]key(down|press|up)['"][^}]*XMLHttpRequest)",
+          "Keyboard capture with XHR", false },
+        // Keyboard event + new Image().src (beacon exfiltration)
+        { R"(addEventListener\s*\(\s*['"]key(down|press|up)['"][^}]*new\s+Image\s*\(\s*\)\.src)",
+          "Keyboard capture with image beacon", false },
+        // onkeydown with string accumulation and URL
+        { R"(onkey(down|press)\s*=.*\+=.*https?://)",
+          "Key accumulation with URL", false },
     };
 }
 const BuiltinRule CRED004 {
     .code = {Category::CredTheft, 4},
-    .name = "Keylogger injection",
-    .description = "Detects keyboard event logging scripts",
+    .name = "Keylogger with exfiltration",
+    .description = "Detects keyboard capture combined with data exfiltration",
     .severity = Severity::High,
     .patterns = detail_CRED004::patterns,
 };
@@ -81,17 +91,20 @@ const BuiltinRule CRED005 {
 };
 
 // CRED006: Suspicious TLD for exfiltration
+// Only flag known-abused FREE TLDs used for phishing/malware
+// Removed .cn and .ru as they have many legitimate sites (Chinese manufacturers, etc.)
 // Note: Using non-capturing group (?:...) so RE2 returns the full URL match
 namespace detail_CRED006 {
     static constexpr Pattern patterns[] = {
-        { R"(https?://[a-zA-Z0-9.\-]+\.(?:ru|cn|tk|ml|ga|cf|gq)/)",
-          "Suspicious TLD URL", false },
+        // Free TLDs heavily abused for malware/phishing
+        { R"(https?://[a-zA-Z0-9.\-]+\.(?:tk|ml|ga|cf|gq)/)",
+          "Free TLD URL (abuse-prone)", false },
     };
 }
 const BuiltinRule CRED006 {
     .code = {Category::CredTheft, 6},
-    .name = "Suspicious TLD in URL",
-    .description = "Detects URLs with suspicious top-level domains",
+    .name = "Suspicious free TLD in URL",
+    .description = "Detects URLs with free TLDs commonly abused for phishing",
     .severity = Severity::Medium,
     .patterns = detail_CRED006::patterns,
 };

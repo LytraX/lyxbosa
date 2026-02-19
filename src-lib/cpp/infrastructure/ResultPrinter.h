@@ -149,23 +149,38 @@ public:
             fmt::print("Files quarantined: {}\n", result.filesQuarantined);
         }
 
-        fmt::print("\nMatches by severity:\n");
-        if (result.criticalCount > 0) {
-            terminal_.print(Terminal::critical(), "  Critical: {}\n", result.criticalCount);
-        }
-        if (result.highCount > 0) {
-            terminal_.print(Terminal::high(), "  High: {}\n", result.highCount);
-        }
-        if (result.mediumCount > 0) {
-            terminal_.print(Terminal::medium(), "  Medium: {}\n", result.mediumCount);
-        }
-        if (result.lowCount > 0) {
-            terminal_.print(Terminal::low(), "  Low: {}\n", result.lowCount);
+        if (result.filesWithMatches > 0) {
+            fmt::print("\nMatches by severity:\n");
+            if (result.criticalCount > 0) {
+                terminal_.print(Terminal::critical(), "  Critical: {}\n", result.criticalCount);
+            }
+            if (result.highCount > 0) {
+                terminal_.print(Terminal::high(), "  High: {}\n", result.highCount);
+            }
+            if (result.mediumCount > 0) {
+                terminal_.print(Terminal::medium(), "  Medium: {}\n", result.mediumCount);
+            }
+            if (result.lowCount > 0) {
+                terminal_.print(Terminal::low(), "  Low: {}\n", result.lowCount);
+            }
+        } else {
+            fmt::print("\nNo matches found.\n");
         }
 
-        auto duration = result.duration();
-        auto secs = duration.count() / 1000.0;
-        fmt::print("\nScan completed in {:.2f} seconds\n", secs);
+        auto totalMs = result.duration().count();
+        auto totalSecs = totalMs / 1000;
+        if (totalSecs >= 3600) {
+            auto h = totalSecs / 3600;
+            auto m = (totalSecs % 3600) / 60;
+            auto s = totalSecs % 60;
+            fmt::print("\nScan completed in {}h {}m {}s\n", h, m, s);
+        } else if (totalSecs >= 60) {
+            auto m = totalSecs / 60;
+            auto s = totalSecs % 60;
+            fmt::print("\nScan completed in {}m {}s\n", m, s);
+        } else {
+            fmt::print("\nScan completed in {:.2f} seconds\n", totalMs / 1000.0);
+        }
     }
 
     // Print results as JSON

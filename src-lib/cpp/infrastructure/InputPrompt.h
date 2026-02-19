@@ -190,7 +190,7 @@ private:
                 if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) > 0) {
                     // More characters available - this is an escape sequence (arrow keys, etc.)
                     char seq[3];
-                    read(STDIN_FILENO, seq, sizeof(seq));  // Consume escape sequence
+                    [[maybe_unused]] auto n_ = read(STDIN_FILENO, seq, sizeof(seq));  // Consume escape sequence
                     continue;  // Ignore it
                 }
                 // No more characters within timeout - standalone ESC key
