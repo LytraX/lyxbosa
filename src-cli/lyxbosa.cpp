@@ -3,6 +3,10 @@
 #include <cstdlib>
 #include <iostream>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "system/CliArgs.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/ResultPrinter.h"
@@ -37,6 +41,12 @@ extern "C" void signalHandler(int signal) {
 }
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // Set console output to UTF-8 so that fmt::print (which uses WriteConsoleW)
+    // correctly handles non-ASCII characters in file paths (e.g., Greek, Cyrillic)
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+
     // Setup signal handlers (cross-platform)
     std::signal(SIGINT, signalHandler);   // Ctrl+C
     std::signal(SIGTERM, signalHandler);  // Termination request

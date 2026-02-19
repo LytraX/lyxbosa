@@ -1,4 +1,5 @@
 #include "Scanner.h"
+#include "infrastructure/PathUtils.h"
 #include "rules/Registry.hpp"
 #include <fstream>
 #include <sstream>
@@ -133,8 +134,7 @@ FileResult Scanner::scanFile(const std::filesystem::path& path) {
         std::string content = readFile(path, config_.scan.maxFileSize);
         result.fileSize = content.size();
 
-        // Pass file path for context-aware filtering
-        auto matches = engine_.match(content, path.string());
+        auto matches = engine_.match(content, pathToUtf8(path));
         result.matches = std::move(matches);
 
     } catch (const std::exception&) {

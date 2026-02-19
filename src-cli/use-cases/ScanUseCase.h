@@ -3,6 +3,7 @@
 #include "infrastructure/Terminal.h"
 #include "infrastructure/ResultPrinter.h"
 #include "infrastructure/InputPrompt.h"
+#include "infrastructure/PathUtils.h"
 #include "config/Config.h"
 #include "core/Scanner.h"
 #include "system/CliArgs.h"
@@ -290,7 +291,7 @@ private:
 
     void printFilePathNoNewline(const std::filesystem::path& path) const {
         fmt::print("\r");  // Go to start of line
-        std::string pathStr = path.string();
+        std::string pathStr = pathToUtf8(path);
         size_t termWidth = getTerminalWidth();
 
         if (pathStr.length() <= termWidth) {

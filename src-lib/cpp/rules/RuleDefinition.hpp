@@ -66,6 +66,7 @@ public:
         opts.set_log_errors(false);
         opts.set_case_sensitive(!case_insensitive);
         opts.set_dot_nl(true);  // Let . match newlines for multiline patterns
+        opts.set_max_mem(64 << 20);  // 64MB DFA cache - prevents NFA fallback on large binary files
 
         // Wrap in capture group if requested (for findMatches to get matched text)
         std::string patternStr(pattern);

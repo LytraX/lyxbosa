@@ -9,6 +9,7 @@ RegexPattern::RegexPattern(std::string_view pattern, bool caseInsensitive)
     RE2::Options options;
     options.set_case_sensitive(!caseInsensitive_);
     options.set_log_errors(false);  // Don't spam stderr
+    options.set_max_mem(64 << 20);  // 64MB DFA cache - prevents NFA fallback on large binary files
 
     // Wrap the pattern in a capturing group so we can extract the match
     std::string wrappedPattern = "(" + std::string(pattern) + ")";

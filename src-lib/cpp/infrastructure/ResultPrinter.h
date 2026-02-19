@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Terminal.h"
+#include "PathUtils.h"
 #include "core/ScanResult.h"
 #include "config/Types.h"
 #include <fmt/core.h>
@@ -52,7 +53,7 @@ public:
     // Print a file result (verbose mode)
     void printFileResult(const FileResult& result) const {
         if (result.skippedSize) {
-            terminal_.print(Terminal::muted(), "[-] {} (skipped - size limit)\n", result.path.string());
+            terminal_.print(Terminal::muted(), "[-] {} (skipped - size limit)\n", pathToUtf8(result.path));
             return;
         }
 
@@ -62,7 +63,7 @@ public:
 
         // Format: {red}[!] {cyan}filepath {yellow}[N matches]
         terminal_.print(Terminal::high(), "[!] ");
-        terminal_.print(Terminal::low(), "{} ", result.path.string());
+        terminal_.print(Terminal::low(), "{} ", pathToUtf8(result.path));
         terminal_.print(Terminal::medium(), "[{} match{}]\n", result.matches.size(), result.matches.size() == 1 ? "" : "es");
 
         for (const auto& match : result.matches) {
@@ -80,7 +81,7 @@ public:
     // Format: [!] path/to/file.php  C:2 H:5 M:3 L:1
     void printFileResultCompact(const FileResult& result, size_t termWidth) const {
         if (result.skippedSize) {
-            terminal_.print(Terminal::muted(), "[-] {} (skipped)\n", truncatePath(result.path.string(), termWidth - 15));
+            terminal_.print(Terminal::muted(), "[-] {} (skipped)\n", truncatePath(pathToUtf8(result.path), termWidth - 15));
             return;
         }
 
@@ -112,7 +113,7 @@ public:
         size_t prefixLen = 4;  // "[!] "
         size_t availableForPath = (termWidth > prefixLen + suffixLen) ? termWidth - prefixLen - suffixLen : 20;
 
-        std::string pathStr = truncatePath(result.path.string(), availableForPath);
+        std::string pathStr = truncatePath(pathToUtf8(result.path), availableForPath);
 
         // Print the line
         terminal_.print(Terminal::high(), "[!] ");
@@ -201,7 +202,7 @@ public:
             firstFile = false;
 
             fmt::print("    {{\n");
-            fmt::print("      \"path\": \"{}\",\n", file.path.string());
+            fmt::print("      \"path\": \"{}\",\n", pathToUtf8(file.path));
             fmt::print("      \"skipped\": {},\n", file.skippedSize ? "true" : "false");
             fmt::print("      \"quarantined\": {},\n", file.quarantined ? "true" : "false");
             fmt::print("      \"matches\": [\n");
@@ -239,7 +240,7 @@ public:
         for (const auto& file : result.files) {
             for (const auto& match : file.matches) {
                 fmt::print("{},{},{},{},{},{},{},{},{}\n",
-                           file.path.string(),
+                           pathToUtf8(file.path),
                            match.ruleName,
                            severityToString(match.severity),
                            match.suppressed ? severityToString(match.originalSeverity) : "",
