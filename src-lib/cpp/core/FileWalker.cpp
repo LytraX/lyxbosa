@@ -1,6 +1,57 @@
 #include "FileWalker.h"
 #include <algorithm>
+
+#ifdef _WIN32
+// Portable fnmatch replacement for Windows
+// Supports *, ?, and ** (recursive) glob patterns
+static bool portable_fnmatch(const char* pattern, const char* str) {
+    while (*pattern && *str) {
+        if (*pattern == '*') {
+            if (*(pattern + 1) == '*') {
+                // ** matches everything including path separators
+                pattern += 2;
+                if (*pattern == '/' || *pattern == '\\') pattern++;
+                if (!*pattern) return true;
+                for (const char* s = str; *s; ++s) {
+                    if (portable_fnmatch(pattern, s)) return true;
+                }
+                return false;
+            }
+            // * matches everything except path separators
+            pattern++;
+            if (!*pattern) {
+                // trailing * — match if no more separators
+                while (*str) {
+                    if (*str == '/' || *str == '\\') return false;
+                    str++;
+                }
+                return true;
+            }
+            for (const char* s = str; *s; ++s) {
+                if (*s == '/' || *s == '\\') return false;
+                if (portable_fnmatch(pattern, s)) return true;
+            }
+            return portable_fnmatch(pattern, str);
+        }
+        if (*pattern == '?') {
+            if (*str == '/' || *str == '\\') return false;
+            pattern++;
+            str++;
+            continue;
+        }
+        char pc = *pattern, sc = *str;
+        if (pc == '\\') pc = '/';
+        if (sc == '\\') sc = '/';
+        if (pc != sc) return false;
+        pattern++;
+        str++;
+    }
+    while (*pattern == '*') pattern++;
+    return !*pattern && !*str;
+}
+#else
 #include <fnmatch.h>
+#endif
 
 namespace lyxbosa {
 
@@ -145,6 +196,19 @@ bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::
 
     // Try matching against filename only first
     std::string filename = path.filename().string();
+#ifdef _WIN32
+    if (portable_fnmatch(pattern.c_str(), filename.c_str())) {
+        return true;
+    }
+
+    // For patterns with **, try matching against full path
+    if (pattern.find("**") != std::string::npos) {
+        std::string fullPath = path.string();
+        if (portable_fnmatch(pattern.c_str(), fullPath.c_str())) {
+            return true;
+        }
+    }
+#else
     if (fnmatch(pattern.c_str(), filename.c_str(), FNM_PATHNAME) == 0) {
         return true;
     }
@@ -156,6 +220,7 @@ bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::
             return true;
         }
     }
+#endif
 
     return false;
 }

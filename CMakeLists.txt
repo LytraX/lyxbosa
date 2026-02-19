@@ -23,6 +23,11 @@ add_compile_definitions(LYXBOSA_VERSION="${PROJECT_VERSION}")
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
+# Prevent Windows.h min/max macros from breaking std::min/std::max
+if(MSVC)
+  add_compile_definitions(NOMINMAX)
+endif()
+
 # Find vcpkg packages
 find_package(fmt CONFIG REQUIRED)
 find_package(argparse CONFIG REQUIRED)
