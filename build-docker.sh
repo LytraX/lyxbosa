@@ -30,7 +30,7 @@ docker run --rm \
 
 # Rename binary with target suffix
 BINARY_NAME="lyxbosa-ubuntu${UBUNTU_VERSION//./}"
-mv "${OUTPUT_DIR}/lyxbosa" "${OUTPUT_DIR}/${BINARY_NAME}"
+mv -f "${OUTPUT_DIR}/lyxbosa" "${OUTPUT_DIR}/${BINARY_NAME}"
 
 echo ""
 echo "=== Build complete ==="

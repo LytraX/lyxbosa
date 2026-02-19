@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(LyxBoSa LANGUAGES CXX)
+project(LyxBoSa VERSION 1.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,6 +18,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 else()
   add_compile_definitions(LYXBOSA_RELEASE)
 endif()
+
+add_compile_definitions(LYXBOSA_VERSION="${PROJECT_VERSION}")
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 

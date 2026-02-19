@@ -51,7 +51,7 @@ struct CliArgs {
 inline CliArgs CliArgs::parse(int argc, char* argv[]) {
     CliArgs result;
 
-    argparse::ArgumentParser program("lyxbosa", "1.0.0");
+    argparse::ArgumentParser program("lyxbosa", LYXBOSA_VERSION);
     program.add_description("Modern malware/bot signature scanner");
 
     // Global options
@@ -217,7 +217,7 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
 }
 
 inline std::string CliArgs::getHelpText() {
-    argparse::ArgumentParser program("lyxbosa", "1.0.0");
+    argparse::ArgumentParser program("lyxbosa", LYXBOSA_VERSION);
     program.add_description("Modern malware/bot signature scanner");
     return program.help().str();
 }
