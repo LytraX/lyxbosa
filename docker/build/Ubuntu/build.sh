@@ -6,17 +6,24 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 # Default values
 UBUNTU_VERSION="${1:-20.04}"
-OUTPUT_DIR="${2:-./dist}"
+ARCH="${2:-all}"
+OUTPUT_DIR="${3:-./dist}"
+
+if [ "${ARCH}" = "all" ]; then
+    ARCHES=(amd64 arm64)
+else
+    ARCHES=("${ARCH}")
+fi
 
 # Create output directory
 mkdir -p "${OUTPUT_DIR}"
 
-for ARCH in amd64 arm64; do
-    PLATFORM="linux/${ARCH}"
-    TAG_NAME="lyxbosa-build-ubuntu${UBUNTU_VERSION//./}-${ARCH}"
-    BINARY_NAME="lyxbosa-ubuntu${UBUNTU_VERSION//./}-${ARCH}"
+for CURRENT_ARCH in "${ARCHES[@]}"; do
+    PLATFORM="linux/${CURRENT_ARCH}"
+    TAG_NAME="lyxbosa-build-ubuntu${UBUNTU_VERSION//./}-${CURRENT_ARCH}"
+    BINARY_NAME="lyxbosa-ubuntu${UBUNTU_VERSION//./}-${CURRENT_ARCH}"
 
-    echo "=== Building LyxBoSa for Ubuntu ${UBUNTU_VERSION} (${ARCH}) ==="
+    echo "=== Building LyxBoSa for Ubuntu ${UBUNTU_VERSION} (${CURRENT_ARCH}) ==="
 
     # Build the Docker image
     echo "Building Docker image..."

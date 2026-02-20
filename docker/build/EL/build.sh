@@ -6,17 +6,24 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 # Default values
 EL_VERSION="${1:-8}"
-OUTPUT_DIR="${2:-./dist}"
+ARCH="${2:-all}"
+OUTPUT_DIR="${3:-./dist}"
+
+if [ "${ARCH}" = "all" ]; then
+    ARCHES=(amd64 arm64)
+else
+    ARCHES=("${ARCH}")
+fi
 
 # Create output directory
 mkdir -p "${OUTPUT_DIR}"
 
-for ARCH in amd64 arm64; do
-    PLATFORM="linux/${ARCH}"
-    TAG_NAME="lyxbosa-build-el${EL_VERSION}-${ARCH}"
-    BINARY_NAME="lyxbosa-el${EL_VERSION}-${ARCH}"
+for CURRENT_ARCH in "${ARCHES[@]}"; do
+    PLATFORM="linux/${CURRENT_ARCH}"
+    TAG_NAME="lyxbosa-build-el${EL_VERSION}-${CURRENT_ARCH}"
+    BINARY_NAME="lyxbosa-el${EL_VERSION}-${CURRENT_ARCH}"
 
-    echo "=== Building LyxBoSa for EL ${EL_VERSION} (${ARCH}) ==="
+    echo "=== Building LyxBoSa for EL ${EL_VERSION} (${CURRENT_ARCH}) ==="
 
     # Build the Docker image
     echo "Building Docker image..."
