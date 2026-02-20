@@ -15,6 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build for Ubuntu ${{ matrix.version }}
         run: docker/build/Ubuntu/build.sh "${{ matrix.version }}" dist
 
@@ -27,6 +35,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build for EL 8
         run: docker/build/EL/build.sh 8 dist
@@ -61,7 +77,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: lyxbosa-windows
-          path: dist/lyxbosa-windows.exe
+          path: dist/lyxbosa-windows-*.exe
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

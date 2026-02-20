@@ -8,34 +8,39 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 EL_VERSION="${1:-8}"
 OUTPUT_DIR="${2:-./dist}"
 
-# Derive tag name
-TAG_NAME="lyxbosa-build-el${EL_VERSION}"
-
-echo "=== Building LyxBoSa for EL ${EL_VERSION} ==="
-
 # Create output directory
 mkdir -p "${OUTPUT_DIR}"
 
-# Build the Docker image
-echo "Building Docker image..."
-docker build \
-    --build-arg EL_VERSION="${EL_VERSION}" \
-    -t "${TAG_NAME}" \
-    -f "${SCRIPT_DIR}/Dockerfile" \
-    "${SCRIPT_DIR}"
+for ARCH in amd64 arm64; do
+    PLATFORM="linux/${ARCH}"
+    TAG_NAME="lyxbosa-build-el${EL_VERSION}-${ARCH}"
+    BINARY_NAME="lyxbosa-el${EL_VERSION}-${ARCH}"
 
-# Run the build
-echo "Running build inside container..."
-docker run --rm \
-    -v "${PROJECT_ROOT}:/src:ro" \
-    -v "$(pwd)/${OUTPUT_DIR}:/output" \
-    "${TAG_NAME}"
+    echo "=== Building LyxBoSa for EL ${EL_VERSION} (${ARCH}) ==="
 
-# Rename binary with target suffix
-BINARY_NAME="lyxbosa-el${EL_VERSION}"
-mv -f "${OUTPUT_DIR}/lyxbosa" "${OUTPUT_DIR}/${BINARY_NAME}"
+    # Build the Docker image
+    echo "Building Docker image..."
+    docker buildx build \
+        --platform "${PLATFORM}" \
+        --build-arg EL_VERSION="${EL_VERSION}" \
+        -t "${TAG_NAME}" \
+        --load \
+        -f "${SCRIPT_DIR}/Dockerfile" \
+        "${SCRIPT_DIR}"
 
-echo ""
-echo "=== Build complete ==="
-echo "Binary: ${OUTPUT_DIR}/${BINARY_NAME}"
-file "${OUTPUT_DIR}/${BINARY_NAME}"
+    # Run the build
+    echo "Running build inside container..."
+    docker run --rm \
+        --platform "${PLATFORM}" \
+        -v "${PROJECT_ROOT}:/src:ro" \
+        -v "$(pwd)/${OUTPUT_DIR}:/output" \
+        "${TAG_NAME}"
+
+    # Rename binary with target suffix
+    mv -f "${OUTPUT_DIR}/lyxbosa" "${OUTPUT_DIR}/${BINARY_NAME}"
+
+    echo ""
+    echo "=== Build complete: ${OUTPUT_DIR}/${BINARY_NAME} ==="
+    file "${OUTPUT_DIR}/${BINARY_NAME}"
+    echo ""
+done

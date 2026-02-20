@@ -1,7 +1,7 @@
 /build/
 /build-release/
 /build-release-portable/
-/build-win-release/
+/build-win-release*/
 node_modules/
 dist/
 experiments/
