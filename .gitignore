@@ -19,3 +19,6 @@ debug.log
 !CMakeUserPresets.example.json
 CMakeUserPresets.json
 .vscode/c_cpp_properties.json
+
+# AI
+/.claude/
