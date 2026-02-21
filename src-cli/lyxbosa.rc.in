@@ -1,0 +1,30 @@
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION    @LYXBOSA_VER_MAJOR@,@LYXBOSA_VER_MINOR@,@LYXBOSA_VER_PATCH@,0
+PRODUCTVERSION @LYXBOSA_VER_MAJOR@,@LYXBOSA_VER_MINOR@,@LYXBOSA_VER_PATCH@,0
+FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+FILEFLAGS      0x0L
+FILEOS         VOS_NT_WINDOWS32
+FILETYPE       VFT_APP
+FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "LytraX"
+            VALUE "FileDescription",  "LyxBoSa - Website Malware Scanner"
+            VALUE "FileVersion",      "@LYXBOSA_VER_STRING@"
+            VALUE "InternalName",     "lyxbosa"
+            VALUE "LegalCopyright",   "Copyright (C) LytraX"
+            VALUE "OriginalFilename", "lyxbosa.exe"
+            VALUE "ProductName",      "LyxtrX Bot Search"
+            VALUE "ProductVersion",   "@LYXBOSA_VER_STRING@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END

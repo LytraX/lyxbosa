@@ -1,5 +1,4 @@
-ARG EL_VERSION=8
-FROM almalinux:${EL_VERSION}
+FROM almalinux:8
 
 # Install build dependencies + GCC 12 for C++20 support
 # AlmaLinux 8 AppStream has cmake 3.20 (>=3.18 needed for vcpkg output passthrough)

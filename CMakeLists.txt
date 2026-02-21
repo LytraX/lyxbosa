@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(LyxBoSa VERSION 1.3.0 LANGUAGES CXX)
+project(LyxBoSa VERSION 0.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,7 +19,21 @@ else()
   add_compile_definitions(LYXBOSA_RELEASE)
 endif()
 
-add_compile_definitions(LYXBOSA_VERSION="${PROJECT_VERSION}")
+# Version: use LYXBOSA_VERSION_OVERRIDE if provided (e.g., from CI tag), otherwise PROJECT_VERSION
+if(DEFINED LYXBOSA_VERSION_OVERRIDE)
+  set(LYXBOSA_VER_STRING "${LYXBOSA_VERSION_OVERRIDE}")
+else()
+  set(LYXBOSA_VER_STRING "${PROJECT_VERSION}")
+endif()
+
+add_compile_definitions(LYXBOSA_VERSION="${LYXBOSA_VER_STRING}")
+message(STATUS "Version: ${LYXBOSA_VER_STRING}")
+
+# Parse version components for Windows resource file
+string(REPLACE "." ";" _VERSION_LIST "${LYXBOSA_VER_STRING}")
+list(GET _VERSION_LIST 0 LYXBOSA_VER_MAJOR)
+list(GET _VERSION_LIST 1 LYXBOSA_VER_MINOR)
+list(GET _VERSION_LIST 2 LYXBOSA_VER_PATCH)
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
@@ -64,10 +78,21 @@ set(LIB_SOURCES
     ${RULE_SOURCES}
 )
 
+# Windows version resource
+if(WIN32)
+  configure_file(
+    ${CMAKE_SOURCE_DIR}/src-cli/lyxbosa.rc.in
+    ${CMAKE_BINARY_DIR}/lyxbosa.rc
+    @ONLY
+  )
+  set(WIN_RC_FILE ${CMAKE_BINARY_DIR}/lyxbosa.rc)
+endif()
+
 # Create the CLI executable
 add_executable(lyxbosa
     src-cli/lyxbosa.cpp
     ${LIB_SOURCES}
+    ${WIN_RC_FILE}
 )
 
 target_include_directories(lyxbosa PRIVATE

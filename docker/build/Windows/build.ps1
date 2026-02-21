@@ -18,6 +18,13 @@ if (-not $env:VCPKG_ROOT) {
 
 Write-Host "Using vcpkg at: $env:VCPKG_ROOT"
 
+# Version override from environment
+$VersionArg = @()
+if ($env:LYXBOSA_VERSION) {
+    $VersionArg = @("-DLYXBOSA_VERSION_OVERRIDE=$env:LYXBOSA_VERSION")
+    Write-Host "Version override: $env:LYXBOSA_VERSION"
+}
+
 # Create output directory
 $AbsOutputDir = Join-Path (Get-Location) $OutputDir
 New-Item -ItemType Directory -Force -Path $AbsOutputDir | Out-Null
@@ -44,7 +51,8 @@ foreach ($Target in $Architectures) {
         -DBUILD_TESTS=OFF `
         "-DVCPKG_TARGET_TRIPLET=$VcpkgTriplet" `
         -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
-        "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
+        "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+        @VersionArg
 
     # Build
     Write-Host "Building..."
