@@ -19,7 +19,7 @@ BEGIN
             VALUE "InternalName",     "lyxbosa"
             VALUE "LegalCopyright",   "Copyright (C) LytraX"
             VALUE "OriginalFilename", "lyxbosa.exe"
-            VALUE "ProductName",      "LyxtrX Bot Search"
+            VALUE "ProductName",      "LyxtraX Bot Search"
             VALUE "ProductVersion",   "@LYXBOSA_VER_STRING@"
         END
     END
