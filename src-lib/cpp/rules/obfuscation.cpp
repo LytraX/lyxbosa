@@ -1,5 +1,7 @@
 #include "obfuscation.h"
+#include "analysis/StringAssembly.h"
 #include <array>
+#include <string>
 
 namespace lyxbosa::rules::obfuscation {
 
@@ -409,11 +411,128 @@ const BuiltinRule OBF023 {
     .patterns = detail_OBF023::patterns,
 };
 
+// OBF024 / OBF025: identifiers the code assembles at runtime
+//
+// The generic form of OBF005/OBF006/OBF008: instead of matching one particular
+// way of cutting up a function name, fold the expression and look at the result.
+//   $f="ba"; $h="s"; $l="e"; $n="64";
+//   $o=$f.$h.$l.$n."_d".$l."cod".$l;          -> "base64_decode"
+//   $s="as"; $s.="sert"; @$s(...);            -> "assert"
+//   strrev("edoced_46esab")                   -> "base64_decode"
+//   implode("", array("ba","se","64_decode")) -> "base64_decode"
+//   chr(101).chr(118).chr(97).chr(108)        -> "eval"
+// Any cut, any mix of literals and variables, any of the pure string builtins
+// the folder understands. What matters is the value that comes out and how many
+// separate pieces it was written in.
+namespace detail_assembly {
+    // Never emit more than this per file - one obfuscated file can hold hundreds
+    constexpr size_t MAX_FINDINGS = 20;
+
+    // A sensitive name written as exactly two adjacent literals ('base64' . '_decode')
+    // is the weak end of the technique: malware uses it, but so do plugins splitting
+    // names to get past WordPress.org's review scanners. OBF025 reports those.
+    bool isPlainLiteralSplit(const analysis::AssembledString& assembled) {
+        return assembled.sensitive && assembled.fragments == 2 &&
+               assembled.transforms == 0 && !assembled.viaVariables;
+    }
+
+    std::string describe(const analysis::AssembledString& assembled, std::string_view reason) {
+        std::string note = "Assembles \"" + assembled.value + "\" at runtime";
+
+        if (assembled.fragments >= 2) {
+            note += " from " + std::to_string(assembled.fragments) + " fragments";
+        }
+        if (assembled.transforms > 0) {
+            note += (assembled.fragments >= 2 ? " and " : " via ") +
+                    std::to_string(assembled.transforms) + " decode/transform call" +
+                    (assembled.transforms == 1 ? "" : "s");
+        }
+
+        note += " - ";
+        note += reason;
+        return note;
+    }
+
+    MatchResult toMatch(std::string_view content, const analysis::AssembledString& assembled,
+                        std::string_view reason) {
+        auto [line, column] = positionToLineCol(content, assembled.offset);
+
+        MatchResult result;
+        result.line = line;
+        result.column = column;
+        result.matched = content.substr(assembled.offset, assembled.length);
+        result.note = describe(assembled, reason);
+        return result;
+    }
+
+    std::vector<MatchResult> detectAssembled(std::string_view content) {
+        std::vector<MatchResult> results;
+
+        for (const auto& assembled : analysis::findAssembledStrings(content)) {
+            std::string_view reason;
+
+            if (assembled.sensitive && !isPlainLiteralSplit(assembled)) {
+                // A name on the sensitive list, never written out in one piece
+                reason = "a security-sensitive PHP identifier";
+            } else if (assembled.fragments >= 3 && !assembled.variable.empty() &&
+                       analysis::isDynamicallyCalled(content, assembled.variable)) {
+                // Unknown name, but the result is what gets called
+                reason = "an identifier that is then called dynamically";
+            } else if (assembled.fragments >= 5 && assembled.value.size() >= 8 &&
+                       assembled.value.size() / assembled.fragments <= 3) {
+                // Nobody splits an identifier into this many tiny pieces by accident
+                reason = "an identifier split into single-character fragments";
+            } else {
+                continue;
+            }
+
+            results.push_back(toMatch(content, assembled, reason));
+            if (results.size() >= MAX_FINDINGS) break;
+        }
+
+        return results;
+    }
+
+    std::vector<MatchResult> detectLiteralSplit(std::string_view content) {
+        std::vector<MatchResult> results;
+
+        for (const auto& assembled : analysis::findAssembledStrings(content)) {
+            if (!isPlainLiteralSplit(assembled)) continue;
+
+            results.push_back(toMatch(content, assembled,
+                "a security-sensitive PHP identifier written as two literals"));
+            if (results.size() >= MAX_FINDINGS) break;
+        }
+
+        return results;
+    }
+}
+const BuiltinRule OBF024 {
+    .code = {Category::Obfuscation, 24},
+    .name = "Runtime-assembled identifier",
+    .description = "Detects function names built at runtime from fragments to evade signature matching",
+    .severity = Severity::Critical,
+    .patterns = {},
+    .analyzer = &detail_assembly::detectAssembled,
+};
+
+// OBF025: the low-confidence half of OBF024 - a sensitive name split across two
+// adjacent literals, with no variables and no decoding in between.
+const BuiltinRule OBF025 {
+    .code = {Category::Obfuscation, 25},
+    .name = "Split sensitive function name",
+    .description = "Detects sensitive function names written as two concatenated literals to avoid review scanners",
+    .severity = Severity::Medium,
+    .patterns = {},
+    .analyzer = &detail_assembly::detectLiteralSplit,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF001, &OBF002, &OBF003, &OBF004, &OBF005,
     &OBF006, &OBF007, &OBF008, &OBF009, &OBF010,
     &OBF011, &OBF012, &OBF013, &OBF014, &OBF015, &OBF016,
-    &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023
+    &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023,
+    &OBF024, &OBF025
 };
 
 const BuiltinRule* const* getAllRules() {

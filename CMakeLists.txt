@@ -67,6 +67,7 @@ set(RULE_SOURCES
 # Collect library sources from src-lib
 set(LIB_SOURCES
     src-lib/cpp/infrastructure/Console.cpp
+    src-lib/cpp/analysis/StringAssembly.cpp
     src-lib/cpp/config/Config.cpp
     src-lib/cpp/patterns/StringPattern.cpp
     src-lib/cpp/patterns/RegexPattern.cpp

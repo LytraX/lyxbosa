@@ -672,8 +672,13 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
             fm.line = match.line;
             fm.column = match.column;
             fm.offset = offset;
-            fm.matchedText = std::string(match.matched);
+            fm.matchedText = match.note.empty() ? std::string(match.matched) : match.note;
             fm.context = getContext(content, fm.offset, match.matched.size());
+
+            // Analyzer rules explain themselves - the raw source alone does not
+            if (!match.note.empty()) {
+                fm.context = match.note + " | " + fm.context;
+            }
 
             // Check for suppression
             if (hasSuppression(content, fm.offset)) {
@@ -694,9 +699,9 @@ size_t MatchEngine::patternCount() const {
     for (const auto& rule : rules_) {
         total += rule->patternCount();
     }
-    // Add builtin patterns
+    // Add builtin patterns - an analyzer rule carries no patterns but counts as one check
     for (const auto* rule : builtinRules_) {
-        total += rule->patterns.size();
+        total += rule->analyzer ? 1 : rule->patterns.size();
     }
     return total;
 }

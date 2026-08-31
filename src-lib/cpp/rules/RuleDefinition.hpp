@@ -16,6 +16,7 @@ struct MatchResult {
     size_t line;
     size_t column;
     std::string_view matched;
+    std::string note;  // Analyzer rules only: what the analysis concluded
 };
 
 // A single pattern within a rule (stores regex string for RE2 compilation)
@@ -105,6 +106,11 @@ private:
     std::unordered_map<std::string, std::unique_ptr<RE2>> cache_;
 };
 
+// Some techniques cannot be expressed as a regex - runtime string assembly, for
+// one, needs the fragments folded before there is anything to compare against.
+// Such rules supply an analyzer instead of patterns.
+using RuleAnalyzer = std::vector<MatchResult> (*)(std::string_view content);
+
 // Built-in rule definition
 struct BuiltinRule {
     RuleCode code;
@@ -112,9 +118,14 @@ struct BuiltinRule {
     std::string_view description;
     Severity severity;
     std::span<const Pattern> patterns;
+    RuleAnalyzer analyzer = nullptr;  // Optional: used instead of `patterns`
 
     // Check if any pattern matches
     bool matches(std::string_view content) const {
+        if (analyzer) {
+            return !analyzer(content).empty();
+        }
+
         auto& cache = PatternCache::instance();
 
         for (const auto& pattern : patterns) {
@@ -128,6 +139,10 @@ struct BuiltinRule {
 
     // Get all matches with positions
     std::vector<MatchResult> findMatches(std::string_view content) const {
+        if (analyzer) {
+            return analyzer(content);
+        }
+
         std::vector<MatchResult> results;
         auto& cache = PatternCache::instance();
 

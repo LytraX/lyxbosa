@@ -16,6 +16,7 @@ At its core, LyxBoSa uses a layered matching engine that applies multiple patter
 - **Entropy analysis** -- identifies high-entropy regions that may indicate encrypted or obfuscated content.
 - **Hash matching** -- detects known malicious files by their cryptographic fingerprint (xxHash).
 - **Heuristic analysis** -- behavioral detection for techniques like variable function calls, base64 concatenation, and goto-based obfuscation.
+- **Constant folding** -- resolves string expressions the way PHP would, so identifiers assembled at runtime (`$f="ba"; $h="s"; $o=$f.$h."e64_decode";`, `strrev()`, `implode()`, `chr()` chains, nested decoders) are detected by what they resolve to rather than by how they were split up.
 
 The engine also includes context-aware filtering, suppression comments, and false-positive reduction by recognizing SQL queries and code comments.
 

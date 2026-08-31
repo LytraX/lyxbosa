@@ -512,3 +512,164 @@ TEST_F(ContextFilterTest, DRP001_DetectsRealRemoteLoader) {
     EXPECT_TRUE(hasMatchForRule(matches, "DRP001"))
         << "DRP001 should detect real remote code loaders";
 }
+
+// ============================================================================
+// Runtime string assembly (OBF024 / OBF025)
+// The scanner folds string expressions, so detection does not depend on how
+// the attacker chose to cut up the identifier.
+// ============================================================================
+
+class StringAssemblyTest : public ::testing::Test {
+protected:
+    // Returns the analyzer's notes for a rule, so tests can assert on what it resolved
+    std::vector<std::string> notesFor(const char* content, const char* ruleCode) {
+        const auto* rule = getRuleByCode(ruleCode);
+        EXPECT_NE(rule, nullptr);
+
+        std::vector<std::string> notes;
+        if (!rule) return notes;
+
+        for (const auto& match : rule->findMatches(content)) {
+            notes.push_back(match.note);
+        }
+        return notes;
+    }
+
+    bool anyNoteContains(const std::vector<std::string>& notes, std::string_view needle) {
+        for (const auto& note : notes) {
+            if (note.find(needle) != std::string::npos) return true;
+        }
+        return false;
+    }
+};
+
+// The injector that motivated this rule: fragments in separate variables,
+// concatenated with more inline fragments, then called and eval'd.
+TEST_F(StringAssemblyTest, DetectsFragmentedBase64DecodeLoader) {
+    const char* content =
+        "<?php ini_set(\"memory_limit\",\"-1\");\n"
+        "$f=\"ba\"; $h=\"s\"; $l=\"e\"; $n=\"64\";\n"
+        "$o=$f.$h.$l.$n.\"_d\".$l.\"cod\".$l;\n"
+        "$p=\"Z290byBsQ1lHbw==\";\n"
+        "eval($o($p));\n"
+        "require __DIR__ . '/wp-blog-header.php';\n";
+
+    auto notes = notesFor(content, "OBF024");
+    ASSERT_FALSE(notes.empty());
+    EXPECT_TRUE(anyNoteContains(notes, "\"base64_decode\""));
+}
+
+// Same technique, every other shape it comes in
+TEST_F(StringAssemblyTest, DetectsAssemblyRegardlessOfTechnique) {
+    struct Case {
+        const char* content;
+        const char* resolves;
+    };
+
+    const Case cases[] = {
+        {"<?php $a=\"ev\"; $b=\"al\"; $c=$a.$b; $c($x);", "\"eval\""},
+        {"<?php $s=\"as\"; $s .= \"sert\"; @$s($payload);", "\"assert\""},
+        {"<?php $r = strrev(\"edoced_46esab\");", "\"base64_decode\""},
+        {"<?php $i = implode(\"\", array(\"sy\",\"st\",\"em\"));", "\"system\""},
+        {"<?php $t = str_replace(\"Q\",\"\",\"sQysQtQem\");", "\"system\""},
+        {"<?php $h = chr(101).chr(118).chr(97).chr(108);", "\"eval\""},
+        {"<?php $b = base64_decode(\"c2hlbGxfZXhlYw==\");", "\"shell_exec\""},
+        {"<?php $p = pack(\"H*\", \"6576616c\");", "\"eval\""},
+        {"<?php $v = \"_PO\".\"S\".\"T\"; $d = $$v;", "\"_POST\""},
+    };
+
+    for (const auto& testCase : cases) {
+        auto notes = notesFor(testCase.content, "OBF024");
+        EXPECT_TRUE(anyNoteContains(notes, testCase.resolves))
+            << "Failed to resolve " << testCase.resolves << " in: " << testCase.content;
+    }
+}
+
+// An assembled name that is not on the sensitive list still counts when the
+// result is what gets called - that is what keeps the rule generic.
+TEST_F(StringAssemblyTest, DetectsUnknownNameThatIsCalledDynamically) {
+    const char* content =
+        "<?php\n"
+        "$g = \"my\".\"_Sec\".\"ret\".\"Fn\";\n"
+        "$g($argument);\n";
+
+    auto notes = notesFor(content, "OBF024");
+    EXPECT_TRUE(anyNoteContains(notes, "\"my_SecretFn\""));
+}
+
+// A `.=` chain reports the finished name once, not every intermediate state
+TEST_F(StringAssemblyTest, CollapsesAppendChainIntoOneFinding) {
+    const char* content =
+        "<?php\n"
+        "$g='';$g.=\"b\";$g.=\"a\";$g.=\"se\";$g.=\"64\";$g.=\"_de\";$g.=\"code\";\n"
+        "$g($data);\n";
+
+    auto notes = notesFor(content, "OBF024");
+    ASSERT_EQ(notes.size(), 1u);
+    EXPECT_NE(notes[0].find("\"base64_decode\""), std::string::npos);
+}
+
+// A sensitive name split across exactly two literals is the weak signal:
+// reported, but as OBF025 (medium) rather than OBF024 (critical)
+TEST_F(StringAssemblyTest, PlainTwoLiteralSplitIsReportedSeparately) {
+    const char* content =
+        "<?php\n"
+        "$fn = 'base64' . '_decode';\n"
+        "return $fn($input);\n";
+
+    EXPECT_TRUE(notesFor(content, "OBF024").empty());
+    EXPECT_FALSE(notesFor(content, "OBF025").empty());
+}
+
+// Ordinary concatenation must stay silent
+TEST_F(StringAssemblyTest, NoFalsePositiveOnLegitimateConcatenation) {
+    const char* content =
+        "<?php\n"
+        "class OrderExporter {\n"
+        "    const PREFIX = 'order_';\n"
+        "    public function build($row) {\n"
+        "        $key = self::PREFIX . 'export';\n"
+        "        $table = $this->db->prefix . 'orders';\n"
+        "        $sql = 'SELECT id FROM ' . $table . ' WHERE status = 1';\n"
+        "        $path = __DIR__ . '/../var/cache/' . $key . '.json';\n"
+        "        $method = 'get' . ucfirst('total');\n"
+        "        return $sql . $path . $method;\n"
+        "    }\n"
+        "}\n";
+
+    EXPECT_TRUE(notesFor(content, "OBF024").empty());
+    EXPECT_TRUE(notesFor(content, "OBF025").empty());
+}
+
+// Parameter defaults are not assignments, and a folded value must be the whole
+// right-hand side - both were false positives against Joomla's factories.
+TEST_F(StringAssemblyTest, NoFalsePositiveOnFactoryClassNames) {
+    const char* content =
+        "<?php\n"
+        "class BaseController {\n"
+        "    public function getView($name = '', $type = '', $prefix = '') {\n"
+        "        $class = ucfirst($prefix) . 'Controller' . ucfirst($type);\n"
+        "        if (class_exists($class)) {\n"
+        "            return new $class();\n"
+        "        }\n"
+        "    }\n"
+        "    public function getLanguage($lang = '') {\n"
+        "        $lang = $lang ?: $this->getDefaultLanguage();\n"
+        "        $class = str_replace('-', '_', $lang . 'Localise');\n"
+        "        return new $class();\n"
+        "    }\n"
+        "}\n";
+
+    EXPECT_TRUE(notesFor(content, "OBF024").empty());
+    EXPECT_TRUE(notesFor(content, "OBF025").empty());
+}
+
+// Interpolated strings are not the literal text they are written as
+TEST_F(StringAssemblyTest, IgnoresInterpolatedStrings) {
+    const char* content =
+        "<?php\n"
+        "$a = \"ev\"; $b = \"al\";\n"
+        "$c = \"$a\" . \"{$b}\";\n";
+
+    EXPECT_TRUE(notesFor(content, "OBF024").empty());
+}
