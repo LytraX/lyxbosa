@@ -74,6 +74,27 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Must run before download-artifact: checkout cleans the workspace
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history + tags, needed to diff against the previous tag
+
+      - name: Build commit list
+        run: |
+          previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          {
+            echo "## Commits"
+            echo
+            if [ -n "${previous}" ]; then
+              echo "Since [\`${previous}\`](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${previous}):"
+              echo
+              git log --no-merges --pretty='* %s (%h)' "${previous}..${GITHUB_REF_NAME}"
+            else
+              git log --no-merges --pretty='* %s (%h)' "${GITHUB_REF_NAME}"
+            fi
+          } > NOTES.md
+          cat NOTES.md
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -83,4 +104,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
+          body_path: NOTES.md
           generate_release_notes: true
