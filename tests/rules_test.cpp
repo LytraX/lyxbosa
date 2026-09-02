@@ -2,6 +2,7 @@
 #include "rules/Registry.hpp"
 #include "config/Types.h"
 #include "core/MatchEngine.h"
+#include "utils/SafeText.h"
 
 using namespace lyxbosa::rules;
 using namespace lyxbosa;
@@ -672,4 +673,246 @@ TEST_F(StringAssemblyTest, IgnoresInterpolatedStrings) {
         "$c = \"$a\" . \"{$b}\";\n";
 
     EXPECT_TRUE(notesFor(content, "OBF024").empty());
+}
+
+// ============================================================================
+// OBF036 - Binary payload inside a file that declares itself as text
+// ============================================================================
+
+class BinaryInTextTest : public ::testing::Test {
+protected:
+    // The analyzer sees content only; the extension gate lives in MatchEngine.
+    bool fires(std::string_view content) {
+        const auto* rule = getRuleByCode("OBF036");
+        EXPECT_NE(rule, nullptr);
+        if (!rule) return false;
+        return !rule->findMatches(content).empty();
+    }
+
+    // A .php that carries an encrypted stage ahead of its source, as seen in
+    // live-cleanup-batch3-quarantine/55e69bc987921bd7.php
+    std::string blobThenPhp() {
+        std::string s;
+        for (int i = 0; i < 400; ++i) {
+            s.push_back(static_cast<char>(1 + (i % 8)));   // C0 controls
+            s.push_back(static_cast<char>('A' + (i % 26)));
+        }
+        s += "<?php goto vSHrlRg; $x = 1; ?>";
+        return s;
+    }
+
+    bool gatedFor(std::string_view path, std::string_view content) {
+        MatchContext ctx;
+        ctx.content = content;
+        ctx.filePath = path;
+        ctx.matchOffset = 0;
+        ctx.matchLine = 1;
+        ctx.matchColumn = 1;
+        ctx.matchedText = content.substr(0, 1);
+        return MatchEngine::applyContextFilter("OBF036", ctx);
+    }
+};
+
+TEST_F(BinaryInTextTest, FlagsBinaryBlobPrependedToSource) {
+    EXPECT_TRUE(fires(blobThenPhp()));
+}
+
+TEST_F(BinaryInTextTest, IgnoresOrdinarySource) {
+    EXPECT_FALSE(fires("<?php\n$a = 1;\nfunction f() { return 2; }\n"));
+}
+
+// The whole point of measuring C0 controls rather than "non-ASCII": UTF-8 text in
+// any script must score zero. A rule that counted high bytes would flag every
+// translation file in the tree.
+TEST_F(BinaryInTextTest, IgnoresUtf8InEveryScript) {
+    const char* samples[] = {
+        "<?php // Καλωσορίσατε στο ξενοδοχείο μας, τιμές και κρατήσεις\n",
+        "<?php // 日本語のテキストです。プラグイン設定を変更してください。\n",
+        "<?php // 这是一个中文测试文件，用于验证编码处理是否正确。\n",
+        "<?php // 한국어 텍스트입니다. 워드프레스 플러그인 설정.\n",
+        "<?php // مرحبا بكم في موقعنا. هذا نص تجريبي باللغة العربية.\n",
+        "<?php // שלום וברוכים הבאים לאתר שלנו. זהו טקסט לדוגמה.\n",
+        "<?php // Это тестовый файл на русском языке для проверки.\n",
+        "<?php // นี่คือข้อความภาษาไทยสำหรับทดสอบการเข้ารหัส\n",
+        "<?php // यह एक हिंदी परीक्षण फ़ाइल है।\n",
+        "<?php // Status: done, progress 100% \xF0\x9F\x8E\x89\xF0\x9F\x94\xA5\xE2\x9A\xA1\n",
+        "<?php // \xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7 ZWJ family\n",
+        "<?php // \xE2\x94\x8C\xE2\x94\x80\xE2\x94\xAC\xE2\x94\x80\xE2\x94\x90 box drawing\n",
+    };
+    for (const auto* s : samples) {
+        EXPECT_FALSE(fires(s)) << "UTF-8 text must never be read as a binary payload: " << s;
+    }
+}
+
+// UTF-16 source is half NUL bytes by construction and must be exempted, or every
+// UTF-16 file in a tree becomes a critical finding.
+TEST_F(BinaryInTextTest, IgnoresUtf16WithBom) {
+    std::string utf16le = "\xFF\xFE";
+    const char* ascii = "<?php $a = 1; function f() { return 2; }";
+    for (const char* p = ascii; *p; ++p) { utf16le.push_back(*p); utf16le.push_back('\0'); }
+    EXPECT_FALSE(fires(utf16le));
+}
+
+TEST_F(BinaryInTextTest, IgnoresUtf16WithoutBom) {
+    std::string utf16le;
+    const char* ascii = "<?php $a = 1; function f() { return 2; } // padding text here";
+    for (const char* p = ascii; *p; ++p) { utf16le.push_back(*p); utf16le.push_back('\0'); }
+    EXPECT_FALSE(fires(utf16le));
+}
+
+TEST_F(BinaryInTextTest, IgnoresShortFiles) {
+    EXPECT_FALSE(fires(std::string("\x01\x02\x03\x04", 4)));
+}
+
+// Extension gate: binary in .php is anomalous, binary in .png is the file format.
+TEST_F(BinaryInTextTest, GateAcceptsTextExtensions) {
+    auto blob = blobThenPhp();
+    EXPECT_TRUE(gatedFor("/var/www/html/wp-content/cache/x.php", blob));
+    EXPECT_TRUE(gatedFor("/var/www/html/assets/app.js", blob));
+    EXPECT_TRUE(gatedFor("/var/www/html/index.HTML", blob));
+}
+
+TEST_F(BinaryInTextTest, GateRejectsBinaryFormats) {
+    auto blob = blobThenPhp();
+    EXPECT_FALSE(gatedFor("/var/www/html/img/logo.png", blob));
+    EXPECT_FALSE(gatedFor("/var/www/html/fonts/inter.woff2", blob));
+    EXPECT_FALSE(gatedFor("/var/www/html/media/clip.mp4", blob));
+    EXPECT_FALSE(gatedFor("/var/www/html/backup.zip", blob));
+}
+
+TEST_F(BinaryInTextTest, GateRejectsKnownBinaryBearingText) {
+    auto blob = blobThenPhp();
+    // Wordfence keeps WAF state as binary inside .php under wflogs/
+    EXPECT_FALSE(gatedFor("/var/www/wp-content/wflogs/attack-data.php", blob));
+    // SQL dumps legitimately carry BLOB literals
+    EXPECT_FALSE(gatedFor("/var/www/backup/dump.sql", blob));
+}
+
+// ============================================================================
+// DEFC001 - defacement signature must not fire on ordinary English prose
+// ============================================================================
+
+TEST(DefacementContextTest, IgnoresProseAfterHackedBy) {
+    auto gate = [](std::string_view matched) {
+        MatchContext ctx;
+        ctx.content = matched;
+        ctx.filePath = "/var/www/wp-content/plugins/wordfence/readme.txt";
+        ctx.matchOffset = 0;
+        ctx.matchLine = 1;
+        ctx.matchColumn = 1;
+        ctx.matchedText = matched;
+        return MatchEngine::applyContextFilter("DEFC001", ctx);
+    };
+
+    // Wordfence readme.txt: "stops you from getting hacked by identifying malicious traffic"
+    EXPECT_FALSE(gate("hacked by identifying"));
+    EXPECT_FALSE(gate("hacked by exploiting"));
+    EXPECT_FALSE(gate("Hacked By The"));
+
+    // A real defacement names a handle
+    EXPECT_TRUE(gate("Hacked By 7x1337"));
+    EXPECT_TRUE(gate("hacked by MrX"));
+}
+
+// ============================================================================
+// Untrusted output - findings quote malware, so nothing quoted may reach the
+// terminal as a command. See utils/SafeText.h.
+// ============================================================================
+
+TEST(SafeTextTest, EscapesTerminalControlSequences) {
+    using namespace lyxbosa::safe_text;
+
+    // DA1: the terminal answers this on stdin, and the answer ends up typed at
+    // the user's next shell prompt.
+    EXPECT_EQ(sanitize("A\x1b[c" "B"), "A\\x1b[cB");
+    // OSC 52 writes the analyst's clipboard.
+    EXPECT_EQ(sanitize("\x1b]52;c;aGk=\x07"), "\\x1b]52;c;aGk=\\x07");
+    EXPECT_EQ(sanitize(std::string("nul\0here", 8)), "nul\\x00here");
+    EXPECT_EQ(sanitize("del\x7f"), "del\\x7f");
+}
+
+TEST(SafeTextTest, LeavesUtf8Alone) {
+    using namespace lyxbosa::safe_text;
+
+    // Same rule as OBF036: bytes >= 0x80 are UTF-8, not control codes. Mangling
+    // them would wreck every finding quoted from a non-English file.
+    for (std::string_view s : {"Καλωσορίσατε", "日本語のテキスト", "Это тест",
+                               "مرحبا بكم", "\xF0\x9F\x8E\x89"}) {
+        EXPECT_EQ(sanitize(s), std::string(s)) << s;
+        EXPECT_FALSE(needsSanitizing(s)) << s;
+    }
+}
+
+TEST(SafeTextTest, TruncationCannotLeaveADanglingEscape) {
+    using namespace lyxbosa::safe_text;
+
+    // The original bug: a quote cut at a fixed byte length could end in "\033["
+    // and be completed by whatever was printed next.
+    std::string in(40, 'A');
+    in += "\x1b[";
+    for (size_t limit = 8; limit < 60; ++limit) {
+        std::string out = sanitizeAndTruncate(in, limit);
+        EXPECT_EQ(out.find('\x1b'), std::string::npos) << "raw ESC survived at limit " << limit;
+        // and never half of the "\xNN" we wrote in its place
+        auto tail = out.size() >= 3 ? out.substr(out.size() - 3) : out;
+        if (tail == "...") {
+            std::string body = out.substr(0, out.size() - 3);
+            auto bs = body.find_last_of('\\');
+            if (bs != std::string::npos) {
+                EXPECT_TRUE(body.size() - bs == 4 || body.find("\\x", bs) != bs)
+                    << "half an escape left at limit " << limit;
+            }
+        }
+    }
+}
+
+TEST(SafeTextTest, NeedsSanitizingDetectsOnlyControls) {
+    using namespace lyxbosa::safe_text;
+    EXPECT_FALSE(needsSanitizing("plain ascii ~!@#$%^&*()"));
+    EXPECT_TRUE(needsSanitizing("has\x1b" "esc"));
+    EXPECT_TRUE(needsSanitizing("has\ttab"));
+}
+
+// ============================================================================
+// OBF015 / OBF037 - evasions found in ir-quarantine-20260831b/aa0243e75b010ee3.php
+// ============================================================================
+
+class GotoAndEscapeTest : public ::testing::Test {
+protected:
+    bool fires(const char* code, const char* content) {
+        const auto* rule = getRuleByCode(code);
+        EXPECT_NE(rule, nullptr);
+        return rule && !rule->findMatches(content).empty();
+    }
+};
+
+// The emitter puts no space after the semicolon; the rule used to require one.
+TEST_F(GotoAndEscapeTest, GotoLabelNeedsNoWhitespaceAfterSemicolon) {
+    EXPECT_TRUE(fires("OBF015", "<?php goto kPpzye;LQL4spRSOK: tQtVYGj1();goto NGPmYI;wQEDHkCO: $a=1;"));
+    // still fires with a space, as before
+    EXPECT_TRUE(fires("OBF015", "<?php goto kPpzye; LQL4spRSOK: $a=1;"));
+}
+
+// ALL_CAPS labels are how humans write the one legitimate use of goto.
+TEST_F(GotoAndEscapeTest, GotoIgnoresUppercaseLabels) {
+    EXPECT_FALSE(fires("OBF015", "<?php goto SCANNER_TOP;SCANNER_TOP: $a=1;"));
+}
+
+// Interleaving the two notations slipped between the octal-only and hex-only rules.
+TEST_F(GotoAndEscapeTest, FlagsInterleavedOctalAndHexEscapes) {
+    EXPECT_TRUE(fires("OBF037",
+        "<?php echo \"\\74\\144\\x69\\166\\x3e\\x3c\\x69\\156\\160\\165\\x74\\x20\\x74\\171\";"));
+}
+
+// One convention throughout is what hand-written code looks like - binary constants
+// in getID3, phpseclib and minified JS do this all day and must stay silent.
+TEST_F(GotoAndEscapeTest, IgnoresSingleStyleEscapeRuns) {
+    EXPECT_FALSE(fires("OBF037",
+        "<?php $x = \"\\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07\\x08\\x09\\x0a\\x0b\\x0c\";"));
+    EXPECT_FALSE(fires("OBF037",
+        "<?php $x = \"\\101\\102\\103\\104\\105\\106\\107\\110\\111\\112\\113\\114\";"));
+}
+
+TEST_F(GotoAndEscapeTest, IgnoresShortMixedRuns) {
+    EXPECT_FALSE(fires("OBF037", "<?php $x = \"\\x41\\102\\x43\";"));
 }

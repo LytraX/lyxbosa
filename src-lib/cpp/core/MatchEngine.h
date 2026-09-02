@@ -69,13 +69,15 @@ public:
     // Clear all rules
     void clear();
 
+    // Apply the context filter for a rule code: true keeps the match, false discards it.
+    // Public so the rule tests can exercise a filter without building a whole scan -
+    // several rules (OBF036, DEFC001) carry most of their precision here rather than
+    // in the pattern, so the filter is the part worth testing directly.
+    static bool applyContextFilter(const std::string& ruleCode, const MatchContext& ctx);
+
 private:
     // Check if match has suppression comment nearby
     static bool hasSuppression(std::string_view content, size_t offset);
-
-    // Apply context filter for a specific rule code
-    // Returns true if match should be kept, false to discard
-    static bool applyContextFilter(const std::string& ruleCode, const MatchContext& ctx);
 
     // Get the line containing a specific offset
     static std::string_view getLineAtOffset(std::string_view content, size_t offset);

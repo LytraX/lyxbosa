@@ -1,6 +1,8 @@
 #include "obfuscation.h"
 #include "analysis/StringAssembly.h"
 #include <array>
+#include <cctype>
+#include <fmt/format.h>
 #include <string>
 
 namespace lyxbosa::rules::obfuscation {
@@ -234,8 +236,15 @@ const BuiltinRule OBF014 {
 namespace detail_OBF015 {
     static constexpr Pattern patterns[] = {
         // Labels must contain mixed case (lowercase followed by uppercase somewhere)
-        // This excludes SCANNER_TOP style labels which are all uppercase
-        { R"(goto\s+[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*;\s+[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*:)",
+        // This excludes SCANNER_TOP style labels which are all uppercase.
+        //
+        // The separator is \s* rather than \s+: emitters differ on whether they put
+        // a space after the semicolon, and one that does not
+        //     goto kPpzye;LQL4spRSOK: tQtVYGj1();
+        // was invisible to this rule while carrying 52 jumps. Relaxing it adds 74
+        // detections in the labelled corpus for no false positive on CMS or Sites -
+        // the two mixed-case identifiers either side of the ';' carry the precision.
+        { R"(goto\s+[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*;\s*[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*:)",
           "Multiple goto jumps with mixed-case labels", false },
     };
 }
@@ -527,12 +536,180 @@ const BuiltinRule OBF025 {
     .analyzer = &detail_assembly::detectLiteralSplit,
 };
 
+// OBF036: binary payload embedded in a file that declares itself as text
+//
+// A .php/.js/.html file is source. Bytes that cannot occur in source - NUL and the
+// other C0 controls - mean something non-source is stored in it: an encrypted stage,
+// a raw deflate stream, or an appended blob the PHP half decodes at runtime.
+//
+// The metric counts ONLY C0 control bytes (minus \t \n \r \f) plus DEL. It deliberately
+// ignores every byte >= 0x80, because that is what UTF-8 text is made of. Greek,
+// Japanese, Chinese, Korean, Arabic, Hebrew, Thai, Devanagari, emoji (ZWJ sequences
+// included), combining marks and box-drawing all measure exactly 0.000% - verified
+// against the full set before this rule was written. A rule that counted "non-ASCII"
+// would flag every translated string table in the tree.
+//
+// UTF-16/UTF-32 are the one real trap: their ASCII range is half NUL bytes, so a
+// UTF-16 source file would score ~50%. Those are detected by BOM or by the
+// alternating-NUL signature and exempted before any measurement happens.
+namespace detail_OBF036 {
+    constexpr double kRatioThreshold = 0.02;   // 2% of the file
+    constexpr size_t kMinControlBytes = 8;     // ignore a stray control in a short file
+    constexpr size_t kMinSize = 64;
+
+    inline bool isControl(unsigned char c) {
+        // C0 controls except tab (9), LF (10), FF (12), CR (13); plus DEL (127).
+        return (c < 9) || (c == 11) || (c > 13 && c < 32) || (c == 127);
+    }
+
+    // UTF-16/32 text is not a binary payload - exempt it before measuring.
+    bool looksLikeWideEncoding(std::string_view c) {
+        const auto* p = reinterpret_cast<const unsigned char*>(c.data());
+        if (c.size() >= 2) {
+            if ((p[0] == 0xFF && p[1] == 0xFE) || (p[0] == 0xFE && p[1] == 0xFF)) return true;
+        }
+        if (c.size() >= 4 && p[0] == 0 && p[1] == 0 && p[2] == 0xFE && p[3] == 0xFF) return true;
+
+        // No BOM: UTF-16 ASCII alternates value/NUL. Sample the head and look for that
+        // regularity rather than for NUL bytes as such.
+        size_t sample = std::min<size_t>(c.size(), 512);
+        if (sample < 16) return false;
+        size_t evenNul = 0, oddNul = 0;
+        for (size_t i = 0; i + 1 < sample; i += 2) {
+            if (p[i] == 0) ++evenNul;
+            if (p[i + 1] == 0) ++oddNul;
+        }
+        size_t pairs = sample / 2;
+        return (evenNul * 10 >= pairs * 9) || (oddNul * 10 >= pairs * 9);
+    }
+
+    std::vector<MatchResult> detectBinaryInText(std::string_view content) {
+        std::vector<MatchResult> out;
+        if (content.size() < kMinSize) return out;
+        if (looksLikeWideEncoding(content)) return out;
+
+        size_t controls = 0;
+        size_t firstOffset = content.size();
+        for (size_t i = 0; i < content.size(); ++i) {
+            if (isControl(static_cast<unsigned char>(content[i]))) {
+                if (controls == 0) firstOffset = i;
+                ++controls;
+            }
+        }
+
+        if (controls < kMinControlBytes) return out;
+        double ratio = static_cast<double>(controls) / static_cast<double>(content.size());
+        if (ratio <= kRatioThreshold) return out;
+
+        auto [line, col] = positionToLineCol(content, firstOffset);
+        MatchResult r;
+        r.line = line;
+        r.column = col;
+        r.matched = std::string_view(content.data() + firstOffset, 1);
+        r.note = "Source file carries " + std::to_string(controls) +
+                 " control bytes (" + fmt::format("{:.1f}", ratio * 100.0) +
+                 "% of file) - a binary payload is stored inside declared text";
+        out.push_back(r);
+        return out;
+    }
+}
+const BuiltinRule OBF036 {
+    .code = {Category::Obfuscation, 36},
+    .name = "Binary payload in text file",
+    .description = "Detects binary/control-byte content embedded in a file whose type declares it as source text",
+    .severity = Severity::High,
+    .patterns = {},
+    .analyzer = &detail_OBF036::detectBinaryInText,
+};
+
+// OBF037: a single escaped run that mixes octal and hex
+//
+// OBF016 wants 8+ *consecutive octal* escapes. An emitter that alternates the two
+// notations slips between it and any hex-only rule:
+//
+//     echo "\74\144\x69\166\x3e\x3c\x69\156\160\165\x74";
+//
+// 98 octal and 73 hex escapes in that file, and never eight octal in a row.
+//
+// Mixing is the signal. Hand-written code picks a convention and keeps it; only a
+// generator randomises the notation per character. Requiring both styles inside one
+// run is what makes this safe - a plain "8+ escapes of either kind" rule costs 32
+// false positives on stock CMS and 27 on a real site (binary constants in getID3,
+// phpseclib and minified JS), and this costs none.
+namespace detail_OBF037 {
+    constexpr size_t kMinRun = 8;     // escapes in one uninterrupted run
+    constexpr size_t kMinEach = 2;    // ...of which at least this many in each style
+
+    std::vector<MatchResult> detectMixedEscapes(std::string_view content) {
+        std::vector<MatchResult> out;
+
+        size_t i = 0;
+        while (i + 1 < content.size()) {
+            if (content[i] != '\\') { ++i; continue; }
+
+            const size_t runStart = i;
+            size_t octal = 0, hex = 0;
+
+            for (;;) {
+                if (i + 1 >= content.size() || content[i] != '\\') break;
+
+                const char c = content[i + 1];
+                if (c == 'x' || c == 'X') {
+                    size_t digits = 0;
+                    while (digits < 2 && i + 2 + digits < content.size() &&
+                           std::isxdigit(static_cast<unsigned char>(content[i + 2 + digits]))) {
+                        ++digits;
+                    }
+                    if (digits < 2) break;
+                    ++hex;
+                    i += 2 + digits;
+                } else if (c >= '0' && c <= '7') {
+                    size_t digits = 0;
+                    while (digits < 3 && i + 1 + digits < content.size() &&
+                           content[i + 1 + digits] >= '0' && content[i + 1 + digits] <= '7') {
+                        ++digits;
+                    }
+                    if (digits < 2) break;
+                    ++octal;
+                    i += 1 + digits;
+                } else {
+                    break;
+                }
+            }
+
+            if (octal + hex >= kMinRun && octal >= kMinEach && hex >= kMinEach) {
+                auto [line, col] = positionToLineCol(content, runStart);
+                MatchResult r;
+                r.line = line;
+                r.column = col;
+                r.matched = content.substr(runStart, std::min<size_t>(i - runStart, 64));
+                r.note = "String built from " + std::to_string(octal) + " octal and " +
+                         std::to_string(hex) + " hex escapes interleaved in one literal";
+                out.push_back(r);
+                if (out.size() >= 20) return out;  // one file can hold hundreds
+            }
+
+            if (i == runStart) ++i;
+        }
+
+        return out;
+    }
+}
+const BuiltinRule OBF037 {
+    .code = {Category::Obfuscation, 37},
+    .name = "Mixed octal/hex escaped string",
+    .description = "Detects a string literal that interleaves octal and hex escapes, a generator-only pattern",
+    .severity = Severity::High,
+    .patterns = {},
+    .analyzer = &detail_OBF037::detectMixedEscapes,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF001, &OBF002, &OBF003, &OBF004, &OBF005,
     &OBF006, &OBF007, &OBF008, &OBF009, &OBF010,
     &OBF011, &OBF012, &OBF013, &OBF014, &OBF015, &OBF016,
     &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023,
-    &OBF024, &OBF025
+    &OBF024, &OBF025, &OBF036, &OBF037
 };
 
 const BuiltinRule* const* getAllRules() {
