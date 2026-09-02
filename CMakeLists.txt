@@ -48,6 +48,7 @@ find_package(argparse CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(reflectcpp CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
 # Rule sources
 set(RULE_SOURCES
@@ -108,6 +109,7 @@ target_link_libraries(lyxbosa
     yaml-cpp::yaml-cpp
     reflectcpp::reflectcpp
     re2::re2
+    Threads::Threads
 )
 
 # Testing
@@ -118,6 +120,7 @@ if(BUILD_TESTS)
 
   add_executable(lyxbosa_tests
     tests/rules_test.cpp
+    tests/progress_model_test.cpp
     ${LIB_SOURCES}
   )
 
@@ -133,6 +136,7 @@ if(BUILD_TESTS)
       yaml-cpp::yaml-cpp
       reflectcpp::reflectcpp
       re2::re2
+      Threads::Threads
       GTest::gtest
       GTest::gtest_main
   )

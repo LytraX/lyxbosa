@@ -7,6 +7,7 @@
 // --progress=plain. Deliberately uses no escape sequences beyond a carriage
 // return, so it behaves identically with and without --color.
 
+#include "ProgressModel.h"
 #include "TerminalCaps.h"
 #include "PathUtils.h"
 #include "core/Scanner.h"
@@ -15,33 +16,27 @@
 #include <chrono>
 #include <cstdio>
 #include <string>
+#include <vector>
 #include <fmt/format.h>
 
 namespace lyxbosa {
 
 class PlainProgress {
 public:
-    explicit PlainProgress(const TerminalCaps& caps) : width_(caps.width()) {}
+    explicit PlainProgress(const TerminalCaps& caps)
+        : width_(caps.width()), model_(std::chrono::steady_clock::now()) {}
 
-    void onCountingStart() {
-        render("Counting files...");
-    }
-
-    void onCountingDone(size_t totalFiles) {
-        total_ = totalFiles;
-        render(compose(0, 0, ""));
-    }
+    void start() { render("Starting scan..."); }
 
     void update(const ScanProgress& progress) {
-        auto now = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        model_.update(progress, now);
+
         if (rendered_ && now - lastRender_ < kInterval) {
             return;
         }
         lastRender_ = now;
-        total_ = progress.totalFiles;
-        render(compose(progress.filesScanned,
-                       progress.totalMatchCount,
-                       pathToUtf8(progress.currentFile)));
+        render(compose());
     }
 
     // Erase the status line so something else can write to the terminal.
@@ -62,29 +57,58 @@ public:
 private:
     static constexpr auto kInterval = std::chrono::milliseconds(100);
 
-    std::string compose(size_t scanned, size_t hits, const std::string& current) const {
-        std::string head;
-        if (total_ > 0) {
-            const size_t percent = std::min<size_t>(100, scanned * 100 / total_);
-            head = fmt::format("[{:3}%] {}/{} files", percent, scanned, total_);
+    std::string compose() const {
+        const ScanProgress& p = model_.progress();
+
+        // Head: percentage once the concurrent count has landed, otherwise the
+        // running scanned/discovered counts.
+        std::string line;
+        if (model_.totalKnown()) {
+            line = fmt::format("[{:3}%] {}/{}", model_.percent(), p.filesScanned, p.totalFiles);
+        } else if (p.discoveredFiles > p.filesScanned) {
+            line = fmt::format("[ ...] {} of {}+", p.filesScanned, p.discoveredFiles);
         } else {
-            head = fmt::format("[  --] {} files", scanned);
+            line = fmt::format("[ ...] {}", p.filesScanned);
         }
 
-        if (hits > 0) {
-            head += fmt::format("  {} hits", hits);
+        // Optional segments, most useful first; each is added only if it fits.
+        std::vector<std::string> extras;
+        if (p.directoriesScanned > 0) {
+            extras.push_back(fmt::format("{} dirs", p.directoriesScanned));
+        }
+        if (p.totalMatchCount > 0) {
+            std::string chips;
+            if (p.criticalCount > 0) chips += fmt::format("C:{} ", p.criticalCount);
+            if (p.highCount > 0)     chips += fmt::format("H:{} ", p.highCount);
+            if (p.mediumCount > 0)   chips += fmt::format("M:{} ", p.mediumCount);
+            if (p.lowCount > 0)      chips += fmt::format("L:{} ", p.lowCount);
+            if (!chips.empty()) {
+                chips.pop_back();
+                extras.push_back(chips);
+            }
+        }
+        if (const auto eta = model_.eta()) {
+            extras.push_back(fmt::format("ETA {}", formatDuration(*eta)));
+        }
+        const double rate = model_.filesPerSecond();
+        if (rate >= 1.0) {
+            extras.push_back(fmt::format("{:.0f} f/s", rate));
         }
 
-        if (current.empty()) {
-            return head;
+        const size_t budget = usableWidth();
+        for (const auto& extra : extras) {
+            if (line.size() + extra.size() + 2 > budget) {
+                break;
+            }
+            line += "  " + extra;
         }
 
         // Whatever is left of the line goes to the path being scanned.
-        const size_t budget = usableWidth();
-        if (head.size() + 2 >= budget) {
-            return head;
+        const std::string current = pathToUtf8(p.currentFile);
+        if (current.empty() || line.size() + kMinPathWidth + 2 > budget) {
+            return line;
         }
-        return head + "  " + truncateTail(current, budget - head.size() - 2);
+        return line + "  " + truncateTail(current, budget - line.size() - 2);
     }
 
     void render(const std::string& line) {
@@ -97,6 +121,8 @@ private:
     }
 
     size_t usableWidth() const { return width_ > 1 ? width_ - 1 : 79; }
+
+    static constexpr size_t kMinPathWidth = 20;
 
     // Keep the tail of a path ("...rest/of/path"), never splitting a codepoint.
     static std::string truncateTail(const std::string& s, size_t maxBytes) {
@@ -130,10 +156,10 @@ private:
     }
 
     size_t width_ = 80;
-    size_t total_ = 0;
     size_t lastLen_ = 0;
     bool rendered_ = false;
     std::chrono::steady_clock::time_point lastRender_{};
+    ProgressModel model_;
 };
 
 }  // namespace lyxbosa

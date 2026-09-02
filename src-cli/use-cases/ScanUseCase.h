@@ -3,6 +3,7 @@
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "infrastructure/PlainProgress.h"
+#include "infrastructure/ProgressModel.h"
 #include "infrastructure/InputPrompt.h"
 #include "infrastructure/PathUtils.h"
 #include "infrastructure/report/ReportWriterFactory.h"
@@ -263,6 +264,7 @@ private:
 
         Scanner scanner(config);
         scanner.setDryRun(args.dryRun);
+        scanner.setPreCount(!args.noPreCount);
 
         const ProgressStyle style =
             chooseProgressStyle(args, consoleFormat, consoleWriter != nullptr);
@@ -273,6 +275,7 @@ private:
             size_t lastDisplayedCount = 0;
             bool initialized = false;
             ScanProgress lastProgress;  // Store last progress for re-rendering
+            ProgressModel model;
         };
         ProgressState progressState;
         PlainProgress plain(caps_);
@@ -306,7 +309,7 @@ private:
 
                 // Re-print the 3-line progress display (separator + progress + filepath)
                 fmt::print("\n");  // Empty line separator
-                printProgressLine(progressState.lastProgress);  // Ends with \n
+                printProgressLine(progressState.model);  // Ends with \n
                 printFilePathNoNewline(progressState.lastProgress.currentFile);  // No newline
                 std::cout.flush();
                 return;
@@ -326,36 +329,20 @@ private:
                 updateProgress(progress, progressState);
             });
 
-            // Callback when file counting is done - show initial progress
-            scanner.setCountingDoneCallback([this, &progressState](size_t totalFiles) {
-                // Clear "Globbing files..." line
-                terminal_.moveUp(1);
-                terminal_.clearLine();
-
-                progressState.lastCountUpdate = std::chrono::steady_clock::now();
-                progressState.lastDisplayedCount = 0;
-                progressState.initialized = true;
-                progressState.lastProgress.totalFiles = totalFiles;
-                progressState.lastProgress.filesScanned = 0;
-                progressState.lastProgress.totalMatchCount = 0;
-
-                // Print initial 3-line display: empty separator + progress + placeholder
-                fmt::print("\n");  // Empty line separator
-                fmt::print("Scanning 0/{}\n", totalFiles);
-                fmt::print("Starting...");  // No newline - cursor stays on this line
-                std::cout.flush();
-            });
-
-            fmt::print("Globbing files...\n");
+            // The count now runs concurrently with the scan, so there is no
+            // waiting phase to announce - draw the display and start.
+            progressState.lastCountUpdate = std::chrono::steady_clock::now();
+            progressState.initialized = true;
+            fmt::print("\n");            // Empty line separator
+            fmt::print("Scanning...\n");  // Progress line
+            fmt::print("Starting...");    // No newline - cursor stays on this line
+            std::cout.flush();
             terminal_.hideCursor();
         } else if (style == ProgressStyle::Plain) {
             scanner.setProgressCallback([&plain](const ScanProgress& progress) {
                 plain.update(progress);
             });
-            scanner.setCountingDoneCallback([&plain](size_t totalFiles) {
-                plain.onCountingDone(totalFiles);
-            });
-            plain.onCountingStart();
+            plain.start();
         }
 
         auto result = scanner.scan();
@@ -396,6 +383,7 @@ private:
 
     void updateProgress(const ScanProgress& progress, auto& state) {
         auto now = std::chrono::steady_clock::now();
+        state.model.update(progress, now);
 
         // Progress should already be initialized by counting done callback
         if (!state.initialized) {
@@ -420,7 +408,7 @@ private:
 
         if (updateCount || firstUpdate) {
             fmt::print("\r");
-            printProgressLineNoNewline(progress);
+            printProgressLineNoNewline(state.model);
             terminal_.clearToEndOfLine();
             fmt::print("\n");   // Move to filepath line
             state.lastCountUpdate = now;
@@ -437,15 +425,34 @@ private:
         std::cout.flush();
     }
 
-    void printProgressLineNoNewline(const ScanProgress& progress) const {
-        fmt::print("Scanning {}/{}", progress.filesScanned, progress.totalFiles);
-        if (progress.totalMatchCount > 0) {
-            terminal_.print(Terminal::critical(), " ({} hits)", progress.totalMatchCount);
+    void printProgressLineNoNewline(const ProgressModel& model) const {
+        const ScanProgress& progress = model.progress();
+
+        if (model.totalKnown()) {
+            fmt::print("Scanning {}/{} ({}%)",
+                       progress.filesScanned, progress.totalFiles, model.percent());
+        } else if (progress.discoveredFiles > progress.filesScanned) {
+            fmt::print("Scanning {} of {}+", progress.filesScanned, progress.discoveredFiles);
+        } else {
+            fmt::print("Scanning {}", progress.filesScanned);
+        }
+
+        if (progress.directoriesScanned > 0) {
+            fmt::print("  {} dirs", progress.directoriesScanned);
+        }
+
+        if (progress.criticalCount > 0) terminal_.print(Terminal::critical(), "  C:{}", progress.criticalCount);
+        if (progress.highCount > 0)     terminal_.print(Terminal::high(),     "  H:{}", progress.highCount);
+        if (progress.mediumCount > 0)   terminal_.print(Terminal::medium(),   "  M:{}", progress.mediumCount);
+        if (progress.lowCount > 0)      terminal_.print(Terminal::low(),      "  L:{}", progress.lowCount);
+
+        if (const auto eta = model.eta()) {
+            fmt::print("  ETA {}", formatDuration(*eta));
         }
     }
 
-    void printProgressLine(const ScanProgress& progress) const {
-        printProgressLineNoNewline(progress);
+    void printProgressLine(const ProgressModel& model) const {
+        printProgressLineNoNewline(model);
         fmt::print("\n");
     }
 

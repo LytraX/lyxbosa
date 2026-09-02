@@ -70,5 +70,9 @@ LyxBoSa provides four subcommands:
 - ANSI colored terminal output, detected per stream and controlled with
   `--color=auto|always|never` (`--no-ansi` is kept as an alias). `NO_COLOR`,
   `CLICOLOR_FORCE` and `TERM=dumb` are honored.
+- Live progress showing percentage, files and directories scanned, the severity
+  breakdown of what has been found so far, throughput and an ETA. The file count runs
+  concurrently with the scan, so scanning starts immediately rather than after a silent
+  counting pass; `--no-precount` skips it entirely.
 - Progress display selectable with `--progress=auto|plain|none`, `--no-interactive`
   and `-q/--quiet`.

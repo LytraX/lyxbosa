@@ -4,6 +4,7 @@
 #include <vector>
 #include <filesystem>
 #include <chrono>
+#include <cstdint>
 #include "config/Types.h"
 
 namespace lyxbosa {
@@ -44,6 +45,7 @@ struct ScanResult {
     size_t filesQuarantined = 0;
     size_t filesSkippedSize = 0;
     size_t totalMatches = 0;
+    uint64_t bytesScanned = 0;
 
     // Timing
     std::chrono::steady_clock::time_point startTime;

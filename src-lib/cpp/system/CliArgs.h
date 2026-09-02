@@ -37,6 +37,7 @@ struct CliArgs {
     ProgressWhen progress = ProgressWhen::Auto;
     bool quiet = false;          // Suppress progress and the scan summary
     bool noInteractive = false;  // Never take over stdout with an in-place display
+    bool noPreCount = false;     // Skip the concurrent pre-count (no percentage)
 
     // Check command options
     std::optional<std::string> checkFile;
@@ -106,6 +107,8 @@ inline std::string CliArgs::getHelpText() {
         "                     shows progress. 'plain' always uses the stderr line.\n"
         "      --no-interactive\n"
         "                     Never take over stdout; same as --progress=plain\n"
+        "      --no-precount  Do not pre-count files; progress has no percentage or ETA.\n"
+        "                     The count normally runs concurrently with the scan.\n"
         "  -q, --quiet        Suppress progress and the scan summary\n"
         "      --color WHEN   Colorize output: auto, always or never\n"
         "      --no-ansi      Alias for --color=never\n"
@@ -253,6 +256,11 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
 
     scanCmd.add_argument("--no-interactive")
         .help("Never take over stdout; same as --progress=plain")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--no-precount")
+        .help("Do not pre-count files; progress has no percentage or ETA")
         .default_value(false)
         .implicit_value(true);
 
@@ -432,6 +440,7 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
 
         result.noInteractive = scanCmd.get<bool>("--no-interactive");
         result.quiet = scanCmd.get<bool>("--quiet");
+        result.noPreCount = scanCmd.get<bool>("--no-precount");
 
         if (!applyColor(scanCmd)) {
             return result;

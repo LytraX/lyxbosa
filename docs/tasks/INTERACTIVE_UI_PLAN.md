@@ -1,6 +1,6 @@
 # Interactive CLI UI & Output-File Plan
 
-Status: **phases 0 and 1 implemented**; phases 2-3 proposed
+Status: **phases 0, 1 and 2 implemented**; phase 3 proposed
 Scope: `lyxbosa scan` (and, secondarily, `check`)
 
 Decisions taken: the pinned status goes **below** the findings; the output-file option
@@ -104,7 +104,7 @@ rewrite in place. This breaks whenever a line soft-wraps (long paths at narrow w
 whenever the terminal is resized (no `SIGWINCH` handling at all), and whenever anything
 else writes to the terminal. This is precisely what FTXUI replaces.
 
-### 3.7 The pre-count is a silent dead phase
+### 3.7 The pre-count is a silent dead phase — *fixed in phase 2*
 
 `Scanner.cpp:53` calls `walker.countFiles()`, a full second traversal, before the first
 file is scanned. On a large or network-mounted tree that is minutes of `Globbing
@@ -328,7 +328,7 @@ New and changed options on `scan`:
       --no-ansi            Alias for --color=never (kept)                     [done]
       --no-interactive     Never take over stdout                             [done]
   -q, --quiet              Suppress progress and the summary                  [done]
-      --no-precount        Skip the pre-count; indeterminate progress         [phase 2]
+      --no-precount        Skip the pre-count; indeterminate progress         [done]
 ```
 
 Details:
@@ -402,11 +402,25 @@ clean-file results (§3.4), the JSON escaping bug, and the silent pre-count (§3
 - Skipped-size files now reach the report callback, so they appear in every format
   rather than only in the summary counters.
 
-### Phase 2 — Progress model
-- Extend `ScanProgress` (severity breakdown, live directory count, bytes, phase) — this
-  is what puts "what is infected, by severity" and the directory count into the display.
-- `ProgressModel` with smoothed rate + ETA; unit tests, no terminal required.
-- Concurrent or spinner-fed pre-count (§3.7).
+### Phase 2 — Progress model — **DONE**
+- `ScanProgress` extended: `ScanPhase`, live directory count, bytes scanned, the
+  running severity breakdown, skipped and quarantined counters, and the discovered
+  count from the concurrent pre-count. This is what puts "what is infected, by
+  severity" and the directory count on screen.
+- `ProgressModel` (`infrastructure/ProgressModel.h`): percentage, EWMA-smoothed
+  throughput and ETA, with an injectable clock and no terminal dependency. Covered by
+  12 unit tests driving time explicitly — clamping when the count lags the scan, empty
+  scans, absent ETA while the total is unknown, and the pre-sample fallback to the
+  overall average. Plus `formatDuration` and `formatBytes`.
+- **The pre-count now runs on its own thread, concurrently with the scan** (§3.7).
+  Scanning starts immediately and the display reads `Scanning 1 of 15360+` until the
+  total lands, then switches to `Scanning 25/60548 (0%) 9 dirs ETA 1h 15m`. The
+  counting thread publishes only through atomics and the progress callback always runs
+  on the scan thread, so no display code has to be thread-safe.
+- `--no-precount` keeps progress indeterminate for anyone who would rather not pay for
+  the second traversal.
+- `CountingCallback` is gone: `ScanPhase` and a zero `totalFiles` carry the same
+  information, and displays initialise lazily instead.
 
 ### Phase 3 — FTXUI full-screen UI *(the main deliverable)*
 - Add `ftxui` to `vcpkg.json`; `LYXBOSA_TUI` CMake option.
@@ -451,7 +465,8 @@ scanner lands costs a rewrite of the UI layer.
    status visible *while the user scrolls the findings* is unachievable in the primary
    buffer. It must detect support and degrade automatically, and must dump the findings
    and summary into the primary buffer on exit.
-4. Still open: concurrent pre-count vs spinner-only vs `--no-precount` default
-   (phase 2), and whether `LYXBOSA_TUI=OFF` should be the default for `docker/`
-   and `dist/` (phase 3).
+4. **Pre-count**: runs concurrently with the scan by default, with `--no-precount` to
+   skip it. A spinner-only variant was unnecessary once counting stopped blocking.
+5. Still open: whether `LYXBOSA_TUI=OFF` should be the default for `docker/` and
+   `dist/` (phase 3).
 
