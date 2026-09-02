@@ -31,3 +31,6 @@ CMakeUserPresets.json
 
 # baseline binaries for before/after comparison
 /.baseline/
+
+# vcpkg binary cache used by the Linux container build
+/.vcpkg-cache/

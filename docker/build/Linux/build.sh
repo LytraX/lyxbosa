@@ -21,8 +21,27 @@ if [ -n "${VERSION}" ]; then
     VERSION_ENV="-e LYXBOSA_VERSION=${VERSION}"
 fi
 
-# Create output directory
+# Optional vcpkg binary cache, shared with the host so CI can persist it between
+# runs. vcpkg keys every entry by an ABI hash covering the port version, triplet,
+# compiler and dependency hashes, so a stale or partial cache can only cause a
+# rebuild - never a wrong binary.
+CACHE_MOUNT=""
+if [ -n "${VCPKG_BINARY_CACHE:-}" ]; then
+    mkdir -p "${VCPKG_BINARY_CACHE}"
+    CACHE_DIR="$(cd "${VCPKG_BINARY_CACHE}" && pwd)"
+    CACHE_MOUNT="-v ${CACHE_DIR}:/vcpkg-cache -e VCPKG_DEFAULT_BINARY_CACHE=/vcpkg-cache"
+    echo "vcpkg binary cache: ${CACHE_DIR}"
+fi
+
+# Create the output directory and resolve it to an absolute path.
+#
+# docker -v needs an absolute source, and the default "./dist" is relative, so this
+# used to be spelled "$(pwd)/${OUTPUT_DIR}" at the mount. That silently produced
+# nonsense for an absolute argument - "/out" became "$(pwd)//out". Resolving once
+# here keeps relative paths behaving exactly as before, relative to the working
+# directory, and makes absolute ones work too.
 mkdir -p "${OUTPUT_DIR}"
+OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
 
 for CURRENT_ARCH in "${ARCHES[@]}"; do
     PLATFORM="linux/${CURRENT_ARCH}"
@@ -45,7 +64,8 @@ for CURRENT_ARCH in "${ARCHES[@]}"; do
     docker run --rm \
         --platform "${PLATFORM}" \
         -v "${PROJECT_ROOT}:/src:ro" \
-        -v "$(pwd)/${OUTPUT_DIR}:/output" \
+        -v "${OUTPUT_DIR}:/output" \
+        ${CACHE_MOUNT} \
         ${VERSION_ENV} \
         "${TAG_NAME}"
 

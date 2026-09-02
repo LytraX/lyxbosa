@@ -23,6 +23,10 @@ ENV VCPKG_ROOT=/opt/vcpkg
 RUN git clone https://github.com/microsoft/vcpkg.git ${VCPKG_ROOT} \
     && ${VCPKG_ROOT}/bootstrap-vcpkg.sh -disableMetrics
 
+# vcpkg writes here when VCPKG_DEFAULT_BINARY_CACHE points at it; created up front
+# so the mount does not land on a missing directory.
+RUN mkdir -p /vcpkg-cache
+
 WORKDIR /src
 
 # Build script

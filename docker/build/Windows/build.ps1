@@ -45,11 +45,15 @@ foreach ($Target in $Architectures) {
     # Configure (static linking for standalone binary)
     $BuildDir = Join-Path $ProjectRoot "build-win-release-$Arch"
     Write-Host "Configuring..."
+    # The overlay triplets are the stock ones plus VCPKG_BUILD_TYPE=release, so
+    # vcpkg does not also build a debug copy of every dependency that this
+    # release build would never link.
     cmake -B "$BuildDir" -S "$ProjectRoot" `
         -A "$CmakeArch" `
         -DCMAKE_BUILD_TYPE=Release `
         -DBUILD_TESTS=OFF `
         "-DVCPKG_TARGET_TRIPLET=$VcpkgTriplet" `
+        "-DVCPKG_OVERLAY_TRIPLETS=$ProjectRoot\triplets" `
         -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
         "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
         @VersionArg

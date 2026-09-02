@@ -10,10 +10,15 @@ if [ -n "${LYXBOSA_VERSION}" ]; then
     VERSION_ARG="-DLYXBOSA_VERSION_OVERRIDE=${LYXBOSA_VERSION}"
 fi
 
-# Configure with vcpkg toolchain
+# Configure with vcpkg toolchain.
+#
+# The overlay triplets in /src/triplets are the stock ones plus
+# VCPKG_BUILD_TYPE=release, so vcpkg does not also build a debug copy of every
+# dependency that this release build would never link.
 cmake -B /build -S /src \
     -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
+    -DVCPKG_OVERLAY_TRIPLETS=/src/triplets \
     -DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
     ${VERSION_ARG}
 

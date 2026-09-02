@@ -18,17 +18,41 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Extract version from tag
         id: version
         if: startsWith(github.ref, 'refs/tags/v')
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      # vcpkg builds every dependency from source, which is most of this job. The
+      # cache is keyed on what actually determines the binaries: the dependency
+      # list, the pinned registry baseline in vcpkg-configuration.json, and the
+      # Dockerfile (compiler and toolchain). A miss on any of those rebuilds.
+      #
+      # Restoring a stale or partial cache is safe: vcpkg keys each entry by an ABI
+      # hash covering the port version, triplet, compiler and dependency hashes, so
+      # an entry that does not apply is ignored rather than reused.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-linux-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile') }}
+          restore-keys: |
+            vcpkg-linux-${{ matrix.arch }}-
+
       - name: Build for Linux (${{ matrix.arch }})
+        env:
+          VCPKG_BINARY_CACHE: .vcpkg-cache
         run: docker/build/Linux/build.sh "${{ matrix.arch }}" dist "${{ steps.version.outputs.value }}"
 
-      - uses: actions/upload-artifact@v4
+      # The container writes the cache as root; hand it back so actions/cache can
+      # read it when it saves at the end of the job.
+      - name: Reclaim cache ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache || true
+
+      - uses: actions/upload-artifact@v5
         with:
           name: lyxbosa-linux-${{ matrix.arch }}
           path: dist/lyxbosa-linux-*
@@ -38,7 +62,7 @@ jobs:
     env:
       VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Extract version from tag
         id: version
@@ -47,10 +71,10 @@ jobs:
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Set up vcpkg cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-static-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-windows-static-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: vcpkg-windows-static-
 
       - name: Create binary cache dir
@@ -62,7 +86,7 @@ jobs:
           VCPKG_ROOT: C:\vcpkg
           LYXBOSA_VERSION: ${{ steps.version.outputs.value }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: lyxbosa-windows
           path: dist/lyxbosa-windows-*.exe
@@ -75,7 +99,7 @@ jobs:
       contents: write
     steps:
       # Must run before download-artifact: checkout cleans the workspace
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0  # full history + tags, needed to diff against the previous tag
 
@@ -95,7 +119,7 @@ jobs:
           } > NOTES.md
           cat NOTES.md
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
