@@ -6,7 +6,7 @@
 #include <fstream>
 #include <string>
 #include <memory>
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 #ifdef _WIN32
 #include <windows.h>

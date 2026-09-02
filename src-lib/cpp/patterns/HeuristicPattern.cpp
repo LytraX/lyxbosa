@@ -1,6 +1,6 @@
 #include "HeuristicPattern.h"
 #include <re2/re2.h>
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <algorithm>
 #include <cctype>
 

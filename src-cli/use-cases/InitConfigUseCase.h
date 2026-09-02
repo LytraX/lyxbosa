@@ -1,7 +1,7 @@
 #pragma once
 
 #include "config/Config.h"
-#include <fmt/core.h>
+#include <fmt/base.h>
 
 namespace lyxbosa {
 
