@@ -127,6 +127,34 @@ if(LYXBOSA_TUI)
   target_compile_definitions(lyxbosa PRIVATE LYXBOSA_TUI_ENABLED)
 endif()
 
+# Benchmarks (opt-in). Compares the regex engines against the live rule set;
+# see docs/results/regex-engine-benchmark-2026-09-02.md.
+#
+# Hyperscan is not a project dependency - it is x86-only, pulls ~88 transitive
+# ports, and the scanner does not need it to run. If it happens to be available
+# the benchmark picks it up, otherwise it builds with RE2 and RE2::Set only.
+option(LYXBOSA_BENCHMARKS "Build the regex engine benchmark" OFF)
+if(LYXBOSA_BENCHMARKS)
+  add_executable(lyxbosa_bench_regex benchmarks/regex_engines.cpp ${LIB_SOURCES})
+  target_include_directories(lyxbosa_bench_regex PRIVATE
+    ${CMAKE_SOURCE_DIR}/src-lib/cpp
+    ${CMAKE_SOURCE_DIR}/src-cli
+  )
+  target_link_libraries(lyxbosa_bench_regex PRIVATE
+    fmt::fmt yaml-cpp::yaml-cpp re2::re2 Threads::Threads
+  )
+  find_path(HYPERSCAN_INCLUDE_DIR hs/hs.h)
+  find_library(HYPERSCAN_LIBRARY NAMES hs libhs)
+  if(HYPERSCAN_INCLUDE_DIR AND HYPERSCAN_LIBRARY)
+    target_include_directories(lyxbosa_bench_regex PRIVATE ${HYPERSCAN_INCLUDE_DIR})
+    target_link_libraries(lyxbosa_bench_regex PRIVATE ${HYPERSCAN_LIBRARY})
+    target_compile_definitions(lyxbosa_bench_regex PRIVATE LYXBOSA_HAVE_HYPERSCAN)
+    message(STATUS "Regex benchmark: RE2, RE2::Set and Hyperscan")
+  else()
+    message(STATUS "Regex benchmark: RE2 and RE2::Set (Hyperscan not found)")
+  endif()
+endif()
+
 # Testing
 option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
