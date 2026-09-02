@@ -23,9 +23,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <vector>
+
+#include "TerminalInput.h"
 
 #include <ftxui/component/app.hpp>
 #include <ftxui/component/component.hpp>
@@ -68,13 +72,13 @@ public:
     void onProgress(const ScanProgress& progress) {
         const auto now = Clock::now();
         model_.update(progress, now);
-        current_ = pathToUtf8(progress.currentFile);
+        current_ = pathForDisplay(progress.currentFile);
         pump();
     }
 
     void onFinding(const FileResult& result) {
         Row row;
-        row.path = pathToUtf8(result.path);
+        row.path = pathForDisplay(result.path);
         row.skipped = result.skippedSize;
         row.quarantined = result.quarantined;
         for (const auto& match : result.matches) {
@@ -134,6 +138,14 @@ private:
         component_ = nullptr;
         screen_.reset();
         g_cursorHidden.store(false, std::memory_order_relaxed);
+        drainTerminalReports();
+    }
+
+    // FTXUI's capability probes are answered on stdin; consume what has arrived
+    // by now so it is not handed to the shell. See TerminalInput.h - the reply can
+    // also land after this point, which is why main() drains again at exit.
+    static void drainTerminalReports() {
+        terminal_input::drainReports();
     }
 
     void pump(bool force = false) {
