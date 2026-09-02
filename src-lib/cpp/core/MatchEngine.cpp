@@ -123,6 +123,20 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return false;  // Always filter out - rule is too broken
     }
 
+    // SEO001: Hidden link injection
+    // A markup rule. JavaScript that *builds* markup - slider and page-builder
+    // bundles emit '<a style="display:none" href="http...">' as a template string -
+    // is not an injected spam link, and matching it cost 2 false positives on a
+    // real site after the rule was repaired.
+    if (ruleCode == "SEO001") {
+        std::string path(ctx.filePath);
+        std::transform(path.begin(), path.end(), path.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (path.size() >= 3 && path.compare(path.size() - 3, 3, ".js") == 0) {
+            return false;
+        }
+    }
+
     // OBF036: Binary payload in text file
     // Only meaningful for files whose type *declares* them to be source text. The scan
     // filter deliberately admits images, fonts, archives and video (payloads hide there),
