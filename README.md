@@ -55,7 +55,11 @@ LyxBoSa provides four subcommands:
 - File inclusion/exclusion filters using glob patterns.
 - Severity levels (Critical, High, Medium, Low) for prioritizing findings.
 - Quarantine support with optional directory structure preservation.
-- Report generation in Text, JSON, and CSV formats.
+- Report generation in Text, JSON, and CSV formats, written incrementally as the scan
+  proceeds so an interrupted run still leaves a complete, well-formed report.
+- `-O/--output-file` writes the report to a file while the terminal keeps the readable
+  text view, so `--output` selects the file's format rather than what you are watching.
+  Honors `actions.report.{file,format,console}` from the configuration.
 - Email alert notifications.
 - Graceful interrupt handling: the first Ctrl+C finishes the report it has so far and
   exits 130; a second one leaves immediately.

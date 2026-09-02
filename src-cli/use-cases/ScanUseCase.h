@@ -3,22 +3,28 @@
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "infrastructure/PlainProgress.h"
-#include "infrastructure/ResultPrinter.h"
 #include "infrastructure/InputPrompt.h"
 #include "infrastructure/PathUtils.h"
+#include "infrastructure/report/ReportWriterFactory.h"
 #include "config/Config.h"
 #include "core/Scanner.h"
 #include "system/CliArgs.h"
+#include <algorithm>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <memory>
+#include <optional>
+#include <system_error>
 
 namespace lyxbosa {
 
 // Orchestrates the scan command workflow
 class ScanUseCase {
 public:
-    ScanUseCase(const Terminal& terminal, const ResultPrinter& printer, const TerminalCaps& caps)
-        : terminal_(terminal), printer_(printer), caps_(caps) {}
+    ScanUseCase(const Terminal& terminal, const TerminalCaps& caps)
+        : terminal_(terminal), caps_(caps) {}
 
     int execute(CliArgs& args) {
         // Prompt for directory if none provided on CLI and no config file specified
@@ -87,11 +93,23 @@ public:
     }
 
 private:
+    // Width used for the text format when it is written to a file rather than a
+    // terminal, which has no width of its own.
+    static constexpr size_t kFileReportWidth = 100;
+
     // How the scan reports progress.
     enum class ProgressStyle {
         None,     // no progress display at all
         Inline,   // in-place, multi-line, on stdout (stdout is a terminal)
         Plain     // one throttled line on stderr, leaving stdout untouched
+    };
+
+    // Where the report goes and in what format, after the command line and the
+    // configuration have been reconciled.
+    struct ReportPlan {
+        std::optional<std::string> file;
+        ReportFormat format = ReportFormat::Text;
+        bool console = true;
     };
 
     bool loadConfig(const CliArgs& args, AppConfig& config) {
@@ -142,18 +160,60 @@ private:
         return input.empty() || input[0] == 'y' || input[0] == 'Y';
     }
 
+    // The command line wins over actions.report.* from the configuration, which
+    // until now was parsed and then ignored by everything.
+    static ReportPlan planReport(const CliArgs& args, const AppConfig& config) {
+        ReportPlan plan;
+        plan.format = args.outputFormatExplicit ? args.outputFormat
+                                                : config.actions.report.format;
+        if (args.outputFile) {
+            plan.file = *args.outputFile;
+        } else if (!config.actions.report.file.empty()) {
+            plan.file = config.actions.report.file;
+        }
+        plan.console = config.actions.report.console;
+        return plan;
+    }
+
+    // Writing the report into the tree being scanned means scanning our own
+    // output on the next run, and can mean scanning it during this one.
+    void warnIfOutputInsideScanTree(const std::string& file, const AppConfig& config) const {
+        std::error_code ec;
+        const auto outPath = std::filesystem::weakly_canonical(std::filesystem::path(file), ec);
+        if (ec) {
+            return;
+        }
+        for (const auto& dir : config.scan.directories) {
+            const auto scanPath = std::filesystem::weakly_canonical(std::filesystem::path(dir), ec);
+            if (ec) {
+                continue;
+            }
+            auto [mismatch, unused] = std::mismatch(scanPath.begin(), scanPath.end(),
+                                                    outPath.begin(), outPath.end());
+            if (mismatch == scanPath.end()) {
+                terminal_.printErr(Terminal::warning(),
+                    "Warning: the report file is inside a scanned directory ({}).\n"
+                    "         It will be picked up by later scans.\n", dir);
+                return;
+            }
+        }
+    }
+
     // The in-place display owns stdout, so it can only be used when stdout is a
-    // terminal that accepts escape sequences and is not carrying a machine
-    // report. Everything else falls back to a single line on stderr, which is
-    // what makes `lyxbosa scan ... > report.txt` show progress at all.
-    ProgressStyle chooseProgressStyle(const CliArgs& args) const {
+    // terminal that accepts escape sequences and is carrying the readable text
+    // view. Everything else falls back to a single line on stderr, which is what
+    // makes `lyxbosa scan ... > report.txt` show progress at all.
+    ProgressStyle chooseProgressStyle(const CliArgs& args,
+                                      ReportFormat consoleFormat,
+                                      bool haveConsoleWriter) const {
         if (args.quiet || args.progress == ProgressWhen::None) {
             return ProgressStyle::None;
         }
 
         const bool inlineUsable = caps_.stdoutIsTty()
                                && terminal_.colorOnStdout()
-                               && args.outputFormat == ReportFormat::Text
+                               && haveConsoleWriter
+                               && consoleFormat == ReportFormat::Text
                                && !args.noInteractive
                                && args.progress != ProgressWhen::Plain;
 
@@ -164,15 +224,48 @@ private:
     }
 
     int runScan(const AppConfig& config, const CliArgs& args) {
+        const ReportPlan plan = planReport(args, config);
+
+        // Open the report file before scanning: discovering it is unwritable
+        // after a forty-minute scan would be cruel.
+        std::ofstream fileStream;
+        std::unique_ptr<ReportWriter> fileWriter;
+        if (plan.file) {
+            const std::filesystem::path outPath(*plan.file);
+            if (outPath.has_parent_path()) {
+                std::error_code ec;
+                std::filesystem::create_directories(outPath.parent_path(), ec);
+            }
+            fileStream.open(outPath, std::ios::out | std::ios::trunc);
+            if (!fileStream) {
+                terminal_.printErr(Terminal::error(),
+                    "Error: cannot open output file for writing: {}\n", *plan.file);
+                return 1;
+            }
+            warnIfOutputInsideScanTree(*plan.file, config);
+            fileWriter = makeReportWriter(plan.format, fileStream, /*color=*/false,
+                                          kFileReportWidth, args.verbose, /*summary=*/true);
+        }
+
+        // With an output file the terminal keeps the readable view: --output
+        // selects the file's format, not what the user is watching. Without one,
+        // stdout is the report.
+        const ReportFormat consoleFormat = plan.file ? ReportFormat::Text : plan.format;
+        const bool consoleWanted = plan.console && (!plan.file || caps_.stdoutIsTty());
+
+        std::unique_ptr<ReportWriter> consoleWriter;
+        if (consoleWanted) {
+            consoleWriter = makeReportWriter(
+                consoleFormat, std::cout,
+                consoleFormat == ReportFormat::Text && terminal_.colorOnStdout(),
+                caps_.width(), args.verbose, /*summary=*/!args.quiet);
+        }
+
         Scanner scanner(config);
         scanner.setDryRun(args.dryRun);
 
-        const ProgressStyle style = chooseProgressStyle(args);
-
-        // Text findings are streamed as they are found: for text output they are
-        // the report, so streaming also means a partial report survives Ctrl+C.
-        // JSON and CSV are still emitted whole at the end (see phase 1).
-        const bool streamFindings = (args.outputFormat == ReportFormat::Text);
+        const ProgressStyle style =
+            chooseProgressStyle(args, consoleFormat, consoleWriter != nullptr);
 
         // Progress state for the in-place display
         struct ProgressState {
@@ -184,14 +277,18 @@ private:
         ProgressState progressState;
         PlainProgress plain(caps_);
 
-        if (style == ProgressStyle::Inline) {
-            scanner.setProgressCallback([this, &progressState](const ScanProgress& progress) {
-                progressState.lastProgress = progress;
-                updateProgress(progress, progressState);
-            });
+        if (consoleWriter) consoleWriter->begin();
+        if (fileWriter) fileWriter->begin();
 
-            // Match callback for real-time result output
-            scanner.setMatchCallback([this, &progressState, &args](const FileResult& fileResult) {
+        scanner.setFileResultCallback([&](const FileResult& fileResult) {
+            if (fileWriter) {
+                fileWriter->onFile(fileResult);
+            }
+            if (!consoleWriter) {
+                return;
+            }
+
+            if (style == ProgressStyle::Inline) {
                 // Skip if progress not yet initialized (shouldn't happen but be safe)
                 if (!progressState.initialized) {
                     return;
@@ -205,15 +302,28 @@ private:
                 terminal_.moveUp(1);
                 terminal_.clearLine();  // Clear separator
 
-                // Now at separator line, print the result
-                printFinding(fileResult, args);
+                consoleWriter->onFile(fileResult);
 
                 // Re-print the 3-line progress display (separator + progress + filepath)
-                // Result printing ends with newline, so we're on a new line
                 fmt::print("\n");  // Empty line separator
                 printProgressLine(progressState.lastProgress);  // Ends with \n
                 printFilePathNoNewline(progressState.lastProgress.currentFile);  // No newline
                 std::cout.flush();
+                return;
+            }
+
+            // Progress lives on stderr here, so findings need no cursor
+            // choreography - just erase the status line and write.
+            if (style == ProgressStyle::Plain) {
+                plain.clear();
+            }
+            consoleWriter->onFile(fileResult);
+        });
+
+        if (style == ProgressStyle::Inline) {
+            scanner.setProgressCallback([this, &progressState](const ScanProgress& progress) {
+                progressState.lastProgress = progress;
+                updateProgress(progress, progressState);
             });
 
             // Callback when file counting is done - show initial progress
@@ -222,7 +332,6 @@ private:
                 terminal_.moveUp(1);
                 terminal_.clearLine();
 
-                // Initialize progress state and show initial display
                 progressState.lastCountUpdate = std::chrono::steady_clock::now();
                 progressState.lastDisplayedCount = 0;
                 progressState.initialized = true;
@@ -231,7 +340,6 @@ private:
                 progressState.lastProgress.totalMatchCount = 0;
 
                 // Print initial 3-line display: empty separator + progress + placeholder
-                // Cursor stays at end (after newlines) for subsequent updates
                 fmt::print("\n");  // Empty line separator
                 fmt::print("Scanning 0/{}\n", totalFiles);
                 fmt::print("Starting...");  // No newline - cursor stays on this line
@@ -240,28 +348,14 @@ private:
 
             fmt::print("Globbing files...\n");
             terminal_.hideCursor();
-        } else {
-            if (style == ProgressStyle::Plain) {
-                scanner.setProgressCallback([&plain](const ScanProgress& progress) {
-                    plain.update(progress);
-                });
-                scanner.setCountingDoneCallback([&plain](size_t totalFiles) {
-                    plain.onCountingDone(totalFiles);
-                });
-                plain.onCountingStart();
-            }
-
-            if (streamFindings) {
-                // Progress lives on stderr here, so findings need no cursor
-                // choreography - just erase the status line and write.
-                scanner.setMatchCallback([this, &plain, &args, style](const FileResult& fileResult) {
-                    if (style == ProgressStyle::Plain) {
-                        plain.clear();
-                    }
-                    printFinding(fileResult, args);
-                    std::cout.flush();
-                });
-            }
+        } else if (style == ProgressStyle::Plain) {
+            scanner.setProgressCallback([&plain](const ScanProgress& progress) {
+                plain.update(progress);
+            });
+            scanner.setCountingDoneCallback([&plain](size_t totalFiles) {
+                plain.onCountingDone(totalFiles);
+            });
+            plain.onCountingStart();
         }
 
         auto result = scanner.scan();
@@ -269,7 +363,6 @@ private:
         if (style == ProgressStyle::Inline) {
             terminal_.showCursor();
             // Cursor is at end of filepath line (no newline)
-            // Clear all 3 lines and position for summary output
             terminal_.clearLine();  // Clear filepath
             terminal_.moveUp(1);
             terminal_.clearLine();  // Clear progress
@@ -284,13 +377,14 @@ private:
             terminal_.printErr(Terminal::warning(), "\nHalted by user\n\n");
         }
 
-        if (streamFindings) {
-            // Findings were already written as they were found.
+        // Close both reports off properly, interrupted or not.
+        if (consoleWriter) consoleWriter->end(result, scanner.wasInterrupted());
+        if (fileWriter) {
+            fileWriter->end(result, scanner.wasInterrupted());
+            fileStream.close();
             if (!args.quiet) {
-                printer_.printSummary(result);
+                terminal_.printErr(Terminal::success(), "Report written to {}\n", *plan.file);
             }
-        } else {
-            printer_.printResults(result, args.outputFormat);
         }
 
         // Return 130 on interrupt (standard convention), 2 if matches found, 0 otherwise
@@ -298,14 +392,6 @@ private:
             return 130;
         }
         return result.filesWithMatches > 0 ? 2 : 0;
-    }
-
-    void printFinding(const FileResult& fileResult, const CliArgs& args) const {
-        if (args.verbose) {
-            printer_.printFileResult(fileResult);
-        } else {
-            printer_.printFileResultCompact(fileResult, caps_.width());
-        }
     }
 
     void updateProgress(const ScanProgress& progress, auto& state) {
@@ -328,13 +414,12 @@ private:
             return;
         }
 
-        // Cursor is at end of filepath line
-        // Move to progress line
-        fmt::print("\r");       // Go to start of current line
-        terminal_.moveUp(1);    // Move to progress line
+        // Cursor is at end of filepath line; move to progress line
+        fmt::print("\r");
+        terminal_.moveUp(1);
 
         if (updateCount || firstUpdate) {
-            fmt::print("\r");   // Go to start of progress line
+            fmt::print("\r");
             printProgressLineNoNewline(progress);
             terminal_.clearToEndOfLine();
             fmt::print("\n");   // Move to filepath line
@@ -344,7 +429,7 @@ private:
         }
 
         // Now on filepath line - always update to avoid flicker
-        printFilePathNoNewline(progress.currentFile);  // Includes \r and clearToEndOfLine
+        printFilePathNoNewline(progress.currentFile);
         if (updateFile || firstUpdate) {
             state.lastDisplayedCount = progress.filesScanned;
         }
@@ -365,22 +450,12 @@ private:
     }
 
     void printFilePathNoNewline(const std::filesystem::path& path) const {
-        fmt::print("\r");  // Go to start of line
-        std::string pathStr = pathToUtf8(path);
-        size_t termWidth = caps_.width();
-
-        if (pathStr.length() <= termWidth) {
-            fmt::print("{}", pathStr);
-        } else {
-            // Truncate from the beginning: "...rest/of/path"
-            size_t keep = termWidth - 3;  // Reserve space for "..."
-            fmt::print("...{}", pathStr.substr(pathStr.length() - keep));
-        }
-        terminal_.clearToEndOfLine();  // Clear any leftover chars from previous longer path
+        fmt::print("\r");
+        fmt::print("{}", ResultPrinter::truncatePath(pathToUtf8(path), caps_.width()));
+        terminal_.clearToEndOfLine();
     }
 
     const Terminal& terminal_;
-    const ResultPrinter& printer_;
     const TerminalCaps& caps_;
 };
 

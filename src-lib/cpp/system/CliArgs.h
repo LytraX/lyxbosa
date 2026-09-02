@@ -27,6 +27,8 @@ struct CliArgs {
     std::vector<std::string> directories;
     std::optional<std::string> configFile;
     ReportFormat outputFormat = ReportFormat::Text;
+    bool outputFormatExplicit = false;      // --output was given, so it beats the config
+    std::optional<std::string> outputFile;  // -O/--output-file
     bool quick = false;
     bool dryRun = false;
     bool force = false;
@@ -85,6 +87,11 @@ inline std::string CliArgs::getHelpText() {
         "  -c, --config FILE  Configuration file path (default: built-in configuration)\n"
         "  -o, --output FORMAT\n"
         "                     Report format: text, json or csv (default: text)\n"
+        "  -O, --output-file FILE\n"
+        "                     Write the report to FILE instead of stdout. --output then\n"
+        "                     selects that file's format, while the terminal keeps the\n"
+        "                     readable text view. Overrides actions.report.file from the\n"
+        "                     configuration; parent directories are created.\n"
         "  -r, --recursive    Recurse into subdirectories\n"
         "      --no-recursive Do not recurse into subdirectories\n"
         "      --quick        Quick scan: limit files to 1 MB and disable quarantine\n"
@@ -145,6 +152,7 @@ inline std::string CliArgs::getHelpText() {
         "Examples:\n"
         "  lyxbosa scan /var/www --recursive --force\n"
         "  lyxbosa scan /var/www -o json > report.json\n"
+        "  lyxbosa scan /var/www -O report.json -o json --force\n"
         "  lyxbosa scan -c lyxbosa.yaml --dry-run --verbose\n"
         "  lyxbosa check suspicious.php\n"
         "  lyxbosa init-config > lyxbosa.yaml\n"
@@ -203,6 +211,10 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .help("Report format: text, json or csv")
         .default_value(std::string("text"))
         .metavar("FORMAT");
+
+    scanCmd.add_argument("-O", "--output-file")
+        .help("Write the report to FILE instead of stdout")
+        .metavar("FILE");
 
     scanCmd.add_argument("--quick")
         .help("Quick scan: limit files to 1 MB and disable quarantine")
@@ -392,6 +404,11 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
             return result;
         }
         result.outputFormat = reportFormatFromString(format);
+        result.outputFormatExplicit = scanCmd.is_used("--output");
+
+        if (auto outputFile = scanCmd.present<std::string>("--output-file")) {
+            result.outputFile = *outputFile;
+        }
         result.quick = scanCmd.get<bool>("--quick");
         result.dryRun = scanCmd.get<bool>("--dry-run");
         result.force = scanCmd.get<bool>("--force");

@@ -57,6 +57,18 @@ ScanResult Scanner::scan() {
         countingDoneCallback_(progress.totalFiles);
     }
 
+    auto reportProgress = [&](const std::filesystem::path& path, uint64_t size) {
+        if (!progressCallback_) {
+            return;
+        }
+        progress.filesScanned = result.totalFilesScanned;
+        progress.filesWithMatches = result.filesWithMatches;
+        progress.totalMatchCount = result.totalMatches;
+        progress.currentFile = path;
+        progress.currentFileSize = size;
+        progressCallback_(progress);
+    };
+
     auto fileCallback = [&](const FileInfo& info) -> bool {
         // Check for interrupt
         if (interrupted()) {
@@ -64,15 +76,21 @@ ScanResult Scanner::scan() {
             return false;  // Stop walking
         }
 
-        // Check if file exceeds size limit
+        // Files past the size limit are reported, not scanned
         if (config_.scan.maxFileSize > 0 && info.size > config_.scan.maxFileSize) {
-            FileResult fr;
-            fr.path = info.path;
-            fr.fileSize = info.size;
-            fr.skippedSize = true;
-            result.files.push_back(std::move(fr));
+            FileResult skipped;
+            skipped.path = info.path;
+            skipped.fileSize = info.size;
+            skipped.skippedSize = true;
+
             ++result.filesSkippedSize;
             ++result.totalFilesScanned;
+            result.files.push_back(skipped);
+
+            reportProgress(info.path, info.size);
+            if (fileResultCallback_) {
+                fileResultCallback_(skipped);
+            }
             return true;  // Continue walking
         }
 
@@ -98,21 +116,20 @@ ScanResult Scanner::scan() {
             }
         }
 
-        result.files.push_back(fileResult);  // Copy before move for match callback
-
-        // Report progress FIRST (so display is initialized before match output)
-        if (progressCallback_) {
-            progress.filesScanned = result.totalFilesScanned;
-            progress.filesWithMatches = result.filesWithMatches;
-            progress.totalMatchCount = result.totalMatches;
-            progress.currentFile = info.path;
-            progress.currentFileSize = info.size;
-            progressCallback_(progress);
+        // Only reportable files are retained. Keeping a FileResult for every
+        // clean file cost hundreds of megabytes of paths on a large tree and
+        // bought nothing - every consumer filtered them straight back out.
+        const bool reportable = !fileResult.matches.empty();
+        if (reportable) {
+            result.files.push_back(fileResult);
         }
 
-        // Notify about match AFTER progress (for real-time output)
-        if (!fileResult.matches.empty() && matchCallback_) {
-            matchCallback_(fileResult);
+        // Report progress FIRST (so display is initialized before match output)
+        reportProgress(info.path, info.size);
+
+        // Notify about the finding AFTER progress (for real-time output)
+        if (reportable && fileResultCallback_) {
+            fileResultCallback_(fileResult);
         }
 
         return true;  // Continue walking
@@ -152,8 +169,8 @@ void Scanner::setCountingDoneCallback(CountingCallback callback) {
     countingDoneCallback_ = std::move(callback);
 }
 
-void Scanner::setMatchCallback(MatchCallback callback) {
-    matchCallback_ = std::move(callback);
+void Scanner::setFileResultCallback(FileResultCallback callback) {
+    fileResultCallback_ = std::move(callback);
 }
 
 std::string Scanner::readFile(const std::filesystem::path& path, uint64_t maxSize) {

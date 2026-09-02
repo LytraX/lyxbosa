@@ -2,7 +2,6 @@
 
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
-#include "infrastructure/ResultPrinter.h"
 #include "infrastructure/InputPrompt.h"
 #include "config/Config.h"
 #include "core/Scanner.h"
@@ -15,8 +14,8 @@ namespace lyxbosa {
 // Orchestrates the check (single file) command workflow
 class CheckUseCase {
 public:
-    CheckUseCase(const Terminal& terminal, const ResultPrinter& printer, const TerminalCaps& caps)
-        : terminal_(terminal), printer_(printer), caps_(caps) {}
+    CheckUseCase(const Terminal& terminal, const TerminalCaps& caps)
+        : terminal_(terminal), caps_(caps) {}
 
     int execute(CliArgs& args) {
         // Prompt for file if none provided
@@ -154,7 +153,6 @@ private:
     }
 
     const Terminal& terminal_;
-    const ResultPrinter& printer_;
     const TerminalCaps& caps_;
 };
 

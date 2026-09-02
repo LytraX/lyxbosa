@@ -22,7 +22,10 @@ struct ScanProgress {
 
 using ProgressCallback = std::function<void(const ScanProgress&)>;
 using CountingCallback = std::function<void(size_t totalFiles)>;
-using MatchCallback = std::function<void(const FileResult&)>;
+
+// Called for every file worth reporting - one with matches, or one skipped
+// because of the size limit - as soon as it is known, so reports can stream.
+using FileResultCallback = std::function<void(const FileResult&)>;
 
 // Main scanner orchestrator
 class Scanner {
@@ -41,8 +44,8 @@ public:
     // Set counting done callback (called after file count is complete)
     void setCountingDoneCallback(CountingCallback callback);
 
-    // Set match callback (called when a file with matches is found)
-    void setMatchCallback(MatchCallback callback);
+    // Set the reportable-file callback (matches found, or skipped for size)
+    void setFileResultCallback(FileResultCallback callback);
 
     // Check if quarantine is enabled
     bool isQuarantineEnabled() const { return config_.actions.quarantine.enabled && !dryRun_; }
@@ -64,7 +67,7 @@ private:
     MatchEngine engine_;
     ProgressCallback progressCallback_;
     CountingCallback countingDoneCallback_;
-    MatchCallback matchCallback_;
+    FileResultCallback fileResultCallback_;
     bool dryRun_ = false;
     bool interrupted_ = false;
 };

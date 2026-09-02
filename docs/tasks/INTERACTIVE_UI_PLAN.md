@@ -1,10 +1,12 @@
 # Interactive CLI UI & Output-File Plan
 
-Status: **phase 0 implemented**; phases 1-3 proposed
+Status: **phases 0 and 1 implemented**; phases 2-3 proposed
 Scope: `lyxbosa scan` (and, secondarily, `check`)
 
-Decisions taken: the pinned status goes **below** the findings; the full-screen
-dashboard is **dropped**; the output-file option is **`-O, --output-file`**.
+Decisions taken: the pinned status goes **below** the findings; the output-file option
+is **`-O, --output-file`**; the full-screen TUI is **the interactive default where the
+terminal supports it**, falling back automatically where it does not, and it dumps the
+findings and summary into the primary buffer on exit.
 
 ## 1. Goals
 
@@ -75,7 +77,7 @@ may be enabled. For a tool that moves files, that is a sharp edge.
 **Fix:** when stdin is not a TTY, do not prompt; require `--force` (or abort with a
 clear message). Same for the directory prompt at `ScanUseCase.h:33-42`.
 
-### 3.4 Every scanned file is retained in memory
+### 3.4 Every scanned file is retained in memory — *fixed in phase 1*
 
 `Scanner.cpp:101` pushes a `FileResult` for *every* file, matches or not. On a
 5M-file scan that is millions of `std::filesystem::path` objects held for the whole
@@ -85,10 +87,12 @@ this becomes the thing that OOMs at hour three.
 **Fix:** retain only files with matches or `skippedSize`; keep counters for the rest.
 Streaming report writers (§5.3) make this straightforward.
 
-### 3.5 Path truncation counts bytes, not display columns
+### 3.5 Path truncation counts bytes, not display columns — *partly fixed*
 
-`ResultPrinter.h:278-287` and `ScanUseCase.h::printFilePathNoNewline` use
-`std::string::length()` on UTF-8. Greek/Cyrillic paths — which this project explicitly
+`ResultPrinter::truncatePath` no longer splits a UTF-8 codepoint (phase 1), but it
+still counts *bytes* rather than display columns, so a path of wide characters is cut
+short of the space available. Full width-awareness needs FTXUI's cell measurement in
+phase 3. Originally both call sites used plain `std::string::length()` on UTF-8. Greek/Cyrillic paths — which this project explicitly
 cares about, see the `SetConsoleOutputCP(CP_UTF8)` comment in `lyxbosa.cpp` — truncate
 mid-codepoint and mis-align columns. A pinned status region makes every such glitch
 permanent instead of scrolling away.
@@ -141,7 +145,7 @@ Honour the conventional environment: `NO_COLOR` (any value ⇒ no colour),
 
 | stdout | `--output-file` | What the user sees | Where the report goes |
 |---|---|---|---|
-| TTY | no | Live UI; findings + summary remain in scrollback | stdout (the scrollback *is* the report) |
+| TTY | no | Live UI; findings + summary dumped to the primary buffer on exit | stdout |
 | TTY | yes | Live UI | the file, in `--output` format |
 | pipe/file | no | plain progress on stderr if stderr is a TTY, else nothing | stdout, in `--output` format |
 | pipe/file | yes | plain progress on stderr if stderr is a TTY | the file; stdout stays empty |
@@ -254,25 +258,60 @@ Verified against the 7.0.3 headers (not assumed):
 - `App::ForceHandleCtrlC(false)` — hand Ctrl+C back to us so §3.2's graceful cancel works.
 - `App::HandlePipedInput(bool)` — relevant because we may be reading a piped stdin.
 
-### Why pinned-status rather than full-screen
+### Why full-screen, after all
 
-A full-screen alternate-buffer TUI tears down on exit and **takes every finding with
-it** — the user is left with an empty terminal after a 40-minute scan. `TerminalOutput()`
-+ `WithRestoredIO` gives the cargo/docker/apt behaviour instead: findings land in the
-terminal's own scrollback (infinite, searchable, copy-pasteable, greppable after the
-fact) while the status block stays pinned below them. That satisfies "scrollable
-findings list without affecting the status area" using the terminal's own scrollback,
-and it survives ssh, tmux and resize without us writing a scroll pane.
+The original proposal here was a status block in the *primary* buffer
+(`App::TerminalOutput()` + `WithRestoredIO`), on the grounds that findings would then
+live in the terminal's own scrollback. That was reconsidered against the actual
+requirement: **the status must stay visible while the user scrolls back through the
+findings.**
 
-A full-screen dashboard was considered and **dropped**: the pinned status plus the
-terminal's own scrollback already covers the need, and skipping it keeps two rendering
-paths (in-place and plain) rather than three.
+That is not achievable in the primary buffer. Terminal scrollback belongs to the
+emulator and is entirely client-side; the application is never told the user scrolled
+and cannot draw into the scrolled-back view. Anything we print — pinned-looking or not
+— scrolls away with everything else. `DECSTBM` (`CSI top;bottom r`) reserves a fixed
+footer and confines scrolling above it, which removes flicker during the scan, but the
+footer is part of the viewport and is replaced along with it when the user scrolls
+history.
+
+Pinning while the user scrolls therefore requires the application to own the viewport
+and implement its own scroll: the alternate screen buffer. Claude Code's own CLI is the
+existence proof — its "jump to bottom" affordance can only exist because it owns
+scrolling. tmux's status bar is the same trick one level up.
+
+So the dashboard is **reinstated as the interactive default**, with two obligations:
+
+1. **On exit, dump the findings and the summary into the primary buffer.** This is what
+   keeps `grep`, copy-paste and "what did that scan actually say" working after the
+   alternate screen is torn down, and it removes the only real objection to owning the
+   screen.
+2. **Detect support and degrade automatically** — never assume the alternate screen
+   works (see below).
+
+### Detecting whether the full-screen UI is usable
+
+`TerminalCaps` already answers most of this from phase 0. The TUI runs only when *all*
+of the following hold, and otherwise falls back silently to the phase-0 stderr line:
+
+- stdout is a terminal and virtual-terminal sequences are usable (`vtOut_`);
+- colour is not disabled (`--color=never` / `--no-ansi` / `NO_COLOR`);
+- `TERM` is set and is not `dumb`;
+- the terminal reports a workable size — a dashboard needs roughly 10 rows and 40
+  columns; below that the status block is worth more than the pane;
+- the alternate screen is actually supported (terminfo `smcup`/`rmcup`, or FTXUI
+  reporting the capability);
+- we are not in CI, and `--progress=plain|none`, `--no-interactive` and `--quiet` were
+  not given;
+- the binary was built with `LYXBOSA_TUI=ON`.
+
+Resize is handled by FTXUI (`SIGWINCH`), and a terminal that shrinks below the minimum
+mid-scan should collapse to the status block rather than draw a broken frame.
 
 ### Costs to acknowledge
 
-FTXUI is a real dependency: build time, binary size, and a third rendering path. Given
+FTXUI is a real dependency: build time, binary size, and a second rendering path. Given
 `docker/` and `dist/` exist, gate it with a CMake option `LYXBOSA_TUI` (default `ON`)
-so a minimal/static build can compile `TuiReporter` out and fall back to `PlainReporter`.
+so a minimal/static build can compile `TuiReporter` out and fall back to `PlainProgress`.
 The `ScanReporter` interface is what makes that a one-line change.
 
 ---
@@ -282,7 +321,7 @@ The `ScanReporter` interface is what makes that a one-line change.
 New and changed options on `scan`:
 
 ```
-  -O, --output-file FILE   Write the report to FILE instead of stdout.        [phase 1]
+  -O, --output-file FILE   Write the report to FILE instead of stdout.        [done]
                            --output selects that file's format.
       --progress MODE      auto | plain | none          (default: auto)       [done]
       --color WHEN         auto | always | never        (default: auto)       [done]
@@ -338,10 +377,30 @@ Each phase is independently shippable and independently useful.
 Deliberately not addressed in phase 0: the UTF-8 truncation bug (§3.5), the retained
 clean-file results (§3.4), the JSON escaping bug, and the silent pre-count (§3.7).
 
-### Phase 1 — Output file and streaming report writers
-- `ReportWriter` + Text/Json/Csv streaming implementations; correct JSON escaping.
-- `-O/--output-file`, wired through `actions.report.{file,format,console}`.
-- Stop retaining clean files (§3.4); partial report on interrupt for JSON and CSV too.
+### Phase 1 — Output file and streaming report writers — **DONE**
+- `ReportWriter` (`infrastructure/report/`) with streaming `Text`, `Json` and `Csv`
+  implementations, all writing to a `std::ostream&` so the same code serves the
+  terminal and a file.
+- `ResultPrinter` is no longer hardwired to stdout: it takes `(ostream, color, width)`,
+  which is what lets the text format be reused for a report file without a second
+  implementation of it. `printJson`/`printCsv`/`printResults` moved into the writers.
+- `-O/--output-file`, wired through `actions.report.{file,format,console}` — three
+  configuration keys that were parsed and then ignored by every part of the program.
+  With an output file the terminal keeps the readable text view and `--output` selects
+  the *file's* format.
+- Parent directories are created; the file is opened *before* the scan so an unwritable
+  path fails immediately rather than after forty minutes; a warning is issued when the
+  report would land inside the tree being scanned.
+- Clean files are no longer retained (§3.4). Measured on this tree: 29,022 files
+  scanned, **2** `FileResult`s retained, 11.5 MB peak RSS.
+- Reports stream as the scan proceeds, so an interrupted run leaves a well-formed
+  report. Verified: Ctrl+C mid-scan yields valid JSON carrying `"interrupted": true`
+  and the results found so far.
+- **JSON escaping fixed** — a path containing `"` or `\` previously produced invalid
+  JSON. **CSV quoting added** (RFC 4180) — a path containing a comma previously broke
+  the row.
+- Skipped-size files now reach the report callback, so they appear in every format
+  rather than only in the summary counters.
 
 ### Phase 2 — Progress model
 - Extend `ScanProgress` (severity breakdown, live directory count, bytes, phase) — this
@@ -349,12 +408,19 @@ clean-file results (§3.4), the JSON escaping bug, and the silent pre-count (§3
 - `ProgressModel` with smoothed rate + ETA; unit tests, no terminal required.
 - Concurrent or spinner-fed pre-count (§3.7).
 
-### Phase 3 — FTXUI pinned status *(the main deliverable)*
+### Phase 3 — FTXUI full-screen UI *(the main deliverable)*
 - Add `ftxui` to `vcpkg.json`; `LYXBOSA_TUI` CMake option.
-- `TuiReporter` on `App::TerminalOutput()` + `ftxui::Loop::RunOnce()` pumped from the
-  scan loop; findings printed above via `WithRestoredIO`, status pinned below them.
-- Status block: gauge + percent, `files N/M`, `dirs D`, severity chips, throughput,
-  ETA, elapsed, and the truncated current path.
+- `TuiReporter` on `App::Fullscreen()` + `ftxui::Loop::RunOnce()` pumped from the scan
+  loop, so the scan stays on the main thread and no worker thread is needed.
+- Capability gate per §6; silent fallback to `PlainProgress` when unmet.
+- Status block pinned **below** the findings pane: gauge + percent, `files N/M`,
+  `dirs D`, severity chips, throughput, ETA, elapsed, truncated current path.
+- Findings pane owns its scrolling (`vscroll_indicator | yframe`), with `TrackMouse()`
+  for the wheel, keyboard nav, auto-follow that disengages when the user scrolls up,
+  and a jump-to-bottom affordance that reveals itself when it does.
+- `p` pauses and resumes the scan, `q` ends it early with a valid partial report.
+- **On exit, write the findings and summary into the primary buffer** so nothing is
+  lost when the alternate screen is torn down.
 - Correct grapheme-aware truncation via FTXUI's cell measurement (fixes §3.5); middle-
   ellipsis for paths reads better than head-ellipsis.
 - Delete the hand-rolled cursor dance in `ScanUseCase`.
@@ -381,8 +447,10 @@ scanner lands costs a rewrite of the UI layer.
 
 1. **Output-file option**: `-O, --output-file`.
 2. **Status position**: below the findings, cargo/docker style.
-3. **Full-screen `--tui`**: dropped. The pinned status plus the terminal's own
-   scrollback covers the need without a third rendering path.
+3. **Full-screen UI**: reinstated as the interactive default, because keeping the
+   status visible *while the user scrolls the findings* is unachievable in the primary
+   buffer. It must detect support and degrade automatically, and must dump the findings
+   and summary into the primary buffer on exit.
 4. Still open: concurrent pre-count vs spinner-only vs `--no-precount` default
    (phase 2), and whether `LYXBOSA_TUI=OFF` should be the default for `docker/`
    and `dist/` (phase 3).

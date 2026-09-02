@@ -15,7 +15,6 @@
 #include "system/CliArgs.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
-#include "infrastructure/ResultPrinter.h"
 #include "core/Interrupt.h"
 #include "use-cases/ScanUseCase.h"
 #include "use-cases/CheckUseCase.h"
@@ -138,15 +137,14 @@ int main(int argc, char* argv[]) {
 
     // Setup infrastructure
     Terminal terminal(termCaps);
-    ResultPrinter printer(terminal);
 
     // Dispatch to use case (args passed by ref for potential prompting)
     switch (args.command) {
         case Command::Scan:
-            return ScanUseCase(terminal, printer, caps).execute(args);
+            return ScanUseCase(terminal, caps).execute(args);
 
         case Command::Check:
-            return CheckUseCase(terminal, printer, caps).execute(args);
+            return CheckUseCase(terminal, caps).execute(args);
 
         case Command::ValidateConfig:
             return ValidateConfigUseCase(terminal).execute(args);
