@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -798,7 +799,19 @@ void Folder::record(size_t offset, size_t length, std::string variable, const Va
 }
 
 std::vector<AssembledString> Folder::run() {
+    // Only five bytes can start anything the folder cares about: '$' begins an
+    // assignment, a quote begins a literal, and '/' or '#' may begin a comment
+    // that skipTrivia has to consume so a quote inside it is not read as code.
+    // Everything else - whitespace, operators, punctuation, bare identifiers -
+    // is inert, so jump to the next candidate instead of walking to it a byte at
+    // a time through skipTrivia().
+    static constexpr std::string_view kCandidates = "$\"'/#";
+
     while (pos_ < src_.size()) {
+        const size_t jump = src_.find_first_of(kCandidates, pos_);
+        if (jump == std::string_view::npos) break;
+        pos_ = jump;
+
         const size_t loopStart = pos_;
 
         skipTrivia();
@@ -937,9 +950,43 @@ bool isDynamicallyCalled(std::string_view content, std::string_view variable) {
     return false;
 }
 
+namespace {
+
+// OBF024 and OBF025 are separate rules over the same analysis, so the folder ran
+// twice on every file. Keep the last result and hand it to the second caller.
+//
+// Identity is checked by comparing the bytes, not by hashing them: a scanner reads
+// one file after another, so the same buffer address comes back constantly for
+// different files, and returning another file's findings would be a wrong answer
+// rather than a slow one. memcmp against a kept copy is exact and runs at memory
+// speed - an earlier version verified with a byte-at-a-time FNV hash, which cost
+// most of what the memoisation saved.
+struct FoldCache {
+    std::string content;
+    bool valid = false;
+    std::vector<AssembledString> result;
+
+    bool holds(std::string_view candidate) const {
+        return valid && content.size() == candidate.size() &&
+               std::memcmp(content.data(), candidate.data(), candidate.size()) == 0;
+    }
+};
+
+}  // namespace
+
 std::vector<AssembledString> findAssembledStrings(std::string_view content) {
+    static thread_local FoldCache cache;
+    if (cache.holds(content)) {
+        return cache.result;
+    }
+
     Folder folder(content);
-    return folder.run();
+    auto result = folder.run();
+
+    cache.content.assign(content.data(), content.size());
+    cache.result = result;
+    cache.valid = true;
+    return result;
 }
 
 }  // namespace lyxbosa::analysis

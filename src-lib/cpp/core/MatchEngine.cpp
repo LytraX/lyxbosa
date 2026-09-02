@@ -713,17 +713,48 @@ void MatchEngine::rebuildPrefilter() {
     prefilter_ = LiteralPrefilter{};
     gateHandles_.clear();
     gateHandles_.reserve(builtinRules_.size());
+    residualSet_.reset();
+    residualRuleOf_.clear();
 
-    for (const auto* rule : builtinRules_) {
+    RE2::Options setOpts;
+    setOpts.set_log_errors(false);
+    setOpts.set_dot_nl(true);          // same as PatternCache, or the Set disagrees
+    setOpts.set_case_sensitive(true);  // caseless patterns are folded in as (?i:...)
+    setOpts.set_max_mem(64 << 20);
+    auto residual = std::make_unique<RE2::Set>(setOpts, RE2::UNANCHORED);
+    bool residualUsable = true;
+    size_t residualCount = 0;
+
+    for (size_t ruleIdx = 0; ruleIdx < builtinRules_.size(); ++ruleIdx) {
+        const auto* rule = builtinRules_[ruleIdx];
         std::vector<size_t> handles;
         handles.reserve(rule->patterns.size());
         for (const auto& pattern : rule->patterns) {
-            handles.push_back(prefilter_.add(pattern));
+            const size_t handle = prefilter_.add(pattern);
+            handles.push_back(handle);
+
+            if (handle == LiteralPrefilter::kAlwaysRun && residualUsable) {
+                const std::string expr = pattern.case_insensitive
+                                             ? "(?i:" + std::string(pattern.regex) + ")"
+                                             : std::string(pattern.regex);
+                if (residual->Add(expr, nullptr) < 0) {
+                    residualUsable = false;  // fall back to running them all
+                } else {
+                    residualRuleOf_.push_back(ruleIdx);
+                    ++residualCount;
+                }
+            }
         }
         gateHandles_.push_back(std::move(handles));
     }
 
     prefilter_.compile();
+
+    if (residualUsable && residualCount > 0 && residual->Compile()) {
+        residualSet_ = std::move(residual);
+    } else {
+        residualRuleOf_.clear();  // no Set: the literal-less patterns just always run
+    }
 }
 
 void MatchEngine::addRule(std::unique_ptr<Rule> rule) {
@@ -758,6 +789,21 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
     // change results, only skip work that provably cannot match.
     const auto present = prefilter_.scan(content);
 
+    // Second pass for the patterns no literal can gate: one Set instead of one
+    // walk each. Empty when the Set is unavailable, which means "run them all".
+    std::vector<char> residualRuleHit;
+    if (residualSet_) {
+        residualRuleHit.assign(builtinRules_.size(), 0);
+        std::vector<int> hits;
+        if (residualSet_->Match(re2::StringPiece(content.data(), content.size()), &hits)) {
+            for (int id : hits) {
+                if (id >= 0 && static_cast<size_t>(id) < residualRuleOf_.size()) {
+                    residualRuleHit[residualRuleOf_[static_cast<size_t>(id)]] = 1;
+                }
+            }
+        }
+    }
+
     // Match built-in rules with context-aware filtering
     for (size_t ruleIdx = 0; ruleIdx < builtinRules_.size(); ++ruleIdx) {
         const auto* builtinRule = builtinRules_[ruleIdx];
@@ -768,6 +814,14 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
         if (handles && !handles->empty()) {
             bool anyAllowed = false;
             for (size_t h : *handles) {
+                if (h == LiteralPrefilter::kAlwaysRun) {
+                    // Gated by the residual Set instead, when there is one.
+                    if (residualRuleHit.empty() || residualRuleHit[ruleIdx]) {
+                        anyAllowed = true;
+                        break;
+                    }
+                    continue;
+                }
                 if (prefilter_.allows(h, present)) { anyAllowed = true; break; }
             }
             if (!anyAllowed) continue;

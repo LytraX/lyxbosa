@@ -5,6 +5,9 @@
 #include "ScanResult.h"
 #include "rules/Registry.hpp"
 #include "LiteralPrefilter.h"
+
+#include <re2/set.h>
+#include <memory>
 #include <vector>
 #include <memory>
 #include <string_view>
@@ -95,6 +98,14 @@ private:
 
     LiteralPrefilter prefilter_;
     std::vector<std::vector<size_t>> gateHandles_;
+
+    // Patterns with no literal gate - structural things like `\$\w+\[\d+\]\s*\(`
+    // that no substring is required for. Run individually they are the single
+    // largest cost in a scan, because every one of them walks every file. Compiled
+    // into one small RE2::Set they answer "which of these could match?" in a single
+    // pass; only the ones it names are then run for their offsets and text.
+    std::unique_ptr<RE2::Set> residualSet_;
+    std::vector<size_t> residualRuleOf_;   // set id -> index into builtinRules_
 
     std::vector<std::unique_ptr<Rule>> rules_;  // Custom YAML rules
     std::vector<const rules::BuiltinRule*> builtinRules_;  // Built-in CTRE rules
