@@ -60,6 +60,7 @@ public:
 
         loop_ = std::make_unique<ftxui::Loop>(screen_.get(), component_);
         started_ = true;
+        g_cursorHidden.store(true, std::memory_order_relaxed);
         lastFrame_ = Clock::now();
         pump(/*force=*/true);
     }
@@ -132,6 +133,7 @@ private:
         loop_.reset();
         component_ = nullptr;
         screen_.reset();
+        g_cursorHidden.store(false, std::memory_order_relaxed);
     }
 
     void pump(bool force = false) {

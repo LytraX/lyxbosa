@@ -486,3 +486,58 @@ scanner lands costs a rewrite of the UI layer.
    `-DLYXBOSA_TUI=OFF` to drop the dependency; the binary then always uses the plain
    stderr line.
 
+---
+
+## 11. Compatibility with v1.1.0
+
+**No CLI option was removed or renamed.** Everything v1.1.0 accepted, this still
+accepts, `--no-ansi` included. The additions are `--color`, `--progress`,
+`--no-interactive`, `--no-precount`, `-q/--quiet`, `-s/--silent`, `-O/--output-file`,
+`--quarantine`, `--no-quarantine` (plus `-h/--help` and `-v` for `--verbose`, which
+landed on master before this branch). Exit codes are unchanged: 0 / 1 / 2 / 130.
+
+Behaviour, however, changed in ways that can alter what an existing deployment does.
+
+### Breaking
+
+1. **`actions.report.{file,format,console}` are now honoured.** v1.1.0 parsed these
+   keys and ignored them. A config carrying `report: file: /var/log/scan.json` did
+   nothing then; it now redirects the report to that file and leaves stdout empty for
+   non-terminal runs. **This is the one most likely to surprise an existing install.**
+2. **A non-interactive run without `--force` now refuses (exit 1) instead of scanning.**
+   v1.1.0's confirmation prompt read EOF as consent, so `lyxbosa scan /var/www` in cron
+   or a pipeline scanned anyway - with quarantine, if the config enabled it. Any such
+   invocation now needs `--force`.
+3. **Quarantining unattended now requires `--quarantine`.** A config with
+   `quarantine.enabled: true` plus `--force` used to move files silently; it now
+   refuses unless the move is asked for explicitly on the command line.
+4. **Progress moved from stdout to stderr**, and stdout no longer receives colour or
+   cursor sequences when it is not a terminal. Anything parsing stdout gets cleaner
+   input; anything that wanted colour in a redirect needs `--color=always`; anything
+   scraping progress must read stderr.
+
+### Fixed output that was previously malformed
+
+5. JSON strings are escaped, so a path containing `"` or `\` no longer produces
+   invalid JSON. CSV fields are quoted per RFC 4180, so a path containing a comma no
+   longer breaks the row. Both change the bytes emitted for those specific records.
+6. JSON gained `interrupted` and `filesSkippedSize`, and the summary keys now follow
+   `files` rather than preceding it. Key names are unchanged and JSON objects are
+   unordered, so order-insensitive parsers are unaffected.
+
+### Improved, non-breaking
+
+7. Ctrl+C completes gracefully with a partial report instead of dying mid-scan. The
+   exit code was already 130.
+8. `src-lib` internals changed (`setMatchCallback` to `setFileResultCallback`,
+   `ResultPrinter` constructor, `CountingCallback` removed). No install target is
+   exported and no library is shipped, so this affects nobody outside this repo.
+
+### Version recommendation
+
+**2.0.0.** Items 1-3 can each silently change what an existing installation does:
+a config that was inert starts writing files, a cron job that scanned starts failing,
+and a quarantining job stops moving files until a flag is added. That is a major
+version by any reading of semver, and the safety changes are worth announcing loudly
+rather than slipping out in a minor.
+

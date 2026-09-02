@@ -15,4 +15,10 @@ inline bool interrupted() {
     return g_interrupted.load(std::memory_order_relaxed);
 }
 
+// Set while a full-screen UI owns the terminal. Nothing else hides the cursor,
+// so the exit and signal paths use this to avoid writing a restore sequence to
+// a terminal whose cursor was never touched - which would otherwise be the only
+// thing a --silent run ever emitted.
+inline std::atomic<bool> g_cursorHidden{false};
+
 }  // namespace lyxbosa

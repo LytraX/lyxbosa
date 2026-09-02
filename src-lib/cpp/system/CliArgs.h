@@ -38,6 +38,8 @@ struct CliArgs {
     bool quiet = false;          // Suppress progress and the scan summary
     bool noInteractive = false;  // Never take over stdout with an in-place display
     bool noPreCount = false;     // Skip the concurrent pre-count (no percentage)
+    bool silent = false;         // No output at all; requires an output file
+    std::optional<bool> quarantine;  // --quarantine / --no-quarantine override
 
     // Check command options
     std::optional<std::string> checkFile;
@@ -111,6 +113,15 @@ inline std::string CliArgs::getHelpText() {
         "      --no-precount  Do not pre-count files; progress has no percentage or ETA.\n"
         "                     The count normally runs concurrently with the scan.\n"
         "  -q, --quiet        Suppress progress and the scan summary\n"
+        "  -s, --silent       Produce no output at all: no progress, no findings, no\n"
+        "                     summary. Requires -O/--output-file (or actions.report.file)\n"
+        "                     because a scan with nowhere to write is a scan nobody can\n"
+        "                     read. Errors are still reported on stderr.\n"
+        "      --quarantine   Move matched files to the quarantine directory. Required\n"
+        "                     for any unattended run that quarantines, since moving\n"
+        "                     files cannot be undone.\n"
+        "      --no-quarantine\n"
+        "                     Never move files, whatever the configuration says\n"
         "      --color WHEN   Colorize output: auto, always or never\n"
         "      --no-ansi      Alias for --color=never\n"
         "  -h, --help         Show help for the scan command\n"
@@ -157,6 +168,7 @@ inline std::string CliArgs::getHelpText() {
         "  lyxbosa scan /var/www --recursive --force\n"
         "  lyxbosa scan /var/www -o json > report.json\n"
         "  lyxbosa scan /var/www -O report.json -o json --force\n"
+        "  lyxbosa scan /var/www -O report.json -o json --force --silent\n"
         "  lyxbosa scan -c lyxbosa.yaml --dry-run --verbose\n"
         "  lyxbosa check suspicious.php\n"
         "  lyxbosa init-config > lyxbosa.yaml\n"
@@ -262,6 +274,21 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
 
     scanCmd.add_argument("--no-precount")
         .help("Do not pre-count files; progress has no percentage or ETA")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("-s", "--silent")
+        .help("Produce no output at all; requires -O/--output-file")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--quarantine")
+        .help("Move matched files to the quarantine directory")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--no-quarantine")
+        .help("Never move files, whatever the configuration says")
         .default_value(false)
         .implicit_value(true);
 
@@ -442,6 +469,18 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         result.noInteractive = scanCmd.get<bool>("--no-interactive");
         result.quiet = scanCmd.get<bool>("--quiet");
         result.noPreCount = scanCmd.get<bool>("--no-precount");
+        result.silent = scanCmd.get<bool>("--silent");
+
+        if (scanCmd.get<bool>("--quarantine") && scanCmd.get<bool>("--no-quarantine")) {
+            result.success = false;
+            result.errorMessage = "--quarantine and --no-quarantine are mutually exclusive";
+            return result;
+        }
+        if (scanCmd.get<bool>("--quarantine")) {
+            result.quarantine = true;
+        } else if (scanCmd.get<bool>("--no-quarantine")) {
+            result.quarantine = false;
+        }
 
         if (!applyColor(scanCmd)) {
             return result;

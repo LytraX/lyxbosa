@@ -54,7 +54,10 @@ LyxBoSa provides four subcommands:
 - Recursive directory scanning with configurable file size limits (default 5 MB) and symlink control.
 - File inclusion/exclusion filters using glob patterns.
 - Severity levels (Critical, High, Medium, Low) for prioritizing findings.
-- Quarantine support with optional directory structure preservation.
+- Quarantine support with optional directory structure preservation. Moving files is
+  never the default and never happens unattended by accident: an unattended run that
+  would quarantine refuses unless `--quarantine` is passed explicitly, and
+  `--no-quarantine` or `--dry-run` scan without touching anything.
 - Report generation in Text, JSON, and CSV formats, written incrementally as the scan
   proceeds so an interrupted run still leaves a complete, well-formed report.
 - `-O/--output-file` writes the report to a file while the terminal keeps the readable
@@ -80,5 +83,7 @@ LyxBoSa provides four subcommands:
   breakdown of what has been found so far, throughput and an ETA. The file count runs
   concurrently with the scan, so scanning starts immediately rather than after a silent
   counting pass; `--no-precount` skips it entirely.
-- Progress display selectable with `--progress=auto|plain|none`, `--no-interactive`
-  and `-q/--quiet`.
+- Progress display selectable with `--progress=auto|tui|plain|none`,
+  `--no-interactive` and `-q/--quiet`. `-s/--silent` produces no output whatsoever for
+  unattended runs and requires `-O/--output-file`, since a scan with nowhere to write
+  is a scan nobody can read.

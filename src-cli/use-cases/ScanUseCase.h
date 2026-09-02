@@ -67,6 +67,34 @@ public:
             return 1;
         }
 
+        const ReportPlan plan = planReport(args, config);
+
+        // A silent run with nowhere to write is a scan nobody can ever read.
+        if (args.silent && !plan.file) {
+            terminal_.printErr(Terminal::error(),
+                "Error: --silent produces no output at all, so the report needs somewhere\n"
+                "to go. Pass -O/--output-file FILE, or set actions.report.file in the\n"
+                "configuration.\n");
+            return 1;
+        }
+
+        // Quarantining moves files and cannot be undone. An unattended run has
+        // nobody to confirm it, so it has to have been asked for explicitly.
+        if (config.actions.quarantine.enabled && !args.dryRun) {
+            const bool unattended = args.force || !caps_.stdinIsTty();
+            if (unattended && args.quarantine != true) {
+                terminal_.printErr(Terminal::error(),
+                    "Error: quarantine is enabled, which moves matched files to {}.\n"
+                    "       An unattended run will not do that unless it is asked for\n"
+                    "       explicitly: add --quarantine to confirm, --no-quarantine to\n"
+                    "       scan without moving anything, or --dry-run to report only.\n",
+                    config.actions.quarantine.directory.empty()
+                        ? "the quarantine directory"
+                        : config.actions.quarantine.directory);
+                return 1;
+            }
+        }
+
         // Show confirmation unless forced
         if (!args.force) {
             // Without a terminal there is nobody to answer, and treating that as
@@ -92,7 +120,7 @@ public:
         }
 
         // Run scan
-        return runScan(config, args);
+        return runScan(config, args, plan);
     }
 
 private:
@@ -146,6 +174,10 @@ private:
         if (args.quick) {
             config.scan.maxFileSize = 1024 * 1024;  // 1MB in quick mode
             config.actions.quarantine.enabled = false;
+        }
+
+        if (args.quarantine.has_value()) {
+            config.actions.quarantine.enabled = *args.quarantine;
         }
     }
 
@@ -218,7 +250,7 @@ private:
     ProgressStyle chooseProgressStyle(const CliArgs& args,
                                       ReportFormat consoleFormat,
                                       bool haveConsoleWriter) const {
-        if (args.quiet || args.progress == ProgressWhen::None) {
+        if (args.quiet || args.silent || args.progress == ProgressWhen::None) {
             return ProgressStyle::None;
         }
 
@@ -260,8 +292,9 @@ private:
                            TerminalCaps::kMinColumns, TerminalCaps::kMinRows);
     }
 
-    int runScan(const AppConfig& config, const CliArgs& args) {
-        const ReportPlan plan = planReport(args, config);
+    int runScan(const AppConfig& config, const CliArgs& args, const ReportPlan& plan) {
+        // --silent suppresses everything --quiet does, and the findings too.
+        const bool quiet = args.quiet || args.silent;
 
         // Open the report file before scanning: discovering it is unwritable
         // after a forty-minute scan would be cruel.
@@ -288,7 +321,8 @@ private:
         // selects the file's format, not what the user is watching. Without one,
         // stdout is the report.
         const ReportFormat consoleFormat = plan.file ? ReportFormat::Text : plan.format;
-        const bool consoleWanted = plan.console && (!plan.file || caps_.stdoutIsTty());
+        const bool consoleWanted =
+            !args.silent && plan.console && (!plan.file || caps_.stdoutIsTty());
 
         const ProgressStyle style = chooseProgressStyle(args, consoleFormat, consoleWanted);
 
@@ -306,7 +340,7 @@ private:
             consoleWriter = makeReportWriter(
                 consoleFormat, consoleStream,
                 consoleFormat == ReportFormat::Text && terminal_.colorOnStdout(),
-                caps_.width(), args.verbose, /*summary=*/!args.quiet);
+                caps_.width(), args.verbose, /*summary=*/!quiet);
         }
 
         Scanner scanner(config);
@@ -372,7 +406,7 @@ private:
         const bool interrupted = scanner.wasInterrupted();
 
         // Interruption is a diagnostic, not report data.
-        if (interrupted && !args.quiet) {
+        if (interrupted && !quiet) {
             terminal_.printErr(Terminal::warning(), "\nHalted by user\n\n");
         }
 
@@ -383,7 +417,7 @@ private:
         if (fileWriter) {
             fileWriter->end(result, interrupted);
             fileStream.close();
-            if (!args.quiet) {
+            if (!quiet) {
                 terminal_.printErr(Terminal::success(), "Report written to {}\n", *plan.file);
             }
         }

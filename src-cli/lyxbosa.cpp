@@ -39,6 +39,9 @@ static constexpr size_t kShowCursorLen = sizeof(kShowCursor) - 1;
 // Restore the cursor from a signal handler. write() is async-signal-safe;
 // fmt::print and the iostreams are not.
 static void restoreCursorSignalSafe() {
+    if (!g_cursorHidden.load(std::memory_order_relaxed)) {
+        return;
+    }
 #ifdef _WIN32
     if (g_escapesOnStdout.load(std::memory_order_relaxed)) {
         _write(_fileno(stdout), kShowCursor, static_cast<unsigned int>(kShowCursorLen));
@@ -60,6 +63,9 @@ static void restoreCursorSignalSafe() {
 
 // Restore the cursor on normal exit, where the full runtime is available.
 static void restoreCursor() {
+    if (!g_cursorHidden.load(std::memory_order_relaxed)) {
+        return;
+    }
     if (g_escapesOnStdout.load(std::memory_order_relaxed)) {
         fmt::print("{}", kShowCursor);
         std::fflush(stdout);
