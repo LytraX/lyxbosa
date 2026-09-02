@@ -52,7 +52,7 @@ jobs:
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache || true
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: lyxbosa-linux-${{ matrix.arch }}
           path: dist/lyxbosa-linux-*
@@ -86,7 +86,7 @@ jobs:
           VCPKG_ROOT: C:\vcpkg
           LYXBOSA_VERSION: ${{ steps.version.outputs.value }}
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: lyxbosa-windows
           path: dist/lyxbosa-windows-*.exe
@@ -119,13 +119,13 @@ jobs:
           } > NOTES.md
           cat NOTES.md
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           body_path: NOTES.md
