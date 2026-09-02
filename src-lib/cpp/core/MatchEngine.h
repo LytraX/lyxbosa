@@ -4,6 +4,10 @@
 #include "Rule.h"
 #include "ScanResult.h"
 #include "rules/Registry.hpp"
+#include "LiteralPrefilter.h"
+
+#include <re2/set.h>
+#include <memory>
 #include <vector>
 #include <memory>
 #include <string_view>
@@ -69,13 +73,15 @@ public:
     // Clear all rules
     void clear();
 
+    // Apply the context filter for a rule code: true keeps the match, false discards it.
+    // Public so the rule tests can exercise a filter without building a whole scan -
+    // several rules (OBF036, DEFC001) carry most of their precision here rather than
+    // in the pattern, so the filter is the part worth testing directly.
+    static bool applyContextFilter(const std::string& ruleCode, const MatchContext& ctx);
+
 private:
     // Check if match has suppression comment nearby
     static bool hasSuppression(std::string_view content, size_t offset);
-
-    // Apply context filter for a specific rule code
-    // Returns true if match should be kept, false to discard
-    static bool applyContextFilter(const std::string& ruleCode, const MatchContext& ctx);
 
     // Get the line containing a specific offset
     static std::string_view getLineAtOffset(std::string_view content, size_t offset);
@@ -85,6 +91,21 @@ private:
 
     // Check if position is inside a SQL query (heuristic)
     static bool isInSqlQuery(std::string_view content, size_t offset);
+
+    // Rebuilt whenever the builtin rule set changes. Handles are parallel to
+    // builtinRules_: one vector of per-pattern handles per rule.
+    void rebuildPrefilter();
+
+    LiteralPrefilter prefilter_;
+    std::vector<std::vector<size_t>> gateHandles_;
+
+    // Patterns with no literal gate - structural things like `\$\w+\[\d+\]\s*\(`
+    // that no substring is required for. Run individually they are the single
+    // largest cost in a scan, because every one of them walks every file. Compiled
+    // into one small RE2::Set they answer "which of these could match?" in a single
+    // pass; only the ones it names are then run for their offsets and text.
+    std::unique_ptr<RE2::Set> residualSet_;
+    std::vector<size_t> residualRuleOf_;   // set id -> index into builtinRules_
 
     std::vector<std::unique_ptr<Rule>> rules_;  // Custom YAML rules
     std::vector<const rules::BuiltinRule*> builtinRules_;  // Built-in CTRE rules

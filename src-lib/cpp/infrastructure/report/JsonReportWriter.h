@@ -30,7 +30,7 @@ public:
 
         out_ << "    {\n";
         out_ << "      \"path\": ";
-        writeString(out_, pathToUtf8(result.path));
+        writeString(out_, pathForDisplay(result.path));
         out_ << ",\n";
         out_ << "      \"skipped\": " << (result.skippedSize ? "true" : "false") << ",\n";
         out_ << "      \"quarantined\": " << (result.quarantined ? "true" : "false") << ",\n";

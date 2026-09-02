@@ -115,6 +115,10 @@ int main(int argc, char* argv[]) {
 
     // Register atexit handler to restore cursor on normal exit
     std::atexit(restoreCursor);
+    // ...and to swallow any terminal capability reply that arrived too late for
+    // the UI to eat it. Without this the answer to FTXUI's DA1 probe is delivered
+    // to the shell instead, which prints it and leaves it typed at the prompt.
+    std::atexit([] { lyxbosa::terminal_input::drainReports(); });
 
     auto args = CliArgs::parse(argc, argv);
 

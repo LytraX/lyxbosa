@@ -23,6 +23,13 @@ ScanProgress scanned(size_t files, size_t total, uint64_t bytes = 0) {
     return p;
 }
 
+// A scan whose total size is known, which is what makes the ETA size-aware.
+ScanProgress sized(size_t files, size_t totalFiles, uint64_t bytes, uint64_t totalBytes) {
+    ScanProgress p = scanned(files, totalFiles, bytes);
+    p.totalBytes = totalBytes;
+    return p;
+}
+
 }  // namespace
 
 TEST(ProgressModelTest, PercentIsZeroWhileTotalIsUnknown) {
@@ -134,4 +141,82 @@ TEST(FormatBytesTest, PicksAReadableUnit) {
     EXPECT_EQ(formatBytes(1536), "1.5 KB");
     EXPECT_EQ(formatBytes(5ULL * 1024 * 1024), "5.0 MB");
     EXPECT_EQ(formatBytes(3ULL * 1024 * 1024 * 1024), "3.0 GB");
+}
+
+// ---------------------------------------------------------------------------
+// Size-aware progress
+//
+// The bug these cover: a tree of 100 one-line stubs followed by one 40 MB file
+// is 99% done by file count after a second, so the ETA collapses to almost
+// nothing and then explodes when the big file starts. Weighting by work keeps
+// both the bar and the estimate honest.
+// ---------------------------------------------------------------------------
+
+TEST(ProgressModelTest, PercentIsWeightedByBytesNotFileCount) {
+    ProgressModel model(kOrigin);
+
+    // 100 tiny files done out of 101; the last one is 40 MB.
+    constexpr uint64_t kBig = 40ull * 1024 * 1024;
+    model.update(sized(100, 101, 100 * 200, 100 * 200 + kBig), at(1s));
+
+    // By file count this would read 99%.
+    EXPECT_LT(model.percent(), 10)
+        << "the remaining 40 MB is almost all of the work";
+}
+
+TEST(ProgressModelTest, EtaDoesNotCollapseBeforeALargeFile) {
+    ProgressModel model(kOrigin);
+
+    constexpr uint64_t kTiny = 200;
+    constexpr uint64_t kBig = 40ull * 1024 * 1024;
+    const uint64_t totalBytes = 100 * kTiny + kBig;
+
+    // Steady progress through the stubs.
+    model.update(sized(50, 101, 50 * kTiny, totalBytes), at(500ms));
+    model.update(sized(100, 101, 100 * kTiny, totalBytes), at(1s));
+
+    const auto before = model.eta();
+    ASSERT_TRUE(before.has_value());
+
+    // The big file is still entirely ahead, so the estimate must reflect it
+    // rather than reporting "almost done".
+    EXPECT_GT(before->count(), 1)
+        << "ETA ignored 40 MB of remaining work";
+}
+
+TEST(ProgressModelTest, EtaTracksThroughputThroughAMixedTree) {
+    ProgressModel model(kOrigin);
+
+    // 10 MB total, arriving at a steady 1 MB/s. Whatever the file sizes, the
+    // estimate should converge on the time the remaining bytes will take.
+    constexpr uint64_t kMB = 1024 * 1024;
+    model.update(sized(1, 10, 1 * kMB, 10 * kMB), at(1s));
+    model.update(sized(2, 10, 2 * kMB, 10 * kMB), at(2s));
+    model.update(sized(3, 10, 3 * kMB, 10 * kMB), at(3s));
+
+    const auto eta = model.eta();
+    ASSERT_TRUE(eta.has_value());
+    // 7 MB left at ~1 MB/s. Allow for the exponential smoothing warming up.
+    EXPECT_GE(eta->count(), 4);
+    EXPECT_LE(eta->count(), 10);
+}
+
+TEST(ProgressModelTest, PerFileOverheadDominatesForTinyFiles) {
+    ProgressModel model(kOrigin);
+
+    // 4,000 files averaging 25 bytes: the bytes are noise, the per-file cost is
+    // the whole job. Half done by count must read as roughly half done.
+    model.update(sized(2000, 4000, 2000 * 25, 4000 * 25), at(1s));
+
+    EXPECT_GE(model.percent(), 45);
+    EXPECT_LE(model.percent(), 55);
+}
+
+TEST(ProgressModelTest, FallsBackToFileCountWhenSizesAreUnknown) {
+    ProgressModel model(kOrigin);
+
+    // --no-precount, or a walker that could not stat: totalBytes stays 0 and the
+    // model must still behave, weighting every file equally.
+    model.update(scanned(250, 1000), at(1s));
+    EXPECT_EQ(model.percent(), 25);
 }

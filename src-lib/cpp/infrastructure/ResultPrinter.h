@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/SafeText.h"
+
 #include "Terminal.h"
 #include "PathUtils.h"
 #include "core/ScanResult.h"
@@ -41,7 +43,7 @@ public:
     // Print a file result (verbose mode)
     void printFileResult(const FileResult& result) const {
         if (result.skippedSize) {
-            styled(Terminal::muted(), "[-] {} (skipped - size limit)\n", pathToUtf8(result.path));
+            styled(Terminal::muted(), "[-] {} (skipped - size limit)\n", pathForDisplay(result.path));
             return;
         }
 
@@ -50,7 +52,7 @@ public:
         }
 
         styled(Terminal::high(), "[!] ");
-        styled(Terminal::low(), "{} ", pathToUtf8(result.path));
+        styled(Terminal::low(), "{} ", pathForDisplay(result.path));
         styled(Terminal::medium(), "[{} match{}]\n",
                result.matches.size(), result.matches.size() == 1 ? "" : "es");
 
@@ -70,7 +72,7 @@ public:
     void printFileResultCompact(const FileResult& result) const {
         if (result.skippedSize) {
             styled(Terminal::muted(), "[-] {} (skipped)\n",
-                   truncatePath(pathToUtf8(result.path), width_ > 15 ? width_ - 15 : 20));
+                   truncatePath(pathForDisplay(result.path), width_ > 15 ? width_ - 15 : 20));
             return;
         }
 
@@ -102,7 +104,7 @@ public:
             (width_ > prefixLen + suffixLen) ? width_ - prefixLen - suffixLen : 20;
 
         styled(Terminal::high(), "[!] ");
-        styled(Terminal::low(), "{}", truncatePath(pathToUtf8(result.path), availableForPath));
+        styled(Terminal::low(), "{}", truncatePath(pathForDisplay(result.path), availableForPath));
 
         if (critical > 0) styled(Terminal::critical(), "  C:{}", critical);
         if (high > 0)     styled(Terminal::high(),     "  H:{}", high);

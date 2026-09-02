@@ -24,6 +24,26 @@ struct Pattern {
     std::string_view regex;          // The regex pattern string
     std::string_view description;    // Optional description of what this pattern catches
     bool case_insensitive;
+
+    // Literal gate: substrings a match cannot occur without.
+    //
+    // Every non-empty entry must be present in the file (AND); alternatives inside
+    // one entry are separated by '|' (OR). Comparison is case-insensitive, so write
+    // them lowercase. An empty gate means the pattern always runs.
+    //
+    //   { R"((?i:eval)\s*\(\s*(?i:base64_decode)\s*\()", "...", false,
+    //     {"eval", "base64_decode"} }
+    //
+    //   { R"(((?i:system)|(?i:exec))\s*\(\s*\$_(GET|POST))", "...", false,
+    //     {"system|exec", "$_get|$_post"} }
+    //
+    // SOUNDNESS IS THE WHOLE CONTRACT. A gate entry may only name text that *every*
+    // match must contain: not something inside an alternation the entry does not
+    // enumerate, not inside a `?`/`*` group, not a character a quantifier could
+    // consume zero times. Get this wrong and the pattern is silently skipped on
+    // files it should have matched - a missed detection with no error anywhere.
+    // LiteralGateTest checks each entry against the pattern it guards.
+    std::string_view gate[3] = {};
 };
 
 // Helper to calculate line/column from position in content

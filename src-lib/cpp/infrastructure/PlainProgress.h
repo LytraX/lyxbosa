@@ -104,7 +104,7 @@ private:
         }
 
         // Whatever is left of the line goes to the path being scanned.
-        const std::string current = pathToUtf8(p.currentFile);
+        const std::string current = pathForDisplay(p.currentFile);
         if (current.empty() || line.size() + kMinPathWidth + 2 > budget) {
             return line;
         }

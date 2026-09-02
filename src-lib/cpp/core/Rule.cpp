@@ -1,4 +1,5 @@
 #include "Rule.h"
+#include "utils/SafeText.h"
 #include "patterns/StringPattern.h"
 #include "patterns/RegexPattern.h"
 #include "patterns/HeuristicPattern.h"
@@ -75,8 +76,10 @@ std::vector<FileMatch> Rule::match(std::string_view content) const {
             fm.offset = pm.offset;
             fm.line = pm.line;
             fm.column = pm.column;
-            fm.matchedText = std::move(pm.matchedText);
-            fm.context = std::move(pm.context);
+            // Both are slices of the scanned file. Escape them before they can reach
+            // a terminal - see utils/SafeText.h.
+            fm.matchedText = safe_text::sanitize(pm.matchedText);
+            fm.context = safe_text::sanitize(pm.context);
             matches.push_back(std::move(fm));
         }
     }

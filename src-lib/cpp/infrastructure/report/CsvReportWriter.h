@@ -18,7 +18,7 @@ public:
 
     void onFile(const FileResult& result) override {
         for (const auto& match : result.matches) {
-            writeField(out_, pathToUtf8(result.path));       out_ << ',';
+            writeField(out_, pathForDisplay(result.path));       out_ << ',';
             writeField(out_, match.ruleName);                out_ << ',';
             writeField(out_, severityToString(match.severity)); out_ << ',';
             writeField(out_, match.suppressed ? severityToString(match.originalSeverity)

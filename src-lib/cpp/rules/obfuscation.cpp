@@ -1,6 +1,8 @@
 #include "obfuscation.h"
 #include "analysis/StringAssembly.h"
 #include <array>
+#include <cctype>
+#include <fmt/format.h>
 #include <string>
 
 namespace lyxbosa::rules::obfuscation {
@@ -9,7 +11,8 @@ namespace lyxbosa::rules::obfuscation {
 namespace detail_OBF001 {
     static constexpr Pattern patterns[] = {
         { R"(\$GLOBALS\s*\[\s*['"]\\x[0-9a-fA-F]{2})",
-          "Hex-encoded GLOBALS access", false },
+          "Hex-encoded GLOBALS access", false,
+          {"globals"} },
     };
 }
 const BuiltinRule OBF001 {
@@ -23,8 +26,9 @@ const BuiltinRule OBF001 {
 // OBF002: chr() string building
 namespace detail_OBF002 {
     static constexpr Pattern patterns[] = {
-        { R"(chr\s*\(\s*\d+\s*\)\s*\.\s*chr\s*\(\s*\d+\s*\)\s*\.\s*chr\s*\(\s*\d+\s*\)\s*\.\s*chr)",
-          "chr() string concatenation", false },
+        { R"((?i:chr)\s*\(\s*\d+\s*\)\s*\.\s*(?i:chr)\s*\(\s*\d+\s*\)\s*\.\s*(?i:chr)\s*\(\s*\d+\s*\)\s*\.\s*(?i:chr))",
+          "chr() string concatenation", false,
+          {"chr"} },
     };
 }
 const BuiltinRule OBF002 {
@@ -38,8 +42,9 @@ const BuiltinRule OBF002 {
 // OBF003: pack() obfuscation
 namespace detail_OBF003 {
     static constexpr Pattern patterns[] = {
-        { R"(pack\s*\(\s*['"]H\*['"]\s*,\s*['"][0-9a-fA-F]{20,}['"])",
-          "pack() hex decoding", false },
+        { R"((?i:pack)\s*\(\s*['"]H\*['"]\s*,\s*['"][0-9a-fA-F]{20,}['"])",
+          "pack() hex decoding", false,
+          {"pack"} },
     };
 }
 const BuiltinRule OBF003 {
@@ -56,11 +61,13 @@ const BuiltinRule OBF003 {
 namespace detail_OBF004 {
     static constexpr Pattern patterns[] = {
         // base64_decode with inline long string
-        { R"(base64_decode\s*\(\s*['"][A-Za-z0-9+/]{500,}={0,2}['"])",
-          "base64_decode with long payload", false },
+        { R"((?i:base64_decode)\s*\(\s*['"][A-Za-z0-9+/]{500,}={0,2}['"])",
+          "base64_decode with long payload", false,
+          {"base64_decode"} },
         // Variable assigned from base64_decode of long string
-        { R"(\$\w+\s*=\s*base64_decode\s*\(\s*['"][A-Za-z0-9+/]{300,})",
-          "Variable from decoded base64", false },
+        { R"(\$\w+\s*=\s*(?i:base64_decode)\s*\(\s*['"][A-Za-z0-9+/]{300,})",
+          "Variable from decoded base64", false,
+          {"base64_decode"} },
     };
 }
 const BuiltinRule OBF004 {
@@ -80,8 +87,9 @@ namespace detail_OBF005 {
     static constexpr Pattern patterns[] = {
         // strrev with 2+ concatenated string literals (quoted strings joined by .)
         // Pattern: strrev( ... "..." . "..." ... )
-        { R"(strrev\s*\([^)]*["'][^"']*["']\s*\.\s*["'][^"']*["'][^)]*\))",
-          "strrev with literal concatenation", false },
+        { R"((?i:strrev)\s*\([^)]*["'][^"']*["']\s*\.\s*["'][^"']*["'][^)]*\))",
+          "strrev with literal concatenation", false,
+          {"strrev"} },
     };
 }
 const BuiltinRule OBF005 {
@@ -125,8 +133,9 @@ const BuiltinRule OBF007 {
 // OBF008: str_replace used to build function names
 namespace detail_OBF008 {
     static constexpr Pattern patterns[] = {
-        { R"(str_replace\s*\(\s*['"][^'"]+['"]\s*,\s*['"]['"]?\s*,\s*['"](e|ba|as|ev|sy|ex)[^'"]+['"])",
-          "str_replace function name building", false },
+        { R"((?i:str_replace)\s*\(\s*['"][^'"]+['"]\s*,\s*['"]['"]?\s*,\s*['"](e|ba|as|ev|sy|ex)[^'"]+['"])",
+          "str_replace function name building", false,
+          {"str_replace"} },
     };
 }
 const BuiltinRule OBF008 {
@@ -140,8 +149,9 @@ const BuiltinRule OBF008 {
 // OBF009: Multiple nested base64_decode
 namespace detail_OBF009 {
     static constexpr Pattern patterns[] = {
-        { R"(base64_decode\s*\(\s*base64_decode)",
-          "Nested base64_decode", false },
+        { R"((?i:base64_decode)\s*\(\s*(?i:base64_decode))",
+          "Nested base64_decode", false,
+          {"base64_decode"} },
     };
 }
 const BuiltinRule OBF009 {
@@ -155,8 +165,9 @@ const BuiltinRule OBF009 {
 // OBF010: gzuncompress with base64
 namespace detail_OBF010 {
     static constexpr Pattern patterns[] = {
-        { R"(gzuncompress\s*\(\s*base64_decode)",
-          "gzuncompress+base64", false },
+        { R"((?i:gzuncompress)\s*\(\s*(?i:base64_decode))",
+          "gzuncompress+base64", false,
+          {"gzuncompress"} },
     };
 }
 const BuiltinRule OBF010 {
@@ -170,8 +181,9 @@ const BuiltinRule OBF010 {
 // OBF011: rawurldecode with base64
 namespace detail_OBF011 {
     static constexpr Pattern patterns[] = {
-        { R"(rawurldecode\s*\(\s*base64_decode)",
-          "rawurldecode+base64", false },
+        { R"((?i:rawurldecode)\s*\(\s*(?i:base64_decode))",
+          "rawurldecode+base64", false,
+          {"rawurldecode"} },
     };
 }
 const BuiltinRule OBF011 {
@@ -186,7 +198,8 @@ const BuiltinRule OBF011 {
 namespace detail_OBF012 {
     static constexpr Pattern patterns[] = {
         { R"(\$\{\s*\$\w+\s*\}\s*\()",
-          "Variable variable call", false },
+          "Variable variable call", false,
+          {"${"} },
     };
 }
 const BuiltinRule OBF012 {
@@ -200,8 +213,9 @@ const BuiltinRule OBF012 {
 // OBF013: extract() with user input
 namespace detail_OBF013 {
     static constexpr Pattern patterns[] = {
-        { R"(extract\s*\(\s*\$_(GET|POST|REQUEST|COOKIE))",
-          "extract with user input", false },
+        { R"((?i:extract)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE))",
+          "extract with user input", false,
+          {"extract", "$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule OBF013 {
@@ -215,8 +229,9 @@ const BuiltinRule OBF013 {
 // OBF014: Rot13 encoding
 namespace detail_OBF014 {
     static constexpr Pattern patterns[] = {
-        { R"(str_rot13\s*\(\s*['"][^'"]{20,}['"])",
-          "str_rot13 encoded string", false },
+        { R"((?i:str_rot13)\s*\(\s*['"][^'"]{20,}['"])",
+          "str_rot13 encoded string", false,
+          {"str_rot13"} },
     };
 }
 const BuiltinRule OBF014 {
@@ -234,9 +249,17 @@ const BuiltinRule OBF014 {
 namespace detail_OBF015 {
     static constexpr Pattern patterns[] = {
         // Labels must contain mixed case (lowercase followed by uppercase somewhere)
-        // This excludes SCANNER_TOP style labels which are all uppercase
-        { R"(goto\s+[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*;\s+[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*:)",
-          "Multiple goto jumps with mixed-case labels", false },
+        // This excludes SCANNER_TOP style labels which are all uppercase.
+        //
+        // The separator is \s* rather than \s+: emitters differ on whether they put
+        // a space after the semicolon, and one that does not
+        //     goto kPpzye;LQL4spRSOK: tQtVYGj1();
+        // was invisible to this rule while carrying 52 jumps. Relaxing it adds 74
+        // detections in the labelled corpus for no false positive on CMS or Sites -
+        // the two mixed-case identifiers either side of the ';' carry the precision.
+        { R"(goto\s+[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*;\s*[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*:)",
+          "Multiple goto jumps with mixed-case labels", false,
+          {"goto"} },
     };
 }
 const BuiltinRule OBF015 {
@@ -273,7 +296,8 @@ namespace detail_OBF017 {
         // Pattern: $var = func("..."); return $var(
         // Captures: decode something into variable, then immediately call that variable
         { R"(\$\w+\s*=\s*\w+\s*\(\s*["'][^"']+["']\s*\)\s*;\s*return\s+\$\w+\s*\()",
-          "Decoded variable function call", false },
+          "Decoded variable function call", false,
+          {"return"} },
     };
 }
 const BuiltinRule OBF017 {
@@ -291,17 +315,21 @@ const BuiltinRule OBF017 {
 namespace detail_OBF020 {
     static constexpr Pattern patterns[] = {
         // str_rot13(urldecode(...))
-        { R"(str_rot13\s*\(\s*urldecode\s*\()",
-          "ROT13+urldecode obfuscation", false },
+        { R"((?i:str_rot13)\s*\(\s*(?i:urldecode)\s*\()",
+          "ROT13+urldecode obfuscation", false,
+          {"urldecode", "str_rot13"} },
         // urldecode(str_rot13(...))
-        { R"(urldecode\s*\(\s*str_rot13\s*\()",
-          "urldecode+ROT13 obfuscation", false },
+        { R"((?i:urldecode)\s*\(\s*(?i:str_rot13)\s*\()",
+          "urldecode+ROT13 obfuscation", false,
+          {"urldecode", "str_rot13"} },
         // base64_decode(str_rot13(...))
-        { R"(base64_decode\s*\(\s*str_rot13\s*\()",
-          "base64+ROT13 obfuscation", false },
+        { R"((?i:base64_decode)\s*\(\s*(?i:str_rot13)\s*\()",
+          "base64+ROT13 obfuscation", false,
+          {"base64_decode", "str_rot13"} },
         // str_rot13(base64_decode(...))
-        { R"(str_rot13\s*\(\s*base64_decode\s*\()",
-          "ROT13+base64 obfuscation", false },
+        { R"((?i:str_rot13)\s*\(\s*(?i:base64_decode)\s*\()",
+          "ROT13+base64 obfuscation", false,
+          {"base64_decode", "str_rot13"} },
     };
 }
 const BuiltinRule OBF020 {
@@ -339,11 +367,13 @@ const BuiltinRule OBF021 {
 namespace detail_OBF018 {
     static constexpr Pattern patterns[] = {
         // Function containing base64_decode with XOR and chr in a loop
-        { R"(function\s+\w+\s*\([^)]*\)\s*\{[^}]*base64_decode[^}]*while[^}]*chr[^}]*\^)",
-          "Custom decryption function with base64+XOR", false },
+        { R"(function\s+\w+\s*\([^)]*\)\s*\{[^}]*(?i:base64_decode)[^}]*while[^}]*(?i:chr)[^}]*\^)",
+          "Custom decryption function with base64+XOR", false,
+          {"base64_decode", "function", "while"} },
         // Alternative: for loop variant
-        { R"(function\s+\w+\s*\([^)]*\)\s*\{[^}]*base64_decode[^}]*for[^}]*chr[^}]*\^)",
-          "Custom decryption function with base64+XOR loop", false },
+        { R"(function\s+\w+\s*\([^)]*\)\s*\{[^}]*(?i:base64_decode)[^}]*for[^}]*(?i:chr)[^}]*\^)",
+          "Custom decryption function with base64+XOR loop", false,
+          {"base64_decode", "function"} },
     };
 }
 const BuiltinRule OBF018 {
@@ -400,7 +430,8 @@ namespace detail_OBF023 {
     static constexpr Pattern patterns[] = {
         // 3+ consecutive GLOBALS array index concatenations
         { R"(\$GLOBALS\s*\[[^]]+\]\s*\[\s*\d+\s*\]\s*\.\s*\$GLOBALS\s*\[[^]]+\]\s*\[\s*\d+\s*\]\s*\.\s*\$GLOBALS)",
-          "GLOBALS array string building", false },
+          "GLOBALS array string building", false,
+          {"globals"} },
     };
 }
 const BuiltinRule OBF023 {
@@ -527,12 +558,180 @@ const BuiltinRule OBF025 {
     .analyzer = &detail_assembly::detectLiteralSplit,
 };
 
+// OBF036: binary payload embedded in a file that declares itself as text
+//
+// A .php/.js/.html file is source. Bytes that cannot occur in source - NUL and the
+// other C0 controls - mean something non-source is stored in it: an encrypted stage,
+// a raw deflate stream, or an appended blob the PHP half decodes at runtime.
+//
+// The metric counts ONLY C0 control bytes (minus \t \n \r \f) plus DEL. It deliberately
+// ignores every byte >= 0x80, because that is what UTF-8 text is made of. Greek,
+// Japanese, Chinese, Korean, Arabic, Hebrew, Thai, Devanagari, emoji (ZWJ sequences
+// included), combining marks and box-drawing all measure exactly 0.000% - verified
+// against the full set before this rule was written. A rule that counted "non-ASCII"
+// would flag every translated string table in the tree.
+//
+// UTF-16/UTF-32 are the one real trap: their ASCII range is half NUL bytes, so a
+// UTF-16 source file would score ~50%. Those are detected by BOM or by the
+// alternating-NUL signature and exempted before any measurement happens.
+namespace detail_OBF036 {
+    constexpr double kRatioThreshold = 0.02;   // 2% of the file
+    constexpr size_t kMinControlBytes = 8;     // ignore a stray control in a short file
+    constexpr size_t kMinSize = 64;
+
+    inline bool isControl(unsigned char c) {
+        // C0 controls except tab (9), LF (10), FF (12), CR (13); plus DEL (127).
+        return (c < 9) || (c == 11) || (c > 13 && c < 32) || (c == 127);
+    }
+
+    // UTF-16/32 text is not a binary payload - exempt it before measuring.
+    bool looksLikeWideEncoding(std::string_view c) {
+        const auto* p = reinterpret_cast<const unsigned char*>(c.data());
+        if (c.size() >= 2) {
+            if ((p[0] == 0xFF && p[1] == 0xFE) || (p[0] == 0xFE && p[1] == 0xFF)) return true;
+        }
+        if (c.size() >= 4 && p[0] == 0 && p[1] == 0 && p[2] == 0xFE && p[3] == 0xFF) return true;
+
+        // No BOM: UTF-16 ASCII alternates value/NUL. Sample the head and look for that
+        // regularity rather than for NUL bytes as such.
+        size_t sample = std::min<size_t>(c.size(), 512);
+        if (sample < 16) return false;
+        size_t evenNul = 0, oddNul = 0;
+        for (size_t i = 0; i + 1 < sample; i += 2) {
+            if (p[i] == 0) ++evenNul;
+            if (p[i + 1] == 0) ++oddNul;
+        }
+        size_t pairs = sample / 2;
+        return (evenNul * 10 >= pairs * 9) || (oddNul * 10 >= pairs * 9);
+    }
+
+    std::vector<MatchResult> detectBinaryInText(std::string_view content) {
+        std::vector<MatchResult> out;
+        if (content.size() < kMinSize) return out;
+        if (looksLikeWideEncoding(content)) return out;
+
+        size_t controls = 0;
+        size_t firstOffset = content.size();
+        for (size_t i = 0; i < content.size(); ++i) {
+            if (isControl(static_cast<unsigned char>(content[i]))) {
+                if (controls == 0) firstOffset = i;
+                ++controls;
+            }
+        }
+
+        if (controls < kMinControlBytes) return out;
+        double ratio = static_cast<double>(controls) / static_cast<double>(content.size());
+        if (ratio <= kRatioThreshold) return out;
+
+        auto [line, col] = positionToLineCol(content, firstOffset);
+        MatchResult r;
+        r.line = line;
+        r.column = col;
+        r.matched = std::string_view(content.data() + firstOffset, 1);
+        r.note = "Source file carries " + std::to_string(controls) +
+                 " control bytes (" + fmt::format("{:.1f}", ratio * 100.0) +
+                 "% of file) - a binary payload is stored inside declared text";
+        out.push_back(r);
+        return out;
+    }
+}
+const BuiltinRule OBF036 {
+    .code = {Category::Obfuscation, 36},
+    .name = "Binary payload in text file",
+    .description = "Detects binary/control-byte content embedded in a file whose type declares it as source text",
+    .severity = Severity::High,
+    .patterns = {},
+    .analyzer = &detail_OBF036::detectBinaryInText,
+};
+
+// OBF037: a single escaped run that mixes octal and hex
+//
+// OBF016 wants 8+ *consecutive octal* escapes. An emitter that alternates the two
+// notations slips between it and any hex-only rule:
+//
+//     echo "\74\144\x69\166\x3e\x3c\x69\156\160\165\x74";
+//
+// 98 octal and 73 hex escapes in that file, and never eight octal in a row.
+//
+// Mixing is the signal. Hand-written code picks a convention and keeps it; only a
+// generator randomises the notation per character. Requiring both styles inside one
+// run is what makes this safe - a plain "8+ escapes of either kind" rule costs 32
+// false positives on stock CMS and 27 on a real site (binary constants in getID3,
+// phpseclib and minified JS), and this costs none.
+namespace detail_OBF037 {
+    constexpr size_t kMinRun = 8;     // escapes in one uninterrupted run
+    constexpr size_t kMinEach = 2;    // ...of which at least this many in each style
+
+    std::vector<MatchResult> detectMixedEscapes(std::string_view content) {
+        std::vector<MatchResult> out;
+
+        size_t i = 0;
+        while (i + 1 < content.size()) {
+            if (content[i] != '\\') { ++i; continue; }
+
+            const size_t runStart = i;
+            size_t octal = 0, hex = 0;
+
+            for (;;) {
+                if (i + 1 >= content.size() || content[i] != '\\') break;
+
+                const char c = content[i + 1];
+                if (c == 'x' || c == 'X') {
+                    size_t digits = 0;
+                    while (digits < 2 && i + 2 + digits < content.size() &&
+                           std::isxdigit(static_cast<unsigned char>(content[i + 2 + digits]))) {
+                        ++digits;
+                    }
+                    if (digits < 2) break;
+                    ++hex;
+                    i += 2 + digits;
+                } else if (c >= '0' && c <= '7') {
+                    size_t digits = 0;
+                    while (digits < 3 && i + 1 + digits < content.size() &&
+                           content[i + 1 + digits] >= '0' && content[i + 1 + digits] <= '7') {
+                        ++digits;
+                    }
+                    if (digits < 2) break;
+                    ++octal;
+                    i += 1 + digits;
+                } else {
+                    break;
+                }
+            }
+
+            if (octal + hex >= kMinRun && octal >= kMinEach && hex >= kMinEach) {
+                auto [line, col] = positionToLineCol(content, runStart);
+                MatchResult r;
+                r.line = line;
+                r.column = col;
+                r.matched = content.substr(runStart, std::min<size_t>(i - runStart, 64));
+                r.note = "String built from " + std::to_string(octal) + " octal and " +
+                         std::to_string(hex) + " hex escapes interleaved in one literal";
+                out.push_back(r);
+                if (out.size() >= 20) return out;  // one file can hold hundreds
+            }
+
+            if (i == runStart) ++i;
+        }
+
+        return out;
+    }
+}
+const BuiltinRule OBF037 {
+    .code = {Category::Obfuscation, 37},
+    .name = "Mixed octal/hex escaped string",
+    .description = "Detects a string literal that interleaves octal and hex escapes, a generator-only pattern",
+    .severity = Severity::High,
+    .patterns = {},
+    .analyzer = &detail_OBF037::detectMixedEscapes,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF001, &OBF002, &OBF003, &OBF004, &OBF005,
     &OBF006, &OBF007, &OBF008, &OBF009, &OBF010,
     &OBF011, &OBF012, &OBF013, &OBF014, &OBF015, &OBF016,
     &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023,
-    &OBF024, &OBF025
+    &OBF024, &OBF025, &OBF036, &OBF037
 };
 
 const BuiltinRule* const* getAllRules() {

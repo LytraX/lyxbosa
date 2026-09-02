@@ -16,9 +16,18 @@ vcpkg_installed/
 .DS_Store
 
 debug.log
+
+# local scan reports - can quote customer paths and malware content
+/results*.json
+/report*.json
+/report*.csv
+/report*.txt
 !CMakeUserPresets.example.json
 CMakeUserPresets.json
 .vscode/c_cpp_properties.json
 
 # AI
 /.claude/
+
+# baseline binaries for before/after comparison
+/.baseline/

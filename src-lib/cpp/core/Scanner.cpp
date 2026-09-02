@@ -58,16 +58,18 @@ ScanResult Scanner::scan() {
     // a percentage when the total lands.
     std::atomic<size_t> discovered{0};
     std::atomic<size_t> countedTotal{0};
+    std::atomic<uint64_t> countedBytes{0};
     std::atomic<bool> countReady{false};
     std::thread counter;
 
     if (preCount_) {
-        counter = std::thread([this, &discovered, &countedTotal, &countReady] {
+        counter = std::thread([this, &discovered, &countedTotal, &countedBytes, &countReady] {
             FileWalker countWalker(config_.scan);
-            const size_t total = countWalker.countFiles([&discovered](size_t partial) {
+            const CountResult counted = countWalker.countFiles([&discovered](size_t partial) {
                 discovered.store(partial, std::memory_order_relaxed);
             });
-            countedTotal.store(total, std::memory_order_relaxed);
+            countedTotal.store(counted.files, std::memory_order_relaxed);
+            countedBytes.store(counted.bytes, std::memory_order_relaxed);
             countReady.store(true, std::memory_order_release);
         });
     }
@@ -88,6 +90,7 @@ ScanResult Scanner::scan() {
         // to be thread-safe.
         if (countReady.load(std::memory_order_acquire)) {
             progress.totalFiles = countedTotal.load(std::memory_order_relaxed);
+            progress.totalBytes = countedBytes.load(std::memory_order_relaxed);
             progress.phase = ScanPhase::Scanning;
         } else {
             progress.phase = ScanPhase::Discovering;
@@ -207,6 +210,7 @@ ScanResult Scanner::scan() {
         progress.filesScanned = result.totalFilesScanned;
         if (countReady.load(std::memory_order_acquire)) {
             progress.totalFiles = countedTotal.load(std::memory_order_relaxed);
+            progress.totalBytes = countedBytes.load(std::memory_order_relaxed);
         }
         progress.directoriesScanned = result.totalDirectoriesScanned;
         progressCallback_(progress);

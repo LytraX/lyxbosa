@@ -6,10 +6,12 @@ namespace lyxbosa::rules::perl {
 // PL001: Perl eval with user input
 namespace detail_PL001 {
     static constexpr Pattern patterns[] = {
-        { R"(eval\s*\(\s*\$ENV\{)",
-          "Perl eval with ENV", false },
-        { R"(eval\s+\$ARGV)",
-          "Perl eval with ARGV", false },
+        { R"((?i:eval)\s*\(\s*\$ENV\{)",
+          "Perl eval with ENV", false,
+          {"eval"} },
+        { R"((?i:eval)\s+\$ARGV)",
+          "Perl eval with ARGV", false,
+          {"argv", "eval"} },
     };
 }
 const BuiltinRule PL001 {
@@ -40,9 +42,11 @@ const BuiltinRule PL002 {
 namespace detail_PL003 {
     static constexpr Pattern patterns[] = {
         { R"(socket\s*\(\s*\w+\s*,\s*PF_INET\s*,\s*SOCK_STREAM)",
-          "Perl socket creation", false },
+          "Perl socket creation", false,
+          {"sock_stream", "pf_inet", "socket"} },
         { R"(IO::Socket::INET->new)",
-          "Perl IO::Socket", false },
+          "Perl IO::Socket", false,
+          {"io::socket::inet->new"} },
     };
 }
 const BuiltinRule PL003 {
@@ -56,10 +60,12 @@ const BuiltinRule PL003 {
 // PL004: Perl system/exec with user input
 namespace detail_PL004 {
     static constexpr Pattern patterns[] = {
-        { R"((system|exec)\s*\(\s*['"][^'"]*\$ENV)",
-          "system/exec with ENV", false },
-        { R"((system|exec)\s*\(\s*\$ARGV)",
-          "system/exec with ARGV", false },
+        { R"(((?i:system)|(?i:exec))\s*\(\s*['"][^'"]*\$ENV)",
+          "system/exec with ENV", false,
+          {"system|exec"} },
+        { R"(((?i:system)|(?i:exec))\s*\(\s*\$ARGV)",
+          "system/exec with ARGV", false,
+          {"system|exec", "argv"} },
     };
 }
 const BuiltinRule PL004 {
@@ -74,9 +80,11 @@ const BuiltinRule PL004 {
 namespace detail_PL005 {
     static constexpr Pattern patterns[] = {
         { R"(open\s*\(\s*\w+\s*,\s*['"]>\s*&)",
-          "Perl file descriptor redirect", false },
+          "Perl file descriptor redirect", false,
+          {"open"} },
         { R"(dup2\s*\()",
-          "Perl dup2 call", false },
+          "Perl dup2 call", false,
+          {"dup2"} },
     };
 }
 const BuiltinRule PL005 {
@@ -93,13 +101,17 @@ const BuiltinRule PL005 {
 namespace detail_PL006 {
     static constexpr Pattern patterns[] = {
         { R"(PRIVMSG\s+#\w+\s*:)",
-          "IRC PRIVMSG to channel", false },
+          "IRC PRIVMSG to channel", false,
+          {"privmsg"} },
         { R"(["']JOIN\s+#[a-zA-Z])",
-          "IRC JOIN channel command", false },
+          "IRC JOIN channel command", false,
+          {"join"} },
         { R"(NICK\s+[a-zA-Z]\w*\\r\\n)",
-          "IRC NICK command", false },
+          "IRC NICK command", false,
+          {"nick"} },
         { R"(print\s+\$sock\s+["'])",
-          "IRC socket write", false },
+          "IRC socket write", false,
+          {"print", "sock"} },
     };
 }
 const BuiltinRule PL006 {
@@ -114,9 +126,11 @@ const BuiltinRule PL006 {
 namespace detail_PL007 {
     static constexpr Pattern patterns[] = {
         { R"(Net::SMTP->new)",
-          "Net::SMTP usage", false },
+          "Net::SMTP usage", false,
+          {"net::smtp->new"} },
         { R"(sendmail.*?-t\s+-oi)",
-          "sendmail command", false },
+          "sendmail command", false,
+          {"sendmail"} },
     };
 }
 const BuiltinRule PL007 {
@@ -134,7 +148,8 @@ namespace detail_PL008 {
     static constexpr Pattern patterns[] = {
         // Perl-specific: fork bomb in loop with socket send
         { R"(fork\s*\(\s*\).*?socket\s*\([^)]+\).*?send\s*\()",
-          "Perl fork bomb with socket", false },
+          "Perl fork bomb with socket", false,
+          {"socket", "send", "fork"} },
     };
 }
 const BuiltinRule PL008 {

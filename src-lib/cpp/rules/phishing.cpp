@@ -7,8 +7,9 @@ namespace lyxbosa::rules::phishing {
 // Note: Pattern uses possessive [^...]*+ to avoid CTRE stack overflow on large files
 namespace detail_PHI001 {
     static constexpr Pattern patterns[] = {
-        { R"(<form[^>]*+action\s*=\s*['"][^'"]*+['"][^>]*+>.*?(paypal|apple|microsoft|google|facebook|instagram|netflix)[^<]*+password)",
-          "Phishing form with brand name", false },
+        { R"(<form[^>]*action\s*=\s*['"][^'"]*['"][^>]*>.*?(paypal|apple|microsoft|google|facebook|instagram|netflix)[^<]*password)",
+          "Phishing form with brand name", false,
+          {"password", "action", "<form"} },
     };
 }
 const BuiltinRule PHI001 {
@@ -22,8 +23,9 @@ const BuiltinRule PHI001 {
 // PHI002: Credential capture to external URL
 namespace detail_PHI002 {
     static constexpr Pattern patterns[] = {
-        { R"(mail\s*\([^)]+\$_(POST|GET|REQUEST)\s*\[\s*['"]pass(word)?['"])",
-          "Password emailed", false },
+        { R"((?i:mail)\s*\([^)]+\$_(POST|GET|REQUEST)\s*\[\s*['"]pass(word)?['"])",
+          "Password emailed", false,
+          {"pass", "mail"} },
     };
 }
 const BuiltinRule PHI002 {
@@ -38,7 +40,8 @@ const BuiltinRule PHI002 {
 namespace detail_PHI003 {
     static constexpr Pattern patterns[] = {
         { R"(document\.cookie.*?(location|window\.open|fetch|XMLHttpRequest))",
-          "Cookie exfiltration attempt", false },
+          "Cookie exfiltration attempt", false,
+          {"document", "cookie"} },
     };
 }
 const BuiltinRule PHI003 {
@@ -53,8 +56,9 @@ const BuiltinRule PHI003 {
 // Note: Pattern uses possessive [^<]*+ to avoid CTRE stack overflow on large files
 namespace detail_PHI004 {
     static constexpr Pattern patterns[] = {
-        { R"(<title>[^<]*+(login|signin|sign in|verify|update|confirm)[^<]*+</title>.*?<form.*?password)",
-          "Suspicious login page", false },
+        { R"(<title>[^<]*(login|signin|sign in|verify|update|confirm)[^<]*</title>.*?<form.*?password)",
+          "Suspicious login page", false,
+          {"password", "</title>", "<title>"} },
     };
 }
 const BuiltinRule PHI004 {
@@ -69,8 +73,9 @@ const BuiltinRule PHI004 {
 // Note: Pattern uses possessive [^;]*+ to avoid CTRE stack overflow on large files
 namespace detail_PHI005 {
     static constexpr Pattern patterns[] = {
-        { R"(curl\s+[^;]*+-d\s+[^;]*+\$_(POST|GET|REQUEST)\s*\[)",
-          "curl POST with user data", false },
+        { R"(curl\s+[^;]*-d\s+[^;]*\$_(POST|GET|REQUEST)\s*\[)",
+          "curl POST with user data", false,
+          {"curl"} },
     };
 }
 const BuiltinRule PHI005 {
@@ -85,7 +90,8 @@ const BuiltinRule PHI005 {
 namespace detail_PHI006 {
     static constexpr Pattern patterns[] = {
         { R"(session_id\s*\(\s*\$_(GET|POST|REQUEST))",
-          "Session ID from user input", false },
+          "Session ID from user input", false,
+          {"session_id", "$_get|$_post|$_request"} },
     };
 }
 const BuiltinRule PHI006 {
@@ -99,8 +105,9 @@ const BuiltinRule PHI006 {
 // PHI007: Credit card harvesting
 namespace detail_PHI007 {
     static constexpr Pattern patterns[] = {
-        { R"(preg_match\s*\([^)]*+\d{13,16}[^)]*+,\s*\$_(POST|GET|REQUEST))",
-          "Credit card regex capture", false },
+        { R"((?i:preg_match)\s*\([^)]*\d{13,16}[^)]*,\s*\$_(POST|GET|REQUEST))",
+          "Credit card regex capture", false,
+          {"preg_match"} },
     };
 }
 const BuiltinRule PHI007 {

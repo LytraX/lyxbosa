@@ -6,8 +6,9 @@ namespace lyxbosa::rules::code_exec {
 // RCE001: eval with base64 decode
 namespace detail_RCE001 {
     static constexpr Pattern patterns[] = {
-        { R"(eval\s*\(\s*base64_decode\s*\()",
-          "eval(base64_decode(", false },
+        { R"((?i:eval)\s*\(\s*(?i:base64_decode)\s*\()",
+          "eval(base64_decode(", false,
+          {"base64_decode", "eval"} },
     };
 }
 const BuiltinRule RCE001 {
@@ -21,8 +22,9 @@ const BuiltinRule RCE001 {
 // RCE002: eval with gzinflate
 namespace detail_RCE002 {
     static constexpr Pattern patterns[] = {
-        { R"(eval\s*\(\s*gzinflate\s*\()",
-          "eval(gzinflate(", false },
+        { R"((?i:eval)\s*\(\s*(?i:gzinflate)\s*\()",
+          "eval(gzinflate(", false,
+          {"gzinflate", "eval"} },
     };
 }
 const BuiltinRule RCE002 {
@@ -42,7 +44,8 @@ namespace detail_RCE003 {
         // $var( at statement start (after newline, semicolon, brace, or space)
         // This excludes ->$method( patterns because -> is not in the char class
         { R"([\n;{(\s]\$\w+\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
-          "Dynamic call with user input", false },
+          "Dynamic call with user input", false,
+          {"$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule RCE003 {
@@ -56,8 +59,9 @@ const BuiltinRule RCE003 {
 // RCE004: eval with user input
 namespace detail_RCE004 {
     static constexpr Pattern patterns[] = {
-        { R"(eval\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
-          "eval with user input", false },
+        { R"((?i:eval)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
+          "eval with user input", false,
+          {"eval", "$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule RCE004 {
@@ -71,8 +75,9 @@ const BuiltinRule RCE004 {
 // RCE005: assert with user input
 namespace detail_RCE005 {
     static constexpr Pattern patterns[] = {
-        { R"(assert\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
-          "assert with user input", false },
+        { R"((?i:assert)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
+          "assert with user input", false,
+          {"assert", "$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule RCE005 {
@@ -88,11 +93,13 @@ const BuiltinRule RCE005 {
 namespace detail_RCE006 {
     static constexpr Pattern patterns[] = {
         // Literal /e modifier
-        { R"(preg_replace\s*\(\s*['"]/[^/]+/[a-zA-Z]*e[a-zA-Z]*['"])",
-          "preg_replace /e modifier", false },
+        { R"((?i:preg_replace)\s*\(\s*['"]/[^/]+/[a-zA-Z]*e[a-zA-Z]*['"])",
+          "preg_replace /e modifier", false,
+          {"preg_replace"} },
         // Hex-encoded /e modifier (\x65 = 'e')
-        { R"(preg_replace\s*\(\s*['"]/[^/]+/[^'"]*\\x65[^'"]*['"])",
-          "preg_replace hex-encoded /e", false },
+        { R"((?i:preg_replace)\s*\(\s*['"]/[^/]+/[^'"]*\\x65[^'"]*['"])",
+          "preg_replace hex-encoded /e", false,
+          {"preg_replace"} },
     };
 }
 const BuiltinRule RCE006 {
@@ -106,8 +113,9 @@ const BuiltinRule RCE006 {
 // RCE007: create_function (deprecated, dangerous)
 namespace detail_RCE007 {
     static constexpr Pattern patterns[] = {
-        { R"(create_function\s*\(\s*['"][^'"]*['"]\s*,\s*\$_(GET|POST|REQUEST))",
-          "create_function with user input", false },
+        { R"((?i:create_function)\s*\(\s*['"][^'"]*['"]\s*,\s*\$_(GET|POST|REQUEST))",
+          "create_function with user input", false,
+          {"create_function", "$_get|$_post|$_request"} },
     };
 }
 const BuiltinRule RCE007 {
@@ -121,8 +129,9 @@ const BuiltinRule RCE007 {
 // RCE008: shell_exec/system/passthru/exec with user input
 namespace detail_RCE008 {
     static constexpr Pattern patterns[] = {
-        { R"((shell_exec|system|passthru|exec|popen)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE))",
-          "Shell command with user input", false },
+        { R"(((?i:shell_exec)|(?i:system)|(?i:passthru)|(?i:exec)|(?i:popen))\s*\(\s*\$_(GET|POST|REQUEST|COOKIE))",
+          "Shell command with user input", false,
+          {"shell_exec|system|passthru|exec|popen", "$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule RCE008 {
@@ -140,7 +149,8 @@ const BuiltinRule RCE008 {
 namespace detail_RCE009 {
     static constexpr Pattern patterns[] = {
         { R"(`[^`]{0,500}\$_(GET|POST|REQUEST|COOKIE))",
-          "Backtick with user input", false },
+          "Backtick with user input", false,
+          {"$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule RCE009 {
@@ -154,8 +164,9 @@ const BuiltinRule RCE009 {
 // RCE010: call_user_func with user input
 namespace detail_RCE010 {
     static constexpr Pattern patterns[] = {
-        { R"(call_user_func(_array)?\s*\(\s*\$_(GET|POST|REQUEST))",
-          "call_user_func with user input", false },
+        { R"((?i:call_user_func)(_array)?\s*\(\s*\$_(GET|POST|REQUEST))",
+          "call_user_func with user input", false,
+          {"call_user_func", "$_get|$_post|$_request"} },
     };
 }
 const BuiltinRule RCE010 {
@@ -169,8 +180,9 @@ const BuiltinRule RCE010 {
 // RCE011: array_map/array_filter with user callback
 namespace detail_RCE011 {
     static constexpr Pattern patterns[] = {
-        { R"((array_map|array_filter|array_reduce)\s*\(\s*\$_(GET|POST|REQUEST))",
-          "Array function with user callback", false },
+        { R"(((?i:array_map)|(?i:array_filter)|array_reduce)\s*\(\s*\$_(GET|POST|REQUEST))",
+          "Array function with user callback", false,
+          {"array_map|array_filter|array_reduce", "$_get|$_post|$_request"} },
     };
 }
 const BuiltinRule RCE011 {
@@ -186,8 +198,9 @@ const BuiltinRule RCE011 {
 // This is ALWAYS malicious - no legitimate use for eval(hex2bin())
 namespace detail_RCE012 {
     static constexpr Pattern patterns[] = {
-        { R"(eval\s*\(\s*hex2bin\s*\()",
-          "eval(hex2bin(", false },
+        { R"((?i:eval)\s*\(\s*(?i:hex2bin)\s*\()",
+          "eval(hex2bin(", false,
+          {"hex2bin", "eval"} },
     };
 }
 const BuiltinRule RCE012 {
@@ -206,8 +219,9 @@ const BuiltinRule RCE012 {
 namespace detail_RCE013 {
     static constexpr Pattern patterns[] = {
         // eval with file_get_contents('php://input')
-        { R"(eval\s*\([^;]*file_get_contents\s*\(\s*['"]php://input['"])",
-          "eval with php://input", false },
+        { R"((?i:eval)\s*\([^;]*(?i:file_get_contents)\s*\(\s*['"]php://input['"])",
+          "eval with php://input", false,
+          {"file_get_contents", "php://input", "eval"} },
     };
 }
 const BuiltinRule RCE013 {

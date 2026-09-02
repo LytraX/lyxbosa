@@ -1,4 +1,5 @@
 #include "MatchEngine.h"
+#include "utils/SafeText.h"
 #include <algorithm>
 
 namespace lyxbosa {
@@ -122,6 +123,70 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return false;  // Always filter out - rule is too broken
     }
 
+    // SEO001: Hidden link injection
+    // A markup rule. JavaScript that *builds* markup - slider and page-builder
+    // bundles emit '<a style="display:none" href="http...">' as a template string -
+    // is not an injected spam link, and matching it cost 2 false positives on a
+    // real site after the rule was repaired.
+    if (ruleCode == "SEO001") {
+        std::string path(ctx.filePath);
+        std::transform(path.begin(), path.end(), path.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (path.size() >= 3 && path.compare(path.size() - 3, 3, ".js") == 0) {
+            return false;
+        }
+    }
+
+    // OBF036: Binary payload in text file
+    // Only meaningful for files whose type *declares* them to be source text. The scan
+    // filter deliberately admits images, fonts, archives and video (payloads hide there),
+    // and those are binary by definition - measuring control bytes in a .ttf says nothing.
+    if (ruleCode == "OBF036") {
+        static constexpr std::string_view kTextExtensions[] = {
+            ".php", ".php0", ".php1", ".php2", ".php3", ".php4", ".php5", ".php6",
+            ".php7", ".php8", ".phps", ".pht", ".phtm", ".phtml", ".inc", ".tpl",
+            ".ctp", ".module", ".install", ".engine", ".theme", ".profile",
+            ".js", ".mjs", ".cjs", ".jsx", ".ts", ".vue",
+            ".html", ".htm", ".xhtml", ".shtml", ".css", ".svg",
+            ".xml", ".json", ".yml", ".yaml", ".ini", ".conf", ".cfg", ".env",
+            ".txt", ".log", ".md", ".htaccess", ".htpasswd",
+            ".pl", ".pm", ".py", ".rb", ".sh", ".bash", ".ksh", ".zsh", ".lua", ".cgi",
+            ".c", ".cpp", ".h", ".asp", ".aspx", ".ashx", ".asmx", ".jsp", ".jspx",
+            ".cfm", ".ps1", ".bat",
+        };
+
+        // Compare against the lowercased trailing extension only.
+        std::string path(ctx.filePath);
+        std::transform(path.begin(), path.end(), path.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        auto dot = path.find_last_of("./\\");
+        bool isText = false;
+        if (dot != std::string::npos && path[dot] == '.') {
+            std::string_view ext(path.data() + dot, path.size() - dot);
+            for (auto candidate : kTextExtensions) {
+                if (ext == candidate) { isText = true; break; }
+            }
+        }
+        if (!isText) {
+            return false;
+        }
+
+        // Wordfence stores its WAF state as binary inside .php files guarded by an
+        // exit header. Real, common, and not malware.
+        if (path.find("/wflogs/") != std::string::npos ||
+            path.find("\\wflogs\\") != std::string::npos) {
+            return false;
+        }
+
+        // .sql dumps legitimately carry BLOB literals.
+        if (path.size() >= 4 && path.compare(path.size() - 4, 4, ".sql") == 0) {
+            return false;
+        }
+
+        return true;
+    }
+
     // CRED004: Keylogger injection (addEventListener keydown)
     // False positives: Legitimate keyboard event handling in web apps
     // Only flag if: keydown handler appears to capture and store/send key data
@@ -241,6 +306,34 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         }
 
         return true;  // Keep the match
+    }
+
+    // DEFC001: Hacker signature
+    // "hacked by <word>" also occurs in ordinary English prose - security plugin
+    // readmes talk about "getting hacked by identifying malicious traffic". A real
+    // defacement signature names a handle, it does not continue into a sentence.
+    if (ruleCode == "DEFC001") {
+        static constexpr std::string_view kProseFollowers[] = {
+            "identifying", "exploiting", "using", "the", "a", "an", "attackers",
+            "hackers", "malicious", "someone", "anyone", "this", "these", "those",
+            "scanning", "checking", "blocking", "monitoring", "default",
+        };
+
+        // Take the word that follows "by" in the matched text.
+        std::string matched(ctx.matchedText);
+        std::transform(matched.begin(), matched.end(), matched.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        auto byPos = matched.rfind(" by ");
+        if (byPos != std::string::npos) {
+            std::string_view handle(matched);
+            handle.remove_prefix(byPos + 4);
+            for (auto word : kProseFollowers) {
+                if (handle == word) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // OBF002: chr() string building
@@ -521,18 +614,16 @@ static std::string getContext(std::string_view content, size_t offset, size_t ma
 
     std::string ctx(content.substr(start, end - start));
 
-    // Replace newlines/tabs with spaces for single-line display
+    // Fold the whitespace that only affects layout, so a quote stays on one line.
     for (char& c : ctx) {
         if (c == '\n' || c == '\r' || c == '\t') c = ' ';
     }
 
-    // Hard limit to prevent huge output
-    if (ctx.size() > contextLen) {
-        ctx.resize(contextLen);
-        ctx += "...";
-    }
-
-    return ctx;
+    // Everything else the file might contain is escaped rather than printed. This
+    // quote comes out of malware; ESC in it would drive the terminal instead of
+    // describing the finding. Truncation happens inside sanitizeAndTruncate so a
+    // cut can never leave a dangling escape for the next output to complete.
+    return safe_text::sanitizeAndTruncate(ctx, contextLen);
 }
 
 void MatchEngine::loadRules(const std::vector<RuleConfig>& configs) {
@@ -567,6 +658,7 @@ void MatchEngine::loadBuiltinCategory(rules::Category category) {
             }
         }
     }
+    rebuildPrefilter();
 }
 
 void MatchEngine::loadAllBuiltinRules() {
@@ -579,6 +671,7 @@ void MatchEngine::loadAllBuiltinRules() {
             builtinRules_.push_back(rule);
         }
     }
+    rebuildPrefilter();
 }
 
 void MatchEngine::loadBuiltinRule(std::string_view code) {
@@ -599,6 +692,7 @@ void MatchEngine::loadBuiltinRule(std::string_view code) {
             }
         }
     }
+    rebuildPrefilter();
 }
 
 void MatchEngine::disableBuiltinRule(std::string_view code) {
@@ -611,6 +705,55 @@ void MatchEngine::disableBuiltinRule(std::string_view code) {
             std::remove(builtinRules_.begin(), builtinRules_.end(), ruleToRemove),
             builtinRules_.end()
         );
+    }
+    rebuildPrefilter();
+}
+
+void MatchEngine::rebuildPrefilter() {
+    prefilter_ = LiteralPrefilter{};
+    gateHandles_.clear();
+    gateHandles_.reserve(builtinRules_.size());
+    residualSet_.reset();
+    residualRuleOf_.clear();
+
+    RE2::Options setOpts;
+    setOpts.set_log_errors(false);
+    setOpts.set_dot_nl(true);          // same as PatternCache, or the Set disagrees
+    setOpts.set_case_sensitive(true);  // caseless patterns are folded in as (?i:...)
+    setOpts.set_max_mem(64 << 20);
+    auto residual = std::make_unique<RE2::Set>(setOpts, RE2::UNANCHORED);
+    bool residualUsable = true;
+    size_t residualCount = 0;
+
+    for (size_t ruleIdx = 0; ruleIdx < builtinRules_.size(); ++ruleIdx) {
+        const auto* rule = builtinRules_[ruleIdx];
+        std::vector<size_t> handles;
+        handles.reserve(rule->patterns.size());
+        for (const auto& pattern : rule->patterns) {
+            const size_t handle = prefilter_.add(pattern);
+            handles.push_back(handle);
+
+            if (handle == LiteralPrefilter::kAlwaysRun && residualUsable) {
+                const std::string expr = pattern.case_insensitive
+                                             ? "(?i:" + std::string(pattern.regex) + ")"
+                                             : std::string(pattern.regex);
+                if (residual->Add(expr, nullptr) < 0) {
+                    residualUsable = false;  // fall back to running them all
+                } else {
+                    residualRuleOf_.push_back(ruleIdx);
+                    ++residualCount;
+                }
+            }
+        }
+        gateHandles_.push_back(std::move(handles));
+    }
+
+    prefilter_.compile();
+
+    if (residualUsable && residualCount > 0 && residual->Compile()) {
+        residualSet_ = std::move(residual);
+    } else {
+        residualRuleOf_.clear();  // no Set: the literal-less patterns just always run
     }
 }
 
@@ -641,8 +784,49 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
                           std::make_move_iterator(ruleMatches.end()));
     }
 
+    // One pass to find which gate literals this file contains, so patterns whose
+    // required text is absent are never run. See LiteralPrefilter.h - this cannot
+    // change results, only skip work that provably cannot match.
+    const auto present = prefilter_.scan(content);
+
+    // Second pass for the patterns no literal can gate: one Set instead of one
+    // walk each. Empty when the Set is unavailable, which means "run them all".
+    std::vector<char> residualRuleHit;
+    if (residualSet_) {
+        residualRuleHit.assign(builtinRules_.size(), 0);
+        std::vector<int> hits;
+        if (residualSet_->Match(re2::StringPiece(content.data(), content.size()), &hits)) {
+            for (int id : hits) {
+                if (id >= 0 && static_cast<size_t>(id) < residualRuleOf_.size()) {
+                    residualRuleHit[residualRuleOf_[static_cast<size_t>(id)]] = 1;
+                }
+            }
+        }
+    }
+
     // Match built-in rules with context-aware filtering
-    for (const auto* builtinRule : builtinRules_) {
+    for (size_t ruleIdx = 0; ruleIdx < builtinRules_.size(); ++ruleIdx) {
+        const auto* builtinRule = builtinRules_[ruleIdx];
+
+        // An analyzer rule has no patterns to gate; it always runs.
+        const std::vector<size_t>* handles =
+            ruleIdx < gateHandles_.size() ? &gateHandles_[ruleIdx] : nullptr;
+        if (handles && !handles->empty()) {
+            bool anyAllowed = false;
+            for (size_t h : *handles) {
+                if (h == LiteralPrefilter::kAlwaysRun) {
+                    // Gated by the residual Set instead, when there is one.
+                    if (residualRuleHit.empty() || residualRuleHit[ruleIdx]) {
+                        anyAllowed = true;
+                        break;
+                    }
+                    continue;
+                }
+                if (prefilter_.allows(h, present)) { anyAllowed = true; break; }
+            }
+            if (!anyAllowed) continue;
+        }
+
         auto matches = builtinRule->findMatches(content);
         std::string ruleCode = builtinRule->code.toString();
 
@@ -672,7 +856,10 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
             fm.line = match.line;
             fm.column = match.column;
             fm.offset = offset;
-            fm.matchedText = match.note.empty() ? std::string(match.matched) : match.note;
+            // match.matched is a slice of the scanned file - untrusted. match.note is
+            // written by the analyzer, but goes through the same path for uniformity.
+            fm.matchedText = match.note.empty() ? safe_text::sanitize(match.matched)
+                                                : match.note;
             fm.context = getContext(content, fm.offset, match.matched.size());
 
             // Analyzer rules explain themselves - the raw source alone does not
@@ -710,6 +897,7 @@ void MatchEngine::clear() {
     rules_.clear();
     builtinRules_.clear();
     disabledRules_.clear();
+    rebuildPrefilter();
 }
 
 }  // namespace lyxbosa

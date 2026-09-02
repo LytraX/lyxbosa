@@ -6,8 +6,9 @@ namespace lyxbosa::rules::dropper {
 // DRP001: Remote file download and execute
 namespace detail_DRP001 {
     static constexpr Pattern patterns[] = {
-        { R"(file_get_contents\s*\(\s*['"]https?://[^'"]+['"]\s*\).*?eval)",
-          "Remote file eval", false },
+        { R"((?i:file_get_contents)\s*\(\s*['"]https?://[^'"]+['"]\s*\).*?(?i:eval))",
+          "Remote file eval", false,
+          {"file_get_contents", "http"} },
     };
 }
 const BuiltinRule DRP001 {
@@ -22,7 +23,8 @@ const BuiltinRule DRP001 {
 namespace detail_DRP002 {
     static constexpr Pattern patterns[] = {
         { R"((curl|wget)\s+[^;|&]+\s*\|\s*(php|sh|bash))",
-          "curl/wget pipe to interpreter", false },
+          "curl/wget pipe to interpreter", false,
+          {"curl|wget"} },
     };
 }
 const BuiltinRule DRP002 {
@@ -36,8 +38,9 @@ const BuiltinRule DRP002 {
 // DRP003: Self-replicating code
 namespace detail_DRP003 {
     static constexpr Pattern patterns[] = {
-        { R"(file_put_contents\s*\(\s*\$_SERVER\s*\[\s*['"]SCRIPT_FILENAME['"])",
-          "Self-modification", false },
+        { R"((?i:file_put_contents)\s*\(\s*\$_SERVER\s*\[\s*['"]SCRIPT_FILENAME['"])",
+          "Self-modification", false,
+          {"file_put_contents", "script_filename", "_server"} },
     };
 }
 const BuiltinRule DRP003 {
@@ -51,8 +54,9 @@ const BuiltinRule DRP003 {
 // DRP004: Dropper writing to web root
 namespace detail_DRP004 {
     static constexpr Pattern patterns[] = {
-        { R"(file_put_contents\s*\(\s*\$_SERVER\s*\[\s*['"]DOCUMENT_ROOT['"]\s*\]\s*\.\s*['"][^'"]+\.php['"])",
-          "Writing PHP to document root", false },
+        { R"((?i:file_put_contents)\s*\(\s*\$_SERVER\s*\[\s*['"]DOCUMENT_ROOT['"]\s*\]\s*\.\s*['"][^'"]+\.php['"])",
+          "Writing PHP to document root", false,
+          {"file_put_contents", "document_root", "_server"} },
     };
 }
 const BuiltinRule DRP004 {
@@ -66,8 +70,9 @@ const BuiltinRule DRP004 {
 // DRP005: include_once remote file
 namespace detail_DRP005 {
     static constexpr Pattern patterns[] = {
-        { R"((include|require)(_once)?\s*\(\s*['"]https?://)",
-          "Remote file include", false },
+        { R"(((?i:include)|(?i:require))(_once)?\s*\(\s*['"]https?://)",
+          "Remote file include", false,
+          {"include|require", "http"} },
     };
 }
 const BuiltinRule DRP005 {
@@ -81,8 +86,9 @@ const BuiltinRule DRP005 {
 // DRP006: base64 file dropper
 namespace detail_DRP006 {
     static constexpr Pattern patterns[] = {
-        { R"(file_put_contents\s*\([^,]+,\s*base64_decode\s*\(\s*['"][A-Za-z0-9+/]{100,})",
-          "Base64 payload dropper", false },
+        { R"((?i:file_put_contents)\s*\([^,]+,\s*(?i:base64_decode)\s*\(\s*['"][A-Za-z0-9+/]{100,})",
+          "Base64 payload dropper", false,
+          {"file_put_contents", "base64_decode"} },
     };
 }
 const BuiltinRule DRP006 {
@@ -96,8 +102,9 @@ const BuiltinRule DRP006 {
 // DRP007: Large base64 string assigned to variable (payload staging)
 namespace detail_DRP007 {
     static constexpr Pattern patterns[] = {
-        { R"(\$\w+\s*=\s*base64_decode\s*\(\s*['"][A-Za-z0-9+/]{500,})",
-          "Large base64 payload in variable", false },
+        { R"(\$\w+\s*=\s*(?i:base64_decode)\s*\(\s*['"][A-Za-z0-9+/]{500,})",
+          "Large base64 payload in variable", false,
+          {"base64_decode"} },
     };
 }
 const BuiltinRule DRP007 {
@@ -111,8 +118,9 @@ const BuiltinRule DRP007 {
 // DRP008: file_put_contents writing archive files
 namespace detail_DRP008 {
     static constexpr Pattern patterns[] = {
-        { R"(file_put_contents\s*\(\s*['"][^'"]*\.(zip|tar|gz|rar|7z)['"])",
-          "Writing archive file", false },
+        { R"((?i:file_put_contents)\s*\(\s*['"][^'"]*\.(zip|tar|gz|rar|7z)['"])",
+          "Writing archive file", false,
+          {"file_put_contents"} },
     };
 }
 const BuiltinRule DRP008 {
@@ -129,8 +137,9 @@ const BuiltinRule DRP008 {
 namespace detail_DRP009 {
     static constexpr Pattern patterns[] = {
         // function copyfile, writefile, savefile, dropfile, createfile (specific names)
-        { R"(function\s+(copy|write|save|drop|create)file\s*\()",
-          "Named dropper function", false },
+        { R"(function\s+((?i:copy)|write|save|drop|create)file\s*\()",
+          "Named dropper function", false,
+          {"function", "file"} },
     };
 }
 const BuiltinRule DRP009 {
@@ -148,10 +157,12 @@ namespace detail_DRP010 {
     static constexpr Pattern patterns[] = {
         // $_SERVER['DOCUMENT_ROOT'] concatenated with variable (dynamic path)
         { R"(\$_SERVER\s*\[\s*['"]DOCUMENT_ROOT['"]\s*\]\s*\.\s*['"]/['"]\s*\.\s*\$)",
-          "DOCUMENT_ROOT path building", false },
+          "DOCUMENT_ROOT path building", false,
+          {"document_root", "_server"} },
         // file_put_contents with DOCUMENT_ROOT and /index
-        { R"(file_put_contents\s*\([^,]*DOCUMENT_ROOT[^,]*index)",
-          "Writing to index in document root", false },
+        { R"((?i:file_put_contents)\s*\([^,]*DOCUMENT_ROOT[^,]*index)",
+          "Writing to index in document root", false,
+          {"file_put_contents", "document_root", "index"} },
     };
 }
 const BuiltinRule DRP010 {
