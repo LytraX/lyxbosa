@@ -295,19 +295,72 @@ it were part of the technique. The audit question for each of the ~120 existing 
 > **Which byte in this pattern is the technique, and which is just how the sample I had
 > happened to be written?**
 
-Concrete things to look for:
+### ✅ Audit performed — what it found
+
+Two systematic defects across all 122 rules, both now fixed.
+
+**Case sensitivity (90 patterns).** PHP resolves function names case-insensitively; the
+patterns did not. `EvAl(BaSe64_DeCoDe(…))`, `SySTeM($_GET['cmd'])`, `AsSeRt($_POST['x'])`
+and `UnSerialize($_COOKIE['c'])` all execute exactly as their lowercase forms and all
+scored **zero detections**. Changing the case of a function name evaded the entire
+ruleset. Builtin names are now wrapped in `(?i:…)` rather than the whole pattern being
+made case-insensitive, because case still carries meaning elsewhere — the uppercase HTTP
+verb in `EXP010`, hex classes, base64 alphabets.
+
+**Patterns that never compiled (23 patterns, 20 rules).** They used PCRE possessive
+quantifiers (`[^)]*+`) or backreferences (`\1`). RE2 supports neither.
+`PatternCache::get()` returns `nullptr` on a compile failure and both `matches()` and
+`findMatches()` skip a null quietly — so a syntax error does not fail the build or the
+scan, it **silently disables the rule**. `BD001`–`BD009`, `BD014`, `CRED003`, `CRED005`,
+`DEFC007`, `PHI001`, `PHI004`, `PHI005`, `PHI007`, `SEO001`, `SEO002`, `SEO005` and
+`SEO006` had been dead since they were written.
+
+`BuiltinPatternTest.EveryPatternCompiles` now walks every rule and fails the build on an
+invalid pattern. That guard should have existed from the start.
+
+**Reviving 20 rules is not free.** The FP corpora caught three problems at once, and the
+lesson generalises: a rule that has never run has never been FP-tested either.
+
+| Rule | Defect exposed on revival | FPs | Fix |
+|---|---|---:|---|
+| `BD007` | unbounded `.*?` between `base64_decode` and `fsockopen`; with `dot_nl` it spans the whole file | 3 CMS, 2 Sites | bound to 200 chars |
+| `SEO001` | matched any hidden anchor; themes emit `<a style="display:none" href="<?php echo …">` | 9 Sites | require a literal external URL; gate off `.js` |
+| `BD014` | `touch()` relaxed from its backreference matches legitimate `touch($file,$time,$atime)` in WP and phpseclib | 2 CMS, 1 Sites | pattern dropped — the identity was the whole signal and RE2 cannot express it |
+
+`DEFC007` kept its identity check by moving to an analyzer: the handler assigned to
+`document.onkeydown` must name a function that pops an alert. That is the general escape
+hatch — when the precision needs something RE2 lacks, do the second step in C++ rather
+than weakening the pattern.
+
+Net: CMS 0 and Sites 4, unchanged — but now genuinely earned.
+
+### Still worth checking
 
 - `\s+` where `\s*` is meant — any required whitespace between tokens.
 - One notation where several exist: octal vs hex vs unicode escapes; `'` vs `"`;
   `array()` vs `[]`; `<?php` vs `<?=`.
 - Required argument order or count in a call that accepts either.
-- Case sensitivity on identifiers that PHP treats case-insensitively (function names).
-- Anchors (`^`, `$`, `\b`) that assume a statement starts a line.
 - Fixed distances (`.{0,40}`) tuned to one sample's spacing.
+- Unbounded `.*?` between two required tokens — `dot_nl` is on, so it spans files.
 
 Each candidate change gets the same treatment as a new rule: measure TP on the labelled
 set, FP on CMS *and* Sites, and only relax when the precision demonstrably lives elsewhere
 in the pattern.
+
+### On the regex engine
+
+RE2 lacks backreferences, lookarounds and possessive quantifiers, and vcpkg offers
+alternatives that have them: `pcre2`, `oniguruma`, `boost-regex`, `srell`. **Do not
+switch.** RE2 guarantees linear-time matching; every backtracking engine can be driven
+into exponential time by crafted input, and this scanner's input is malware chosen by an
+attacker who can read these rules. A file that hangs the scanner is an attack on incident
+response. Possessive quantifiers exist in PCRE precisely to suppress backtracking, so on
+RE2 they are redundant, not missing. For the rare rule that genuinely needs a
+backreference, use an analyzer.
+
+`hyperscan`/`vectorscan` are worth a look if multi-pattern throughput ever becomes the
+bottleneck — they are faster than RE2 at scanning many patterns at once and share its
+linear-time property — but they also lack backreferences, so they change nothing here.
 
 ---
 
