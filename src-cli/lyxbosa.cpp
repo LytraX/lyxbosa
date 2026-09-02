@@ -1,4 +1,4 @@
-#include <fmt/core.h>
+#include <fmt/base.h>
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
@@ -55,6 +55,12 @@ int main(int argc, char* argv[]) {
     std::atexit(restoreCursor);
 
     auto args = CliArgs::parse(argc, argv);
+
+    // Explicit --help goes to stdout with a success exit code
+    if (args.success && args.command == Command::Help) {
+        fmt::print("{}", CliArgs::getHelpText());
+        return 0;
+    }
 
     if (!args.success) {
         fmt::print(stderr, "{}\n", args.errorMessage);

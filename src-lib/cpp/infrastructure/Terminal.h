@@ -1,7 +1,7 @@
 #pragma once
 
 #include <iostream>
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <fmt/color.h>
 
 namespace lyxbosa {

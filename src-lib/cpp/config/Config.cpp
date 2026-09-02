@@ -2,7 +2,7 @@
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <sstream>
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 namespace lyxbosa {
 

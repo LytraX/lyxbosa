@@ -3,7 +3,7 @@
 #include "rules/Registry.hpp"
 #include <fstream>
 #include <sstream>
-#include <fmt/core.h>
+#include <fmt/base.h>
 
 namespace lyxbosa {
 

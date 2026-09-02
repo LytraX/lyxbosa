@@ -4,7 +4,7 @@
 #include "PathUtils.h"
 #include "core/ScanResult.h"
 #include "config/Types.h"
-#include <fmt/core.h>
+#include <fmt/format.h>
 
 namespace lyxbosa {
 
