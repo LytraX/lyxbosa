@@ -7,9 +7,14 @@ namespace lyxbosa::rules::seo_spam {
 // Note: Patterns use possessive [^...]*+ to avoid CTRE stack overflow on large files
 namespace detail_SEO001 {
     static constexpr Pattern patterns[] = {
-        { R"(<a\s+[^>]*+style\s*=\s*['"][^'"]*+display\s*:\s*none[^'"]*+['"][^>]*+href)",
+        // The href must be a literal external URL. Themes and widgets legitimately
+        // hide anchors whose href is generated - Avada's slideshow and Fusion's
+        // Twitter widget both emit  <a style="display:none" href="<?php echo ...  -
+        // and matching those cost 9 false positives on one real site. Injected spam
+        // links carry the destination inline.
+        { R"(<a\s+[^>]*style\s*=\s*['"][^'"]*display\s*:\s*none[^'"]*['"][^>]*href\s*=\s*['"]https?://)",
           "Hidden link", false },
-        { R"(<div\s+[^>]*+style\s*=\s*['"][^'"]*+visibility\s*:\s*hidden[^'"]*+['"][^>]*+>.*?<a\s+)",
+        { R"(<div\s+[^>]*style\s*=\s*['"][^'"]*visibility\s*:\s*hidden[^'"]*['"][^>]*>.*?<a\s+)",
           "Hidden div with links", false },
     };
 }
@@ -25,7 +30,7 @@ const BuiltinRule SEO001 {
 // Note: Pattern uses possessive [^,]*+ to avoid CTRE stack overflow on large files
 namespace detail_SEO002 {
     static constexpr Pattern patterns[] = {
-        { R"(file_put_contents\s*\([^,]*+\.html['"]\s*,.*?(viagra|cialis|casino|poker|pharmacy))",
+        { R"((?i:file_put_contents)\s*\([^,]*\.html['"]\s*,.*?(viagra|cialis|casino|poker|pharmacy))",
           "Spam page generation", false },
     };
 }
@@ -73,7 +78,7 @@ const BuiltinRule SEO004 {
 // Note: Pattern uses possessive [^>]*+ to avoid CTRE stack overflow on large files
 namespace detail_SEO005 {
     static constexpr Pattern patterns[] = {
-        { R"(<meta\s+name\s*=\s*['"]keywords['"][^>]*+content\s*=\s*['"][^'"]{500,}['"])",
+        { R"(<meta\s+name\s*=\s*['"]keywords['"][^>]*content\s*=\s*['"][^'"]{500,}['"])",
           "Excessive meta keywords", false },
     };
 }
@@ -89,7 +94,7 @@ const BuiltinRule SEO005 {
 // Note: Pattern uses possessive [^<]*+ to avoid CTRE stack overflow on large files
 namespace detail_SEO006 {
     static constexpr Pattern patterns[] = {
-        { R"(<title>[^<]*+[\x{3040}-\x{309F}\x{30A0}-\x{30FF}]{10,}[^<]*+</title>)",
+        { R"(<title>[^<]*[\x{3040}-\x{309F}\x{30A0}-\x{30FF}]{10,}[^<]*</title>)",
           "Japanese characters in title", false },
     };
 }

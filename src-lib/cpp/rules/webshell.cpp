@@ -6,9 +6,9 @@ namespace lyxbosa::rules::webshell {
 // WS001: China Chopper
 namespace detail_WS001 {
     static constexpr Pattern patterns[] = {
-        { R"(@eval\s*\(\s*\$_POST\s*\[)",
+        { R"(@(?i:eval)\s*\(\s*\$_POST\s*\[)",
           "eval($_POST[", false },
-        { R"(@?assert\s*\(\s*\$_POST\s*\[)",
+        { R"(@?(?i:assert)\s*\(\s*\$_POST\s*\[)",
           "assert($_POST[", false },
     };
 }
@@ -40,7 +40,7 @@ const BuiltinRule WS002 {
 // WS003: Weevely webshell
 namespace detail_WS003 {
     static constexpr Pattern patterns[] = {
-        { R"(\$\w+\s*=\s*str_replace\s*\([^;]+;\s*\$\w+\s*\(\s*\$\w+\s*\(\s*\$_)",
+        { R"(\$\w+\s*=\s*(?i:str_replace)\s*\([^;]+;\s*\$\w+\s*\(\s*\$\w+\s*\(\s*\$_)",
           "Weevely pattern", false },
     };
 }
@@ -119,7 +119,7 @@ const BuiltinRule WS007 {
 // WS008: Upload shell pattern
 namespace detail_WS008 {
     static constexpr Pattern patterns[] = {
-        { R"(move_uploaded_file\s*\([^,]+,\s*\$_(GET|POST|REQUEST))",
+        { R"((?i:move_uploaded_file)\s*\([^,]+,\s*\$_(GET|POST|REQUEST))",
           "Upload to user-controlled path", false },
     };
 }
@@ -134,11 +134,11 @@ const BuiltinRule WS008 {
 // WS009: Encoded webshell loader
 namespace detail_WS009 {
     static constexpr Pattern patterns[] = {
-        { R"(eval\s*\(\s*gzinflate\s*\(\s*base64_decode)",
+        { R"((?i:eval)\s*\(\s*(?i:gzinflate)\s*\(\s*(?i:base64_decode))",
           "gzinflate+base64 eval", false },
-        { R"(eval\s*\(\s*gzuncompress\s*\(\s*base64_decode)",
+        { R"((?i:eval)\s*\(\s*(?i:gzuncompress)\s*\(\s*(?i:base64_decode))",
           "gzuncompress+base64 eval", false },
-        { R"(eval\s*\(\s*str_rot13\s*\(\s*base64_decode)",
+        { R"((?i:eval)\s*\(\s*(?i:str_rot13)\s*\(\s*(?i:base64_decode))",
           "str_rot13+base64 eval", false },
     };
 }

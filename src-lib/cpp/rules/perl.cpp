@@ -6,9 +6,9 @@ namespace lyxbosa::rules::perl {
 // PL001: Perl eval with user input
 namespace detail_PL001 {
     static constexpr Pattern patterns[] = {
-        { R"(eval\s*\(\s*\$ENV\{)",
+        { R"((?i:eval)\s*\(\s*\$ENV\{)",
           "Perl eval with ENV", false },
-        { R"(eval\s+\$ARGV)",
+        { R"((?i:eval)\s+\$ARGV)",
           "Perl eval with ARGV", false },
     };
 }
@@ -56,9 +56,9 @@ const BuiltinRule PL003 {
 // PL004: Perl system/exec with user input
 namespace detail_PL004 {
     static constexpr Pattern patterns[] = {
-        { R"((system|exec)\s*\(\s*['"][^'"]*\$ENV)",
+        { R"(((?i:system)|(?i:exec))\s*\(\s*['"][^'"]*\$ENV)",
           "system/exec with ENV", false },
-        { R"((system|exec)\s*\(\s*\$ARGV)",
+        { R"(((?i:system)|(?i:exec))\s*\(\s*\$ARGV)",
           "system/exec with ARGV", false },
     };
 }

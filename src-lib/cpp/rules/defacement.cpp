@@ -1,4 +1,5 @@
 #include "defacement.h"
+#include <string>
 #include <array>
 
 namespace lyxbosa::rules::defacement {
@@ -23,7 +24,7 @@ const BuiltinRule DEFC001 {
 // DEFC002: index.html replacement
 namespace detail_DEFC002 {
     static constexpr Pattern patterns[] = {
-        { R"(file_put_contents\s*\(\s*['"][^'"]*index\.(html|php)['"]\s*,)",
+        { R"((?i:file_put_contents)\s*\(\s*['"][^'"]*index\.(html|php)['"]\s*,)",
           "Index file replacement", false },
     };
 }
@@ -38,7 +39,7 @@ const BuiltinRule DEFC002 {
 // DEFC003: Mass file replacement
 namespace detail_DEFC003 {
     static constexpr Pattern patterns[] = {
-        { R"(glob\s*\(\s*['"]\*\.php['"]\s*\).*?file_put_contents)",
+        { R"((?i:glob)\s*\(\s*['"]\*\.php['"]\s*\).*?(?i:file_put_contents))",
           "Mass PHP file modification", false },
     };
 }
@@ -104,7 +105,7 @@ namespace detail_DEFC006 {
         // eval building dynamic variable/property access (not JSON parsing)
         // Malicious: eval('var temp=document...'+where) or eval('obj.'+prop)
         // Safe: eval('(' + data + ')') for JSON
-        { R"(eval\s*\(\s*['"]var\s+\w+\s*=)",
+        { R"((?i:eval)\s*\(\s*['"]var\s+\w+\s*=)",
           "JavaScript eval variable assignment", false },
     };
 }
@@ -119,20 +120,51 @@ const BuiltinRule DEFC006 {
 // DEFC007: Keyboard event hijacking with alert
 // Malicious pages intercept keydown/keypress to show alerts or block actions
 // Legitimate uses (accessibility hotkeys) don't pop alerts on every keypress
+// The original pattern used a backreference to tie the handler name to the
+// function it names. RE2 has no backreferences, so it never compiled and the rule
+// was silently dead. That identity check is the whole precision of the rule -
+// "document.onkeydown = <something>" on its own is ordinary - so it moves here.
 namespace detail_DEFC007 {
-    static constexpr Pattern patterns[] = {
-        // Function that shows alert assigned to onkeydown
-        // Pattern: function foo(){alert(...)}...document.onkeydown=foo
-        { R"(function\s+(\w+)\s*\(\s*\)\s*\{[^}]*alert\s*\([^)]*\)[^}]*\}[^;]*document\.onkeydown\s*=\s*\1)",
-          "Keyboard hijack with alert", false },
-    };
+    std::vector<MatchResult> detectKeyboardHijack(std::string_view content) {
+        std::vector<MatchResult> out;
+
+        static const RE2 kAssign(R"(document\.onkeydown\s*=\s*(\w+))");
+        if (!kAssign.ok()) return out;
+
+        re2::StringPiece input(content.data(), content.size());
+        re2::StringPiece handler;
+        while (RE2::FindAndConsume(&input, kAssign, &handler)) {
+            const std::string name(handler.data(), handler.size());
+
+            // The named function must exist and must pop an alert.
+            const RE2 body("function\\s+" + RE2::QuoteMeta(name) +
+                           R"(\s*\([^)]*\)\s*\{[^}]{0,400}alert\s*\()");
+            if (!body.ok() || !RE2::PartialMatch(
+                    re2::StringPiece(content.data(), content.size()), body)) {
+                continue;
+            }
+
+            const size_t pos = static_cast<size_t>(handler.data() - content.data());
+            auto [line, col] = positionToLineCol(content, pos);
+            MatchResult r;
+            r.line = line;
+            r.column = col;
+            r.matched = std::string_view(handler.data(), handler.size());
+            r.note = "document.onkeydown bound to " + name + "(), which pops an alert";
+            out.push_back(r);
+            if (out.size() >= 10) break;
+        }
+
+        return out;
+    }
 }
 const BuiltinRule DEFC007 {
     .code = {Category::Defacement, 7},
     .name = "Keyboard hijacking",
     .description = "Detects keyboard event hijacking for malicious purposes",
     .severity = Severity::Medium,
-    .patterns = detail_DEFC007::patterns,
+    .patterns = {},
+    .analyzer = &detail_DEFC007::detectKeyboardHijack,
 };
 
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
