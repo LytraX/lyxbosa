@@ -8,9 +8,11 @@ namespace lyxbosa::rules::defacement {
 namespace detail_DEFC001 {
     static constexpr Pattern patterns[] = {
         { R"(hacked\s+by\s+[A-Za-z0-9_\-\.]+)",
-          "Hacker signature", true },  // case-insensitive
+          "Hacker signature", true,
+          {"hacked"} },  // case-insensitive
         { R"(defaced\s+by\s+[A-Za-z0-9_\-\.]+)",
-          "Defacement signature", true },  // case-insensitive
+          "Defacement signature", true,
+          {"defaced"} },  // case-insensitive
     };
 }
 const BuiltinRule DEFC001 {
@@ -25,7 +27,8 @@ const BuiltinRule DEFC001 {
 namespace detail_DEFC002 {
     static constexpr Pattern patterns[] = {
         { R"((?i:file_put_contents)\s*\(\s*['"][^'"]*index\.(html|php)['"]\s*,)",
-          "Index file replacement", false },
+          "Index file replacement", false,
+          {"file_put_contents", "index"} },
     };
 }
 const BuiltinRule DEFC002 {
@@ -40,7 +43,8 @@ const BuiltinRule DEFC002 {
 namespace detail_DEFC003 {
     static constexpr Pattern patterns[] = {
         { R"((?i:glob)\s*\(\s*['"]\*\.php['"]\s*\).*?(?i:file_put_contents))",
-          "Mass PHP file modification", false },
+          "Mass PHP file modification", false,
+          {"glob"} },
     };
 }
 const BuiltinRule DEFC003 {
@@ -58,13 +62,16 @@ namespace detail_DEFC004 {
     static constexpr Pattern patterns[] = {
         // oncontextmenu handler blocking
         { R"(oncontextmenu\s*=\s*["']?\s*return\s+false)",
-          "Context menu disabled", false },
+          "Context menu disabled", false,
+          {"oncontextmenu", "return", "false"} },
         // document.oncontextmenu with Function
         { R"(document\.oncontextmenu\s*=\s*new\s+Function)",
-          "Context menu blocked via Function", false },
+          "Context menu blocked via Function", false,
+          {"oncontextmenu", "document", "function"} },
         // onselectstart blocking
         { R"(onselectstart\s*=\s*new\s+Function\s*\(\s*["']return\s+false["']\s*\))",
-          "Text selection disabled", false },
+          "Text selection disabled", false,
+          {"onselectstart", "function", "return"} },
     };
 }
 const BuiltinRule DEFC004 {
@@ -82,10 +89,12 @@ namespace detail_DEFC005 {
     static constexpr Pattern patterns[] = {
         // window.resizeTo inside for loop - spam pattern
         { R"(for\s*\([^)]+\)\s*\{[^}]*window\.resizeTo)",
-          "Window resize spam", false },
+          "Window resize spam", false,
+          {"resizeto", "window"} },
         // Multiple window.moveTo calls
         { R"(window\.moveTo\s*\(\s*0\s*,\s*0\s*\)\s*[;\n]?\s*window\.resizeTo)",
-          "Window manipulation sequence", false },
+          "Window manipulation sequence", false,
+          {"resizeto", "window", "moveto"} },
     };
 }
 const BuiltinRule DEFC005 {
@@ -106,7 +115,8 @@ namespace detail_DEFC006 {
         // Malicious: eval('var temp=document...'+where) or eval('obj.'+prop)
         // Safe: eval('(' + data + ')') for JSON
         { R"((?i:eval)\s*\(\s*['"]var\s+\w+\s*=)",
-          "JavaScript eval variable assignment", false },
+          "JavaScript eval variable assignment", false,
+          {"eval"} },
     };
 }
 const BuiltinRule DEFC006 {

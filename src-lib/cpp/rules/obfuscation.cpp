@@ -11,7 +11,8 @@ namespace lyxbosa::rules::obfuscation {
 namespace detail_OBF001 {
     static constexpr Pattern patterns[] = {
         { R"(\$GLOBALS\s*\[\s*['"]\\x[0-9a-fA-F]{2})",
-          "Hex-encoded GLOBALS access", false },
+          "Hex-encoded GLOBALS access", false,
+          {"globals"} },
     };
 }
 const BuiltinRule OBF001 {
@@ -26,7 +27,8 @@ const BuiltinRule OBF001 {
 namespace detail_OBF002 {
     static constexpr Pattern patterns[] = {
         { R"((?i:chr)\s*\(\s*\d+\s*\)\s*\.\s*(?i:chr)\s*\(\s*\d+\s*\)\s*\.\s*(?i:chr)\s*\(\s*\d+\s*\)\s*\.\s*(?i:chr))",
-          "chr() string concatenation", false },
+          "chr() string concatenation", false,
+          {"chr"} },
     };
 }
 const BuiltinRule OBF002 {
@@ -41,7 +43,8 @@ const BuiltinRule OBF002 {
 namespace detail_OBF003 {
     static constexpr Pattern patterns[] = {
         { R"((?i:pack)\s*\(\s*['"]H\*['"]\s*,\s*['"][0-9a-fA-F]{20,}['"])",
-          "pack() hex decoding", false },
+          "pack() hex decoding", false,
+          {"pack"} },
     };
 }
 const BuiltinRule OBF003 {
@@ -59,10 +62,12 @@ namespace detail_OBF004 {
     static constexpr Pattern patterns[] = {
         // base64_decode with inline long string
         { R"((?i:base64_decode)\s*\(\s*['"][A-Za-z0-9+/]{500,}={0,2}['"])",
-          "base64_decode with long payload", false },
+          "base64_decode with long payload", false,
+          {"base64_decode"} },
         // Variable assigned from base64_decode of long string
         { R"(\$\w+\s*=\s*(?i:base64_decode)\s*\(\s*['"][A-Za-z0-9+/]{300,})",
-          "Variable from decoded base64", false },
+          "Variable from decoded base64", false,
+          {"base64_decode"} },
     };
 }
 const BuiltinRule OBF004 {
@@ -83,7 +88,8 @@ namespace detail_OBF005 {
         // strrev with 2+ concatenated string literals (quoted strings joined by .)
         // Pattern: strrev( ... "..." . "..." ... )
         { R"((?i:strrev)\s*\([^)]*["'][^"']*["']\s*\.\s*["'][^"']*["'][^)]*\))",
-          "strrev with literal concatenation", false },
+          "strrev with literal concatenation", false,
+          {"strrev"} },
     };
 }
 const BuiltinRule OBF005 {
@@ -128,7 +134,8 @@ const BuiltinRule OBF007 {
 namespace detail_OBF008 {
     static constexpr Pattern patterns[] = {
         { R"((?i:str_replace)\s*\(\s*['"][^'"]+['"]\s*,\s*['"]['"]?\s*,\s*['"](e|ba|as|ev|sy|ex)[^'"]+['"])",
-          "str_replace function name building", false },
+          "str_replace function name building", false,
+          {"str_replace"} },
     };
 }
 const BuiltinRule OBF008 {
@@ -143,7 +150,8 @@ const BuiltinRule OBF008 {
 namespace detail_OBF009 {
     static constexpr Pattern patterns[] = {
         { R"((?i:base64_decode)\s*\(\s*(?i:base64_decode))",
-          "Nested base64_decode", false },
+          "Nested base64_decode", false,
+          {"base64_decode"} },
     };
 }
 const BuiltinRule OBF009 {
@@ -158,7 +166,8 @@ const BuiltinRule OBF009 {
 namespace detail_OBF010 {
     static constexpr Pattern patterns[] = {
         { R"((?i:gzuncompress)\s*\(\s*(?i:base64_decode))",
-          "gzuncompress+base64", false },
+          "gzuncompress+base64", false,
+          {"gzuncompress"} },
     };
 }
 const BuiltinRule OBF010 {
@@ -173,7 +182,8 @@ const BuiltinRule OBF010 {
 namespace detail_OBF011 {
     static constexpr Pattern patterns[] = {
         { R"((?i:rawurldecode)\s*\(\s*(?i:base64_decode))",
-          "rawurldecode+base64", false },
+          "rawurldecode+base64", false,
+          {"rawurldecode"} },
     };
 }
 const BuiltinRule OBF011 {
@@ -188,7 +198,8 @@ const BuiltinRule OBF011 {
 namespace detail_OBF012 {
     static constexpr Pattern patterns[] = {
         { R"(\$\{\s*\$\w+\s*\}\s*\()",
-          "Variable variable call", false },
+          "Variable variable call", false,
+          {"${"} },
     };
 }
 const BuiltinRule OBF012 {
@@ -203,7 +214,8 @@ const BuiltinRule OBF012 {
 namespace detail_OBF013 {
     static constexpr Pattern patterns[] = {
         { R"((?i:extract)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE))",
-          "extract with user input", false },
+          "extract with user input", false,
+          {"extract", "$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule OBF013 {
@@ -218,7 +230,8 @@ const BuiltinRule OBF013 {
 namespace detail_OBF014 {
     static constexpr Pattern patterns[] = {
         { R"((?i:str_rot13)\s*\(\s*['"][^'"]{20,}['"])",
-          "str_rot13 encoded string", false },
+          "str_rot13 encoded string", false,
+          {"str_rot13"} },
     };
 }
 const BuiltinRule OBF014 {
@@ -245,7 +258,8 @@ namespace detail_OBF015 {
         // detections in the labelled corpus for no false positive on CMS or Sites -
         // the two mixed-case identifiers either side of the ';' carry the precision.
         { R"(goto\s+[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*;\s*[a-zA-Z0-9]*[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*:)",
-          "Multiple goto jumps with mixed-case labels", false },
+          "Multiple goto jumps with mixed-case labels", false,
+          {"goto"} },
     };
 }
 const BuiltinRule OBF015 {
@@ -282,7 +296,8 @@ namespace detail_OBF017 {
         // Pattern: $var = func("..."); return $var(
         // Captures: decode something into variable, then immediately call that variable
         { R"(\$\w+\s*=\s*\w+\s*\(\s*["'][^"']+["']\s*\)\s*;\s*return\s+\$\w+\s*\()",
-          "Decoded variable function call", false },
+          "Decoded variable function call", false,
+          {"return"} },
     };
 }
 const BuiltinRule OBF017 {
@@ -301,16 +316,20 @@ namespace detail_OBF020 {
     static constexpr Pattern patterns[] = {
         // str_rot13(urldecode(...))
         { R"((?i:str_rot13)\s*\(\s*(?i:urldecode)\s*\()",
-          "ROT13+urldecode obfuscation", false },
+          "ROT13+urldecode obfuscation", false,
+          {"urldecode", "str_rot13"} },
         // urldecode(str_rot13(...))
         { R"((?i:urldecode)\s*\(\s*(?i:str_rot13)\s*\()",
-          "urldecode+ROT13 obfuscation", false },
+          "urldecode+ROT13 obfuscation", false,
+          {"urldecode", "str_rot13"} },
         // base64_decode(str_rot13(...))
         { R"((?i:base64_decode)\s*\(\s*(?i:str_rot13)\s*\()",
-          "base64+ROT13 obfuscation", false },
+          "base64+ROT13 obfuscation", false,
+          {"base64_decode", "str_rot13"} },
         // str_rot13(base64_decode(...))
         { R"((?i:str_rot13)\s*\(\s*(?i:base64_decode)\s*\()",
-          "ROT13+base64 obfuscation", false },
+          "ROT13+base64 obfuscation", false,
+          {"base64_decode", "str_rot13"} },
     };
 }
 const BuiltinRule OBF020 {
@@ -349,10 +368,12 @@ namespace detail_OBF018 {
     static constexpr Pattern patterns[] = {
         // Function containing base64_decode with XOR and chr in a loop
         { R"(function\s+\w+\s*\([^)]*\)\s*\{[^}]*(?i:base64_decode)[^}]*while[^}]*(?i:chr)[^}]*\^)",
-          "Custom decryption function with base64+XOR", false },
+          "Custom decryption function with base64+XOR", false,
+          {"base64_decode", "function", "while"} },
         // Alternative: for loop variant
         { R"(function\s+\w+\s*\([^)]*\)\s*\{[^}]*(?i:base64_decode)[^}]*for[^}]*(?i:chr)[^}]*\^)",
-          "Custom decryption function with base64+XOR loop", false },
+          "Custom decryption function with base64+XOR loop", false,
+          {"base64_decode", "function"} },
     };
 }
 const BuiltinRule OBF018 {
@@ -409,7 +430,8 @@ namespace detail_OBF023 {
     static constexpr Pattern patterns[] = {
         // 3+ consecutive GLOBALS array index concatenations
         { R"(\$GLOBALS\s*\[[^]]+\]\s*\[\s*\d+\s*\]\s*\.\s*\$GLOBALS\s*\[[^]]+\]\s*\[\s*\d+\s*\]\s*\.\s*\$GLOBALS)",
-          "GLOBALS array string building", false },
+          "GLOBALS array string building", false,
+          {"globals"} },
     };
 }
 const BuiltinRule OBF023 {

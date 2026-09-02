@@ -4,6 +4,7 @@
 #include "Rule.h"
 #include "ScanResult.h"
 #include "rules/Registry.hpp"
+#include "LiteralPrefilter.h"
 #include <vector>
 #include <memory>
 #include <string_view>
@@ -87,6 +88,13 @@ private:
 
     // Check if position is inside a SQL query (heuristic)
     static bool isInSqlQuery(std::string_view content, size_t offset);
+
+    // Rebuilt whenever the builtin rule set changes. Handles are parallel to
+    // builtinRules_: one vector of per-pattern handles per rule.
+    void rebuildPrefilter();
+
+    LiteralPrefilter prefilter_;
+    std::vector<std::vector<size_t>> gateHandles_;
 
     std::vector<std::unique_ptr<Rule>> rules_;  // Custom YAML rules
     std::vector<const rules::BuiltinRule*> builtinRules_;  // Built-in CTRE rules

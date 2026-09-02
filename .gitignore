@@ -28,3 +28,6 @@ CMakeUserPresets.json
 
 # AI
 /.claude/
+
+# baseline binaries for before/after comparison
+/.baseline/

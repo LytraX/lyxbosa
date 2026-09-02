@@ -658,6 +658,7 @@ void MatchEngine::loadBuiltinCategory(rules::Category category) {
             }
         }
     }
+    rebuildPrefilter();
 }
 
 void MatchEngine::loadAllBuiltinRules() {
@@ -670,6 +671,7 @@ void MatchEngine::loadAllBuiltinRules() {
             builtinRules_.push_back(rule);
         }
     }
+    rebuildPrefilter();
 }
 
 void MatchEngine::loadBuiltinRule(std::string_view code) {
@@ -690,6 +692,7 @@ void MatchEngine::loadBuiltinRule(std::string_view code) {
             }
         }
     }
+    rebuildPrefilter();
 }
 
 void MatchEngine::disableBuiltinRule(std::string_view code) {
@@ -703,6 +706,24 @@ void MatchEngine::disableBuiltinRule(std::string_view code) {
             builtinRules_.end()
         );
     }
+    rebuildPrefilter();
+}
+
+void MatchEngine::rebuildPrefilter() {
+    prefilter_ = LiteralPrefilter{};
+    gateHandles_.clear();
+    gateHandles_.reserve(builtinRules_.size());
+
+    for (const auto* rule : builtinRules_) {
+        std::vector<size_t> handles;
+        handles.reserve(rule->patterns.size());
+        for (const auto& pattern : rule->patterns) {
+            handles.push_back(prefilter_.add(pattern));
+        }
+        gateHandles_.push_back(std::move(handles));
+    }
+
+    prefilter_.compile();
 }
 
 void MatchEngine::addRule(std::unique_ptr<Rule> rule) {
@@ -732,8 +753,26 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
                           std::make_move_iterator(ruleMatches.end()));
     }
 
+    // One pass to find which gate literals this file contains, so patterns whose
+    // required text is absent are never run. See LiteralPrefilter.h - this cannot
+    // change results, only skip work that provably cannot match.
+    const auto present = prefilter_.scan(content);
+
     // Match built-in rules with context-aware filtering
-    for (const auto* builtinRule : builtinRules_) {
+    for (size_t ruleIdx = 0; ruleIdx < builtinRules_.size(); ++ruleIdx) {
+        const auto* builtinRule = builtinRules_[ruleIdx];
+
+        // An analyzer rule has no patterns to gate; it always runs.
+        const std::vector<size_t>* handles =
+            ruleIdx < gateHandles_.size() ? &gateHandles_[ruleIdx] : nullptr;
+        if (handles && !handles->empty()) {
+            bool anyAllowed = false;
+            for (size_t h : *handles) {
+                if (prefilter_.allows(h, present)) { anyAllowed = true; break; }
+            }
+            if (!anyAllowed) continue;
+        }
+
         auto matches = builtinRule->findMatches(content);
         std::string ruleCode = builtinRule->code.toString();
 
@@ -804,6 +843,7 @@ void MatchEngine::clear() {
     rules_.clear();
     builtinRules_.clear();
     disabledRules_.clear();
+    rebuildPrefilter();
 }
 
 }  // namespace lyxbosa
