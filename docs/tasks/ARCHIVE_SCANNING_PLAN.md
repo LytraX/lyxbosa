@@ -15,6 +15,39 @@ re-run.
 
 ---
 
+## 0. What real backups actually look like
+
+Validated against a production ISPConfig server backup — 50 sites, **164 GB**,
+read-only. This changed two decisions in this plan, so re-check it before trusting
+anything below.
+
+**They are `.tar.gz`, not `.zip`.** 201 tar.gz archives, **zero zip**. Zip's
+central directory is a real advantage where it applies, but it is not the case that
+matters most; tar.gz has to be the primary path.
+
+**They are large.**
+
+```
+site archives : 201, 149 GB total
+median        : 82.5 MB
+p90           : 1.6 GB
+largest       : 13.3 GB      (24 over 1 GB, 7 over 5 GB)
+```
+
+Plus a sibling `db/` directory of loose `.sql` dumps up to **1.7 GB**, and one site
+backup contained **110 `.sql` dumps inside it**.
+
+**Streaming them is expensive.** Reading member headers only — no scanning — from a
+90 MB archive ran at 21 MB/s of compressed input on this storage. At that rate the
+13.3 GB archive costs **~10 minutes just to inflate**, before a single rule runs.
+That is the strongest argument for §2: for a large backup, the finding that matters
+is the archive itself, and it costs nothing.
+
+Expansion ratios on real sites run higher than the malware corpus: **5.6×** on a
+WordPress backup against 3.2× for the corpus archives.
+
+---
+
 ## 1. There are two problems, not one
 
 They need different handling, and conflating them is the main design risk.
@@ -35,8 +68,10 @@ of the live tree that is already being scanned.
 No decompression and no CMS knowledge needed. Count, over the archive's entry list:
 
 - entries ending `.php`, `.phtml`, `.inc`
-- credential files: `wp-config.php`, `.env`, `env.php`, `settings.php`, `local.xml`,
-  `config.inc.php`, `configure.php`
+- credential files, **path-qualified** (see below):
+  `wp-config.php`, `configuration.php`, `.env` near the archive root, plus
+  `sites/default/settings.php`, `app/etc/env.php`, `app/etc/local.xml`,
+  `config/settings.inc.php`, `app/config/parameters.php`, `includes/configure.php`
 - database dumps: `.sql`, `.sql.gz`, `.dump`
 
 Measured on the corpus archives:
@@ -50,7 +85,16 @@ archive                  members     php  config   sql   ->
 
 Rule: **≥20 PHP entries, or any credential file, or any `.sql` dump → treat as a
 site backup.** A `.sql` dump is the strongest single signal — nothing legitimate
-ships one inside a deployment archive.
+ships one inside a deployment archive, and one real site backup held 110 of them.
+
+> **A bare basename is not a credential marker.** Matching `settings.php` anywhere
+> hit `wp-admin/network/settings.php`, a WordPress core admin page, and reported six
+> "credential files" in an archive that has one. Drupal's is specifically
+> `sites/default/settings.php`. Qualify by path, or require the file within two
+> levels of the archive root for the ones that genuinely live there
+> (`wp-config.php`, `configuration.php`, `.env`). With that correction, eight real
+> backups each reported exactly one credential file, and the CMS was identified
+> correctly in every case.
 
 ---
 
@@ -142,24 +186,78 @@ requirement.
 
 ---
 
-## 5. Zip can triage for free; tar.gz cannot
+## 5. Progress: archives are directories, not files
 
-A zip's **central directory lists every member's name and uncompressed size without
-decompressing anything**. Triage the index, inflate only what was selected.
+An archive must not be one tick on the progress bar. A 20 GB backup would freeze the
+display on a single "file" for minutes and strand the ETA — exactly the pathology the
+work-based progress model was built to fix.
 
-A `.tar.gz` is a solid stream: reaching member 10,000 means inflating everything
-before it. Accept the asymmetry — zip gets selection, tar.gz gets "inflate until the
-budget is spent, then flag the rest".
+**Every member is a progress unit.** `filesScanned` advances per member,
+`bytesScanned` by member size, and the current-file line reads
+`backup.zip → 1203/28092  wp-content/uploads/x.php`. Scanning an archive should look
+like scanning a directory, because that is what it is.
 
-This also decides the progress work. `ProgressModel` weights by
-`size + kFileOverheadBytes` and needs `totalBytes` up front:
+### Are they counted in the total? Zip yes, exactly
 
-- **zip** — add each member's uncompressed size from the central directory; the
-  estimate stays accurate.
-- **gz/tar.gz** — the gzip footer only stores size mod 2³². Count the compressed
-  size and accept the ETA drifting on those archives.
+A zip's central directory sits at the end of the file and lists every member's name
+and uncompressed size. Measured on a 337 MB, 28,092-member backup:
 
----
+```
+index read (no decompression) : 0.096 s   -> 0.8% of a full read
+selective inflate, 212 hot PHP:  0.05 s   -> 39.1 MB of 694 MB
+```
+
+So the concurrent pre-count can open every zip, read the index, apply the §4
+selection policy — which is deterministic from names and sizes — and add the exact
+member count and byte total. **The ETA stays accurate and no member is decompressed
+to get it.**
+
+`ProgressModel` needs no change: a zip contributes
+`sum(selected member sizes) + kFileOverheadBytes × selected member count`, in the
+same units as a directory of loose files.
+
+### tar.gz: measure progress in compressed bytes, do not guess
+
+A `.tar.gz` is a solid stream. There is no index, and the gzip footer only stores the
+uncompressed size mod 2³², so it is unusable for anything large. Reaching member
+10,000 means inflating everything before it.
+
+Two ways to get a total, and only one is honest:
+
+- **Rejected — estimate the expansion ratio.** The corpus averages 3.2×, this backup
+  is 2.16×, and a directory of images would be ~1.0×. An estimate that wrong makes
+  the ETA worse than no ETA.
+- **Rejected — inflate once to count, again to scan.** Doubles the cost of the
+  single most expensive item in the scan.
+- **Adopted — count the archive as its *compressed* size**, which is known exactly
+  from the filesystem, and advance progress by compressed bytes consumed as the
+  stream is read.
+
+That is exact for "how far through this archive am I", needs no second pass, and the
+work-rate EWMA absorbs the difference in cost-per-compressed-byte. Streaming is not
+the expensive part anyway: 2,000 members came off the same backup in 0.18 s, so a
+full pass over a 337 MB `.tar.gz` costs a few seconds of inflation. The scanning
+dominates, and scanning is what the guards in §7 bound.
+
+The asymmetry is real and worth accepting rather than papering over: **zip gets
+selection and an exact total, tar.gz gets a full stream and an exact
+compressed-byte position.** Both give the operator honest movement.
+
+### Discovery races the scan
+
+The pre-count runs concurrently, so an archive may be reached before its index has
+been read. `ScanProgress.totalFiles` and `totalBytes` are already allowed to arrive
+late — the display shows an indeterminate phase until they do. Totals may also be
+revised upward mid-scan when a `.tar.gz` turns out larger than its compressed size
+implied; `fraction()` already clamps to 1.0, so that degrades to a bar that stalls
+near the end rather than one that lies.
+
+### The pre-count must be guarded too
+
+Opening archives during the pre-count means parsing attacker-controlled data on the
+counting thread. Every guard in §7 applies there as well, and a corrupt or hostile
+index must be caught and counted as `corrupt`, never allowed to hang or abort the
+count.
 
 ## 6. Never extract to disk
 
@@ -180,7 +278,7 @@ Capping *archive* size protects nothing: `42.zip` is 42 KB and expands to 4.5 PB
 |---|---|---|
 | per-member size | `scan.max_file_size` (5 MB) | consistent with loose files |
 | total expansion per archive | 256 MB | largest real archive expands to 16.9 MB |
-| compression ratio | 100:1 | corpus averages **3.2×**, worst **3.5×** |
+| compression ratio | 100:1 | corpus averages 3.2×; real site backups reach **5.6×** |
 | nesting depth | 2 | corpus contains **zero** nested archives |
 | wall-clock per archive | 60 s | bytes are unpredictable across ratios; time is what an operator can reason about |
 
@@ -241,11 +339,15 @@ deliberate risk decision rather than a convenience.
 
 | step | work | value |
 |---|---|---|
-| 1 | **Exposure finding** — index-only, no extraction, plus §3 CMS naming | catches the 20 GB backup case for free |
-| 2 | **Zip member scanning** — central-directory triage, priority order, all guards | recovers 47 of the 50 archive misses |
-| 3 | **tar / tar.gz streaming** — same guards, no selection | the remaining 2 |
-| 4 | Progress integration — zip sizes into `totalBytes` | keeps the ETA honest |
+| 1 | **Exposure finding** — no extraction at all, plus §3 CMS naming | the only affordable answer for a 13 GB backup, and it is free |
+| 2 | **tar / tar.gz streaming** — guards, time budget, skip accounting | the format every real backup uses |
+| 3 | **Zip member scanning** — central-directory triage and priority order | recovers 47 of the 50 archive misses in the malware corpus |
+| 4 | Progress integration — §5 | keeps the ETA honest |
 | 5 | Exhaustive mode | for operators who want it |
+
+Steps 2 and 3 are swapped relative to an earlier draft. The malware corpus is mostly
+zip, so zip looked like the priority; the production backups in §0 are entirely
+tar.gz. Both matter, but tar.gz is what an operator meets on a real server.
 
 ### Verification
 
@@ -270,4 +372,5 @@ belongs in `tests/`, asserting the scan terminates and reports the skip reason.
 | triage by extension | code is 55.7% of a real site's bytes — only ~44% saved, against 94% for path-based triage |
 | scan members sequentially | spends the budget on whatever is at the front of the archive |
 | libarchive first | large parser surface on attacker-controlled input, for formats no observed sample uses |
+| bare-basename credential markers | `settings.php` matches a WordPress core admin page; qualify by path or proximity to the archive root |
 | hash members and skip ones already scanned on disk | saves the scan but not the decompression; ~3× at best, and real complexity. Revisit after step 3. |
