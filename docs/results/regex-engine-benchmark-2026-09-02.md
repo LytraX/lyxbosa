@@ -125,35 +125,102 @@ next bottleneck at ~70% of what remains.
 
 ---
 
-## 6. Recommendation
+## 6. A third option that needs no second engine
 
-**Do not replace RE2.** It stays the matcher of record: it produces the offsets and
-text that findings need, its linear-time guarantee is a security property when the
-input is attacker-chosen malware, and it is the only one of the three that builds
-everywhere.
+Hyperscan's advantage is not really the automaton — it is that **it stops looking
+early**. Any pattern can be skipped outright when a string it *must* contain is
+absent from the file. That check needs no new engine and no new dependency.
 
-**Hyperscan is worth adopting as an optional prefilter**, behind a build flag, with
-the current path as the fallback. The evidence: 163/163 compatible, exact agreement
-on 14,288 files, and 32–50× on the dominant cost.
+For each pattern, extract the literal runs that every match must contain. A run
+qualifies only when nothing can make it optional: not inside an alternation, not
+inside a `?`/`*` group, not the character before a quantifier. **82% of patterns
+(134/163) yield one**, e.g. `RCE001` requires `eval` and `base64_decode`; `BD004`
+requires `file_get_contents` and `wp-config`.
 
-Costs to weigh before committing:
+Then one pass over the file finds which of the 136 distinct literals are present,
+and only patterns whose literals are all present are run.
 
-- **Portability is the real obstacle.** vcpkg marks `hyperscan` as `!arm` and
-  `vectorscan` as `!(x64 | x86)` — they are complementary forks, so covering the
-  `linux-amd64` and `linux-arm64` targets in `dist/` means shipping *both*, plus RE2
-  as the fallback for anything else.
-- **Build weight.** 88 transitive ports, mostly Boost.
-- **Startup.** 264 ms to compile the database. Irrelevant for a 100 s scan, but
-  material for `lyxbosa check` on one file. `hs_serialize_database()` can ship it
-  prebuilt.
-- **Prefilter only.** Start-of-match needs `HS_FLAG_SOM_LEFTMOST`, which is expensive
-  and bounded; the follow-up RE2 pass is what supplies positions and text.
+| corpus | A: today | literal prefilter | patterns run per file | speedup |
+|---|---|---|---:|---:|
+| stock CMS, 128 MB | 13.36 s | **4.63 s** | 31.0 | **2.9×** |
+| production site, 96 MB | 9.82 s | **3.82 s** | 31.8 | **2.6×** |
+| malware, 89 MB | 9.43 s | **3.89 s** | 35.0 | **2.4×** |
 
-Suggested sequence:
+Results are **identical**, and the prototype verifies it: it re-checks every pattern
+that matched and asserts its literal really was present. Zero unsound extractions
+across all three corpora.
 
-1. Land the prefilter interface with RE2::Set as the default implementation — no new
-   dependency, and it already pays for itself on clean trees.
-2. Add Hyperscan behind `LYXBOSA_HYPERSCAN`, selected at build time per platform.
-3. Gate both in CI with `--agree`; a prefilter that under-reports is a silent
-   detection failure, which is exactly the class of bug the rule audit just found.
-4. Revisit the analyzers afterwards — they are next.
+### The 29 patterns without a literal are the bottleneck
+
+31 patterns run per file, and 29 of them are the ones no literal could be extracted
+from — because their required text sits in an alternation
+(`(shell_exec|system|passthru|exec|popen)`) or is shorter than the four-character
+floor. Extracting literal *sets* — "any of these five" — is the obvious next step and
+is just as sound.
+
+Measured ceiling with every pattern gated (unsound shortcut, upper bound only):
+
+| corpus | patterns run per file | time | speedup |
+|---|---:|---|---:|
+| stock CMS | 2.0 | 0.75 s | **17.9×** |
+| production site | 2.8 | 0.88 s | **11.2×** |
+| malware | 6.0 | 1.14 s | **8.2×** |
+
+So a complete literal prefilter lands at **8–18×**, against Hyperscan's 33–50×.
+
+---
+
+## 7. Recommendation
+
+**Build the literal prefilter. Do not adopt a second engine.**
+
+| | speedup | engines | correctness | dependency | platforms |
+|---|---:|---|---|---|---|
+| RE2::Set prefilter | 1.2–25× | 1 | identical | none | all |
+| **Literal prefilter** | **8–18×** (2.4–2.9× today) | **1** | **provable** | **none** | **all** |
+| Hyperscan prefilter | 33–50× | 2 | verified empirically | 88 ports | x86 only |
+
+Three reasons the literal prefilter wins despite being slower on paper:
+
+1. **Its correctness is provable, not measured.** A pattern that requires the literal
+   `base64_decode` cannot match a file that does not contain it — that is a property
+   of the pattern, checkable per rule, not a claim about two engines agreeing on the
+   corpora we happened to test. For a scanner, "provably cannot miss" beats "did not
+   miss on 14,288 files".
+2. **One engine means one result everywhere.** Hyperscan is `!arm` and vectorscan is
+   `!(x64 | x86)`; shipping both to cover the `linux-amd64` and `linux-arm64` targets
+   means the same file could in principle be classified differently depending on the
+   platform that scanned it. For a security tool that is a defect, not a trade-off,
+   and no benchmark number justifies it.
+3. **It is not a second pass over the file.** The file is read once. What changes is
+   how much *pattern* work runs on the buffer: 163 passes today, 31 with partial
+   gating, 2–6 with complete gating. It cannot be slower than the status quo — the
+   prefilter replaces work rather than adding to it.
+
+RE2 stays the matcher of record either way: it produces the offsets and matched text
+findings need, and its linear-time guarantee is a security property when the input is
+attacker-chosen.
+
+### Sequence
+
+1. Declare the required literals **next to each rule**, hand-written and reviewed,
+   rather than parsed out of the pattern. The prototype's generator derived them by
+   parsing regexes and the first version silently paired every literal with the wrong
+   rule; explicit declaration is auditable and cannot drift.
+2. Add a test that asserts soundness for every rule: if the rule matches a string,
+   the string must contain the rule's declared literals. That is a property test, and
+   it makes the optimisation safe to extend.
+3. Extract literal sets for alternations to close the remaining 29 patterns.
+4. Revisit the analyzers — at ~12% of scan time today, they become the next
+   bottleneck once regex drops to a fifth of its current cost.
+
+Hyperscan stays in the benchmark as a reference point. If throughput ever becomes the
+binding constraint on one platform, the numbers are here — but the portability and
+determinism cost should be paid deliberately, not for a benchmark win.
+
+### Note on the benchmark's `--agree` flag
+
+`--agree` is a mode of `lyxbosa_bench_regex`, the benchmark binary. It is not, and was
+not proposed as, an option on `lyxbosa` itself. No engine selection or prefilter
+tuning should ever reach the CLI: the scanner has one behaviour, and the prefilter is
+an internal optimisation that is invisible precisely because it cannot change results.
