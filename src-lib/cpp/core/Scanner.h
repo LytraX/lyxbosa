@@ -27,6 +27,7 @@ struct ScanProgress {
     size_t discoveredFiles = 0;     // running count from the concurrent pre-count
     size_t directoriesScanned = 0;
     uint64_t bytesScanned = 0;
+    uint64_t totalBytes = 0;        // 0 while still unknown; pairs with totalFiles
 
     size_t filesWithMatches = 0;
     size_t totalMatchCount = 0;     // Total matches found so far

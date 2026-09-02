@@ -17,8 +17,27 @@
 
 namespace lyxbosa {
 
+// Scan cost is not one file, one unit. Measured on this scanner: matching costs
+// ~2.5e-7 s per byte, and each file carries ~314 us of fixed overhead (open, stat,
+// rule dispatch) regardless of size - so a file costs about as much as 1.3 KB of
+// content. Progress is therefore tracked in "work units" of
+//
+//     work(file) = size + kFileOverheadBytes
+//
+// which behaves correctly at both extremes: a directory of 4,000 one-line stubs is
+// dominated by the constant, a directory of 40 MB dumps by the bytes.
+//
+// Counting files alone is what made the ETA swing between 30s and 10s within a
+// second: the count advances at a uniform rate while the actual work per file
+// varies by four orders of magnitude.
+//
+// The rate is measured online rather than derived from those constants, because
+// throughput depends on content as much as size - obfuscated malware measured
+// roughly half the bytes/second of stock CMS source through the same ruleset.
 class ProgressModel {
 public:
+    // A file's fixed cost expressed in bytes of equivalent content.
+    static constexpr uint64_t kFileOverheadBytes = 1280;
     using Clock = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
 
@@ -40,29 +59,51 @@ public:
             (static_cast<double>(progress.filesScanned) - static_cast<double>(sampleFiles_)) / dt;
         const double instantBytes =
             (static_cast<double>(progress.bytesScanned) - static_cast<double>(sampleBytes_)) / dt;
+        const double instantWork =
+            (static_cast<double>(workDone()) - static_cast<double>(sampleWork_)) / dt;
 
         filesRate_ = haveRate_ ? kAlpha * instantFiles + (1.0 - kAlpha) * filesRate_
                                : instantFiles;
         bytesRate_ = haveRate_ ? kAlpha * instantBytes + (1.0 - kAlpha) * bytesRate_
                                : instantBytes;
+        workRate_ = haveRate_ ? kAlpha * instantWork + (1.0 - kAlpha) * workRate_
+                              : instantWork;
 
         haveRate_ = true;
         lastSample_ = now;
         sampleFiles_ = progress.filesScanned;
         sampleBytes_ = progress.bytesScanned;
+        sampleWork_ = workDone();
     }
 
     const ScanProgress& progress() const { return progress_; }
 
     bool totalKnown() const { return progress_.totalFiles > 0; }
 
+    // Work completed and total, in the units described above.
+    uint64_t workDone() const {
+        return progress_.bytesScanned +
+               kFileOverheadBytes * static_cast<uint64_t>(progress_.filesScanned);
+    }
+
+    uint64_t workTotal() const {
+        return progress_.totalBytes +
+               kFileOverheadBytes * static_cast<uint64_t>(progress_.totalFiles);
+    }
+
     // 0.0 to 1.0; 0.0 while the total is still being counted.
+    //
+    // Weighted by work rather than file count, so the bar does not sprint through
+    // a directory of stubs and then stall on one large file.
     double fraction() const {
         if (!totalKnown()) {
             return 0.0;
         }
-        const double f = static_cast<double>(progress_.filesScanned) /
-                         static_cast<double>(progress_.totalFiles);
+        const uint64_t total = workTotal();
+        if (total == 0) {
+            return 0.0;
+        }
+        const double f = static_cast<double>(workDone()) / static_cast<double>(total);
         return std::clamp(f, 0.0, 1.0);
     }
 
@@ -89,6 +130,15 @@ public:
         return secs > 0.0 ? static_cast<double>(progress_.bytesScanned) / secs : 0.0;
     }
 
+    // Work units per second, the quantity the ETA is actually built on.
+    double workPerSecond() const {
+        if (haveRate_) {
+            return workRate_;
+        }
+        const double secs = std::chrono::duration<double>(now_ - start_).count();
+        return secs > 0.0 ? static_cast<double>(workDone()) / secs : 0.0;
+    }
+
     // Absent while the total is unknown or no rate can be established yet.
     std::optional<std::chrono::seconds> eta() const {
         if (!totalKnown() || progress_.phase == ScanPhase::Finished) {
@@ -97,12 +147,18 @@ public:
         if (progress_.filesScanned >= progress_.totalFiles) {
             return std::chrono::seconds{0};
         }
-        const double rate = filesPerSecond();
+
+        const uint64_t done = workDone();
+        const uint64_t total = workTotal();
+        if (total <= done) {
+            return std::chrono::seconds{0};
+        }
+
+        const double rate = workPerSecond();
         if (rate <= 0.0) {
             return std::nullopt;
         }
-        const double remaining =
-            static_cast<double>(progress_.totalFiles - progress_.filesScanned) / rate;
+        const double remaining = static_cast<double>(total - done) / rate;
         return std::chrono::seconds{static_cast<long long>(remaining + 0.5)};
     }
 
@@ -116,8 +172,10 @@ private:
     TimePoint lastSample_;
     size_t sampleFiles_ = 0;
     uint64_t sampleBytes_ = 0;
+    uint64_t sampleWork_ = 0;
     double filesRate_ = 0.0;
     double bytesRate_ = 0.0;
+    double workRate_ = 0.0;
     bool haveRate_ = false;
 };
 

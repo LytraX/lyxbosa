@@ -182,24 +182,25 @@ bool FileWalker::matchesFilters(const std::filesystem::path& path) const {
     return true;
 }
 
-size_t FileWalker::countFiles(const CountProgressCallback& onProgress) const {
-    size_t count = 0;
+CountResult FileWalker::countFiles(const CountProgressCallback& onProgress) const {
+    CountResult result;
 
     // Counting is a full traversal in its own right and can run for minutes on a
     // large tree, so it has to honour an interrupt too - otherwise Ctrl+C during
     // the count appears to do nothing until the count finishes.
-    walk([&count, &onProgress](const FileInfo&) {
+    walk([&result, &onProgress](const FileInfo& info) {
         if (interrupted()) {
             return false;
         }
-        ++count;
-        if (onProgress && (count % 512) == 0) {
-            onProgress(count);
+        ++result.files;
+        result.bytes += info.size;
+        if (onProgress && (result.files % 512) == 0) {
+            onProgress(result.files);
         }
         return true;  // Continue counting
     });
 
-    return count;
+    return result;
 }
 
 bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::path& path) {

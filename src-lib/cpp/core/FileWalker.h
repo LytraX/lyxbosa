@@ -26,6 +26,14 @@ using DirectoryCallback = std::function<void(const std::filesystem::path&)>;
 // Called periodically during countFiles with the running total.
 using CountProgressCallback = std::function<void(size_t discovered)>;
 
+// What the pre-count learned. Bytes matter as much as the count: scan time is
+// dominated by the content actually matched against, so an ETA built on file
+// counts alone lurches every time a large file turns up.
+struct CountResult {
+    size_t files = 0;
+    uint64_t bytes = 0;
+};
+
 // Directory traversal with filtering
 class FileWalker {
 public:
@@ -38,9 +46,10 @@ public:
     // Walk a single directory (stopped is set to true if callback returns false)
     size_t walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped) const;
 
-    // Count total files without processing (fast pre-scan). The optional
-    // callback receives the running total so a long count is not silent.
-    size_t countFiles(const CountProgressCallback& onProgress = {}) const;
+    // Count total files and bytes without processing (fast pre-scan). The
+    // optional callback receives the running file count so a long count is not
+    // silent.
+    CountResult countFiles(const CountProgressCallback& onProgress = {}) const;
 
     // Report each directory as it is entered. Not thread-safe with respect to
     // walk(); set it before walking, and use a separate FileWalker per thread.
