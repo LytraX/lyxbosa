@@ -3,6 +3,7 @@
 #include "Rules.h"
 #include <string>
 #include <string_view>
+#include <vector>
 #include <filesystem>
 #include <stdexcept>
 
@@ -30,6 +31,10 @@ public:
 
     // Validate a configuration, returns error message or empty string if valid
     static std::string validate(const AppConfig& config);
+
+    // Settings that are legal but worth saying out loud - a guard turned off,
+    // mostly. Returns one line per warning, empty when there is nothing to say.
+    static std::vector<std::string> warnings(const AppConfig& config);
 
     // Print configuration summary to stdout (for confirmation prompt)
     static void printSummary(const AppConfig& config);

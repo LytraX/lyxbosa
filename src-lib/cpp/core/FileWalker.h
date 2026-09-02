@@ -34,6 +34,12 @@ struct CountResult {
     uint64_t bytes = 0;
 };
 
+// Called for each file the count walks past, so a caller can add work the walk
+// cannot see. An archive is a directory in every sense that matters to progress -
+// its members are files - and a zip says how many it holds without decompressing
+// one, so the count can be exact rather than a guess.
+using CountAugmentCallback = std::function<void(const FileInfo&, CountResult&)>;
+
 // Directory traversal with filtering
 class FileWalker {
 public:
@@ -49,7 +55,8 @@ public:
     // Count total files and bytes without processing (fast pre-scan). The
     // optional callback receives the running file count so a long count is not
     // silent.
-    CountResult countFiles(const CountProgressCallback& onProgress = {}) const;
+    CountResult countFiles(const CountProgressCallback& onProgress = {},
+                           const CountAugmentCallback& augment = {}) const;
 
     // Report each directory as it is entered. Not thread-safe with respect to
     // walk(); set it before walking, and use a separate FileWalker per thread.

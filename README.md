@@ -22,7 +22,7 @@ The engine also includes context-aware filtering, suppression comments, and fals
 
 ### Built-in Rule Categories
 
-LyxBoSa ships with a comprehensive set of built-in rules organized into 11 categories:
+LyxBoSa ships with a comprehensive set of built-in rules organized into 12 categories:
 
 | Code | Category | Description |
 |------|----------|-------------|
@@ -37,6 +37,7 @@ LyxBoSa ships with a comprehensive set of built-in rules organized into 11 categ
 | SEO | SEO Spam | SEO injection and hidden link spam |
 | DEFC | Defacement | Website defacement markers |
 | PL | Perl | Perl-based attack scripts |
+| ARC | Archive | Site backups and source archives left exposed in the scanned tree |
 
 Rules can be selectively enabled or disabled by category or individual rule code through the YAML configuration file. Custom rules can also be defined alongside the built-in set.
 
@@ -49,9 +50,68 @@ LyxBoSa provides four subcommands:
 - **`validate-config`** -- Validate a YAML configuration file for correctness.
 - **`init-config`** -- Generate a default configuration file to stdout.
 
+### Archives
+
+A `.zip` or `.tar.gz` is not opaque bytes: it is a directory that happens to be one
+file. LyxBoSa opens them, and finds two different things.
+
+**Malware staged inside one.** Members go through the same rules, the same literal
+prefilter and the same escaping as a loose file, and are addressed
+`backup.zip!wp-content/uploads/shell.php`.
+
+**The archive itself.** A forgotten backup under a web root that holds `wp-config.php`,
+`.env` or a `.sql` dump is a critical exposure in its own right: anyone who guesses the
+URL gets the source and the live database password. That finding costs no
+decompression at all — it comes from the entry list — which is the only affordable
+answer for the 13 GB backups that turn up on real servers. Where the platform can be
+identified from its distribution files the finding says so ("Magento 2 backup — 4,102
+entries, 3,318 PHP — exposes app/etc/env.php").
+
+It takes a copy of an *installed site* to raise that finding — credentials, a database
+dump, or a platform's distribution files alongside the code. A vendor plugin bundle
+sitting in `wp-content/uploads` is public code anyone can download, and is not
+reported however much PHP it contains.
+
+**An exposed backup is never quarantined.** It says a file is in the wrong place, not
+that it is hostile — it is your data, possibly the only copy, possibly tens of
+gigabytes. The finding carries the remediation ("delete it or move it outside the web
+root") and the scanner leaves the file alone. Malware *inside* an archive is a
+different matter and still quarantines the container.
+
+Nothing is ever extracted to disk. Members are streamed into a bounded in-memory
+buffer, so a scan never writes malware onto the analyst's filesystem.
+
+Every guard is expressed in decompressed bytes or wall-clock time, never in the size of
+the archive — `42.zip` is 42 KB and expands to 4.5 PB, so a cap on the file protects
+nothing. And nothing is skipped silently: every member that was not read is counted by
+reason (`not code`, `over size limit`, `budget spent`, `compression ratio`,
+`too deeply nested`, `corrupt`) in the summary and in the JSON report.
+
+```yaml
+archives:
+  enabled: true
+  max_depth: 2            # 1 = top-level archives only
+  max_member_size: 5MB    # 0 = fall back to scan.max_file_size
+  max_expansion: 256MB    # total decompressed bytes per archive; 0 = unlimited
+  max_ratio: 100          # decompressed / compressed; 0 = unlimited
+  time_budget: 60s        # per archive; 0 = unlimited
+  exhaustive: false       # scan every member, not only scripts and markup
+```
+
+Turning a guard off is allowed and is warned about, because unlimited plus a crafted
+bomb is a hang rather than a finding.
+
+Formats are zip, tar, tar.gz and gz, decided by the bytes rather than by the file name.
+Progress treats an archive as the directory it is: a zip's central directory gives an
+exact member count before anything is inflated, and a `.tar.gz` — which has no index —
+reports its position in compressed bytes, which the filesystem already knows exactly.
+
 ### Key Features
 
 - Recursive directory scanning with configurable file size limits (default 5 MB) and symlink control.
+- Archive scanning: zip, tar, tar.gz and gz opened and scanned member by member, with
+  bomb guards on decompressed bytes and an exposure finding for backups left in the
+  tree. See [Archives](#archives).
 - File inclusion/exclusion filters using glob patterns.
 - Severity levels (Critical, High, Medium, Low) for prioritizing findings.
 - Quarantine support with optional directory structure preservation. Moving files is
@@ -129,12 +189,20 @@ not a terminal, in which case it is an error rather than a guess.
 | `--no-interactive` | Never take over stdout; same as `--progress=plain` |
 | `--no-precount` | Do not pre-count files, so progress has no percentage or ETA. The count normally runs concurrently with the scan |
 
+**Archives**
+
+| Option | Description |
+|--------|-------------|
+| `--archives` | Open archives and scan their members, and report an archive that turns out to be a copy of the site. On by default |
+| `--no-archives` | Treat archives as opaque bytes, as before |
+| `--exhaustive-archives` | Scan every member, not only scripts and markup. The members otherwise skipped are 45.8% of a real site's bytes and have yet to hold a webshell in this corpus |
+
 **Actions**
 
 | Option | Description |
 |--------|-------------|
 | `--dry-run` | Report only; never move files |
-| `--quarantine` | Move matched files to the quarantine directory. **Required for any unattended run that quarantines** |
+| `--quarantine` | Move matched files to the quarantine directory. **Required for any unattended run that quarantines.** Exposure findings never move a file, and the destination must be outside every scanned root |
 | `--no-quarantine` | Never move files, whatever the configuration says |
 | `--force` | Skip the configuration summary and the confirmation prompt |
 
@@ -145,7 +213,9 @@ lyxbosa check [options] [FILE]
 ```
 
 Prompts for a path when FILE is omitted. Quarantine is always disabled. Accepts
-`-c/--config` and the global options.
+`-c/--config` and the global options. An archive is checked like the directory it is:
+the exposure finding lands on the file, and each member with findings is listed under
+it as `archive.zip!member/path.php`.
 
 ### `validate-config` — validate a configuration file
 

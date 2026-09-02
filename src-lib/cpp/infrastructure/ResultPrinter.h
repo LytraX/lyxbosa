@@ -128,6 +128,8 @@ public:
             plain("Files quarantined: {}\n", result.filesQuarantined);
         }
 
+        printArchiveSummary(result.archives);
+
         if (result.filesWithMatches > 0) {
             plain("\nMatches by severity:\n");
             if (result.criticalCount > 0) styled(Terminal::critical(), "  Critical: {}\n", result.criticalCount);
@@ -148,6 +150,66 @@ public:
         } else {
             plain("\nScan completed in {:.2f} seconds\n", totalMs / 1000.0);
         }
+    }
+
+    // What the archives cost and, more importantly, what was left unread.
+    //
+    // Every member not scanned is counted by reason and printed here. Silent
+    // skips are how the goto-obfuscation family stayed invisible for so long,
+    // and an archive is exactly where a scanner is tempted to give up quietly.
+    void printArchiveSummary(const archive::Stats& stats) const {
+        if (stats.archivesOpened == 0) {
+            return;
+        }
+
+        plain("Archives opened: {} ({} member{} scanned, {} expanded)\n",
+              stats.archivesOpened, stats.membersScanned,
+              stats.membersScanned == 1 ? "" : "s",
+              formatByteCount(stats.bytesExpanded));
+
+        if (stats.archivesUnreadable > 0) {
+            styled(Terminal::warning(), "Archives unreadable: {}\n",
+                   stats.archivesUnreadable);
+        }
+
+        if (stats.archivesTruncated > 0) {
+            styled(Terminal::warning(),
+                   "Archives stopped early: {} (a guard fired; the rest of the stream "
+                   "was not read)\n", stats.archivesTruncated);
+        }
+
+        if (stats.totalSkipped() == 0) {
+            return;
+        }
+
+        std::string reasons;
+        const auto add = [&reasons](size_t count, std::string_view label) {
+            if (count == 0) return;
+            if (!reasons.empty()) reasons += ", ";
+            reasons += fmt::format("{} {}", count, label);
+        };
+        add(stats.skippedPolicy, "not code");
+        add(stats.skippedSize, "over size limit");
+        add(stats.skippedBudget, "budget spent");
+        add(stats.skippedRatio, "compression ratio");
+        add(stats.skippedDepth, "too deeply nested");
+        add(stats.skippedCorrupt, "corrupt");
+
+        plain("Members not scanned: {} ({})\n", stats.totalSkipped(), reasons);
+    }
+
+    // "512 B", "1.5 MB". ProgressModel has the same helper, but this header is
+    // used by report writers that have no business pulling in the progress model.
+    static std::string formatByteCount(uint64_t bytes) {
+        constexpr const char* kUnits[] = {"B", "KB", "MB", "GB", "TB"};
+        auto value = static_cast<double>(bytes);
+        size_t unit = 0;
+        while (value >= 1024.0 && unit + 1 < std::size(kUnits)) {
+            value /= 1024.0;
+            ++unit;
+        }
+        return unit == 0 ? fmt::format("{} {}", bytes, kUnits[unit])
+                         : fmt::format("{:.1f} {}", value, kUnits[unit]);
     }
 
     // Truncate a path from the beginning ("...rest/of/path") without ever

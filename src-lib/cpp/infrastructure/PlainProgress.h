@@ -103,12 +103,15 @@ private:
             line += "  " + extra;
         }
 
-        // Whatever is left of the line goes to the path being scanned.
-        const std::string current = pathForDisplay(p.currentFile);
-        if (current.empty() || line.size() + kMinPathWidth + 2 > budget) {
+        // Whatever is left of the line goes to what is being read. Inside an
+        // archive that is the archive, where the scan is within it, and the
+        // member - because an archive is a directory, and scanning one should
+        // look like scanning a directory.
+        if (line.size() + kMinPathWidth + 2 > budget) {
             return line;
         }
-        return line + "  " + truncateTail(current, budget - line.size() - 2);
+        const std::string current = describeCurrentFile(p, budget - line.size() - 2);
+        return current.empty() ? line : line + "  " + current;
     }
 
     void render(const std::string& line) {
@@ -123,21 +126,6 @@ private:
     size_t usableWidth() const { return width_ > 1 ? width_ - 1 : 79; }
 
     static constexpr size_t kMinPathWidth = 20;
-
-    // Keep the tail of a path ("...rest/of/path"), never splitting a codepoint.
-    static std::string truncateTail(const std::string& s, size_t maxBytes) {
-        if (s.size() <= maxBytes) {
-            return s;
-        }
-        if (maxBytes <= 3) {
-            return "...";
-        }
-        size_t start = s.size() - (maxBytes - 3);
-        while (start < s.size() && isContinuation(s[start])) {
-            ++start;
-        }
-        return "..." + s.substr(start);
-    }
 
     // Drop any trailing partial codepoint left by a hard byte-length clip.
     static std::string clipUtf8(const std::string& s, size_t maxBytes) {

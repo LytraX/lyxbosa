@@ -40,6 +40,8 @@ struct CliArgs {
     bool noPreCount = false;     // Skip the concurrent pre-count (no percentage)
     bool silent = false;         // No output at all; requires an output file
     std::optional<bool> quarantine;  // --quarantine / --no-quarantine override
+    std::optional<bool> archives;    // --archives / --no-archives override
+    bool exhaustiveArchives = false; // --exhaustive-archives: scan every member
 
     // Check command options
     std::optional<std::string> checkFile;
@@ -122,6 +124,15 @@ inline std::string CliArgs::getHelpText() {
         "                     files cannot be undone.\n"
         "      --no-quarantine\n"
         "                     Never move files, whatever the configuration says\n"
+        "      --archives     Open archives (.zip, .tar, .tar.gz) and scan what is\n"
+        "                     inside them, and report an archive that turns out to be\n"
+        "                     a copy of the site. On by default.\n"
+        "      --no-archives  Treat archives as opaque bytes, as before\n"
+        "      --exhaustive-archives\n"
+        "                     Scan every member, not only scripts and markup. On a real\n"
+        "                     site the members skipped are 45.8% of the bytes and have\n"
+        "                     never yet held a webshell, so this is for completeness\n"
+        "                     rather than coverage.\n"
         "      --color WHEN   Colorize output: auto, always or never\n"
         "      --no-ansi      Alias for --color=never\n"
         "  -h, --help         Show help for the scan command\n"
@@ -289,6 +300,21 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
 
     scanCmd.add_argument("--no-quarantine")
         .help("Never move files, whatever the configuration says")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--archives")
+        .help("Open archives and scan their members (default)")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--no-archives")
+        .help("Treat archives as opaque bytes")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--exhaustive-archives")
+        .help("Scan every archive member, not only scripts and markup")
         .default_value(false)
         .implicit_value(true);
 
@@ -481,6 +507,18 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         } else if (scanCmd.get<bool>("--no-quarantine")) {
             result.quarantine = false;
         }
+
+        if (scanCmd.get<bool>("--archives") && scanCmd.get<bool>("--no-archives")) {
+            result.success = false;
+            result.errorMessage = "--archives and --no-archives are mutually exclusive";
+            return result;
+        }
+        if (scanCmd.get<bool>("--archives")) {
+            result.archives = true;
+        } else if (scanCmd.get<bool>("--no-archives")) {
+            result.archives = false;
+        }
+        result.exhaustiveArchives = scanCmd.get<bool>("--exhaustive-archives");
 
         if (!applyColor(scanCmd)) {
             return result;

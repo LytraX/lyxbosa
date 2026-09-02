@@ -1,5 +1,6 @@
 #pragma once
 
+#include "archive/ArchiveScanner.h"
 #include "config/Rules.h"
 #include "FileWalker.h"
 #include "MatchEngine.h"
@@ -43,6 +44,18 @@ struct ScanProgress {
 
     size_t currentFileSize = 0;
     std::filesystem::path currentFile;
+
+    // Where the scan is inside an archive, empty when it is not in one. An
+    // archive must not be one tick on the progress bar: a 20 GB backup would
+    // freeze the display on a single "file" for minutes and strand the ETA.
+    // Scanning an archive should look like scanning a directory, because that is
+    // what it is.
+    std::filesystem::path currentArchive;
+    size_t archiveMember = 0;       // 1-based position within the archive
+    size_t archiveMemberTotal = 0;  // 0 when unknown, which a tar always is
+
+    // Members not scanned, by reason, so nothing is skipped silently.
+    archive::Stats archives;
 };
 
 using ProgressCallback = std::function<void(const ScanProgress&)>;
@@ -85,11 +98,17 @@ private:
     // Read file content
     std::string readFile(const std::filesystem::path& path, uint64_t maxSize);
 
+    // Scan a file, keeping the bytes that were read. The content is needed twice:
+    // once for the rules, and once to find out whether the file is a container -
+    // which is a question about its bytes, never about its name.
+    FileResult scanContent(const std::filesystem::path& path, std::string& content);
+
     // Quarantine a file
     bool quarantineFile(const std::filesystem::path& source, std::string& destPath);
 
     AppConfig config_;
     MatchEngine engine_;
+    archive::ArchiveScanner archives_;
     ProgressCallback progressCallback_;
     FileResultCallback fileResultCallback_;
     bool dryRun_ = false;

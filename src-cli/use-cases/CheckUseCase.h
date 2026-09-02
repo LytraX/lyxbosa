@@ -5,6 +5,7 @@
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "infrastructure/InputPrompt.h"
+#include "infrastructure/PathUtils.h"
 #include "config/Config.h"
 #include "core/Scanner.h"
 #include "system/CliArgs.h"
@@ -56,18 +57,32 @@ public:
         config.actions.quarantine.enabled = false;
 
         Scanner scanner(config);
+
+        // A container is checked like the directory it is: findings inside it are
+        // reported as they are found, addressed `archive.zip!member/path.php`.
+        std::vector<FileResult> members;
+        scanner.setFileResultCallback([&members](const FileResult& member) {
+            members.push_back(member);
+        });
+
         auto result = scanner.scanFile(filePath);
 
-        if (result.matches.empty()) {
+        if (result.matches.empty() && members.empty()) {
             terminal_.print(Terminal::success(), "No matches found in: {}\n", filePath.string());
             return 0;
         }
 
-        terminal_.print(Terminal::info(), "File: {}\n", filePath.string());
-        fmt::print("Matches: {}\n\n", result.matches.size());
+        if (!result.matches.empty()) {
+            terminal_.print(Terminal::info(), "File: {}\n", filePath.string());
+            fmt::print("Matches: {}\n\n", result.matches.size());
+            printCompactMatches(result.matches);
+        }
 
-        // Group matches by rule+line for compact output
-        printCompactMatches(result.matches);
+        for (const auto& member : members) {
+            terminal_.print(Terminal::info(), "\nMember: {}\n", pathForDisplay(member.path));
+            fmt::print("Matches: {}\n\n", member.matches.size());
+            printCompactMatches(member.matches);
+        }
 
         return 2;  // Matches found
     }

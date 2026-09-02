@@ -7,6 +7,7 @@
 // against a driven clock rather than a real one.
 
 #include "core/Scanner.h"
+#include "PathUtils.h"
 
 #include <algorithm>
 #include <chrono>
@@ -34,6 +35,10 @@ namespace lyxbosa {
 // The rate is measured online rather than derived from those constants, because
 // throughput depends on content as much as size - obfuscated malware measured
 // roughly half the bytes/second of stock CMS source through the same ruleset.
+// Below this, a member path is not worth showing at all and the line keeps the
+// archive instead.
+inline constexpr size_t kMinMemberWidth = 12;
+
 class ProgressModel {
 public:
     // A file's fixed cost expressed in bytes of equivalent content.
@@ -178,6 +183,63 @@ private:
     double workRate_ = 0.0;
     bool haveRate_ = false;
 };
+
+// Keep the tail of a path ("...rest/of/path"), never splitting a codepoint.
+inline std::string truncatePathTail(const std::string& s, size_t maxBytes) {
+    if (s.size() <= maxBytes) {
+        return s;
+    }
+    if (maxBytes <= 3) {
+        return "...";
+    }
+    size_t start = s.size() - (maxBytes - 3);
+    while (start < s.size() && (static_cast<unsigned char>(s[start]) & 0xC0) == 0x80) {
+        ++start;
+    }
+    return "..." + s.substr(start);
+}
+
+// Where the scan is inside an archive: "backup.zip -> 1203/28092  ", or "" when
+// it is not in one.
+//
+// An archive is a directory, and scanning one has to look like scanning a
+// directory - a 20 GB backup shown as a single unchanging "file" freezes the
+// display for minutes and strands the ETA, which is exactly the pathology the
+// work-based progress model was built to fix. A tar has no index, so it shows
+// the member number without inventing a total.
+inline std::string archivePositionPrefix(const ScanProgress& p) {
+    if (p.currentArchive.empty()) {
+        return {};
+    }
+
+    const std::string archive = pathForDisplay(p.currentArchive.filename());
+    if (p.archiveMember == 0) {
+        return archive + "  ";
+    }
+    if (p.archiveMemberTotal > 0) {
+        return fmt::format("{} -> {}/{}  ", archive, p.archiveMember,
+                           p.archiveMemberTotal);
+    }
+    return fmt::format("{} -> {}  ", archive, p.archiveMember);
+}
+
+// What the display should call the thing being read right now, clipped to fit.
+//
+// The archive prefix is never what gets cut: dropping "backup.zip" from the
+// front of the line loses the only part that says where the scan is, and leaves
+// a member path that looks like a loose file.
+inline std::string describeCurrentFile(const ScanProgress& p, size_t maxBytes) {
+    const std::string prefix = archivePositionPrefix(p);
+    const std::string current = pathForDisplay(p.currentFile);
+
+    if (prefix.empty()) {
+        return truncatePathTail(current, maxBytes);
+    }
+    if (prefix.size() + kMinMemberWidth > maxBytes) {
+        return truncatePathTail(prefix, maxBytes);
+    }
+    return prefix + truncatePathTail(current, maxBytes - prefix.size());
+}
 
 // "3s", "2m 14s", "1h 05m"
 inline std::string formatDuration(std::chrono::seconds total) {

@@ -1,11 +1,13 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <filesystem>
 #include <chrono>
 #include <cstdint>
 #include "config/Types.h"
+#include "archive/ArchiveTypes.h"
 
 namespace lyxbosa {
 
@@ -24,6 +26,19 @@ struct FileMatch {
     bool suppressed = false;    // True if suppression comment detected nearby
 };
 
+// `patternType` of a finding the archive scanner raises about a *container* -
+// that it is a site backup sitting in a web root - rather than about any bytes
+// inside it.
+inline constexpr std::string_view kExposurePatternType = "archive";
+
+// An exposure finding says a file is in the wrong place, not that it is hostile.
+// It is the operator's own backup, it can be tens of gigabytes, and moving it is
+// a data-custody decision rather than remediation - so nothing that acts on
+// findings may treat one as malware.
+inline bool isExposureFinding(const FileMatch& match) {
+    return match.patternType == kExposurePatternType;
+}
+
 // Result for a single file
 struct FileResult {
     std::filesystem::path path;
@@ -33,6 +48,17 @@ struct FileResult {
     bool skippedSize = false;    // true if skipped due to size limit
     uint64_t fileSize = 0;
 };
+
+// True when a file carries at least one finding about its own content, as
+// opposed to only an exposure finding about where it sits.
+inline bool hasHostileContent(const FileResult& result) {
+    for (const auto& match : result.matches) {
+        if (!isExposureFinding(match)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 // Aggregate scan results
 struct ScanResult {
@@ -46,6 +72,11 @@ struct ScanResult {
     size_t filesSkippedSize = 0;
     size_t totalMatches = 0;
     uint64_t bytesScanned = 0;
+
+    // Archive handling, including every member that was not scanned and why.
+    // Silent skips are how a whole family of obfuscation stayed invisible; an
+    // archive is exactly where a scanner is tempted to give up quietly.
+    archive::Stats archives;
 
     // Timing
     std::chrono::steady_clock::time_point startTime;

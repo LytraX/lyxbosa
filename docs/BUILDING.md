@@ -12,7 +12,8 @@ assumes you run commands from the repository root.
 | Ninja | Generator used by every preset. |
 | vcpkg | Cloned and bootstrapped, with `VCPKG_ROOT` exported. |
 
-Dependencies (`fmt`, `argparse`, `yaml-cpp`, `reflectcpp`, `re2`, `xxhash`, `gtest`)
+Dependencies (`fmt`, `argparse`, `yaml-cpp`, `reflectcpp`, `re2`, `xxhash`, `gtest`,
+`zlib`, `libzip`)
 are declared in [`vcpkg.json`](../vcpkg.json) and installed automatically at configure
 time, pinned to the registry baseline in
 [`vcpkg-configuration.json`](../vcpkg-configuration.json). The first configure of a

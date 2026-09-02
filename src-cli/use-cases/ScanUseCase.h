@@ -67,6 +67,14 @@ public:
             return 1;
         }
 
+        // Guards that have been turned off are legal, and worth saying out loud
+        // before a scan rather than after one that never came back.
+        if (!args.silent) {
+            for (const auto& warning : Config::warnings(config)) {
+                terminal_.printErr(Terminal::warning(), "Warning: {}\n", warning);
+            }
+        }
+
         const ReportPlan plan = planReport(args, config);
 
         // A silent run with nowhere to write is a scan nobody can ever read.
@@ -76,6 +84,23 @@ public:
                 "to go. Pass -O/--output-file FILE, or set actions.report.file in the\n"
                 "configuration.\n");
             return 1;
+        }
+
+        // Quarantining into a directory that is itself being scanned does not
+        // remove anything from the tree: it changes the path, re-finds the same
+        // file on the next run, and - if that path is still served - leaves the
+        // malware reachable under a new URL while reporting it as handled.
+        if (config.actions.quarantine.enabled && !args.dryRun) {
+            if (const auto under = quarantineInsideScanTree(config)) {
+                terminal_.printErr(Terminal::error(),
+                    "Error: the quarantine directory ({}) is inside a scanned directory\n"
+                    "       ({}). Moving a file there does not take it out of the tree:\n"
+                    "       the next scan finds it again, and if that path is served the\n"
+                    "       file is still reachable. Point quarantine.directory somewhere\n"
+                    "       outside every scanned root.\n",
+                    config.actions.quarantine.directory, *under);
+                return 1;
+            }
         }
 
         // Quarantining moves files and cannot be undone. An unattended run has
@@ -179,6 +204,13 @@ private:
         if (args.quarantine.has_value()) {
             config.actions.quarantine.enabled = *args.quarantine;
         }
+
+        if (args.archives.has_value()) {
+            config.archives.enabled = *args.archives;
+        }
+        if (args.exhaustiveArchives) {
+            config.archives.exhaustive = true;
+        }
     }
 
     bool confirmScan() {
@@ -208,6 +240,34 @@ private:
         }
         plan.console = config.actions.report.console;
         return plan;
+    }
+
+    // The scanned root the quarantine directory sits under, if it sits under one.
+    static std::optional<std::string> quarantineInsideScanTree(const AppConfig& config) {
+        if (config.actions.quarantine.directory.empty()) {
+            return std::nullopt;
+        }
+
+        std::error_code ec;
+        const auto dest = std::filesystem::weakly_canonical(
+            std::filesystem::path(config.actions.quarantine.directory), ec);
+        if (ec) {
+            return std::nullopt;
+        }
+
+        for (const auto& dir : config.scan.directories) {
+            const auto root =
+                std::filesystem::weakly_canonical(std::filesystem::path(dir), ec);
+            if (ec) {
+                continue;
+            }
+            auto [mismatch, unused] =
+                std::mismatch(root.begin(), root.end(), dest.begin(), dest.end());
+            if (mismatch == root.end()) {
+                return dir;
+            }
+        }
+        return std::nullopt;
     }
 
     // Writing the report into the tree being scanned means scanning our own

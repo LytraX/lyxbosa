@@ -72,6 +72,9 @@ public:
     void onProgress(const ScanProgress& progress) {
         const auto now = Clock::now();
         model_.update(progress, now);
+        // Inside an archive the line reads "backup.zip -> 1203/28092  member",
+        // so a 20 GB backup does not sit on one unchanging "file" for minutes.
+        currentPrefix_ = archivePositionPrefix(progress);
         current_ = pathForDisplay(progress.currentFile);
         pump();
     }
@@ -359,7 +362,11 @@ private:
 
         Element currentLine = hbox({
             text(state + ": ") | color(paused_ ? Color::Yellow : Color::GrayDark),
-            text(truncateTail(current_, std::max(10, width - 12))) | dim,
+            text(currentPrefix_ +
+                 truncateTail(current_,
+                              std::max<int>(10, width - 12 -
+                                                static_cast<int>(currentPrefix_.size()))))
+                | dim,
         });
 
         Element keys = hbox({
@@ -405,6 +412,7 @@ private:
     int scroll_ = 0;
 
     std::string current_;
+    std::string currentPrefix_;   // "backup.zip -> 1203/28092  ", never truncated
     std::vector<Row> rows_;
     ProgressModel model_;
     Clock::time_point lastFrame_{};

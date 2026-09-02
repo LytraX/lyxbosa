@@ -638,11 +638,21 @@ void MatchEngine::loadRules(const std::vector<RuleConfig>& configs) {
     }
 }
 
+// A rule with neither patterns nor an analyzer has nothing to run against file
+// content: the ARC rules are raised by the archive scanner from an entry list.
+// Loading them here would walk every file for a rule that can never match.
+static bool scansContent(const rules::BuiltinRule* rule) {
+    return rule && (!rule->patterns.empty() || rule->analyzer != nullptr);
+}
+
 void MatchEngine::loadBuiltinCategory(rules::Category category) {
     const auto& registry = rules::Registry::instance();
     auto categoryRules = registry.getByCategory(category);
 
     for (const auto* rule : categoryRules) {
+        if (!scansContent(rule)) {
+            continue;
+        }
         std::string code = rule->code.toString();
         if (disabledRules_.find(code) == disabledRules_.end()) {
             // Check if already loaded
@@ -666,6 +676,9 @@ void MatchEngine::loadAllBuiltinRules() {
     builtinRules_.clear();
 
     for (const auto* rule : registry.getAllRules()) {
+        if (!scansContent(rule)) {
+            continue;
+        }
         std::string code = rule->code.toString();
         if (disabledRules_.find(code) == disabledRules_.end()) {
             builtinRules_.push_back(rule);
@@ -676,7 +689,7 @@ void MatchEngine::loadAllBuiltinRules() {
 
 void MatchEngine::loadBuiltinRule(std::string_view code) {
     const auto* rule = rules::getRuleByCode(code);
-    if (rule) {
+    if (scansContent(rule)) {
         std::string codeStr(code);
         if (disabledRules_.find(codeStr) == disabledRules_.end()) {
             // Check if already loaded

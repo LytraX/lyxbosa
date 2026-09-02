@@ -48,6 +48,8 @@ find_package(argparse CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(reflectcpp CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(libzip CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 # The full-screen terminal UI. Off-switch for minimal/static builds (docker/,
@@ -73,6 +75,7 @@ set(RULE_SOURCES
     src-lib/cpp/rules/seo_spam.cpp
     src-lib/cpp/rules/defacement.cpp
     src-lib/cpp/rules/perl.cpp
+    src-lib/cpp/rules/archive.cpp
 )
 
 # Collect library sources from src-lib
@@ -87,6 +90,11 @@ set(LIB_SOURCES
     src-lib/cpp/core/FileWalker.cpp
     src-lib/cpp/core/MatchEngine.cpp
     src-lib/cpp/core/Scanner.cpp
+    src-lib/cpp/archive/ArchiveFormat.cpp
+    src-lib/cpp/archive/ArchiveIndex.cpp
+    src-lib/cpp/archive/ArchiveScanner.cpp
+    src-lib/cpp/archive/TarReader.cpp
+    src-lib/cpp/archive/ZipReader.cpp
     ${RULE_SOURCES}
 )
 
@@ -119,6 +127,8 @@ target_link_libraries(lyxbosa
     yaml-cpp::yaml-cpp
     reflectcpp::reflectcpp
     re2::re2
+    libzip::zip
+    ZLIB::ZLIB
     Threads::Threads
 )
 
@@ -141,7 +151,7 @@ if(LYXBOSA_BENCHMARKS)
     ${CMAKE_SOURCE_DIR}/src-cli
   )
   target_link_libraries(lyxbosa_bench_regex PRIVATE
-    fmt::fmt yaml-cpp::yaml-cpp re2::re2 Threads::Threads
+    fmt::fmt yaml-cpp::yaml-cpp re2::re2 libzip::zip ZLIB::ZLIB Threads::Threads
   )
   find_path(HYPERSCAN_INCLUDE_DIR hs/hs.h)
   find_library(HYPERSCAN_LIBRARY NAMES hs libhs)
@@ -164,6 +174,7 @@ if(BUILD_TESTS)
   add_executable(lyxbosa_tests
     tests/rules_test.cpp
     tests/progress_model_test.cpp
+    tests/archive_test.cpp
     ${LIB_SOURCES}
   )
 
@@ -179,6 +190,8 @@ if(BUILD_TESTS)
       yaml-cpp::yaml-cpp
       reflectcpp::reflectcpp
       re2::re2
+      libzip::zip
+      ZLIB::ZLIB
       Threads::Threads
       GTest::gtest
       GTest::gtest_main

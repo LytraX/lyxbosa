@@ -116,6 +116,34 @@ ScanConfig parseScanConfig(const YAML::Node& node) {
     return sc;
 }
 
+ArchiveConfig parseArchivesConfig(const YAML::Node& node) {
+    ArchiveConfig ac;
+
+    if (node["enabled"]) {
+        ac.enabled = node["enabled"].as<bool>();
+    }
+    if (node["max_depth"]) {
+        ac.maxDepth = node["max_depth"].as<size_t>();
+    }
+    if (node["max_member_size"]) {
+        ac.maxMemberSize = parseFileSize(node["max_member_size"].as<std::string>());
+    }
+    if (node["max_expansion"]) {
+        ac.maxExpansion = parseFileSize(node["max_expansion"].as<std::string>());
+    }
+    if (node["max_ratio"]) {
+        ac.maxRatio = node["max_ratio"].as<uint64_t>();
+    }
+    if (node["time_budget"]) {
+        ac.timeBudgetSeconds = parseDurationSeconds(node["time_budget"].as<std::string>());
+    }
+    if (node["exhaustive"]) {
+        ac.exhaustive = node["exhaustive"].as<bool>();
+    }
+
+    return ac;
+}
+
 ActionsConfig parseActionsConfig(const YAML::Node& node) {
     ActionsConfig ac;
 
@@ -218,6 +246,10 @@ AppConfig Config::loadFromString(std::string_view yaml) {
 
         if (root["scan"]) {
             config.scan = parseScanConfig(root["scan"]);
+        }
+
+        if (root["archives"]) {
+            config.archives = parseArchivesConfig(root["archives"]);
         }
 
         if (root["rules"] && root["rules"].IsSequence()) {
@@ -415,10 +447,32 @@ scan:
     - vendor/**
     - "*.min.js"
 
+# Archives
+#
+# A .zip or .tar.gz is not opaque bytes: it is a directory that happens to be one
+# file. Two different things are found by opening one - malware staged inside a
+# payload archive, and a forgotten site backup that hands its own database
+# password to anyone who guesses the URL.
+#
+# Every guard below is expressed in decompressed bytes or wall-clock time, never
+# in the size of the archive: 42.zip is 42 KB and expands to 4.5 PB, so a cap on
+# the file protects nothing at all.
+archives:
+  enabled: true
+  max_depth: 2            # 1 = top-level archives only; an archive inside an
+                          # archive needs 2
+  max_member_size: 5MB    # 0 = fall back to scan.max_file_size
+  max_expansion: 256MB    # total decompressed bytes per archive; 0 = unlimited
+  max_ratio: 100          # decompressed / compressed; 0 = unlimited
+  time_budget: 60s        # per archive; 0 = unlimited
+  exhaustive: false       # true scans every member, not only the code. Scripts,
+                          # then markup, then everything else - on a real site the
+                          # first two are 54% of the files and 5.6% of the bytes.
+
 # Built-in detection rules (CTRE compile-time regex - extremely fast)
 # Categories: WS (Webshell), BD (Backdoor), OBF (Obfuscation), PHI (Phishing),
 #             EXP (Exploit), DRP (Dropper), RCE (CodeExec), CRED (CredTheft),
-#             SEO (SeoSpam), DEFC (Defacement), PL (Perl)
+#             SEO (SeoSpam), DEFC (Defacement), PL (Perl), ARC (Archive)
 builtin_rules:
   enabled: true
   # use: []                    # Empty = load all rules (default)
@@ -493,6 +547,42 @@ std::string Config::validate(const AppConfig& config) {
     return "";  // Valid
 }
 
+std::vector<std::string> Config::warnings(const AppConfig& config) {
+    std::vector<std::string> out;
+
+    if (!config.archives.enabled) {
+        return out;
+    }
+
+    // "0 = unlimited" is accepted, because an operator scanning a known-good
+    // archive should be able to turn a guard off. It is warned about because
+    // unlimited plus a crafted bomb is a hang rather than a finding, and a hang
+    // during an incident looks exactly like a scanner that found nothing.
+    if (config.archives.maxExpansion == 0) {
+        out.push_back("archives.max_expansion is 0 (unlimited): a decompression bomb "
+                      "will be inflated until it runs out of disk or patience");
+    }
+    if (config.archives.maxRatio == 0) {
+        out.push_back("archives.max_ratio is 0 (unlimited): the compression-ratio guard "
+                      "is off, so a bomb is only bounded by the expansion and time budgets");
+    }
+    if (config.archives.timeBudgetSeconds == 0) {
+        out.push_back("archives.time_budget is 0 (unlimited): a single archive can hold "
+                      "the scan for as long as it takes to read");
+    }
+    if (config.archives.maxExpansion == 0 && config.archives.timeBudgetSeconds == 0) {
+        out.push_back("with both the expansion and time budgets unlimited, nothing bounds "
+                      "an archive at all");
+    }
+    if (config.archives.maxDepth > 4) {
+        out.push_back(fmt::format("archives.max_depth is {}: no observed sample nests "
+                                  "archives at all, and every level multiplies the work",
+                                  config.archives.maxDepth));
+    }
+
+    return out;
+}
+
 void Config::printSummary(const AppConfig& config) {
     fmt::print(stderr, "\n=== LyxBoSa Configuration ===\n\n");
 
@@ -519,6 +609,25 @@ void Config::printSummary(const AppConfig& config) {
         fmt::print(stderr, "\nExclude patterns ({}):\n", config.scan.exclude.size());
         for (const auto& pat : config.scan.exclude) {
             fmt::print(stderr, "  - {}\n", pat);
+        }
+    }
+
+    // Archives
+    fmt::print(stderr, "\nArchives: {}\n", config.archives.enabled ? "opened" : "not opened");
+    if (config.archives.enabled) {
+        fmt::print(stderr, "  Nesting depth: {}\n", config.archives.maxDepth);
+        fmt::print(stderr, "  Per-member limit: {} bytes\n",
+                   config.archives.memberSizeLimit(config.scan.maxFileSize));
+        fmt::print(stderr, "  Expansion budget: {}\n",
+                   config.archives.maxExpansion == 0
+                       ? std::string("unlimited")
+                       : fmt::format("{} bytes", config.archives.maxExpansion));
+        fmt::print(stderr, "  Time budget: {}\n",
+                   config.archives.timeBudgetSeconds == 0
+                       ? std::string("unlimited")
+                       : fmt::format("{}s", config.archives.timeBudgetSeconds));
+        if (config.archives.exhaustive) {
+            fmt::print(stderr, "  Exhaustive: every member, not only code\n");
         }
     }
 

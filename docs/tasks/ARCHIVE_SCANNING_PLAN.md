@@ -1,6 +1,6 @@
 # Archive scanning plan
 
-**Date:** 2026-09-02 · **Status:** designed, not started
+**Date:** 2026-09-02 · **Status:** implemented 2026-09-03 — see [What shipped](#what-shipped)
 
 Archives are the largest remaining detection gap. In the labelled malware corpus,
 **50 of 185 misses are `.zip` or `.tar`** — the scanner reads them as opaque bytes.
@@ -87,6 +87,15 @@ Rule: **≥20 PHP entries, or any credential file, or any `.sql` dump → treat 
 site backup.** A `.sql` dump is the strongest single signal — nothing legitimate
 ships one inside a deployment archive, and one real site backup held 110 of them.
 
+> **Corrected in implementation: the PHP count alone is not enough.** Three vendor
+> plugin bundles in one real WordPress theme — `js_composer.zip` (435 PHP),
+> `revslider.zip` (290), `data.zip` (110) — clear the threshold and expose nothing,
+> because they are public plugin code anyone can download. A PHP count measures
+> size, not exposure. The shipped rule requires a credential file, a `.sql` dump,
+> **or** ≥20 PHP entries *together with a platform marker from §3* — the thing that
+> says this is a copy of an installed site rather than of somebody's plugin. See
+> [What shipped](#what-shipped).
+
 > **A bare basename is not a credential marker.** Matching `settings.php` anywhere
 > hit `wp-admin/network/settings.php`, a WordPress core admin page, and reported six
 > "credential files" in an archive that has one. Drupal's is specifically
@@ -150,7 +159,10 @@ concrete/dispatcher.php                               Concrete
 vendor/typo3/                                         TYPO3
 ```
 
-Keep this list additive. A platform nobody added still gets §2's finding.
+Keep this list additive. A platform nobody added still gets §2's finding whenever
+the archive carries credentials or a database dump — which every real backup
+measured does. It is only the source-only case that now needs a marker, for the
+reason in the note under §1.
 
 ---
 
@@ -374,3 +386,130 @@ belongs in `tests/`, asserting the scan terminates and reports the skip reason.
 | libarchive first | large parser surface on attacker-controlled input, for formats no observed sample uses |
 | bare-basename credential markers | `settings.php` matches a WordPress core admin page; qualify by path or proximity to the archive root |
 | hash members and skip ones already scanned on disk | saves the scan but not the decompression; ~3× at best, and real complexity. Revisit after step 3. |
+
+---
+
+## What shipped
+
+All five steps, on 2026-09-03. Code lives in [`src-lib/cpp/archive/`](../../src-lib/cpp/archive/),
+the rules in [`src-lib/cpp/rules/archive.cpp`](../../src-lib/cpp/rules/archive.cpp), and
+the tests in [`tests/archive_test.cpp`](../../tests/archive_test.cpp).
+
+| § | Shipped as |
+|---|---|
+| 1 | `IndexSummary` in `ArchiveIndex.cpp` — accumulates one name at a time, so a zip index and a tar stream share it |
+| 2 | `ARC001` (critical, credentials or a dump), `ARC002` (high, source only), `ARC003` (low, unreadable) |
+| 3 | 15 distribution-file markers, most hits wins; naming only, never a gate |
+| 4 | `Bucket::{HotScript, Script, Markup, Other}`; zip is stable-sorted by bucket, `Other` needs `exhaustive` |
+| 5 | Members are progress units; zip contributes an exact count from the central directory, tar.gz its compressed position |
+| 6 | `MemorySource` / bounded `std::string`; there is no path in the code that writes a member anywhere |
+| 7 | `archive::Budget`, shared down through nesting so a bomb cannot buy budget by nesting |
+| 8 | `archive::Stats`, by reason, in the text summary and the JSON report |
+| 9 | libzip 1.11.4 (`default-features: false`) + zlib, added to `vcpkg.json` |
+
+### Measured against the corpora
+
+`.baseline/lyxbosa-baseline` (5246db9) versus the new binary, JSON reports compared
+per file and per match, ignoring `durationMs`:
+
+```
+corpus       lost matches  new matches  new rule mix
+CMS                     0            0  -
+Sites                   0            0  -
+verified                0          570  OBF015 x556, RCE001 x7, EXP009 x4,
+                                        BD012 x2, ARC001 x1
+unverified              0            0  -
+```
+
+**Zero findings lost**, which is the assertion that matters: archive support adds
+findings, it must not move one. The 570 new matches on the verified corpus are real
+malware recovered from inside `.tar` and `.zip` files the scanner previously read as
+opaque bytes — including `wp-log1n.php` under `.well-known/pki-validation/a/b/d/` —
+and are the recovery §10 predicted.
+
+One *record* changes on Sites without any finding changing: `revslider.zip` (8.4 MB)
+used to appear as `skipped — size limit` with no matches, and no longer appears at all,
+because it is no longer skipped. It is opened, indexed, and 2,116 of its members are
+scanned. Reporting it as unscanned would now be false.
+
+Cost, on `trail-data/CMS` (51,294 files, 455 archives): **5.40 s with archives against
+5.14 s with `--no-archives`**, about 5%.
+
+### Two things the corpora forced
+
+**`__MACOSX` sidecars.** The first run added 1,501 findings on the Sites corpus, and
+1,499 of them were `revslider.zip!__MACOSX/…/._index.php` — AppleDouble resource forks
+that a Mac writes beside every file it zips. They start `00 05 16 07` and are pure
+binary, so OBF036 (binary payload in a file that declares itself as source) fired on
+every one, correctly and uselessly. `isContainerMetadata()` now skips `__MACOSX/`
+trees, `._*` stubs, `.DS_Store` and `Thumbs.db` — counted as `policy` skips, and
+excluded from the PHP tally that decides whether an archive is a site backup, since
+otherwise a Mac-made zip doubles its own PHP count. After the fix the Sites corpus adds
+exactly two findings, both ARC002, both real: plugin zips bundled inside a theme, in a
+web root.
+
+**Directory entries are not skipped members.** Counting them made `--exhaustive-archives`
+report eight members "not scanned" on an archive where it had scanned everything.
+
+### Deviations from the plan above
+
+**§2 severity is split, and §1's threshold is tightened.** The plan calls any archive
+holding executable source, credentials or a dump a critical exposure, on a ≥20 PHP
+trigger. Both halves needed work, and the corpus said so:
+
+- Two rules, not one. ARC001 is critical when there are credentials or a `.sql` dump;
+  ARC002 is **high** when there is only source. Reporting a source disclosure at the
+  same severity as a handed-over database password drowns the second in the first. The
+  distinction is the one §2 draws in its own prose — *"delete this, it is exposing your
+  database password"*.
+- The ≥20 PHP trigger now also needs a platform marker. On its own it fired on all
+  three vendor plugin bundles in the Sites corpus and on nothing else; those bundles
+  are downloadable from the vendor, so there is no exposure to report. With the marker
+  required, Sites contributes **zero** archive findings and every real backup measured
+  still reports, because a backup carries distribution files, credentials and a
+  database — all three.
+
+**Exposure findings are never quarantined.** ARC001 says a file is in the wrong place,
+not that it is hostile: it is the operator's own backup, possibly their only copy of
+the site, possibly 13 GB of it. `fs::rename` across a filesystem boundary degrades to
+copy-and-delete, so a full quarantine volume mid-copy is a bad failure on a file that
+is not malware. Worse, a quarantine directory inside the web root would change the URL
+without removing the exposure, while reporting it as handled. So the finding carries
+the remediation — *"delete it or move it outside the web root"* — and the scanner does
+not perform it. Malware *inside* an archive is a separate matter and still quarantines
+the container, because a member cannot be moved out of one.
+
+**Quarantining into a scanned directory is now refused outright.** The same reasoning
+applies to ordinary malware and was not archive-specific: moving a file to a path that
+is still inside a scanned root does not take it out of the tree, and if that path is
+served the file stays reachable. This is a new error for a configuration that
+previously ran; the message names both directories and the fix is one line of YAML.
+
+**`check` sniffs an oversize file from disk.** `check` read the file bounded by
+`scan.max_file_size` and sniffed the buffer, so a single-file check on the 8.4 MB
+`revslider.zip` reported nothing while `scan` on its directory reported the exposure.
+`scan` had always used the short-read path for oversize files; `check` now does too.
+
+**Guards charge skipped bytes too.** Bytes stepped over inside a tar still count
+against `max_expansion`. They have to: a member claiming 4.5 PB is skipped for its
+size, but the stream still has to be inflated to get past it, and not charging that is
+the hole a bomb would use. The consequence is that a 13 GB backup stops after 256 MB of
+output — which is what §2 says should happen anyway, since the finding that matters is
+the archive itself.
+
+**A truncated stream is counted as one archive, not N members.** When a guard fires
+part-way through a `.tar.gz`, how many members remain cannot be known without reading
+the bytes the guard just refused. `archivesTruncated` records the archive; inventing a
+member count would have been a number with nothing behind it.
+
+**`check` opens archives too.** Not in the plan, but a single-file check on a backup
+that reports nothing about its contents would be surprising once `scan` does.
+
+### Left for later
+
+- **libarchive.** Still not warranted: no observed sample uses 7z or rar. `§9` stands.
+- **Hashing members against files already scanned on disk.** As §Rejected says — saves
+  the scan but not the decompression. Revisit if the decompression ever dominates.
+- **Priority order inside a tar.** A solid stream has no index, so a webshell late in a
+  large `.tar.gz` is missed when the budget runs out. Nothing can fix that without
+  a second pass, which costs more than it saves.

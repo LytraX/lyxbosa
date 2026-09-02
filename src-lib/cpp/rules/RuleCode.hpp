@@ -23,6 +23,7 @@ enum class Category : uint8_t {
     Tracking,       // TRK - Tracking/analytics abuse
     Defacement,     // DEFC - Site defacement
     Perl,           // PL - Perl-specific malware
+    Archive,        // ARC - Exposed archives and backups
     COUNT           // Number of categories
 };
 
@@ -48,6 +49,7 @@ constexpr CategoryInfo getCategoryInfo(Category cat) {
         {"TRK",  "Tracking",      "Malicious tracking"},
         {"DEFC", "Defacement",    "Site defacement"},
         {"PL",   "Perl",          "Perl malware"},
+        {"ARC",  "Archive",       "Exposed archives and backups"},
     }};
     return infos[static_cast<size_t>(cat)];
 }
@@ -66,6 +68,7 @@ inline std::optional<Category> parseCategory(std::string_view code) {
     if (code == "TRK")  return Category::Tracking;
     if (code == "DEFC") return Category::Defacement;
     if (code == "PL")   return Category::Perl;
+    if (code == "ARC")  return Category::Archive;
     return std::nullopt;
 }
 

@@ -183,6 +183,35 @@ inline uint64_t parseFileSize(std::string_view s) {
     return value;
 }
 
+// Parse duration strings like "60s", "5m", "2h", or a bare "90" (seconds).
+// Returns 0 for an empty or unparseable value, which every caller reads as
+// "unlimited".
+inline uint64_t parseDurationSeconds(std::string_view s) {
+    if (s.empty()) return 0;
+
+    uint64_t value = 0;
+    size_t i = 0;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+        value = value * 10 + static_cast<uint64_t>(s[i] - '0');
+        ++i;
+    }
+
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) {
+        ++i;
+    }
+
+    if (i < s.size()) {
+        const char unit = s[i];
+        if (unit == 'm' || unit == 'M') {
+            value *= 60ULL;
+        } else if (unit == 'h' || unit == 'H') {
+            value *= 3600ULL;
+        }
+    }
+
+    return value;
+}
+
 // Parse ColorWhen from string ("auto", "always", "never")
 inline bool colorWhenFromString(std::string_view s, ColorWhen& out) {
     if (s == "auto")   { out = ColorWhen::Auto;   return true; }

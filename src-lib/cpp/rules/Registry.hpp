@@ -12,6 +12,7 @@
 #include "seo_spam.h"
 #include "defacement.h"
 #include "perl.h"
+#include "archive.h"
 #include <vector>
 #include <unordered_map>
 #include <optional>
@@ -148,6 +149,13 @@ private:
         auto plRules = perl::getAllRules();
         for (size_t i = 0; i < perl::RULE_COUNT; ++i) {
             registerRule(plRules[i]);
+        }
+        // Register archive exposure rules. They carry no patterns - the archive
+        // scanner raises them from an entry list - but they are registered so
+        // that they can be named, listed and disabled like any other rule.
+        auto arcRules = archive::getAllRules();
+        for (size_t i = 0; i < archive::RULE_COUNT; ++i) {
+            registerRule(arcRules[i]);
         }
     }
 

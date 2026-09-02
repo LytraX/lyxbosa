@@ -47,6 +47,29 @@ struct ScanConfig {
     std::vector<std::string> exclude;
 };
 
+// Archive scanning settings.
+//
+// Every guard is expressed in *decompressed* bytes or wall-clock time, never in
+// archive size: 42.zip is 42 KB and expands to 4.5 PB, so a cap on the file
+// protects nothing. The defaults sit far above anything real - the largest
+// archive in the malware corpus expands to 16.9 MB against a 256 MB cap, and the
+// worst real expansion ratio measured on a production site backup was 5.6x
+// against a cap of 100.
+struct ArchiveConfig {
+    bool enabled = true;
+    size_t maxDepth = 2;                          // 1 = top-level archives only
+    uint64_t maxMemberSize = 0;                   // 0 = fall back to scan.max_file_size
+    uint64_t maxExpansion = 256ULL * 1024 * 1024; // 0 = unlimited
+    uint64_t maxRatio = 100;                      // 0 = unlimited
+    uint64_t timeBudgetSeconds = 60;              // 0 = unlimited
+    bool exhaustive = false;                      // scan every member, not just the code
+
+    // The effective per-member cap, which is scan.max_file_size unless overridden.
+    uint64_t memberSizeLimit(uint64_t scanMaxFileSize) const {
+        return maxMemberSize > 0 ? maxMemberSize : scanMaxFileSize;
+    }
+};
+
 // Quarantine action settings
 struct QuarantineConfig {
     bool enabled = false;
@@ -87,6 +110,7 @@ struct BuiltinRulesConfig {
 struct AppConfig {
     int version = 1;
     ScanConfig scan;
+    ArchiveConfig archives;                     // Archive (zip/tar/tar.gz) handling
     std::vector<RuleConfig> rules;              // Custom YAML rules
     BuiltinRulesConfig builtinRules;            // Built-in CTRE rules config
     ActionsConfig actions;

@@ -75,9 +75,34 @@ public:
         out_ << "  \"filesWithMatches\": " << result.filesWithMatches << ",\n";
         out_ << "  \"filesSkippedSize\": " << result.filesSkippedSize << ",\n";
         out_ << "  \"filesQuarantined\": " << result.filesQuarantined << ",\n";
+        writeArchives(result.archives);
         out_ << "  \"durationMs\": " << result.duration().count() << "\n";
         out_ << "}\n";
         out_.flush();
+    }
+
+    // Archive handling, including every member that was not scanned and why.
+    // Emitted only when an archive was actually opened, so a report from a tree
+    // with none in it is byte-identical to what this wrote before.
+    void writeArchives(const archive::Stats& stats) {
+        if (stats.archivesOpened == 0) {
+            return;
+        }
+        out_ << "  \"archives\": {\n";
+        out_ << "    \"opened\": " << stats.archivesOpened << ",\n";
+        out_ << "    \"unreadable\": " << stats.archivesUnreadable << ",\n";
+        out_ << "    \"stoppedEarly\": " << stats.archivesTruncated << ",\n";
+        out_ << "    \"membersScanned\": " << stats.membersScanned << ",\n";
+        out_ << "    \"bytesExpanded\": " << stats.bytesExpanded << ",\n";
+        out_ << "    \"membersSkipped\": {\n";
+        out_ << "      \"policy\": " << stats.skippedPolicy << ",\n";
+        out_ << "      \"size\": " << stats.skippedSize << ",\n";
+        out_ << "      \"budget\": " << stats.skippedBudget << ",\n";
+        out_ << "      \"ratio\": " << stats.skippedRatio << ",\n";
+        out_ << "      \"depth\": " << stats.skippedDepth << ",\n";
+        out_ << "      \"corrupt\": " << stats.skippedCorrupt << "\n";
+        out_ << "    }\n";
+        out_ << "  },\n";
     }
 
     // Escape per RFC 8259. Bytes >= 0x80 pass through: paths reach us already
