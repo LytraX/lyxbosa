@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "rules/Registry.hpp"
+#include <re2/re2.h>
 #include "config/Types.h"
 #include "core/MatchEngine.h"
 #include "utils/SafeText.h"
@@ -915,4 +916,75 @@ TEST_F(GotoAndEscapeTest, IgnoresSingleStyleEscapeRuns) {
 
 TEST_F(GotoAndEscapeTest, IgnoresShortMixedRuns) {
     EXPECT_FALSE(fires("OBF037", "<?php $x = \"\\x41\\102\\x43\";"));
+}
+
+// ============================================================================
+// Every builtin pattern must actually compile.
+//
+// PatternCache::get() returns nullptr when RE2 rejects a pattern, and both
+// matches() and findMatches() skip a null quietly - so a syntax error does not
+// fail the build or the scan, it silently disables the rule. That is the worst
+// possible failure mode for a scanner, and it is exactly the risk taken on by
+// rewriting 90 patterns to wrap builtin names in (?i:...).
+// ============================================================================
+
+TEST(BuiltinPatternTest, EveryPatternCompiles) {
+    size_t checked = 0;
+
+    for (const auto* rule : getAllBuiltinRules()) {
+        ASSERT_NE(rule, nullptr);
+        for (const auto& pattern : rule->patterns) {
+            RE2::Options opts;
+            opts.set_log_errors(false);
+            opts.set_case_sensitive(!pattern.case_insensitive);
+            opts.set_dot_nl(true);
+            RE2 re(std::string(pattern.regex), opts);
+
+            EXPECT_TRUE(re.ok())
+                << rule->code.toString() << " (" << rule->name << ") has an invalid pattern:\n"
+                << "  " << pattern.regex << "\n"
+                << "  RE2: " << re.error();
+            ++checked;
+        }
+    }
+
+    EXPECT_GT(checked, 100u) << "expected the full builtin pattern set to be walked";
+}
+
+// RE2 must actually honour the inline flag the rewrite depends on. If this ever
+// stops holding, every (?i:...) rule degrades to case-sensitive silently.
+TEST(BuiltinPatternTest, Re2SupportsInlineCaseInsensitiveGroups) {
+    RE2::Options opts;
+    opts.set_log_errors(false);
+    RE2 re(R"((?i:eval)\s*\(\s*(?i:base64_decode)\s*\()", opts);
+
+    ASSERT_TRUE(re.ok()) << re.error();
+    EXPECT_TRUE(RE2::PartialMatch("eval(base64_decode(", re));
+    EXPECT_TRUE(RE2::PartialMatch("EvAl(BaSe64_DeCoDe(", re));
+    EXPECT_TRUE(RE2::PartialMatch("EVAL(BASE64_DECODE(", re));
+    // the scope of the flag must not leak past its group
+    RE2 scoped(R"((?i:eval)\(X\))", opts);
+    ASSERT_TRUE(scoped.ok()) << scoped.error();
+    EXPECT_TRUE(RE2::PartialMatch("EVAL(X)", scoped));
+    EXPECT_FALSE(RE2::PartialMatch("EVAL(x)", scoped));
+}
+
+// PHP resolves function names case-insensitively, so these all execute.
+TEST(BuiltinPatternTest, CaseVariantsOfBuiltinsStillMatch) {
+    struct Case { const char* code; const char* content; };
+    const Case cases[] = {
+        {"RCE001", "<?php EvAl(BaSe64_DeCoDe(\"AAAA\"));"},
+        {"RCE001", "<?php EVAL(BASE64_DECODE(\"AAAA\"));"},
+        {"RCE005", "<?php AsSeRt($_POST[\"x\"]);"},
+        {"RCE008", "<?php SySTeM($_GET[\"cmd\"]);"},
+        {"EXP006", "<?php UnSerialize($_COOKIE[\"c\"]);"},
+        {"WS008",  "<?php Move_Uploaded_File($f, $_GET[\"d\"]);"},
+    };
+
+    for (const auto& c : cases) {
+        const auto* rule = getRuleByCode(c.code);
+        ASSERT_NE(rule, nullptr) << c.code;
+        EXPECT_TRUE(rule->matches(c.content))
+            << c.code << " missed a case variant: " << c.content;
+    }
 }
