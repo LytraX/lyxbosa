@@ -27,11 +27,19 @@ struct CliArgs {
     std::vector<std::string> directories;
     std::optional<std::string> configFile;
     ReportFormat outputFormat = ReportFormat::Text;
+    bool outputFormatExplicit = false;      // --output was given, so it beats the config
+    std::optional<std::string> outputFile;  // -O/--output-file
     bool quick = false;
     bool dryRun = false;
     bool force = false;
     bool verbose = false;  // Verbose output (detailed view)
     std::optional<bool> recursive;
+    ProgressWhen progress = ProgressWhen::Auto;
+    bool quiet = false;          // Suppress progress and the scan summary
+    bool noInteractive = false;  // Never take over stdout with an in-place display
+    bool noPreCount = false;     // Skip the concurrent pre-count (no percentage)
+    bool silent = false;         // No output at all; requires an output file
+    std::optional<bool> quarantine;  // --quarantine / --no-quarantine override
 
     // Check command options
     std::optional<std::string> checkFile;
@@ -40,7 +48,8 @@ struct CliArgs {
     std::optional<std::string> validateConfigFile;
 
     // Global options
-    bool noAnsi = false;
+    bool noAnsi = false;              // Older spelling of --color=never
+    ColorWhen color = ColorWhen::Auto;
 
     // Parse command-line arguments
     static CliArgs parse(int argc, char* argv[]);
@@ -54,7 +63,7 @@ inline std::string CliArgs::getHelpText() {
         "LyxBoSa " LYXBOSA_VERSION " - Modern malware/bot signature scanner\n"
         "\n"
         "Usage:\n"
-        "  lyxbosa [--no-ansi] <command> [options]\n"
+        "  lyxbosa [--color WHEN] <command> [options]\n"
         "  lyxbosa --help | --version\n"
         "\n"
         "Commands:\n"
@@ -66,7 +75,11 @@ inline std::string CliArgs::getHelpText() {
         "Global options (before the command):\n"
         "  -h, --help         Show this help message and exit\n"
         "  -v, --version      Show version information and exit\n"
-        "      --no-ansi      Disable colored output (also accepted after any command)\n"
+        "      --color WHEN   Colorize output: auto, always or never (default: auto).\n"
+        "                     'auto' colors a stream only when it is a terminal, so a\n"
+        "                     redirected report never contains escape sequences.\n"
+        "                     Also accepted after any command.\n"
+        "      --no-ansi      Alias for --color=never (also accepted after any command)\n"
         "\n"
         "scan [options] [DIRECTORY...]\n"
         "  Scan one or more directories for malicious files.\n"
@@ -77,13 +90,40 @@ inline std::string CliArgs::getHelpText() {
         "  -c, --config FILE  Configuration file path (default: built-in configuration)\n"
         "  -o, --output FORMAT\n"
         "                     Report format: text, json or csv (default: text)\n"
+        "  -O, --output-file FILE\n"
+        "                     Write the report to FILE instead of stdout. --output then\n"
+        "                     selects that file's format, while the terminal keeps the\n"
+        "                     readable text view. Overrides actions.report.file from the\n"
+        "                     configuration; parent directories are created.\n"
         "  -r, --recursive    Recurse into subdirectories\n"
         "      --no-recursive Do not recurse into subdirectories\n"
         "      --quick        Quick scan: limit files to 1 MB and disable quarantine\n"
         "      --dry-run      Report only; never quarantine files\n"
         "      --force        Skip the configuration summary and confirmation prompt\n"
         "  -v, --verbose      Verbose output with full match details\n"
-        "      --no-ansi      Disable colored output\n"
+        "      --progress WHEN\n"
+        "                     Progress display: auto, tui, plain or none (default: auto).\n"
+        "                     'auto' uses the full-screen UI when the terminal supports\n"
+        "                     it, and otherwise prints a single throttled line to stderr\n"
+        "                     so that 'lyxbosa scan ... > report.txt' still shows\n"
+        "                     progress. 'tui' demands the full-screen UI, 'plain' always\n"
+        "                     uses the stderr line.\n"
+        "      --no-interactive\n"
+        "                     Never take over stdout; same as --progress=plain\n"
+        "      --no-precount  Do not pre-count files; progress has no percentage or ETA.\n"
+        "                     The count normally runs concurrently with the scan.\n"
+        "  -q, --quiet        Suppress progress and the scan summary\n"
+        "  -s, --silent       Produce no output at all: no progress, no findings, no\n"
+        "                     summary. Requires -O/--output-file (or actions.report.file)\n"
+        "                     because a scan with nowhere to write is a scan nobody can\n"
+        "                     read. Errors are still reported on stderr.\n"
+        "      --quarantine   Move matched files to the quarantine directory. Required\n"
+        "                     for any unattended run that quarantines, since moving\n"
+        "                     files cannot be undone.\n"
+        "      --no-quarantine\n"
+        "                     Never move files, whatever the configuration says\n"
+        "      --color WHEN   Colorize output: auto, always or never\n"
+        "      --no-ansi      Alias for --color=never\n"
         "  -h, --help         Show help for the scan command\n"
         "\n"
         "check [options] [FILE]\n"
@@ -91,7 +131,8 @@ inline std::string CliArgs::getHelpText() {
         "\n"
         "  FILE               File to check; prompts for a path when omitted\n"
         "  -c, --config FILE  Configuration file path (default: built-in configuration)\n"
-        "      --no-ansi      Disable colored output\n"
+        "      --color WHEN   Colorize output: auto, always or never\n"
+        "      --no-ansi      Alias for --color=never\n"
         "  -h, --help         Show help for the check command\n"
         "\n"
         "validate-config [options] FILE\n"
@@ -99,13 +140,15 @@ inline std::string CliArgs::getHelpText() {
         "  counts.\n"
         "\n"
         "  FILE               Configuration file to validate (required)\n"
-        "      --no-ansi      Disable colored output\n"
+        "      --color WHEN   Colorize output: auto, always or never\n"
+        "      --no-ansi      Alias for --color=never\n"
         "  -h, --help         Show help for the validate-config command\n"
         "\n"
         "init-config [options]\n"
         "  Print the default configuration to stdout.\n"
         "\n"
-        "      --no-ansi      Disable colored output\n"
+        "      --color WHEN   Colorize output: auto, always or never\n"
+        "      --no-ansi      Alias for --color=never\n"
         "  -h, --help         Show help for the init-config command\n"
         "\n"
         "Configuration:\n"
@@ -124,6 +167,8 @@ inline std::string CliArgs::getHelpText() {
         "Examples:\n"
         "  lyxbosa scan /var/www --recursive --force\n"
         "  lyxbosa scan /var/www -o json > report.json\n"
+        "  lyxbosa scan /var/www -O report.json -o json --force\n"
+        "  lyxbosa scan /var/www -O report.json -o json --force --silent\n"
         "  lyxbosa scan -c lyxbosa.yaml --dry-run --verbose\n"
         "  lyxbosa check suspicious.php\n"
         "  lyxbosa init-config > lyxbosa.yaml\n"
@@ -146,9 +191,14 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .nargs(0);
 
     program.add_argument("--no-ansi")
-        .help("Disable colored output")
+        .help("Alias for --color=never")
         .default_value(false)
         .implicit_value(true);
+
+    program.add_argument("--color")
+        .help("Colorize output: auto, always or never")
+        .default_value(std::string("auto"))
+        .metavar("WHEN");
 
     // Subcommands only get --help; -v is reserved for --verbose on scan
     constexpr auto subcommandArgs = argparse::default_arguments::help;
@@ -177,6 +227,10 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .help("Report format: text, json or csv")
         .default_value(std::string("text"))
         .metavar("FORMAT");
+
+    scanCmd.add_argument("-O", "--output-file")
+        .help("Write the report to FILE instead of stdout")
+        .metavar("FILE");
 
     scanCmd.add_argument("--quick")
         .help("Quick scan: limit files to 1 MB and disable quarantine")
@@ -208,8 +262,48 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .default_value(false)
         .implicit_value(true);
 
+    scanCmd.add_argument("--progress")
+        .help("Progress display: auto, tui, plain or none")
+        .default_value(std::string("auto"))
+        .metavar("WHEN");
+
+    scanCmd.add_argument("--no-interactive")
+        .help("Never take over stdout; same as --progress=plain")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--no-precount")
+        .help("Do not pre-count files; progress has no percentage or ETA")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("-s", "--silent")
+        .help("Produce no output at all; requires -O/--output-file")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--quarantine")
+        .help("Move matched files to the quarantine directory")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--no-quarantine")
+        .help("Never move files, whatever the configuration says")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("-q", "--quiet")
+        .help("Suppress progress and the scan summary")
+        .default_value(false)
+        .implicit_value(true);
+
+    scanCmd.add_argument("--color")
+        .help("Colorize output: auto, always or never")
+        .default_value(std::string("auto"))
+        .metavar("WHEN");
+
     scanCmd.add_argument("--no-ansi")
-        .help("Disable colored output")
+        .help("Alias for --color=never")
         .default_value(false)
         .implicit_value(true);
 
@@ -231,8 +325,13 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .help("Configuration file path (default: built-in configuration)")
         .metavar("FILE");
 
+    checkCmd.add_argument("--color")
+        .help("Colorize output: auto, always or never")
+        .default_value(std::string("auto"))
+        .metavar("WHEN");
+
     checkCmd.add_argument("--no-ansi")
-        .help("Disable colored output")
+        .help("Alias for --color=never")
         .default_value(false)
         .implicit_value(true);
 
@@ -249,8 +348,13 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .help("Configuration file to validate")
         .required();
 
+    validateCmd.add_argument("--color")
+        .help("Colorize output: auto, always or never")
+        .default_value(std::string("auto"))
+        .metavar("WHEN");
+
     validateCmd.add_argument("--no-ansi")
-        .help("Disable colored output")
+        .help("Alias for --color=never")
         .default_value(false)
         .implicit_value(true);
 
@@ -261,8 +365,13 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         "Example:\n"
         "  lyxbosa init-config > lyxbosa.yaml");
 
+    initCmd.add_argument("--color")
+        .help("Colorize output: auto, always or never")
+        .default_value(std::string("auto"))
+        .metavar("WHEN");
+
     initCmd.add_argument("--no-ansi")
-        .help("Disable colored output")
+        .help("Alias for --color=never")
         .default_value(false)
         .implicit_value(true);
 
@@ -283,6 +392,27 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
     // Global --no-ansi applies to every command; each command also accepts its own
     const bool globalNoAnsi = program.get<bool>("--no-ansi");
     result.noAnsi = globalNoAnsi;
+
+    // --color is accepted globally and per command; the command's spelling wins
+    // when both are given. Applied only when explicitly used, so that a command's
+    // default "auto" does not silently undo a global --color=never.
+    auto applyColor = [&result](const argparse::ArgumentParser& parser) {
+        if (!parser.is_used("--color")) {
+            return true;
+        }
+        const auto value = parser.get<std::string>("--color");
+        if (!colorWhenFromString(value, result.color)) {
+            result.success = false;
+            result.errorMessage =
+                "Invalid --color value: '" + value + "'. Valid values are: auto, always, never";
+            return false;
+        }
+        return true;
+    };
+
+    if (!applyColor(program)) {
+        return result;
+    }
 
     if (program.get<bool>("--help")) {
         result.command = Command::Help;
@@ -310,6 +440,11 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
             return result;
         }
         result.outputFormat = reportFormatFromString(format);
+        result.outputFormatExplicit = scanCmd.is_used("--output");
+
+        if (auto outputFile = scanCmd.present<std::string>("--output-file")) {
+            result.outputFile = *outputFile;
+        }
         result.quick = scanCmd.get<bool>("--quick");
         result.dryRun = scanCmd.get<bool>("--dry-run");
         result.force = scanCmd.get<bool>("--force");
@@ -322,6 +457,34 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
 
         result.verbose = scanCmd.get<bool>("--verbose");
         result.noAnsi = globalNoAnsi || scanCmd.get<bool>("--no-ansi");
+
+        const auto progressValue = scanCmd.get<std::string>("--progress");
+        if (!progressWhenFromString(progressValue, result.progress)) {
+            result.success = false;
+            result.errorMessage = "Invalid --progress value: '" + progressValue +
+                                  "'. Valid values are: auto, tui, plain, none";
+            return result;
+        }
+
+        result.noInteractive = scanCmd.get<bool>("--no-interactive");
+        result.quiet = scanCmd.get<bool>("--quiet");
+        result.noPreCount = scanCmd.get<bool>("--no-precount");
+        result.silent = scanCmd.get<bool>("--silent");
+
+        if (scanCmd.get<bool>("--quarantine") && scanCmd.get<bool>("--no-quarantine")) {
+            result.success = false;
+            result.errorMessage = "--quarantine and --no-quarantine are mutually exclusive";
+            return result;
+        }
+        if (scanCmd.get<bool>("--quarantine")) {
+            result.quarantine = true;
+        } else if (scanCmd.get<bool>("--no-quarantine")) {
+            result.quarantine = false;
+        }
+
+        if (!applyColor(scanCmd)) {
+            return result;
+        }
 
     } else if (program.is_subcommand_used("check")) {
         result.command = Command::Check;
@@ -336,20 +499,34 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         }
 
         result.noAnsi = globalNoAnsi || checkCmd.get<bool>("--no-ansi");
+        if (!applyColor(checkCmd)) {
+            return result;
+        }
 
     } else if (program.is_subcommand_used("validate-config")) {
         result.command = Command::ValidateConfig;
         result.validateConfigFile = validateCmd.get<std::string>("file");
         result.noAnsi = globalNoAnsi || validateCmd.get<bool>("--no-ansi");
+        if (!applyColor(validateCmd)) {
+            return result;
+        }
 
     } else if (program.is_subcommand_used("init-config")) {
         result.command = Command::InitConfig;
         result.noAnsi = globalNoAnsi || initCmd.get<bool>("--no-ansi");
+        if (!applyColor(initCmd)) {
+            return result;
+        }
 
     } else {
         // No subcommand - show help
         result.success = false;
         result.errorMessage = getHelpText();
+    }
+
+    // --no-ansi is the older, coarser spelling and always wins.
+    if (result.noAnsi) {
+        result.color = ColorWhen::Never;
     }
 
     return result;

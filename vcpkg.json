@@ -6,6 +6,7 @@
     "fmt",
     "re2",
     "xxhash",
-    "gtest"
+    "gtest",
+    "ftxui"
   ]
 }

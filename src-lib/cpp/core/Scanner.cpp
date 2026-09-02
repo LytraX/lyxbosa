@@ -1,8 +1,10 @@
 #include "Scanner.h"
 #include "infrastructure/PathUtils.h"
 #include "rules/Registry.hpp"
+#include <atomic>
 #include <fstream>
 #include <sstream>
+#include <thread>
 #include <fmt/base.h>
 
 namespace lyxbosa {
@@ -49,30 +51,88 @@ ScanResult Scanner::scan() {
     FileWalker walker(config_.scan);
     ScanProgress progress;
 
-    // Pre-count files for progress reporting
-    progress.totalFiles = walker.countFiles();
+    // Count on a second thread rather than before the scan. The pre-count is a
+    // full traversal of its own; running it first meant minutes of dead air on a
+    // large or network-mounted tree before the first file was even looked at.
+    // Scanning starts immediately and the display switches from indeterminate to
+    // a percentage when the total lands.
+    std::atomic<size_t> discovered{0};
+    std::atomic<size_t> countedTotal{0};
+    std::atomic<bool> countReady{false};
+    std::thread counter;
 
-    // Notify that counting is done
-    if (countingDoneCallback_) {
-        countingDoneCallback_(progress.totalFiles);
+    if (preCount_) {
+        counter = std::thread([this, &discovered, &countedTotal, &countReady] {
+            FileWalker countWalker(config_.scan);
+            const size_t total = countWalker.countFiles([&discovered](size_t partial) {
+                discovered.store(partial, std::memory_order_relaxed);
+            });
+            countedTotal.store(total, std::memory_order_relaxed);
+            countReady.store(true, std::memory_order_release);
+        });
     }
+
+    // Directory count, updated live as the walk descends.
+    std::atomic<size_t> directoriesSeen{0};
+    walker.setDirectoryCallback([&directoriesSeen](const std::filesystem::path&) {
+        directoriesSeen.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    auto publishProgress = [&](const std::filesystem::path& path, uint64_t size) {
+        if (!progressCallback_) {
+            return;
+        }
+
+        // The counting thread only ever publishes through these atomics; the
+        // callback itself always runs on this thread, so the display never has
+        // to be thread-safe.
+        if (countReady.load(std::memory_order_acquire)) {
+            progress.totalFiles = countedTotal.load(std::memory_order_relaxed);
+            progress.phase = ScanPhase::Scanning;
+        } else {
+            progress.phase = ScanPhase::Discovering;
+        }
+        progress.discoveredFiles = discovered.load(std::memory_order_relaxed);
+        progress.directoriesScanned = directoriesSeen.load(std::memory_order_relaxed);
+
+        progress.filesScanned = result.totalFilesScanned;
+        progress.filesWithMatches = result.filesWithMatches;
+        progress.totalMatchCount = result.totalMatches;
+        progress.filesSkippedSize = result.filesSkippedSize;
+        progress.filesQuarantined = result.filesQuarantined;
+        progress.criticalCount = result.criticalCount;
+        progress.highCount = result.highCount;
+        progress.mediumCount = result.mediumCount;
+        progress.lowCount = result.lowCount;
+        progress.currentFile = path;
+        progress.currentFileSize = size;
+        progress.bytesScanned = result.bytesScanned;
+
+        progressCallback_(progress);
+    };
 
     auto fileCallback = [&](const FileInfo& info) -> bool {
         // Check for interrupt
-        if (g_interrupted.load(std::memory_order_relaxed)) {
+        if (interrupted()) {
             interrupted_ = true;
             return false;  // Stop walking
         }
 
-        // Check if file exceeds size limit
+        // Files past the size limit are reported, not scanned
         if (config_.scan.maxFileSize > 0 && info.size > config_.scan.maxFileSize) {
-            FileResult fr;
-            fr.path = info.path;
-            fr.fileSize = info.size;
-            fr.skippedSize = true;
-            result.files.push_back(std::move(fr));
+            FileResult skipped;
+            skipped.path = info.path;
+            skipped.fileSize = info.size;
+            skipped.skippedSize = true;
+
             ++result.filesSkippedSize;
             ++result.totalFilesScanned;
+            result.files.push_back(skipped);
+
+            publishProgress(info.path, info.size);
+            if (fileResultCallback_) {
+                fileResultCallback_(skipped);
+            }
             return true;  // Continue walking
         }
 
@@ -82,7 +142,17 @@ ScanResult Scanner::scan() {
 
         // Update statistics
         ++result.totalFilesScanned;
+        result.bytesScanned += info.size;
         result.totalMatches += fileResult.matches.size();
+
+        for (const auto& match : fileResult.matches) {
+            switch (match.severity) {
+                case Severity::Critical: ++result.criticalCount; break;
+                case Severity::High:     ++result.highCount; break;
+                case Severity::Medium:   ++result.mediumCount; break;
+                case Severity::Low:      ++result.lowCount; break;
+            }
+        }
 
         if (!fileResult.matches.empty()) {
             ++result.filesWithMatches;
@@ -98,21 +168,20 @@ ScanResult Scanner::scan() {
             }
         }
 
-        result.files.push_back(fileResult);  // Copy before move for match callback
-
-        // Report progress FIRST (so display is initialized before match output)
-        if (progressCallback_) {
-            progress.filesScanned = result.totalFilesScanned;
-            progress.filesWithMatches = result.filesWithMatches;
-            progress.totalMatchCount = result.totalMatches;
-            progress.currentFile = info.path;
-            progress.currentFileSize = info.size;
-            progressCallback_(progress);
+        // Only reportable files are retained. Keeping a FileResult for every
+        // clean file cost hundreds of megabytes of paths on a large tree and
+        // bought nothing - every consumer filtered them straight back out.
+        const bool reportable = !fileResult.matches.empty();
+        if (reportable) {
+            result.files.push_back(fileResult);
         }
 
-        // Notify about match AFTER progress (for real-time output)
-        if (!fileResult.matches.empty() && matchCallback_) {
-            matchCallback_(fileResult);
+        // Report progress FIRST (so display is initialized before match output)
+        publishProgress(info.path, info.size);
+
+        // Notify about the finding AFTER progress (for real-time output)
+        if (reportable && fileResultCallback_) {
+            fileResultCallback_(fileResult);
         }
 
         return true;  // Continue walking
@@ -120,8 +189,28 @@ ScanResult Scanner::scan() {
 
     result.totalDirectoriesScanned = walker.walk(fileCallback);
 
+    if (counter.joinable()) {
+        // countFiles polls the interrupt flag, so this returns promptly on Ctrl+C.
+        counter.join();
+    }
+
     result.endTime = std::chrono::steady_clock::now();
-    result.updateSeverityCounts();
+
+    // Severity counters are maintained live now; this keeps them correct if the
+    // file list is ever rebuilt from elsewhere.
+    if (result.criticalCount + result.highCount + result.mediumCount + result.lowCount == 0) {
+        result.updateSeverityCounts();
+    }
+
+    if (progressCallback_) {
+        progress.phase = ScanPhase::Finished;
+        progress.filesScanned = result.totalFilesScanned;
+        if (countReady.load(std::memory_order_acquire)) {
+            progress.totalFiles = countedTotal.load(std::memory_order_relaxed);
+        }
+        progress.directoriesScanned = result.totalDirectoriesScanned;
+        progressCallback_(progress);
+    }
 
     return result;
 }
@@ -148,12 +237,8 @@ void Scanner::setProgressCallback(ProgressCallback callback) {
     progressCallback_ = std::move(callback);
 }
 
-void Scanner::setCountingDoneCallback(CountingCallback callback) {
-    countingDoneCallback_ = std::move(callback);
-}
-
-void Scanner::setMatchCallback(MatchCallback callback) {
-    matchCallback_ = std::move(callback);
+void Scanner::setFileResultCallback(FileResultCallback callback) {
+    fileResultCallback_ = std::move(callback);
 }
 
 std::string Scanner::readFile(const std::filesystem::path& path, uint64_t maxSize) {

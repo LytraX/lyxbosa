@@ -48,6 +48,17 @@ find_package(argparse CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(reflectcpp CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+
+# The full-screen terminal UI. Off-switch for minimal/static builds (docker/,
+# dist/), which then fall back to the plain stderr progress line.
+option(LYXBOSA_TUI "Build the full-screen terminal UI (FTXUI)" ON)
+if(LYXBOSA_TUI)
+  find_package(ftxui CONFIG REQUIRED)
+  message(STATUS "Full-screen UI: enabled (FTXUI)")
+else()
+  message(STATUS "Full-screen UI: disabled")
+endif()
 
 # Rule sources
 set(RULE_SOURCES
@@ -108,7 +119,13 @@ target_link_libraries(lyxbosa
     yaml-cpp::yaml-cpp
     reflectcpp::reflectcpp
     re2::re2
+    Threads::Threads
 )
+
+if(LYXBOSA_TUI)
+  target_link_libraries(lyxbosa PRIVATE ftxui::screen ftxui::dom ftxui::component)
+  target_compile_definitions(lyxbosa PRIVATE LYXBOSA_TUI_ENABLED)
+endif()
 
 # Testing
 option(BUILD_TESTS "Build unit tests" ON)
@@ -118,6 +135,7 @@ if(BUILD_TESTS)
 
   add_executable(lyxbosa_tests
     tests/rules_test.cpp
+    tests/progress_model_test.cpp
     ${LIB_SOURCES}
   )
 
@@ -133,6 +151,7 @@ if(BUILD_TESTS)
       yaml-cpp::yaml-cpp
       reflectcpp::reflectcpp
       re2::re2
+      Threads::Threads
       GTest::gtest
       GTest::gtest_main
   )

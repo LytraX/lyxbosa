@@ -1,4 +1,5 @@
 #include "FileWalker.h"
+#include "Interrupt.h"
 #include <algorithm>
 
 #ifdef _WIN32
@@ -76,6 +77,10 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
 
     if (stopped || !fs::exists(dir) || !fs::is_directory(dir)) {
         return 0;
+    }
+
+    if (dirCallback_) {
+        dirCallback_(dir);
     }
 
     size_t dirCount = 1;
@@ -177,11 +182,20 @@ bool FileWalker::matchesFilters(const std::filesystem::path& path) const {
     return true;
 }
 
-size_t FileWalker::countFiles() const {
+size_t FileWalker::countFiles(const CountProgressCallback& onProgress) const {
     size_t count = 0;
 
-    walk([&count](const FileInfo&) {
+    // Counting is a full traversal in its own right and can run for minutes on a
+    // large tree, so it has to honour an interrupt too - otherwise Ctrl+C during
+    // the count appears to do nothing until the count finishes.
+    walk([&count, &onProgress](const FileInfo&) {
+        if (interrupted()) {
+            return false;
+        }
         ++count;
+        if (onProgress && (count % 512) == 0) {
+            onProgress(count);
+        }
         return true;  // Continue counting
     });
 

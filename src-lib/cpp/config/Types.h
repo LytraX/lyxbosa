@@ -42,6 +42,21 @@ enum class ReportFormat {
     Csv
 };
 
+// When colour / ANSI escape sequences may be written to a stream.
+enum class ColorWhen {
+    Auto,    // only when the stream is a terminal that supports it
+    Always,
+    Never
+};
+
+// How scan progress is reported.
+enum class ProgressWhen {
+    Auto,    // full-screen UI when the terminal supports it, else plain on stderr
+    Tui,     // demand the full-screen UI
+    Plain,   // never take over stdout; a single throttled line on stderr
+    None
+};
+
 // Convert Severity to string
 constexpr std::string_view severityToString(Severity s) {
     switch (s) {
@@ -166,6 +181,23 @@ inline uint64_t parseFileSize(std::string_view s) {
     }
 
     return value;
+}
+
+// Parse ColorWhen from string ("auto", "always", "never")
+inline bool colorWhenFromString(std::string_view s, ColorWhen& out) {
+    if (s == "auto")   { out = ColorWhen::Auto;   return true; }
+    if (s == "always") { out = ColorWhen::Always; return true; }
+    if (s == "never")  { out = ColorWhen::Never;  return true; }
+    return false;
+}
+
+// Parse ProgressWhen from string ("auto", "plain", "none")
+inline bool progressWhenFromString(std::string_view s, ProgressWhen& out) {
+    if (s == "auto")  { out = ProgressWhen::Auto;  return true; }
+    if (s == "tui")   { out = ProgressWhen::Tui;   return true; }
+    if (s == "plain") { out = ProgressWhen::Plain; return true; }
+    if (s == "none")  { out = ProgressWhen::None;  return true; }
+    return false;
 }
 
 }  // namespace lyxbosa

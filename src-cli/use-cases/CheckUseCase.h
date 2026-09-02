@@ -1,7 +1,7 @@
 #pragma once
 
 #include "infrastructure/Terminal.h"
-#include "infrastructure/ResultPrinter.h"
+#include "infrastructure/TerminalCaps.h"
 #include "infrastructure/InputPrompt.h"
 #include "config/Config.h"
 #include "core/Scanner.h"
@@ -14,12 +14,19 @@ namespace lyxbosa {
 // Orchestrates the check (single file) command workflow
 class CheckUseCase {
 public:
-    CheckUseCase(const Terminal& terminal, const ResultPrinter& printer)
-        : terminal_(terminal), printer_(printer) {}
+    CheckUseCase(const Terminal& terminal, const TerminalCaps& caps)
+        : terminal_(terminal), caps_(caps) {}
 
     int execute(CliArgs& args) {
         // Prompt for file if none provided
         if (!args.checkFile) {
+            if (!caps_.stdinIsTty()) {
+                terminal_.printErr(Terminal::error(),
+                    "Error: No file given and stdin is not a terminal.\n"
+                    "Pass a file path on the command line.\n");
+                return 1;
+            }
+
             InputPrompt prompt(terminal_);
             auto file = prompt.promptFile("File to check");
 
@@ -146,7 +153,7 @@ private:
     }
 
     const Terminal& terminal_;
-    const ResultPrinter& printer_;
+    const TerminalCaps& caps_;
 };
 
 }  // namespace lyxbosa
