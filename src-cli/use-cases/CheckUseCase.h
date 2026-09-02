@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/SafeText.h"
+
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "infrastructure/InputPrompt.h"

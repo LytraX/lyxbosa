@@ -1,4 +1,5 @@
 #include "MatchEngine.h"
+#include "utils/SafeText.h"
 #include <algorithm>
 
 namespace lyxbosa {
@@ -122,6 +123,56 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return false;  // Always filter out - rule is too broken
     }
 
+    // OBF036: Binary payload in text file
+    // Only meaningful for files whose type *declares* them to be source text. The scan
+    // filter deliberately admits images, fonts, archives and video (payloads hide there),
+    // and those are binary by definition - measuring control bytes in a .ttf says nothing.
+    if (ruleCode == "OBF036") {
+        static constexpr std::string_view kTextExtensions[] = {
+            ".php", ".php0", ".php1", ".php2", ".php3", ".php4", ".php5", ".php6",
+            ".php7", ".php8", ".phps", ".pht", ".phtm", ".phtml", ".inc", ".tpl",
+            ".ctp", ".module", ".install", ".engine", ".theme", ".profile",
+            ".js", ".mjs", ".cjs", ".jsx", ".ts", ".vue",
+            ".html", ".htm", ".xhtml", ".shtml", ".css", ".svg",
+            ".xml", ".json", ".yml", ".yaml", ".ini", ".conf", ".cfg", ".env",
+            ".txt", ".log", ".md", ".htaccess", ".htpasswd",
+            ".pl", ".pm", ".py", ".rb", ".sh", ".bash", ".ksh", ".zsh", ".lua", ".cgi",
+            ".c", ".cpp", ".h", ".asp", ".aspx", ".ashx", ".asmx", ".jsp", ".jspx",
+            ".cfm", ".ps1", ".bat",
+        };
+
+        // Compare against the lowercased trailing extension only.
+        std::string path(ctx.filePath);
+        std::transform(path.begin(), path.end(), path.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        auto dot = path.find_last_of("./\\");
+        bool isText = false;
+        if (dot != std::string::npos && path[dot] == '.') {
+            std::string_view ext(path.data() + dot, path.size() - dot);
+            for (auto candidate : kTextExtensions) {
+                if (ext == candidate) { isText = true; break; }
+            }
+        }
+        if (!isText) {
+            return false;
+        }
+
+        // Wordfence stores its WAF state as binary inside .php files guarded by an
+        // exit header. Real, common, and not malware.
+        if (path.find("/wflogs/") != std::string::npos ||
+            path.find("\\wflogs\\") != std::string::npos) {
+            return false;
+        }
+
+        // .sql dumps legitimately carry BLOB literals.
+        if (path.size() >= 4 && path.compare(path.size() - 4, 4, ".sql") == 0) {
+            return false;
+        }
+
+        return true;
+    }
+
     // CRED004: Keylogger injection (addEventListener keydown)
     // False positives: Legitimate keyboard event handling in web apps
     // Only flag if: keydown handler appears to capture and store/send key data
@@ -241,6 +292,34 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         }
 
         return true;  // Keep the match
+    }
+
+    // DEFC001: Hacker signature
+    // "hacked by <word>" also occurs in ordinary English prose - security plugin
+    // readmes talk about "getting hacked by identifying malicious traffic". A real
+    // defacement signature names a handle, it does not continue into a sentence.
+    if (ruleCode == "DEFC001") {
+        static constexpr std::string_view kProseFollowers[] = {
+            "identifying", "exploiting", "using", "the", "a", "an", "attackers",
+            "hackers", "malicious", "someone", "anyone", "this", "these", "those",
+            "scanning", "checking", "blocking", "monitoring", "default",
+        };
+
+        // Take the word that follows "by" in the matched text.
+        std::string matched(ctx.matchedText);
+        std::transform(matched.begin(), matched.end(), matched.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        auto byPos = matched.rfind(" by ");
+        if (byPos != std::string::npos) {
+            std::string_view handle(matched);
+            handle.remove_prefix(byPos + 4);
+            for (auto word : kProseFollowers) {
+                if (handle == word) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // OBF002: chr() string building
@@ -521,18 +600,16 @@ static std::string getContext(std::string_view content, size_t offset, size_t ma
 
     std::string ctx(content.substr(start, end - start));
 
-    // Replace newlines/tabs with spaces for single-line display
+    // Fold the whitespace that only affects layout, so a quote stays on one line.
     for (char& c : ctx) {
         if (c == '\n' || c == '\r' || c == '\t') c = ' ';
     }
 
-    // Hard limit to prevent huge output
-    if (ctx.size() > contextLen) {
-        ctx.resize(contextLen);
-        ctx += "...";
-    }
-
-    return ctx;
+    // Everything else the file might contain is escaped rather than printed. This
+    // quote comes out of malware; ESC in it would drive the terminal instead of
+    // describing the finding. Truncation happens inside sanitizeAndTruncate so a
+    // cut can never leave a dangling escape for the next output to complete.
+    return safe_text::sanitizeAndTruncate(ctx, contextLen);
 }
 
 void MatchEngine::loadRules(const std::vector<RuleConfig>& configs) {
@@ -672,7 +749,10 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
             fm.line = match.line;
             fm.column = match.column;
             fm.offset = offset;
-            fm.matchedText = match.note.empty() ? std::string(match.matched) : match.note;
+            // match.matched is a slice of the scanned file - untrusted. match.note is
+            // written by the analyzer, but goes through the same path for uniformity.
+            fm.matchedText = match.note.empty() ? safe_text::sanitize(match.matched)
+                                                : match.note;
             fm.context = getContext(content, fm.offset, match.matched.size());
 
             // Analyzer rules explain themselves - the raw source alone does not
