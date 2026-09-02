@@ -56,6 +56,12 @@ int main(int argc, char* argv[]) {
 
     auto args = CliArgs::parse(argc, argv);
 
+    // Explicit --help goes to stdout with a success exit code
+    if (args.success && args.command == Command::Help) {
+        fmt::print("{}", CliArgs::getHelpText());
+        return 0;
+    }
+
     if (!args.success) {
         fmt::print(stderr, "{}\n", args.errorMessage);
         return 1;
