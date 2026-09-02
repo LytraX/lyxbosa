@@ -70,6 +70,14 @@ cmake --build --preset release  # or: cmake --build build-release
 - Output: `build-release/lyxbosa` and `build-release/lyxbosa_tests`
 - `CMAKE_BUILD_TYPE=Release`, defines `LYXBOSA_RELEASE`
 
+### Build options
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `BUILD_TESTS` | `ON` | Build `lyxbosa_tests` |
+| `LYXBOSA_TUI` | `ON` | Build the full-screen scan UI (FTXUI). `OFF` drops the dependency and the binary falls back to the plain stderr progress line |
+| `LYXBOSA_VERSION_OVERRIDE` | unset | Stamp a version into the binary (see "Versioning") |
+
 Both build directories are independent and gitignored, so you can keep a debug and a
 release tree side by side without reconfiguring. `cmake --build <dir>` is equivalent to
 `cmake --build --preset <name>` and works even without the user presets file.
@@ -86,6 +94,10 @@ cmake --build build -j 8
 
 # Skip building the test executable
 cmake --preset release -DBUILD_TESTS=OFF
+
+# Build without the full-screen terminal UI, dropping the ftxui dependency.
+# The binary then always uses the plain stderr progress line.
+cmake --preset release -DLYXBOSA_TUI=OFF
 
 # Stamp a version into the binary (see "Versioning" below)
 cmake --preset release -DLYXBOSA_VERSION_OVERRIDE=1.1.0
