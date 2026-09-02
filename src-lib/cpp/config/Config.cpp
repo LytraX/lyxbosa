@@ -260,33 +260,156 @@ scan:
   follow_symlinks: false
 
   # File filters
+  #
+  # Never trust an extension to tell you what a file is. Real incidents have put
+  # executable PHP behind .jpeg, .tif, .ico, .php0, .zip and .txt, so this list is
+  # deliberately wide: it decides what gets *opened*, not what gets *reported*.
+  # Content still has to match a rule to become a finding.
   include:
-    - "!ext"         # Files without extension
-    - "*.php"
-    - "*.php?"       # .php3, .php4, .php5, etc.
+    - "!ext"          # Files without extension - webshells often have none
+
+    # PHP and PHP-adjacent
+    - "*.php*"        # .php .php5 .php0 .phps .php.bak .php.suspected .php_expire
+    - "*.pht"
+    - "*.phtm"
     - "*.phtml"
-    - "*.js"
-    - "*.html"
-    - "*.htm"
-    - "*.css"
-    - "*.svg"
-    - "*.gif"
-    - "*.png"
-    - "*.jpg"
-    - "*.jpeg"
-    - "*.ico"
-    - "*.bmp"
-    - "*.webp"
-    - "*.tiff"
-    - "*.tif"
+    - "*.phar"        # PHP archive - directly executable
+    - "*.inc"
+    - "*.tpl"         # Smarty
+    - "*.ctp"         # CakePHP
+    - "*.module"      # Drupal carries PHP in these
+    - "*.install"
+    - "*.engine"
+    - "*.theme"
+    - "*.profile"
+
+    # Other server-side languages
+    - "*.pl"
+    - "*.pm"
+    - "*.cgi"
+    - "*.py"
+    - "*.rb"
+    - "*.lua"
+    - "*.sh"
+    - "*.bash"
+    - "*.ksh"
+    - "*.zsh"
+    - "*.jsp"
+    - "*.jspx"
+    - "*.asp"
+    - "*.aspx"
+    - "*.ashx"
+    - "*.asmx"
+    - "*.cfm"
+    - "*.ps1"
+    - "*.bat"
     - "*.c"
     - "*.cpp"
     - "*.h"
-    - "*.sh"
-    - "*.pl"
-    - "*.py"
-    - "*.rb"
+
+    # Client-side and markup
+    - "*.js"
+    - "*.mjs"
+    - "*.cjs"
+    - "*.jsx"
+    - "*.ts"
+    - "*.vue"
+    - "*.html"
+    - "*.htm"
+    - "*.xhtml"
+    - "*.shtml"       # server-side includes
+    - "*.css"
+    - "*.svg"
+
+    # Images - polyglot carriers. This is not hypothetical: incident response has
+    # recovered working webshells hidden in .jpeg, .tif and .ico.
+    - "*.gif"
+    - "*.png"
+    - "*.jpg"
+    - "*.jpe"
+    - "*.jpeg"
+    - "*.jfif"
+    - "*.ico"
+    - "*.bmp"
+    - "*.webp"
+    - "*.avif"
+    - "*.tif"
+    - "*.tiff"
+    - "*.psd"
+    - "*.tga"
+    - "*.xbm"
+    - "*.jpx"
+    - "*.jp2"
+
+    # Video and audio containers - same trick, larger haystack
+    - "*.flv"
+    - "*.mp4"
+    - "*.m4v"
+    - "*.avi"
+    - "*.mpg"
+    - "*.mpeg"
+    - "*.mov"
+    - "*.wmv"
+    - "*.mkv"
+    - "*.webm"
+    - "*.3gp"
+    - "*.ogv"
+    - "*.mp3"
+    - "*.wav"
+    - "*.ogg"
+    - "*.m4a"
+    - "*.wma"
+    - "*.flac"
+
+    # Documents and fonts
+    - "*.pdf"
+    - "*.rtf"
+    - "*.doc*"
+    - "*.xls*"
+    - "*.ppt*"
+    - "*.ttf"
+    - "*.otf"
+    - "*.eot"
+    - "*.woff"
+    - "*.woff2"
+
+    # Archives - payloads get staged inside these
+    - "*.zip"
+    - "*.tar"
+    - "*.gz"
+    - "*.tgz"
+    - "*.bz2"
+    - "*.xz"
+    - "*.7z"
+    - "*.rar"
+
+    # Data, config, backups and leftovers
+    - "*.txt"
+    - "*.log"
+    - "*.dat"
+    - "*.bin"
+    - "*.json"
+    - "*.xml"
+    - "*.yml"
+    - "*.yaml"
+    - "*.ini"
+    - "*.conf"
+    - "*.cfg"
+    - "*.env"
+    - "*.sql"
+    - "*.bak"
+    - "*.old"
+    - "*.orig"
+    - "*.save"
+    - "*.swp"
+    - "*.tmp"
+    - "*.suspected"   # Imunify360 renames quarantined PHP to this
+    - "*.disabled"
+    - "*~"
     - ".htaccess"
+    - ".htpasswd"
+    - ".user.ini"
+    - "web.config"
   exclude:
     - node_modules/**
     - vendor/**
