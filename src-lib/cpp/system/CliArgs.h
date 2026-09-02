@@ -100,11 +100,12 @@ inline std::string CliArgs::getHelpText() {
         "      --force        Skip the configuration summary and confirmation prompt\n"
         "  -v, --verbose      Verbose output with full match details\n"
         "      --progress WHEN\n"
-        "                     Progress display: auto, plain or none (default: auto).\n"
-        "                     'auto' updates in place on stdout when stdout is a\n"
-        "                     terminal, and otherwise prints a single throttled line\n"
-        "                     to stderr so that 'lyxbosa scan ... > report.txt' still\n"
-        "                     shows progress. 'plain' always uses the stderr line.\n"
+        "                     Progress display: auto, tui, plain or none (default: auto).\n"
+        "                     'auto' uses the full-screen UI when the terminal supports\n"
+        "                     it, and otherwise prints a single throttled line to stderr\n"
+        "                     so that 'lyxbosa scan ... > report.txt' still shows\n"
+        "                     progress. 'tui' demands the full-screen UI, 'plain' always\n"
+        "                     uses the stderr line.\n"
         "      --no-interactive\n"
         "                     Never take over stdout; same as --progress=plain\n"
         "      --no-precount  Do not pre-count files; progress has no percentage or ETA.\n"
@@ -250,7 +251,7 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .implicit_value(true);
 
     scanCmd.add_argument("--progress")
-        .help("Progress display: auto, plain or none")
+        .help("Progress display: auto, tui, plain or none")
         .default_value(std::string("auto"))
         .metavar("WHEN");
 
@@ -434,7 +435,7 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         if (!progressWhenFromString(progressValue, result.progress)) {
             result.success = false;
             result.errorMessage = "Invalid --progress value: '" + progressValue +
-                                  "'. Valid values are: auto, plain, none";
+                                  "'. Valid values are: auto, tui, plain, none";
             return result;
         }
 

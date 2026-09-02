@@ -50,6 +50,16 @@ find_package(reflectcpp CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
+# The full-screen terminal UI. Off-switch for minimal/static builds (docker/,
+# dist/), which then fall back to the plain stderr progress line.
+option(LYXBOSA_TUI "Build the full-screen terminal UI (FTXUI)" ON)
+if(LYXBOSA_TUI)
+  find_package(ftxui CONFIG REQUIRED)
+  message(STATUS "Full-screen UI: enabled (FTXUI)")
+else()
+  message(STATUS "Full-screen UI: disabled")
+endif()
+
 # Rule sources
 set(RULE_SOURCES
     src-lib/cpp/rules/webshell.cpp
@@ -111,6 +121,11 @@ target_link_libraries(lyxbosa
     re2::re2
     Threads::Threads
 )
+
+if(LYXBOSA_TUI)
+  target_link_libraries(lyxbosa PRIVATE ftxui::screen ftxui::dom ftxui::component)
+  target_compile_definitions(lyxbosa PRIVATE LYXBOSA_TUI_ENABLED)
+endif()
 
 # Testing
 option(BUILD_TESTS "Build unit tests" ON)

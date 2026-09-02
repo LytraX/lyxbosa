@@ -4,6 +4,7 @@
 #include "infrastructure/TerminalCaps.h"
 #include "infrastructure/PlainProgress.h"
 #include "infrastructure/ProgressModel.h"
+#include "infrastructure/TuiReporter.h"
 #include "infrastructure/InputPrompt.h"
 #include "infrastructure/PathUtils.h"
 #include "infrastructure/report/ReportWriterFactory.h"
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <system_error>
 
 namespace lyxbosa {
@@ -100,9 +102,9 @@ private:
 
     // How the scan reports progress.
     enum class ProgressStyle {
-        None,     // no progress display at all
-        Inline,   // in-place, multi-line, on stdout (stdout is a terminal)
-        Plain     // one throttled line on stderr, leaving stdout untouched
+        None,   // no progress display at all
+        Tui,    // full-screen UI on the alternate screen buffer
+        Plain   // one throttled line on stderr, leaving stdout untouched
     };
 
     // Where the report goes and in what format, after the command line and the
@@ -200,10 +202,19 @@ private:
         }
     }
 
-    // The in-place display owns stdout, so it can only be used when stdout is a
-    // terminal that accepts escape sequences and is carrying the readable text
-    // view. Everything else falls back to a single line on stderr, which is what
-    // makes `lyxbosa scan ... > report.txt` show progress at all.
+    // Is the full-screen UI compiled in at all?
+    static constexpr bool tuiAvailable() {
+#ifdef LYXBOSA_TUI_ENABLED
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    // The full-screen UI owns stdout, so it can only run when stdout is a
+    // terminal that supports it and is carrying the readable text view rather
+    // than a machine report. Everything else falls back to a single line on
+    // stderr, which is what makes `lyxbosa scan ... > report.txt` show progress.
     ProgressStyle chooseProgressStyle(const CliArgs& args,
                                       ReportFormat consoleFormat,
                                       bool haveConsoleWriter) const {
@@ -211,17 +222,42 @@ private:
             return ProgressStyle::None;
         }
 
-        const bool inlineUsable = caps_.stdoutIsTty()
-                               && terminal_.colorOnStdout()
-                               && haveConsoleWriter
-                               && consoleFormat == ReportFormat::Text
-                               && !args.noInteractive
-                               && args.progress != ProgressWhen::Plain;
+        const bool wantsTui = args.progress == ProgressWhen::Auto ||
+                              args.progress == ProgressWhen::Tui;
+        const bool usable = tuiAvailable()
+                         && haveConsoleWriter
+                         && consoleFormat == ReportFormat::Text
+                         && !args.noInteractive
+                         && caps_.stdoutIsTty()
+                         && caps_.supportsFullScreen(args.color);
 
-        if (inlineUsable) {
-            return ProgressStyle::Inline;
+        if (wantsTui && usable) {
+            return ProgressStyle::Tui;
         }
+
+        // Asking for it explicitly and not getting it deserves an explanation.
+        if (args.progress == ProgressWhen::Tui && !usable) {
+            terminal_.printErr(Terminal::warning(),
+                "Note: the full-screen UI is unavailable here ({}); using --progress=plain.\n",
+                tuiUnavailableReason(args, consoleFormat, haveConsoleWriter));
+        }
+
         return caps_.stderrIsTty() ? ProgressStyle::Plain : ProgressStyle::None;
+    }
+
+    std::string tuiUnavailableReason(const CliArgs& args, ReportFormat consoleFormat,
+                                     bool haveConsoleWriter) const {
+        if (!tuiAvailable())            return "built without LYXBOSA_TUI";
+        if (!caps_.stdoutIsTty())       return "stdout is not a terminal";
+        if (!haveConsoleWriter)         return "console output is disabled";
+        if (consoleFormat != ReportFormat::Text)
+                                        return "stdout is carrying a machine-readable report";
+        if (args.noInteractive)         return "--no-interactive";
+        if (caps_.isCI())               return "running in CI";
+        if (!terminal_.colorOnStdout()) return "colour is disabled";
+        return fmt::format("terminal is {}x{}, minimum is {}x{}",
+                           caps_.width(), caps_.height(),
+                           TerminalCaps::kMinColumns, TerminalCaps::kMinRows);
     }
 
     int runScan(const AppConfig& config, const CliArgs& args) {
@@ -254,10 +290,21 @@ private:
         const ReportFormat consoleFormat = plan.file ? ReportFormat::Text : plan.format;
         const bool consoleWanted = plan.console && (!plan.file || caps_.stdoutIsTty());
 
+        const ProgressStyle style = chooseProgressStyle(args, consoleFormat, consoleWanted);
+
+        // The full-screen UI owns stdout while it runs, and the alternate screen
+        // takes its contents with it on exit. So the console report is buffered
+        // and written into the primary buffer once the UI stands down - that is
+        // what keeps grep, copy-paste and scrollback working afterwards.
+        const bool bufferConsole = (style == ProgressStyle::Tui);
+        std::ostringstream consoleBuffer;
+        std::ostream& consoleStream =
+            bufferConsole ? static_cast<std::ostream&>(consoleBuffer) : std::cout;
+
         std::unique_ptr<ReportWriter> consoleWriter;
         if (consoleWanted) {
             consoleWriter = makeReportWriter(
-                consoleFormat, std::cout,
+                consoleFormat, consoleStream,
                 consoleFormat == ReportFormat::Text && terminal_.colorOnStdout(),
                 caps_.width(), args.verbose, /*summary=*/!args.quiet);
         }
@@ -266,19 +313,13 @@ private:
         scanner.setDryRun(args.dryRun);
         scanner.setPreCount(!args.noPreCount);
 
-        const ProgressStyle style =
-            chooseProgressStyle(args, consoleFormat, consoleWriter != nullptr);
-
-        // Progress state for the in-place display
-        struct ProgressState {
-            std::chrono::steady_clock::time_point lastCountUpdate;
-            size_t lastDisplayedCount = 0;
-            bool initialized = false;
-            ScanProgress lastProgress;  // Store last progress for re-rendering
-            ProgressModel model;
-        };
-        ProgressState progressState;
         PlainProgress plain(caps_);
+#ifdef LYXBOSA_TUI_ENABLED
+        std::unique_ptr<TuiReporter> tui;
+        if (style == ProgressStyle::Tui) {
+            tui = std::make_unique<TuiReporter>(args.dryRun);
+        }
+#endif
 
         if (consoleWriter) consoleWriter->begin();
         if (fileWriter) fileWriter->begin();
@@ -287,179 +328,77 @@ private:
             if (fileWriter) {
                 fileWriter->onFile(fileResult);
             }
-            if (!consoleWriter) {
-                return;
-            }
-
-            if (style == ProgressStyle::Inline) {
-                // Skip if progress not yet initialized (shouldn't happen but be safe)
-                if (!progressState.initialized) {
-                    return;
+            if (consoleWriter) {
+                // The plain line lives on stderr; erase it before stdout writes
+                // so the two do not interleave on a shared terminal.
+                if (style == ProgressStyle::Plain) {
+                    plain.clear();
                 }
-
-                // Cursor is at end of filepath line (no newline)
-                // Clear all 3 lines: filepath (current), progress (up 1), separator (up 2)
-                terminal_.clearLine();  // Clear filepath
-                terminal_.moveUp(1);
-                terminal_.clearLine();  // Clear progress
-                terminal_.moveUp(1);
-                terminal_.clearLine();  // Clear separator
-
                 consoleWriter->onFile(fileResult);
-
-                // Re-print the 3-line progress display (separator + progress + filepath)
-                fmt::print("\n");  // Empty line separator
-                printProgressLine(progressState.model);  // Ends with \n
-                printFilePathNoNewline(progressState.lastProgress.currentFile);  // No newline
-                std::cout.flush();
-                return;
             }
-
-            // Progress lives on stderr here, so findings need no cursor
-            // choreography - just erase the status line and write.
-            if (style == ProgressStyle::Plain) {
-                plain.clear();
+#ifdef LYXBOSA_TUI_ENABLED
+            if (tui) {
+                tui->onFinding(fileResult);
             }
-            consoleWriter->onFile(fileResult);
+#endif
         });
 
-        if (style == ProgressStyle::Inline) {
-            scanner.setProgressCallback([this, &progressState](const ScanProgress& progress) {
-                progressState.lastProgress = progress;
-                updateProgress(progress, progressState);
-            });
-
-            // The count now runs concurrently with the scan, so there is no
-            // waiting phase to announce - draw the display and start.
-            progressState.lastCountUpdate = std::chrono::steady_clock::now();
-            progressState.initialized = true;
-            fmt::print("\n");            // Empty line separator
-            fmt::print("Scanning...\n");  // Progress line
-            fmt::print("Starting...");    // No newline - cursor stays on this line
-            std::cout.flush();
-            terminal_.hideCursor();
-        } else if (style == ProgressStyle::Plain) {
+        if (style == ProgressStyle::Plain) {
             scanner.setProgressCallback([&plain](const ScanProgress& progress) {
                 plain.update(progress);
             });
             plain.start();
         }
+#ifdef LYXBOSA_TUI_ENABLED
+        else if (tui) {
+            scanner.setProgressCallback([&tui](const ScanProgress& progress) {
+                tui->onProgress(progress);
+            });
+            tui->begin();
+        }
+#endif
 
         auto result = scanner.scan();
 
-        if (style == ProgressStyle::Inline) {
-            terminal_.showCursor();
-            // Cursor is at end of filepath line (no newline)
-            terminal_.clearLine();  // Clear filepath
-            terminal_.moveUp(1);
-            terminal_.clearLine();  // Clear progress
-            terminal_.moveUp(1);
-            terminal_.clearLine();  // Clear separator - cursor now here
-        } else if (style == ProgressStyle::Plain) {
+        if (style == ProgressStyle::Plain) {
             plain.finish();
         }
+#ifdef LYXBOSA_TUI_ENABLED
+        if (tui) {
+            tui->finish();  // leaves the alternate screen; stdout is ours again
+        }
+#endif
+
+        const bool interrupted = scanner.wasInterrupted();
 
         // Interruption is a diagnostic, not report data.
-        if (scanner.wasInterrupted() && !args.quiet) {
+        if (interrupted && !args.quiet) {
             terminal_.printErr(Terminal::warning(), "\nHalted by user\n\n");
         }
 
         // Close both reports off properly, interrupted or not.
-        if (consoleWriter) consoleWriter->end(result, scanner.wasInterrupted());
+        if (consoleWriter) {
+            consoleWriter->end(result, interrupted);
+        }
         if (fileWriter) {
-            fileWriter->end(result, scanner.wasInterrupted());
+            fileWriter->end(result, interrupted);
             fileStream.close();
             if (!args.quiet) {
                 terminal_.printErr(Terminal::success(), "Report written to {}\n", *plan.file);
             }
         }
 
+        // Hand the buffered findings and summary to the primary buffer.
+        if (bufferConsole) {
+            std::cout << consoleBuffer.str();
+            std::cout.flush();
+        }
+
         // Return 130 on interrupt (standard convention), 2 if matches found, 0 otherwise
-        if (scanner.wasInterrupted()) {
+        if (interrupted) {
             return 130;
         }
         return result.filesWithMatches > 0 ? 2 : 0;
-    }
-
-    void updateProgress(const ScanProgress& progress, auto& state) {
-        auto now = std::chrono::steady_clock::now();
-        state.model.update(progress, now);
-
-        // Progress should already be initialized by counting done callback
-        if (!state.initialized) {
-            return;
-        }
-
-        auto countElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - state.lastCountUpdate).count();
-        bool updateCount = countElapsed >= 1000;
-        bool updateFile = (progress.filesScanned - state.lastDisplayedCount) >= 10;
-
-        // Force immediate update on very first file to replace "Starting..."
-        bool firstUpdate = (state.lastDisplayedCount == 0 && progress.filesScanned > 0);
-
-        if (!updateCount && !updateFile && !firstUpdate) {
-            return;
-        }
-
-        // Cursor is at end of filepath line; move to progress line
-        fmt::print("\r");
-        terminal_.moveUp(1);
-
-        if (updateCount || firstUpdate) {
-            fmt::print("\r");
-            printProgressLineNoNewline(state.model);
-            terminal_.clearToEndOfLine();
-            fmt::print("\n");   // Move to filepath line
-            state.lastCountUpdate = now;
-        } else {
-            fmt::print("\n");   // Move to filepath line
-        }
-
-        // Now on filepath line - always update to avoid flicker
-        printFilePathNoNewline(progress.currentFile);
-        if (updateFile || firstUpdate) {
-            state.lastDisplayedCount = progress.filesScanned;
-        }
-
-        std::cout.flush();
-    }
-
-    void printProgressLineNoNewline(const ProgressModel& model) const {
-        const ScanProgress& progress = model.progress();
-
-        if (model.totalKnown()) {
-            fmt::print("Scanning {}/{} ({}%)",
-                       progress.filesScanned, progress.totalFiles, model.percent());
-        } else if (progress.discoveredFiles > progress.filesScanned) {
-            fmt::print("Scanning {} of {}+", progress.filesScanned, progress.discoveredFiles);
-        } else {
-            fmt::print("Scanning {}", progress.filesScanned);
-        }
-
-        if (progress.directoriesScanned > 0) {
-            fmt::print("  {} dirs", progress.directoriesScanned);
-        }
-
-        if (progress.criticalCount > 0) terminal_.print(Terminal::critical(), "  C:{}", progress.criticalCount);
-        if (progress.highCount > 0)     terminal_.print(Terminal::high(),     "  H:{}", progress.highCount);
-        if (progress.mediumCount > 0)   terminal_.print(Terminal::medium(),   "  M:{}", progress.mediumCount);
-        if (progress.lowCount > 0)      terminal_.print(Terminal::low(),      "  L:{}", progress.lowCount);
-
-        if (const auto eta = model.eta()) {
-            fmt::print("  ETA {}", formatDuration(*eta));
-        }
-    }
-
-    void printProgressLine(const ProgressModel& model) const {
-        printProgressLineNoNewline(model);
-        fmt::print("\n");
-    }
-
-    void printFilePathNoNewline(const std::filesystem::path& path) const {
-        fmt::print("\r");
-        fmt::print("{}", ResultPrinter::truncatePath(pathToUtf8(path), caps_.width()));
-        terminal_.clearToEndOfLine();
     }
 
     const Terminal& terminal_;

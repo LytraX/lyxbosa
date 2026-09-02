@@ -51,7 +51,8 @@ enum class ColorWhen {
 
 // How scan progress is reported.
 enum class ProgressWhen {
-    Auto,    // in-place on stdout when it is a terminal, else plain on stderr
+    Auto,    // full-screen UI when the terminal supports it, else plain on stderr
+    Tui,     // demand the full-screen UI
     Plain,   // never take over stdout; a single throttled line on stderr
     None
 };
@@ -193,6 +194,7 @@ inline bool colorWhenFromString(std::string_view s, ColorWhen& out) {
 // Parse ProgressWhen from string ("auto", "plain", "none")
 inline bool progressWhenFromString(std::string_view s, ProgressWhen& out) {
     if (s == "auto")  { out = ProgressWhen::Auto;  return true; }
+    if (s == "tui")   { out = ProgressWhen::Tui;   return true; }
     if (s == "plain") { out = ProgressWhen::Plain; return true; }
     if (s == "none")  { out = ProgressWhen::None;  return true; }
     return false;

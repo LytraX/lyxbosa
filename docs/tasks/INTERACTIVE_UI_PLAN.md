@@ -1,6 +1,6 @@
 # Interactive CLI UI & Output-File Plan
 
-Status: **phases 0, 1 and 2 implemented**; phase 3 proposed
+Status: **phases 0-3 implemented**
 Scope: `lyxbosa scan` (and, secondarily, `check`)
 
 Decisions taken: the pinned status goes **below** the findings; the output-file option
@@ -97,7 +97,7 @@ cares about, see the `SetConsoleOutputCP(CP_UTF8)` comment in `lyxbosa.cpp` — 
 mid-codepoint and mis-align columns. A pinned status region makes every such glitch
 permanent instead of scrolling away.
 
-### 3.6 The 3-line cursor dance is structurally fragile
+### 3.6 The 3-line cursor dance is structurally fragile — *deleted in phase 3*
 
 `ScanUseCase.h::updateProgress` / the match callback move the cursor up 1-2 lines and
 rewrite in place. This breaks whenever a line soft-wraps (long paths at narrow widths),
@@ -422,22 +422,37 @@ clean-file results (§3.4), the JSON escaping bug, and the silent pre-count (§3
 - `CountingCallback` is gone: `ScanPhase` and a zero `totalFiles` carry the same
   information, and displays initialise lazily instead.
 
-### Phase 3 — FTXUI full-screen UI *(the main deliverable)*
-- Add `ftxui` to `vcpkg.json`; `LYXBOSA_TUI` CMake option.
-- `TuiReporter` on `App::Fullscreen()` + `ftxui::Loop::RunOnce()` pumped from the scan
-  loop, so the scan stays on the main thread and no worker thread is needed.
-- Capability gate per §6; silent fallback to `PlainProgress` when unmet.
+### Phase 3 — FTXUI full-screen UI — **DONE**
+- `ftxui` 7.0.3 added to `vcpkg.json`; `LYXBOSA_TUI` CMake option (default `ON`)
+  compiles `TuiReporter` out for minimal builds, which then fall back to
+  `PlainProgress`.
+- `TuiReporter` on `App::Fullscreen()`, driven by `ftxui::Loop::RunOnce()` pumped from
+  the scan callbacks, so the scan stays on the main thread and no worker thread is
+  needed. Throttled to ~20fps.
+- **`RunOnce()` alone does not repaint.** It drains pending tasks and only redraws in
+  response to one, so a scan that generates no input events renders a single frame and
+  then appears frozen. `RequestAnimationFrame()` before each `RunOnce()` is what drives
+  the redraw. Verified against FTXUI directly with a standalone probe: bare `RunOnce()`
+  painted frame 0 and nothing after it.
+- Capability gate per §6, with a stated reason on fallback, e.g.
+  `the full-screen UI is unavailable here (terminal is 100x8, minimum is 40x10)`.
 - Status block pinned **below** the findings pane: gauge + percent, `files N/M`,
-  `dirs D`, severity chips, throughput, ETA, elapsed, truncated current path.
-- Findings pane owns its scrolling (`vscroll_indicator | yframe`), with `TrackMouse()`
-  for the wheel, keyboard nav, auto-follow that disengages when the user scrolls up,
-  and a jump-to-bottom affordance that reveals itself when it does.
-- `p` pauses and resumes the scan, `q` ends it early with a valid partial report.
-- **On exit, write the findings and summary into the primary buffer** so nothing is
-  lost when the alternate screen is torn down.
-- Correct grapheme-aware truncation via FTXUI's cell measurement (fixes §3.5); middle-
-  ellipsis for paths reads better than head-ellipsis.
-- Delete the hand-rolled cursor dance in `ScanUseCase`.
+  `dirs D`, severity chips, throughput, ETA, elapsed, truncated current path, key hints.
+- The findings pane owns its scrolling. Auto-follow disengages the moment the user
+  scrolls up and re-engages on reaching the bottom again, and a
+  `jump to bottom (End) - N more below` affordance appears while it is disengaged.
+  Verified working from ArrowUp, PageUp, Home and the mouse wheel.
+- `p` pauses and resumes (the pause blocks in `RunOnceBlocking`, so input still
+  works while the scan is held), `q`/`Esc`/`Ctrl-C` end the scan early through the
+  same interrupt path as a command-line Ctrl-C, giving exit 130 and a valid partial
+  report.
+- **On exit the findings and summary are written into the primary buffer.** The console
+  report is buffered to a `std::ostringstream` while the UI owns stdout and flushed
+  once it stands down, so `grep`, copy-paste and scrollback all still work afterwards.
+- The hand-rolled 3-line cursor dance is deleted (§3.6), along with `ProgressStyle::Inline`.
+- Still outstanding: path truncation counts bytes rather than display columns (§3.5).
+  FTXUI's cell measurement would fix it; the current code at least never splits a
+  codepoint.
 
 ### Phase 4 — Docs, tests, CI
 - README updates (the `--help` reference is already current).
@@ -467,6 +482,7 @@ scanner lands costs a rewrite of the UI layer.
    and summary into the primary buffer on exit.
 4. **Pre-count**: runs concurrently with the scan by default, with `--no-precount` to
    skip it. A spinner-only variant was unnecessary once counting stopped blocking.
-5. Still open: whether `LYXBOSA_TUI=OFF` should be the default for `docker/` and
-   `dist/` (phase 3).
+5. **`LYXBOSA_TUI`** defaults to `ON`. `docker/` and `dist/` can pass
+   `-DLYXBOSA_TUI=OFF` to drop the dependency; the binary then always uses the plain
+   stderr line.
 

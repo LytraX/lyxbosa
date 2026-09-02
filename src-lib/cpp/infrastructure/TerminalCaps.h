@@ -41,7 +41,19 @@ public:
         caps.stderrTty_ = isTty(StdStream::Err);
 
         const char* term = std::getenv("TERM");
-        caps.dumbTerm_ = (term != nullptr) && std::strcmp(term, "dumb") == 0;
+        caps.termSet_ = (term != nullptr) && term[0] != '\0';
+        caps.dumbTerm_ = !caps.termSet_ ||
+                         std::strcmp(term, "dumb") == 0 ||
+                         std::strcmp(term, "unknown") == 0;
+
+        for (const char* var : {"CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS",
+                                "GITLAB_CI", "JENKINS_URL", "BUILDKITE",
+                                "TEAMCITY_VERSION", "TF_BUILD"}) {
+            if (std::getenv(var) != nullptr) {
+                caps.ci_ = true;
+                break;
+            }
+        }
 
         // no-color.org: the presence of NO_COLOR disables colour whatever its value.
         caps.noColorEnv_ = std::getenv("NO_COLOR") != nullptr;
@@ -60,6 +72,60 @@ public:
     // May we write colour to this stream, given the user's --color choice?
     bool colorOnStdout(ColorWhen when) const { return colorAllowed(when, vtOut_); }
     bool colorOnStderr(ColorWhen when) const { return colorAllowed(when, vtErr_); }
+
+    // Is this a continuous-integration environment? Interactive UIs there
+    // produce log noise and nobody is watching.
+    bool isCI() const { return ci_; }
+
+    // Whether a full-screen UI on the alternate screen buffer can be expected
+    // to work. Deliberately conservative: the fallback is a perfectly good
+    // status line, so a false negative costs nothing while a false positive
+    // leaves the user staring at escape sequences.
+    bool supportsFullScreen(ColorWhen when) const {
+        if (!stdoutTty_ || !colorOnStdout(when)) {
+            return false;
+        }
+        if (dumbTerm_ || ci_) {
+            return false;
+        }
+        // No TERM at all means we cannot assume smcup/rmcup is understood.
+        if (!termSet_) {
+            return false;
+        }
+        return height() >= kMinRows && width() >= kMinColumns;
+    }
+
+    static constexpr size_t kMinRows = 10;
+    static constexpr size_t kMinColumns = 40;
+
+    // Terminal height in rows, with the same fallbacks as width().
+    size_t height() const {
+#ifdef _WIN32
+        for (DWORD handle : {STD_OUTPUT_HANDLE, STD_ERROR_HANDLE}) {
+            CONSOLE_SCREEN_BUFFER_INFO csbi;
+            if (GetConsoleScreenBufferInfo(GetStdHandle(handle), &csbi)) {
+                int rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+                if (rows > 0) {
+                    return static_cast<size_t>(rows);
+                }
+            }
+        }
+#else
+        for (int fd : {STDOUT_FILENO, STDERR_FILENO}) {
+            struct winsize ws;
+            if (::isatty(fd) && ioctl(fd, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
+                return static_cast<size_t>(ws.ws_row);
+            }
+        }
+#endif
+        if (const char* lines = std::getenv("LINES")) {
+            int rows = std::atoi(lines);
+            if (rows > 0) {
+                return static_cast<size_t>(rows);
+            }
+        }
+        return 24;
+    }
 
     // Terminal width in columns, preferring stdout and falling back to stderr,
     // COLUMNS, and finally 80.
@@ -148,6 +214,8 @@ private:
     bool vtOut_ = false;
     bool vtErr_ = false;
     bool dumbTerm_ = false;
+    bool termSet_ = false;
+    bool ci_ = false;
     bool noColorEnv_ = false;
     bool forceColorEnv_ = false;
 };

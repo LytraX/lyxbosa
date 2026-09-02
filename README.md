@@ -70,6 +70,12 @@ LyxBoSa provides four subcommands:
 - ANSI colored terminal output, detected per stream and controlled with
   `--color=auto|always|never` (`--no-ansi` is kept as an alias). `NO_COLOR`,
   `CLICOLOR_FORCE` and `TERM=dumb` are honored.
+- Full-screen scan UI when the terminal supports it: the status block stays pinned
+  while you scroll back through the findings, with auto-follow, a jump-to-bottom
+  affordance, mouse-wheel and keyboard scrolling, and `p` to pause the scan. On exit
+  the findings and summary are written into the normal terminal buffer, so nothing is
+  lost when the alternate screen is torn down. Falls back automatically (with a stated
+  reason) when the terminal is too small, output is redirected, or `TERM` says no.
 - Live progress showing percentage, files and directories scanned, the severity
   breakdown of what has been found so far, throughput and an ETA. The file count runs
   concurrently with the scan, so scanning starts immediately rather than after a silent
