@@ -371,50 +371,50 @@ std::string Config::validate(const AppConfig& config) {
 }
 
 void Config::printSummary(const AppConfig& config) {
-    fmt::print("\n=== LyxBoSa Configuration ===\n\n");
+    fmt::print(stderr, "\n=== LyxBoSa Configuration ===\n\n");
 
     // Directories
-    fmt::print("Scan directories ({}):\n", config.scan.directories.size());
+    fmt::print(stderr, "Scan directories ({}):\n", config.scan.directories.size());
     for (const auto& dir : config.scan.directories) {
-        fmt::print("  - {}\n", dir);
+        fmt::print(stderr, "  - {}\n", dir);
     }
 
-    fmt::print("\nOptions:\n");
-    fmt::print("  Recursive: {}\n", config.scan.recursive ? "yes" : "no");
-    fmt::print("  Max file size: {} bytes\n", config.scan.maxFileSize);
-    fmt::print("  Follow symlinks: {}\n", config.scan.followSymlinks ? "yes" : "no");
+    fmt::print(stderr, "\nOptions:\n");
+    fmt::print(stderr, "  Recursive: {}\n", config.scan.recursive ? "yes" : "no");
+    fmt::print(stderr, "  Max file size: {} bytes\n", config.scan.maxFileSize);
+    fmt::print(stderr, "  Follow symlinks: {}\n", config.scan.followSymlinks ? "yes" : "no");
 
     // Filters
     if (!config.scan.include.empty()) {
-        fmt::print("\nInclude patterns ({}):\n", config.scan.include.size());
+        fmt::print(stderr, "\nInclude patterns ({}):\n", config.scan.include.size());
         for (const auto& pat : config.scan.include) {
-            fmt::print("  - {}\n", pat);
+            fmt::print(stderr, "  - {}\n", pat);
         }
     }
 
     if (!config.scan.exclude.empty()) {
-        fmt::print("\nExclude patterns ({}):\n", config.scan.exclude.size());
+        fmt::print(stderr, "\nExclude patterns ({}):\n", config.scan.exclude.size());
         for (const auto& pat : config.scan.exclude) {
-            fmt::print("  - {}\n", pat);
+            fmt::print(stderr, "  - {}\n", pat);
         }
     }
 
     // Built-in rules info
-    fmt::print("\nBuilt-in rules: {}\n", config.builtinRules.enabled ? "enabled" : "disabled");
+    fmt::print(stderr, "\nBuilt-in rules: {}\n", config.builtinRules.enabled ? "enabled" : "disabled");
     if (config.builtinRules.enabled) {
         if (config.builtinRules.use.empty()) {
-            fmt::print("  Loading: all rules\n");
+            fmt::print(stderr, "  Loading: all rules\n");
         } else {
-            fmt::print("  Loading: {} specified rules/categories\n", config.builtinRules.use.size());
+            fmt::print(stderr, "  Loading: {} specified rules/categories\n", config.builtinRules.use.size());
         }
         if (!config.builtinRules.disable.empty()) {
-            fmt::print("  Disabled: {} rules\n", config.builtinRules.disable.size());
+            fmt::print(stderr, "  Disabled: {} rules\n", config.builtinRules.disable.size());
         }
     }
 
     // Custom rules summary
     if (!config.rules.empty()) {
-        fmt::print("\nCustom rules ({}):\n", config.rules.size());
+        fmt::print(stderr, "\nCustom rules ({}):\n", config.rules.size());
         size_t criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
         for (const auto& rule : config.rules) {
             switch (rule.severity) {
@@ -424,29 +424,29 @@ void Config::printSummary(const AppConfig& config) {
                 case Severity::Low:      ++lowCount; break;
             }
         }
-        fmt::print("  Critical: {}, High: {}, Medium: {}, Low: {}\n",
+        fmt::print(stderr, "  Critical: {}, High: {}, Medium: {}, Low: {}\n",
                    criticalCount, highCount, mediumCount, lowCount);
     }
 
     // Actions
-    fmt::print("\nActions:\n");
-    fmt::print("  Quarantine: {}", config.actions.quarantine.enabled ? "enabled" : "disabled");
+    fmt::print(stderr, "\nActions:\n");
+    fmt::print(stderr, "  Quarantine: {}", config.actions.quarantine.enabled ? "enabled" : "disabled");
     if (config.actions.quarantine.enabled) {
-        fmt::print(" ({})", config.actions.quarantine.directory);
+        fmt::print(stderr, " ({})", config.actions.quarantine.directory);
     }
-    fmt::print("\n");
+    fmt::print(stderr, "\n");
 
-    fmt::print("  Report: console={}, format={}\n",
+    fmt::print(stderr, "  Report: console={}, format={}\n",
                config.actions.report.console ? "yes" : "no",
                reportFormatToString(config.actions.report.format));
 
     if (config.actions.alert.enabled) {
-        fmt::print("  Alert: enabled (to: {})\n", config.actions.alert.to);
+        fmt::print(stderr, "  Alert: enabled (to: {})\n", config.actions.alert.to);
     } else {
-        fmt::print("  Alert: disabled\n");
+        fmt::print(stderr, "  Alert: disabled\n");
     }
 
-    fmt::print("\n");
+    fmt::print(stderr, "\n");
 }
 
 }  // namespace lyxbosa

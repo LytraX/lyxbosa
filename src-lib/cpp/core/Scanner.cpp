@@ -59,7 +59,7 @@ ScanResult Scanner::scan() {
 
     auto fileCallback = [&](const FileInfo& info) -> bool {
         // Check for interrupt
-        if (g_interrupted.load(std::memory_order_relaxed)) {
+        if (interrupted()) {
             interrupted_ = true;
             return false;  // Stop walking
         }

@@ -4,14 +4,11 @@
 #include "FileWalker.h"
 #include "MatchEngine.h"
 #include "ScanResult.h"
+#include "Interrupt.h"
 #include <filesystem>
 #include <functional>
-#include <atomic>
 
 namespace lyxbosa {
-
-// Global flag for interrupt handling (signal-safe)
-inline std::atomic<bool> g_interrupted{false};
 
 // Callback for progress reporting
 struct ScanProgress {

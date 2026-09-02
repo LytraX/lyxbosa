@@ -57,5 +57,14 @@ LyxBoSa provides four subcommands:
 - Quarantine support with optional directory structure preservation.
 - Report generation in Text, JSON, and CSV formats.
 - Email alert notifications.
-- Graceful interrupt handling (Ctrl+C) with progress reporting.
-- ANSI colored terminal output (can be disabled with `--no-ansi`).
+- Graceful interrupt handling: the first Ctrl+C finishes the report it has so far and
+  exits 130; a second one leaves immediately.
+- Progress reporting that follows the streams. The report goes to stdout, progress and
+  diagnostics go to stderr, so `lyxbosa scan /var/www > report.txt` shows live progress
+  on the terminal while the report accumulates in the file - and the file never
+  contains a single escape sequence.
+- ANSI colored terminal output, detected per stream and controlled with
+  `--color=auto|always|never` (`--no-ansi` is kept as an alias). `NO_COLOR`,
+  `CLICOLOR_FORCE` and `TERM=dumb` are honored.
+- Progress display selectable with `--progress=auto|plain|none`, `--no-interactive`
+  and `-q/--quiet`.
