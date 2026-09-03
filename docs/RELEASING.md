@@ -121,6 +121,11 @@ Two things to check before you do:
 The README is not the place for this. It describes what the tool does now; the history
 of how it got there lives here.
 
+This step comes before tagging for a mechanical reason, not a tidiness one: CI reads
+the section for the tagged version out of the file *as it exists at the tag*, so an
+entry written afterwards never reaches the release body. See
+[What CI produces](#what-ci-produces).
+
 ### 3. Tag
 
 Use an **annotated** tag with a one-line summary; the tag message is what shows in
@@ -165,11 +170,19 @@ wrong](#if-a-release-goes-wrong).
 | `lyxbosa-linux-arm64` | `ubuntu-24.04-arm`, same container |
 | `lyxbosa-windows-*.exe` | `windows-latest`, static vcpkg triplet |
 
-Release notes are the union of two things:
+Release notes are the union of three things, in this order:
 
+- the **[CHANGELOG.md](../CHANGELOG.md) section for the tagged version**, matched on
+  `## [1.2.0]` or `## 1.2.0` and taken up to the next `##` heading. This is why the
+  changelog is closed out *before* tagging — the tag is what makes CI look for the
+  section, so an entry added afterwards never reaches the release body. A tag with no
+  matching section still releases, with the commit list alone;
 - a **Commits** section the workflow builds itself, from
   `git log --no-merges` between the previous tag and this one;
 - GitHub's own `generate_release_notes: true` output.
+
+The step logs which of the first two it found, so a release published without its
+changelog entry says so in the job output rather than only in the body.
 
 The previous tag is found with:
 

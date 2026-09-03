@@ -103,10 +103,51 @@ jobs:
         with:
           fetch-depth: 0  # full history + tags, needed to diff against the previous tag
 
-      - name: Build commit list
+      # Release notes are the changelog entry for this version, then the commit
+      # list. The changelog carries what a commit subject cannot - what a scan
+      # reports differently on the same input, and what a caller has to change -
+      # so it goes first and the commits become the detail below it.
+      #
+      # A tag with no changelog entry still releases, with the commit list alone.
+      # Failing a release over a missing section would be the wrong trade.
+      - name: Build release notes
         run: |
+          version="${GITHUB_REF_NAME#v}"
           previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+
+          # Everything under "## [1.2.0]" (or "## 1.2.0") up to the next "## ".
+          # Dots in the version are escaped so 2.1.0 cannot match 2x1y0, and the
+          # trailing separator and link-reference block that follow the last
+          # section in the file are trimmed off the end.
+          awk -v ver="${version}" '
+            BEGIN {
+              esc = ver; gsub(/\./, "\\.", esc)
+              head = "^## \\[?" esc "\\]?([^0-9]|$)"
+            }
+            /^## / { if (inside) exit; if ($0 ~ head) inside = 1; next }
+            inside { body = body $0 "\n" }
+            END {
+              n = split(body, line, "\n")
+              while (n > 0 && (line[n] == "" || line[n] == "---" || line[n] ~ /^\[[^]]+\]: /)) n--
+              first = 1
+              while (first <= n && line[first] == "") first++
+              for (i = first; i <= n; i++) print line[i]
+            }
+          ' CHANGELOG.md > CHANGES.md || true
+
+          if [ -s CHANGES.md ]; then
+            echo "Changelog section found for ${version} ($(wc -l < CHANGES.md) lines)"
+          else
+            echo "No changelog section for ${version}; releasing with the commit list only"
+          fi
+
           {
+            if [ -s CHANGES.md ]; then
+              cat CHANGES.md
+              echo
+              echo "---"
+              echo
+            fi
             echo "## Commits"
             echo
             if [ -n "${previous}" ]; then

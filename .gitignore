@@ -18,6 +18,10 @@ vcpkg_installed/
 
 debug.log
 
+# release-note scratch, written by the release job and by anyone testing it locally
+/NOTES.md
+/CHANGES.md
+
 # local scan reports - can quote customer paths and malware content
 /results*.json
 /report*.json
