@@ -19,6 +19,12 @@ namespace lyxbosa::archive {
 namespace {
 
 // The separator between an archive and a member, as it appears in every report.
+// Separator for the human-readable member path, "backup.zip!wp-content/shell.php".
+//
+// NOT escaped, and therefore ambiguous in two cases - a nested container yields
+// "outer.zip!css/c!s", and a filename may legitimately contain "!". Treat this string as
+// display only; it cannot be parsed back into (container, member) reliably. See
+// docs/KNOWN_ISSUES.md #1 before changing this or before writing anything that consumes it.
 constexpr std::string_view kMemberSeparator = "!";
 
 // Directory of a normalised member name, "" for a member at the root.
