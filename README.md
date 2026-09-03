@@ -108,17 +108,18 @@ reports its position in compressed bytes, which the filesystem already knows exa
 
 ### Skipped files
 
-A file that was not scanned is a fact about the scan's coverage, and the report says
-which of three things happened to it:
+A file the scanner did not open is not a file it found nothing in, so every skip is
+counted and named. Three things can happen to a file at the file level:
 
 | reason | meaning |
 |---|---|
-| `size` | larger than `scan.max_file_size` (default 25 MB) |
+| `size` | larger than `scan.max_file_size` |
 | `excluded` | rejected by `scan.include` / `scan.exclude` |
 | `unreadable` | `stat` or `open` failed — permissions, a race, a dead mount |
 
-This is the same treatment archive members already got, one level up. The summary
-reads the same way for both:
+Archive members carry their own reasons (`not code`, `over size limit`, `budget spent`,
+`compression ratio`, `too deeply nested`, `corrupt`), and both levels read the same way
+in the summary:
 
 ```
 Files scanned: 482013
@@ -130,9 +131,21 @@ Archives opened: 41 (18022 members scanned, 3.1 GB expanded)
 Members not scanned: 906 (874 not code, 30 over size limit, 2 corrupt)
 ```
 
-In JSON, `skipped` and `filesSkippedSize` keep exactly the meanings they always had,
-and the detail is additive — a per-file `skipReason` when there is one, and a
-`filesSkipped` object shaped like `archives.membersSkipped`:
+`Directories unreadable` is a coverage fact too: a directory the scanner was pointed at
+and could not list is reported rather than treated as empty.
+
+In JSON, a skipped file carries the reason alongside the flag, and the totals appear as
+an object shaped like `archives.membersSkipped`:
+
+```json
+{
+  "path": "/var/www/html/backup.zip",
+  "skipped": true,
+  "skipReason": "size",
+  "quarantined": false,
+  "matches": []
+}
+```
 
 ```json
 "filesSkippedSize": 183,
@@ -140,47 +153,65 @@ and the detail is additive — a per-file `skipReason` when there is one, and a
 "directoriesUnreadable": 2
 ```
 
-CSV gained `skipped` and `skip_reason` columns, appended so positional consumers keep
-working, and now emits a row for a skipped file — which it previously did not, because
-it wrote one row per match and a skipped file has none.
+CSV carries `skipped` and `skip_reason` as its last two columns, and a skipped file gets
+a row with the rule, severity, line and column fields empty:
 
-`check` says so too. It used to print "No matches found" for a file it had never read,
-which is the same silent skip one file at a time; an oversize or unreadable file now
-reports `Not scanned (over size limit)` and exits `1`.
+```
+file,rule,severity,original_severity,suppressed,category,line,column,quarantined,skipped,skip_reason
+/var/www/html/backup.zip,,,,false,,,,false,true,size
+```
+
+`check` reports it the same way for a single file — an oversize or unreadable file prints
+`Not scanned (over size limit)` and exits `1`, so "no matches found" always means the
+bytes were read.
 
 Excluded files are always *counted*, so you can tell whether a pattern took effect, but
-only *listed* when you ask: globs are how people cut `node_modules` out of a scan, and
-on a real tree the excluded files outnumber the findings by orders of magnitude.
+only *listed* on request: globs are how people cut `node_modules` out of a scan, and on
+a real tree the excluded files outnumber the findings by orders of magnitude.
 
 ```yaml
 scan:
   report_excluded: false   # true = emit a per-file record for every excluded file
 ```
 
-#### Why the size cap is 25 MB
+### Choosing `scan.max_file_size`
 
-Measured on a production host of ~1.3 M files. Of the 423 files a 5 MB cap skipped,
-87% of the bytes were archives — which the cap does not govern at all, because an
-oversize container still has its index read — and most of the rest was PDFs, images and
-video. Only **36 files, 783 MB, were code or text**, and that is the whole decision.
+The default is **25 MB**. A file over the cap is reported as a size skip and never read,
+so the cap decides coverage, not correctness.
 
-25 MB recovers 29 of those 36, including a 20.7 MB database dump, a 21.5 MB content
-import and 20.6 MB of page-cache HTML. The seven it still skips are logs: plugin
-failed-login records and `debug.log`/`laravel.log`, up to 140 MB. Going to 100 MB buys
-444 MB of log text and no additional finding on that host.
+Two things it does *not* govern:
 
-The cap is raised rather than removed because a file is read whole into memory, so no
-cap means reading a 680 MB backup into RAM, and the tail past 25 MB is media, containers
+- **Archives.** A container past the cap still has its index read and its members
+  scanned, so raising the cap to reach a large backup is unnecessary.
+- **Archive members.** Those are bounded by `archives.max_member_size` (5 MB), which
+  does not track this value. A member is inflated into memory and shares one expansion
+  budget with every other member of the same archive, so it wants a tighter bound.
+
+Sizing it, measured against a shared host of ~1.3 M files where a 5 MB cap left 423
+files unread:
+
+| cap | code/text files it reads | cost vs 5 MB |
+|---|---|---|
+| 5 MB | — | baseline |
+| 16 MB | 22 of 36 | ~+2% |
+| **25 MB** | **29 of 36** | **~+4%** |
+| 100 MB | 35 of 36 | ~+10% |
+| unlimited | 36 of 36 | ~+74% |
+
+Of those 423 files, 87% of the bytes were archives — which the cap does not govern — and
+most of the rest was PDFs, images and video. Only 36 files, 783 MB, were code or text.
+25 MB reads 29 of them, including a 20.7 MB database dump, a 21.5 MB content import and
+20.6 MB of page-cache HTML. The seven it leaves are logs — plugin failed-login records,
+`debug.log`, `laravel.log`, up to 140 MB — which is why 100 MB costs more without
+covering anything a rule can use.
+
+Keep a cap rather than setting `0`: a file is read whole into memory, so unlimited means
+pulling a multi-gigabyte backup into RAM, and past 25 MB the tail is media, containers
 and logs.
 
-**Measured cost: +4.3% (24.3 → 25.4 min on that host), and zero new findings.** The
-change moved 230 files out of "not scanned" and read them; none of them matched anything.
-It is a coverage change, not a detection change — the point being that a file the scanner
-never opened should not be counted as clean.
-
-Raising the cap does not raise `archives.max_member_size`, which stays at 5 MB: a member
-is inflated into memory and shares one expansion budget with every other member of the
-same archive, so it wants the tighter bound.
+Raising the cap buys coverage, not detections. On that host the extra 230 files it read
+matched nothing — the reason to read them is that an unopened file should not be counted
+as clean.
 
 ### Key Features
 
@@ -372,3 +403,9 @@ lyxbosa validate-config lyxbosa.yaml
 ## Building
 
 See [docs/BUILDING.md](docs/BUILDING.md).
+
+## Changes
+
+[CHANGELOG.md](CHANGELOG.md) — what changed per release, and anything a configuration or
+a calling script has to do differently. Releasing is
+[docs/RELEASING.md](docs/RELEASING.md).

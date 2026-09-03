@@ -92,12 +92,40 @@ set. Copy `CMakeUserPresets.example.json` if you do not have one yet.
 
 If the change touches rules or the match engine, also confirm findings did not move
 against a known-good binary — see [Verifying detection did not
-change](#verifying-detection-did-not-change).
+change](#verifying-detection-did-not-change). Whatever it moved on purpose is what the
+changelog entry has to say, so the two steps feed each other.
 
-### 2. Tag
+### 2. Close out the changelog
+
+[`CHANGELOG.md`](../CHANGELOG.md) carries an `## Unreleased` section that is written as
+the work lands, not at release time. Closing it out means renaming that heading to the
+version and the date, and opening a fresh empty one above it:
+
+```markdown
+## Unreleased
+
+## [1.2.0] - 2026-09-14
+```
+
+Two things to check before you do:
+
+- **Every user-visible change since the last tag has an entry.**
+  `git log --no-merges v1.1.0..HEAD` is the list to read against. CI already publishes
+  the commit subjects in the release notes, so the changelog is not a second copy of
+  them — it is the part a commit subject cannot carry: what a scan now reports on the
+  same input, and what a configuration or a calling script has to do differently.
+- **Anything under *Compatibility* agrees with the number you are about to pick.**
+  That section exists so the bump is not a guess; see
+  [Choosing the number](#choosing-the-number).
+
+The README is not the place for this. It describes what the tool does now; the history
+of how it got there lives here.
+
+### 3. Tag
 
 Use an **annotated** tag with a one-line summary; the tag message is what shows in
-`git tag -n` and in the GitHub tag list.
+`git tag -n` and in the GitHub tag list. Take it from the changelog headline for that
+version, so the tag and the entry do not drift apart.
 
 ```bash
 git tag -a v1.2.0 -m "Literal prefilter, 6x faster scans"
@@ -106,7 +134,7 @@ git tag -a v1.2.0 -m "Literal prefilter, 6x faster scans"
 > `v1.0.0` was created as a lightweight tag and `v1.1.0` as an annotated one. Use
 > annotated from here on.
 
-### 3. Push the tag
+### 4. Push the tag
 
 ```bash
 git push origin v1.2.0
@@ -115,7 +143,7 @@ git push origin v1.2.0
 **`git push` alone does not push tags.** Pushing master will not start a release;
 the tag ref has to be pushed explicitly.
 
-### 4. Watch the build
+### 5. Watch the build
 
 ```bash
 gh run watch
@@ -242,6 +270,12 @@ something about compatibility.
 
 A change in *what gets detected* is worth calling out in the tag message even when it
 is a patch, because it changes what a scan reports on the same input.
+
+The **Compatibility** section of the unreleased changelog entry is what decides between
+minor and major: if it is empty, nothing breaks and the bump is minor at most. Rule
+removals and default changes belong there too, not only flags and formats — a removed
+rule is a silent no-op for anyone who named it in `builtin_rules`, and a changed default
+alters coverage for everyone who never set it.
 
 ---
 
