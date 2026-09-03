@@ -994,6 +994,24 @@ namespace detail_OBF038 {
 
         if (body.size() < kMinNoisyLength) return false;
 
+        // A quoted escape sequence is a glyph reference, not filler. Icon-font CSS
+        // documents every character it defines as `/* '\\1f3b5' */`, which is short and
+        // has a high distinct-character ratio for the same reason a hex string does -
+        // and unyson ships 285 of them in one stylesheet.
+        {
+            bool sawBackslash = false;
+            bool onlyEscapeBytes = true;
+            for (unsigned char ch : body) {
+                if (ch == '\\') { sawBackslash = true; continue; }
+                const bool hex = (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') ||
+                                 (ch >= 'A' && ch <= 'F');
+                const bool filler = ch == '\'' || ch == '"' || ch == ' ' ||
+                                    ch == '\t' || ch == '\r' || ch == '\n';
+                if (!hex && !filler) { onlyEscapeBytes = false; break; }
+            }
+            if (sawBackslash && onlyEscapeBytes) return false;
+        }
+
         size_t letters = 0;
         for (char ch : body) {
             if (std::isalpha(static_cast<unsigned char>(ch))) {

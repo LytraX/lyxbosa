@@ -460,6 +460,35 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return true;
     }
 
+    // SEO008: PHP user-agent cloaking
+    //
+    // A cloaker is code the webserver runs. The analyzer sees content only, so the
+    // file-type gate lives here, the same way OBF036's does. wp-fastest-cache ships a
+    // readme.txt that names enough crawlers to satisfy the rule's crawler test.
+    //
+    // Files with no extension at all are admitted deliberately: webshells routinely
+    // have none, and one of the cloakers this rule found on a production host was a
+    // bare filename in a file manager plugin's `.tmp/` directory.
+    if (ruleCode == "SEO008") {
+        static constexpr std::string_view kExecutableExtensions[] = {
+            ".php", ".php5", ".php7", ".php8", ".phtml", ".inc", ".module",
+            ".install", ".theme", ".profile", ".engine", ".tpl", ".ctp",
+        };
+        const auto slash = ctx.filePath.find_last_of("/\\");
+        const std::string_view name = (slash == std::string_view::npos)
+                                          ? ctx.filePath
+                                          : ctx.filePath.substr(slash + 1);
+        const auto dot = name.find_last_of('.');
+        if (dot == std::string_view::npos || dot == 0) {
+            return true;   // no extension - could be anything, including a shell
+        }
+        const std::string ext = lowerExtension(name);
+        for (auto candidate : kExecutableExtensions) {
+            if (ext == candidate) return true;
+        }
+        return false;
+    }
+
     // DEFC002: Index file replacement
     //
     // Writing an index file is how a plugin *protects* a directory, and that is the
