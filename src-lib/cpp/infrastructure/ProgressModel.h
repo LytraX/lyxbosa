@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/ByteSize.h"
+
 // ProgressModel.h - Derived progress state: percentage, throughput and ETA.
 //
 // Deliberately free of any terminal dependency, so the plain stderr line and the
@@ -256,19 +258,5 @@ inline std::string formatDuration(std::chrono::seconds total) {
     return fmt::format("{}s", secs);
 }
 
-// "512 B", "1.5 KB", "3.2 MB"
-inline std::string formatBytes(uint64_t bytes) {
-    constexpr const char* kUnits[] = {"B", "KB", "MB", "GB", "TB"};
-    auto value = static_cast<double>(bytes);
-    size_t unit = 0;
-    while (value >= 1024.0 && unit + 1 < std::size(kUnits)) {
-        value /= 1024.0;
-        ++unit;
-    }
-    if (unit == 0) {
-        return fmt::format("{} {}", bytes, kUnits[unit]);
-    }
-    return fmt::format("{:.1f} {}", value, kUnits[unit]);
-}
 
 }  // namespace lyxbosa

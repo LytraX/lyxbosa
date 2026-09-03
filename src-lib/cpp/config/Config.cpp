@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <fmt/format.h>
+#include "utils/ByteSize.h"
 
 namespace lyxbosa {
 
@@ -540,8 +541,15 @@ actions:
     console: true
     format: text
 
+  # Email alert. The recipient nests under `email:`, not directly under `alert:` -
+  # setting `to:` here has no effect and the scan will warn that there is nobody to
+  # alert.
   alert:
     enabled: false
+    # email:
+    #   to: soc@example.com
+    #   from: lyxbosa@example.com
+    #   subject: "LyxBoSa: findings on ${HOSTNAME}"
 )";
 }
 
@@ -580,6 +588,14 @@ std::string Config::validate(const AppConfig& config) {
 std::vector<std::string> Config::warnings(const AppConfig& config) {
     std::vector<std::string> out;
 
+    // An alert that says "email me" with nowhere to email is a misconfiguration the
+    // operator wants to hear about now, not after a twenty-minute scan finds something.
+    // The recipient nests under alert.email.to, which is easy to miss.
+    if (config.actions.alert.enabled && config.actions.alert.to.empty()) {
+        out.push_back("actions.alert.enabled is true but actions.alert.email.to is empty: "
+                      "there is nobody to alert");
+    }
+
     if (!config.archives.enabled) {
         return out;
     }
@@ -613,99 +629,174 @@ std::vector<std::string> Config::warnings(const AppConfig& config) {
     return out;
 }
 
-void Config::printSummary(const AppConfig& config) {
+namespace {
+
+// One "label  a, b, c" block, flowed to the terminal instead of one item per line.
+//
+// Long lists are summarised rather than wrapped forever: the default include list is
+// 127 globs, and 18 lines of them ahead of a yes/no question is what this replaces.
+// A short list - which is what a hand-written config has - is shown in full, so the
+// case where the patterns are worth reading is the case that prints them.
+void printPatternList(std::string_view label, const std::vector<std::string>& items,
+                      size_t width, bool verbose) {
+    constexpr size_t kIndent = 4;
+    constexpr size_t kAlwaysShow = 12;   // a hand-written list fits; the default does not
+
+    fmt::print(stderr, "  {} ({})\n", label, items.size());
+
+    const bool all = verbose || items.size() <= kAlwaysShow;
+    const size_t usable = width > kIndent + 20 ? width - kIndent : 56;
+
+    std::string line;
+    size_t shown = 0;
+    for (const auto& item : items) {
+        if (!all && shown >= kAlwaysShow) break;
+        if (!line.empty() && line.size() + 2 + item.size() > usable) {
+            fmt::print(stderr, "{:{}}{}\n", "", kIndent, line);
+            line.clear();
+        }
+        if (!line.empty()) line += "  ";
+        line += item;
+        ++shown;
+    }
+    if (!line.empty()) {
+        fmt::print(stderr, "{:{}}{}\n", "", kIndent, line);
+    }
+    if (shown < items.size()) {
+        fmt::print(stderr, "{:{}}... and {} more (-v to list)\n",
+                   "", kIndent, items.size() - shown);
+    }
+}
+
+// "  Scan      recursive | max file 25.0 MB | symlinks not followed", wrapped to the
+// terminal with the continuation aligned under the first fact rather than under the
+// label, so a narrow window folds instead of overflowing.
+//
+// ASCII only, deliberately. Every other byte this project writes to a plain terminal
+// is ASCII, and it ships a Windows build where a separator like a middle dot can
+// arrive as mojibake on a legacy console codepage.
+void printFactLine(std::string_view label, const std::vector<std::string>& facts,
+                   size_t width) {
+    constexpr size_t kLabelColumn = 12;   // "  " + 8-wide label + "  "
+    const size_t usable = width > kLabelColumn + 16 ? width - kLabelColumn : 48;
+
+    std::string line;
+    bool firstLine = true;
+    const auto flush = [&] {
+        if (line.empty()) return;
+        if (firstLine) {
+            fmt::print(stderr, "  {:<8}  {}\n", label, line);
+            firstLine = false;
+        } else {
+            fmt::print(stderr, "{:{}}{}\n", "", kLabelColumn, line);
+        }
+        line.clear();
+    };
+
+    for (const auto& fact : facts) {
+        if (fact.empty()) continue;
+        const std::string piece = line.empty() ? fact : " | " + fact;
+        if (!line.empty() && line.size() + piece.size() > usable) {
+            flush();
+            line = fact;
+        } else {
+            line += piece;
+        }
+    }
+    flush();
+    if (firstLine) {   // every fact was empty
+        fmt::print(stderr, "  {:<8}  -\n", label);
+    }
+}
+
+}  // namespace
+
+void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
     fmt::print(stderr, "\n=== LyxBoSa Configuration ===\n\n");
 
-    // Directories
-    fmt::print(stderr, "Scan directories ({}):\n", config.scan.directories.size());
+    // What will be touched, first and unabbreviated. Everything else is a setting;
+    // this is the answer to "am I about to scan the right thing".
+    fmt::print(stderr, "Directories ({})\n", config.scan.directories.size());
     for (const auto& dir : config.scan.directories) {
-        fmt::print(stderr, "  - {}\n", dir);
-    }
-
-    fmt::print(stderr, "\nOptions:\n");
-    fmt::print(stderr, "  Recursive: {}\n", config.scan.recursive ? "yes" : "no");
-    fmt::print(stderr, "  Max file size: {} bytes\n", config.scan.maxFileSize);
-    fmt::print(stderr, "  Follow symlinks: {}\n", config.scan.followSymlinks ? "yes" : "no");
-
-    // Filters
-    if (!config.scan.include.empty()) {
-        fmt::print(stderr, "\nInclude patterns ({}):\n", config.scan.include.size());
-        for (const auto& pat : config.scan.include) {
-            fmt::print(stderr, "  - {}\n", pat);
-        }
-    }
-
-    if (!config.scan.exclude.empty()) {
-        fmt::print(stderr, "\nExclude patterns ({}):\n", config.scan.exclude.size());
-        for (const auto& pat : config.scan.exclude) {
-            fmt::print(stderr, "  - {}\n", pat);
-        }
-    }
-
-    // Archives
-    fmt::print(stderr, "\nArchives: {}\n", config.archives.enabled ? "opened" : "not opened");
-    if (config.archives.enabled) {
-        fmt::print(stderr, "  Nesting depth: {}\n", config.archives.maxDepth);
-        fmt::print(stderr, "  Per-member limit: {} bytes\n",
-                   config.archives.memberSizeLimit(config.scan.maxFileSize));
-        fmt::print(stderr, "  Expansion budget: {}\n",
-                   config.archives.maxExpansion == 0
-                       ? std::string("unlimited")
-                       : fmt::format("{} bytes", config.archives.maxExpansion));
-        fmt::print(stderr, "  Time budget: {}\n",
-                   config.archives.timeBudgetSeconds == 0
-                       ? std::string("unlimited")
-                       : fmt::format("{}s", config.archives.timeBudgetSeconds));
-        if (config.archives.exhaustive) {
-            fmt::print(stderr, "  Exhaustive: every member, not only code\n");
-        }
-    }
-
-    // Built-in rules info
-    fmt::print(stderr, "\nBuilt-in rules: {}\n", config.builtinRules.enabled ? "enabled" : "disabled");
-    if (config.builtinRules.enabled) {
-        if (config.builtinRules.use.empty()) {
-            fmt::print(stderr, "  Loading: all rules\n");
-        } else {
-            fmt::print(stderr, "  Loading: {} specified rules/categories\n", config.builtinRules.use.size());
-        }
-        if (!config.builtinRules.disable.empty()) {
-            fmt::print(stderr, "  Disabled: {} rules\n", config.builtinRules.disable.size());
-        }
-    }
-
-    // Custom rules summary
-    if (!config.rules.empty()) {
-        fmt::print(stderr, "\nCustom rules ({}):\n", config.rules.size());
-        size_t criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
-        for (const auto& rule : config.rules) {
-            switch (rule.severity) {
-                case Severity::Critical: ++criticalCount; break;
-                case Severity::High:     ++highCount; break;
-                case Severity::Medium:   ++mediumCount; break;
-                case Severity::Low:      ++lowCount; break;
-            }
-        }
-        fmt::print(stderr, "  Critical: {}, High: {}, Medium: {}, Low: {}\n",
-                   criticalCount, highCount, mediumCount, lowCount);
-    }
-
-    // Actions
-    fmt::print(stderr, "\nActions:\n");
-    fmt::print(stderr, "  Quarantine: {}", config.actions.quarantine.enabled ? "enabled" : "disabled");
-    if (config.actions.quarantine.enabled) {
-        fmt::print(stderr, " ({})", config.actions.quarantine.directory);
+        fmt::print(stderr, "    {}\n", dir);
     }
     fmt::print(stderr, "\n");
 
-    fmt::print(stderr, "  Report: console={}, format={}\n",
-               config.actions.report.console ? "yes" : "no",
-               reportFormatToString(config.actions.report.format));
+    printFactLine("Scan", {
+        config.scan.recursive ? "recursive" : "not recursive",
+        fmt::format("max file {}", formatBytes(config.scan.maxFileSize)),
+        config.scan.followSymlinks ? "follows symlinks" : "symlinks not followed",
+    }, width);
 
-    if (config.actions.alert.enabled) {
-        fmt::print(stderr, "  Alert: enabled (to: {})\n", config.actions.alert.to);
+    if (config.archives.enabled) {
+        printFactLine("Archives", {
+            "opened",
+            fmt::format("depth {}", config.archives.maxDepth),
+            fmt::format("member {}",
+                        formatBytes(config.archives.memberSizeLimit(config.scan.maxFileSize))),
+            config.archives.maxExpansion == 0
+                ? std::string("expansion unlimited")
+                : fmt::format("expansion {}", formatBytes(config.archives.maxExpansion)),
+            config.archives.timeBudgetSeconds == 0
+                ? std::string("time unlimited")
+                : fmt::format("time {}s", config.archives.timeBudgetSeconds),
+            config.archives.exhaustive ? "every member" : "",
+        }, width);
     } else {
-        fmt::print(stderr, "  Alert: disabled\n");
+        printFactLine("Archives", {"not opened"}, width);
+    }
+
+    // Rules
+    std::string rules;
+    if (!config.builtinRules.enabled) {
+        rules = "built-in disabled";
+    } else if (config.builtinRules.use.empty()) {
+        rules = "all built-in";
+    } else {
+        rules = fmt::format("{} selected built-in", config.builtinRules.use.size());
+    }
+    if (!config.builtinRules.disable.empty()) {
+        rules += fmt::format(", {} disabled", config.builtinRules.disable.size());
+    }
+    if (!config.rules.empty()) {
+        size_t crit = 0, high = 0, med = 0, low = 0;
+        for (const auto& rule : config.rules) {
+            switch (rule.severity) {
+                case Severity::Critical: ++crit; break;
+                case Severity::High:     ++high; break;
+                case Severity::Medium:   ++med;  break;
+                case Severity::Low:      ++low;  break;
+            }
+        }
+        rules += fmt::format(" | {} custom (C:{} H:{} M:{} L:{})",
+                             config.rules.size(), crit, high, med, low);
+    }
+    printFactLine("Rules", {rules}, width);
+
+    // Actions - the other half of "what will be touched".
+    std::string quarantine = config.actions.quarantine.enabled
+        ? fmt::format("quarantine to {}", config.actions.quarantine.directory)
+        : std::string("quarantine disabled");
+    printFactLine("Actions", {
+        quarantine,
+        config.actions.report.console
+            ? fmt::format("report console ({})", reportFormatToString(config.actions.report.format))
+            : fmt::format("report {}", reportFormatToString(config.actions.report.format)),
+        !config.actions.alert.enabled
+            ? std::string("no alert")
+            : config.actions.alert.to.empty()
+                  ? std::string("alert enabled but no recipient")
+                  : fmt::format("alert to {}", config.actions.alert.to),
+    }, width);
+
+    if (!config.scan.include.empty() || !config.scan.exclude.empty()) {
+        fmt::print(stderr, "\n");
+        if (!config.scan.include.empty()) {
+            printPatternList("Include", config.scan.include, width, verbose);
+        }
+        if (!config.scan.exclude.empty()) {
+            printPatternList("Exclude", config.scan.exclude, width, verbose);
+        }
     }
 
     fmt::print(stderr, "\n");

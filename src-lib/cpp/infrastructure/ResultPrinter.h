@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/ByteSize.h"
+
 #include "utils/SafeText.h"
 
 #include "Terminal.h"
@@ -182,7 +184,7 @@ public:
         plain("Archives opened: {} ({} member{} scanned, {} expanded)\n",
               stats.archivesOpened, stats.membersScanned,
               stats.membersScanned == 1 ? "" : "s",
-              formatByteCount(stats.bytesExpanded));
+              formatBytes(stats.bytesExpanded));
 
         if (stats.archivesUnreadable > 0) {
             styled(Terminal::warning(), "Archives unreadable: {}\n",
@@ -201,20 +203,6 @@ public:
 
         plain("Members not scanned: {} ({})\n",
               stats.totalSkipped(), formatSkipTally(stats.skips, kArchiveSkipOrder));
-    }
-
-    // "512 B", "1.5 MB". ProgressModel has the same helper, but this header is
-    // used by report writers that have no business pulling in the progress model.
-    static std::string formatByteCount(uint64_t bytes) {
-        constexpr const char* kUnits[] = {"B", "KB", "MB", "GB", "TB"};
-        auto value = static_cast<double>(bytes);
-        size_t unit = 0;
-        while (value >= 1024.0 && unit + 1 < std::size(kUnits)) {
-            value /= 1024.0;
-            ++unit;
-        }
-        return unit == 0 ? fmt::format("{} {}", bytes, kUnits[unit])
-                         : fmt::format("{:.1f} {}", value, kUnits[unit]);
     }
 
     // Truncate a path from the beginning ("...rest/of/path") without ever

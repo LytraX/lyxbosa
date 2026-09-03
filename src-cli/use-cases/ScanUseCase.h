@@ -132,7 +132,7 @@ public:
                 return 1;
             }
 
-            Config::printSummary(config);
+            Config::printSummary(config, caps_.width(), args.verbose);
 
             if (args.dryRun) {
                 terminal_.printErr(Terminal::warning(), "[DRY RUN MODE - No files will be quarantined]\n\n");
