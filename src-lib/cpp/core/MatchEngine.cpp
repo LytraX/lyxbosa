@@ -460,6 +460,73 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return true;
     }
 
+    // DEFC002: Index file replacement
+    //
+    // Writing an index file is how a plugin *protects* a directory, and that is the
+    // opposite of defacement. Unyson's backup module writes an index.php holding
+    // `header('HTTP/1.0 403 Forbidden'); die('<h1>Forbidden</h1>');`, and Amelia
+    // writes an empty index.html - both so the directory cannot be listed.
+    //
+    // A defacer replaces index.php with a page. A guard stub denies access or is
+    // empty, and says so in the bytes being written.
+    if (ruleCode == "DEFC002") {
+        // The content is usually assembled just above the write and passed as a
+        // variable, so the window has to look backwards as well as forwards.
+        const size_t start = (ctx.matchOffset > 400) ? ctx.matchOffset - 400 : 0;
+        const size_t end = std::min(ctx.matchOffset + 400, ctx.content.size());
+        const std::string_view around = ctx.content.substr(start, end - start);
+
+        static constexpr std::string_view kGuardMarkers[] = {
+            "403 Forbidden", "Forbidden", "Deny from all", "deny from all",
+            "Options -Indexes", "Silence is golden", "HTTP/1.0 403", "R=404",
+        };
+        for (auto marker : kGuardMarkers) {
+            if (around.find(marker) != std::string_view::npos) {
+                return false;
+            }
+        }
+
+        // An empty file cannot deface anything.
+        const std::string_view afterMatch =
+            ctx.content.substr(ctx.matchOffset, end - ctx.matchOffset);
+        if (afterMatch.find(", '')") != std::string_view::npos ||
+            afterMatch.find(", \"\")") != std::string_view::npos ||
+            afterMatch.find(",'')") != std::string_view::npos ||
+            afterMatch.find(",\"\")") != std::string_view::npos) {
+            return false;
+        }
+
+        return true;
+    }
+
+    // BD008: htaccess backdoor
+    //
+    // The technique is an .htaccess that makes something *executable* - mapping an
+    // innocuous extension to the PHP handler so an uploaded .jpg runs as code. Merely
+    // writing an .htaccess is what every plugin does to protect its own directories.
+    //
+    // Note that `RewriteRule` is not an enabling directive, despite looking like one:
+    // unyson's backup guard is `Deny from all` followed by
+    // `RewriteRule . - [R=404,L]`, which is a rewrite that denies. The enabling
+    // directives are the ones that attach a handler.
+    if (ruleCode == "BD008") {
+        const size_t start = (ctx.matchOffset > 400) ? ctx.matchOffset - 400 : 0;
+        const size_t end = std::min(ctx.matchOffset + 400, ctx.content.size());
+        const std::string_view around = ctx.content.substr(start, end - start);
+
+        static constexpr std::string_view kEnablingDirectives[] = {
+            "AddType", "AddHandler", "SetHandler", "ForceType",
+            "php_flag engine", "php_value", "php_admin_value", "Action ",
+            "x-httpd-php", "application/x-httpd",
+        };
+        for (auto directive : kEnablingDirectives) {
+            if (around.find(directive) != std::string_view::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // BD013: Embedded private key
     //
     // The rule wants a key a backdoor uses to talk to its C2. What it found on a production
