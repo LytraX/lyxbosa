@@ -1,6 +1,7 @@
 # Corpus collection and golden test suite — plan
 
-**Status:** plan only, nothing executed.
+**Status:** under review. Plan only, nothing executed.
+**Revision:** 2 — sensitivity reworked as a separate axis; backups excluded; publication assumed.
 **Trigger:** the review in `docs/local/ChatGPT-Review.md` — "the golden corpus is now the
 highest-value improvement you could make" — plus a hard deadline: the incident host is
 about to be cleaned, and everything on it is unrecoverable after that.
@@ -134,21 +135,33 @@ Two things learned the hard way in the session that produced this plan:
   readability locally *after* the manifest has recorded the originals:
   `chmod -R u+rwX trail-data/incoming/`.
 
-### 2.3 Archives and oversize files — decide, don't default
+### 2.3 Archives: take the members, never the containers
 
-Last measurement: 170 archives / 24.7 GB, and the interesting part is *inside* them (this
-session found two obfuscated webshells and a JPEG/PHP polyglot uploader in backups sitting
-in web roots). Pulling 25 GB of customer site backups to keep three members is the wrong
-trade, and those backups contain live `wp-config.php` credentials.
+Site backups are **not** corpus data. They are tens of gigabytes, they are full of real
+customer records, and cleaning one is harder than cleaning the site it came from. Last
+measurement: 170 archives, 24.7 GB, and 32 of them held a live `wp-config.php`, `.env` or
+`.ssh/id_rsa`.
 
-Recommended: for each archive, pull **the member list plus only the members that matched**
-(the scanner already addresses them as `backup.zip!path/inside.php`). Keep the container
-itself only where the container *is* the finding — `ARC001` exposure cases — and then only
-one or two as examples, recorded as such.
+So: for every archive in the report, collect **the member list plus only the members that
+matched**. The scanner already addresses them as `backup.zip!path/inside.php`, and the
+members are the interesting part — this is how the two obfuscated `wp-admin/index.php`
+webshells and the JPEG/PHP polyglot uploader were found.
 
-Anything above ~100 MB: record its manifest row and a 2 MB head prefix, not the file. That
-is enough to write a format sniffer against later (it is how the `.wpress` prefix sample
-already in the corpus was handled).
+Nothing above ~100 MB comes across at all. Record its manifest row and, where a format
+sniffer is wanted later, a 2 MB head prefix.
+
+**Archive fixtures get emulated, not collected.** The suite needs archive coverage — bombs,
+nested archives, malformed central directories, a container that is a copy of an installed
+site — and every one of those is better *generated* than harvested:
+
+- deterministic, so a fixture is reproducible from a script rather than a 600 MB download;
+- no customer bytes, so it can be public without a sanitisation pass;
+- and it can be built to hit an exact guard, which a real backup cannot.
+
+`tests/archive_test.cpp` already generates zips and tars in-process, including a 64 MB
+bomb from 64 KB. Extend that generator into a `corpus/generate-archives.sh` producing the
+fixture set, and pair each with its expected outcome (`ARC001` on a synthesised site copy,
+`skippedRatio`/`skippedBudget` on the bomb, `skippedCorrupt` on a truncated one).
 
 ### 2.4 Verify before anyone deletes anything
 
@@ -195,21 +208,55 @@ result per sample**. That is the whole point of a golden suite: `infected=true` 
 enough, because a rule change that keeps the detection but for the wrong reason is a
 regression that a boolean cannot see.
 
-### 4.1 Tiers
+### 4.1 Two independent axes
 
-The existing corpus has two tiers (`verified` / `unverified`) and this session proved two
-more are needed — one because four "verified malware" samples turned out to be WordPress
-core and WooCommerce, and one because customer content cannot be published at all.
+This is the part the first draft of this plan got wrong. It treated classification as one
+question — is this malicious — when there are two, and they do not correlate:
 
-| tier | meaning | publishable |
+- **Verdict:** what the scanner should say about the file.
+- **Sensitivity:** what real-world information the file carries, and therefore what has to
+  be masked before it can be published.
+
+They are orthogonal. A webshell is malicious *and* sensitive: it embeds the victim's
+absolute paths, their domain, the attacker's callback host, sometimes an e-mail address or
+a hardcoded password hash. A `wp-config.php` flagged by `BD004` is benign *and* highly
+sensitive. An upstream Symfony polyfill is benign and carries nothing. Classifying on one
+axis and assuming the other follows is how secrets end up in a public corpus.
+
+**Axis A — verdict**
+
+| verdict | meaning |
+|---|---|
+| `malicious` | opened, read, confirmed hostile |
+| `benign` | confirmed legitimate — includes upstream code a rule wrongly flagged |
+| `vulnerable` | genuinely dangerous code in legitimate software (`EXP006`, `RCE006`) — a correct detection, not malware |
+| `unreviewed` | collected, not yet opened. The default; nothing leaves it without a human looking |
+
+**Axis B — sensitivity**, recorded as a set of tags, not a single level, because a file can
+carry several kinds at once and each is masked differently:
+
+| tag | what it means | what happens to it |
 |---|---|---|
-| `malicious` | opened, read, confirmed hostile | yes |
-| `benign` | opened, read, confirmed legitimate — includes upstream code that a rule wrongly flagged | yes |
-| `vulnerable` | genuinely dangerous code in legitimate software (`EXP006`, `RCE006` cases) — a correct detection, not malware | yes |
-| `sensitive` | customer content or credentials. Never published, hash and note only | **no** |
-| `unreviewed` | collected, not yet opened | no |
+| `secret` | credentials, API keys, DB passwords, salts, private keys, session tokens | replaced with a synthetic value of the same shape and length |
+| `identity` | domains, hostnames, IPs, e-mail addresses, account and customer names | deterministic substitution from a mapping kept out of the repo |
+| `path` | absolute filesystem paths that name an account or a customer | account segment substituted, structure preserved |
+| `pii` | personal data — names, phone numbers, addresses, order records, log lines with user data | sample is not published; index row only |
+| `content` | customer-authored media or documents that are not code | not published; see §4.3 for the polyglot case |
+| `c2` | attacker infrastructure — callback hosts, bucket URLs, Telegram tokens | **kept**, deliberately: it is an IOC and it is the attacker's, not the customer's |
+| `clean` | carries none of the above | published as-is |
 
-`unreviewed` is the default and nothing leaves it without a human having looked.
+Two consequences worth stating plainly:
+
+- **`c2` is the one category we do not mask.** A cloaker's `https://…/index.txt`, a
+  `gsocket.io` installer URL, a `jan09.ofu5563ytu` campaign marker — those are the value
+  of the sample and they belong to the attacker. Masking them would destroy the IOC.
+- **`pii` and `content` are not maskable, so they are not published.** There is no
+  substitution that makes a customer's order export or family photo safe. Those get a
+  manifest row, a hash and a note, and the test that needed them gets a synthesised
+  equivalent instead (§4.3, §7).
+
+A sample is publishable when its verdict is not `unreviewed` **and** every sensitivity tag
+on it is either `clean`, `c2`, or has been masked and re-verified.
 
 ### 4.2 Keep the human queue small by automating triage, not judgement
 
@@ -265,89 +312,122 @@ JSONL because a schema can gain fields without rewriting existing rows, appendin
 line, and it diffs and merges in git.
 
 ```json
-{"sha256":"...","size":14916,"tier":"malicious","family":"smart-chunk-stager",
- "origin":{"incident":"2026-08-22","account_hash":"a3f1","path":"/wp-content/uploads/x.php",
+{"sha256":"...","size":14916,
+ "verdict":"malicious","family":"smart-chunk-stager",
+ "sensitivity":["path","c2"],
+ "masked":{"path":"account segment -> acct01","c2":"kept deliberately (IOC)"},
+ "publishable":true,
+ "origin":{"incident":"2026-08-22","account_hash":"a3f1",
+           "path":"/home/<acct01>/public_html/wp-admin.php",
            "mode":"0444","mtime":1782000000},
+ "discovered_by":"lyxbosa-scan",
  "technique":["chunked-append","base64"],
  "expect":{"must_detect":["OBF029"],"must_not_detect":["OBF025"],"min_severity":"critical"},
- "review":{"by":"cl","date":"2026-09-04","note":"203831 appends of width 4"},
- "publishable":true}
+ "review":{"by":"cl","date":"2026-09-04","note":"203831 appends of width 4"}}
 ```
 
 - `expect.must_detect` gives recall; `expect.must_not_detect` gives precision and is where
   every fixed false positive is pinned forever.
-- `origin.account_hash` not the account name: provenance without the customer.
-- One row per *sample*, and duplicates collapse to one row with a count.
+- `sensitivity` and `masked` are the audit trail for §7. A sample cannot become
+  `publishable: true` while a tag is unmasked and not on the keep-list.
+- `origin.account_hash` rather than the account name: provenance without the customer.
+- **`discovered_by`** records how the sample came to us — `lyxbosa-scan`, `manual-sweep`,
+  `operator-report`, `third-party-scanner`. This is not a quality judgement on the sample;
+  every one of them is real malware regardless. It exists so recall can be reported two
+  ways: overall, and excluding samples this scanner found itself. A recall figure computed
+  only over `lyxbosa-scan` samples is close to 100% by construction and would overstate
+  what the tool does on malware it has never seen. Six families in the current corpus are
+  in that category, which is worth being able to say out loud rather than hide.
+- One row per *sample*; duplicates collapse to one row with a count.
 
-Migrate the existing `manifest.tsv` (4,198 rows) into this by mapping
-`tier/family/stored_as/decoder` and leaving `expect` empty, to be filled as each family is
-reviewed. Keep `manifest.tsv` generated from the JSONL for as long as anything reads it.
+Migrate the existing `manifest.tsv` (4,198 rows) by mapping `tier/family/stored_as/decoder`
+onto `verdict/family`, leaving `sensitivity` as `["unreviewed"]` and `expect` empty until
+each family is reviewed. Keep `manifest.tsv` generated from the JSONL while anything still
+reads it.
 
----
+## 5. Masking
 
-## 5. Make `trail-data/Sites/site21.tld` generic
+Two jobs that share one mechanism: sanitising the one real site in the corpus, and
+sanitising the samples themselves. The second is the one that is easy to forget — a
+webshell is not customer content, but it is *full of customer identifiers*.
 
-22,414 files of a real site. It is the only *whole realistic site* in the corpus, which is
-exactly why it is worth keeping and why it cannot stay as-is.
+### 5.1 Every sample, including the malicious ones
 
-**What identifies it,** and all of it has to go: the domain (in `wp-config.php`, the DB
-dump, page caches, sitemaps, minified asset URLs, `.htaccess`), the account name in paths,
-admin and contact e-mail addresses, DB name/user/password and salts, plugin licence keys
-and API tokens, and everything under `wp-content/uploads` — which is customer content, not
-site code.
+What the malware in this corpus carries about its victims, from files already read this
+session: absolute paths naming the account (`/home/<acct>/public_html/…`), the site's
+domain in cloaker configs and injected markup, admin e-mail addresses, hardcoded password
+hashes, and in one case an admin address inside a database dump. A `wp-config.php` flagged
+by `BD004` carries DB credentials and salts outright.
 
-**Approach:**
+The masking rules, per §4.1's tags:
 
-1. Build the identifier list mechanically before editing anything: grep the tree for the
-   domain, the account name, every `@`-bearing string, and the `wp-config.php` constants.
-   Review the list by hand — this is the step where a missed identifier survives.
-2. Substitute deterministically from a mapping file kept **outside** the repo, so the same
-   token maps to the same replacement everywhere. A page cache that references the domain
-   has to still match the config after substitution, or the corpus stops being a coherent
-   site.
-3. **Prefer length-preserving replacements.** `site21.tld` → `demo.tld` keeps offsets, sizes
-   and entropy stable. This matters because the file is also a false-positive fixture: the
-   four known `OBF025` findings must survive sanitisation unchanged, and offset-sensitive
-   rules should see the same shape.
-4. Replace `uploads/` with generated placeholders — correct extensions, plausible sizes,
-   no customer bytes. Keep the *directory structure*, since upload-path placement is
-   itself a detection signal.
-5. Delete the DB dump rather than sanitise it. A WordPress dump is mostly customer content
-   and the effort/risk is not worth it; if a SQL fixture is needed, generate one.
+| tag | rule |
+|---|---|
+| `secret` | replace with a synthetic value of the **same shape and length** — a 64-hex salt stays 64 hex, a bcrypt hash stays a valid-looking bcrypt hash |
+| `identity` | deterministic substitution from a mapping kept outside the repo, so the same domain maps to the same replacement in every file |
+| `path` | substitute the account segment only; keep depth and structure, because placement is a detection signal |
+| `c2` | **keep**. Attacker infrastructure is the IOC and is not the customer's |
+| `pii`, `content` | not maskable — do not publish (index row and hash only) |
 
-**Verify:**
+**Length-preserving wherever possible.** Several rules here are offset- and
+entropy-sensitive — `OBF036` measures control-byte ratio and adjacency, `OBF029` measures
+chunk width uniformity, `DRP007` needs a literal of a minimum length. A substitution that
+changes a file's size can change whether it is detected, which would make the fixture test
+the mask instead of the malware.
 
-- grep the sanitised tree for every identifier on the list → zero hits;
-- re-scan and confirm **exactly** the 4 known `OBF025` findings, no more, no fewer;
-- file count and directory shape unchanged;
-- a second person greps for the identifier list independently.
+**Verify per sample, mechanically:** after masking, re-scan and assert the sample still
+produces exactly its `expect.must_detect` set. If masking moved the verdict, the mask is
+wrong, not the rule.
 
-Rename the directory to something generic (`Sites/demo-wp/`) and record in the corpus
-README that it is a sanitised real site, with what was replaced.
+### 5.2 The site corpus (`trail-data/Sites/site21.tld`)
 
----
+22,414 files of a real site — the only whole realistic site in the corpus, which is why it
+is worth keeping and why it cannot stay as-is.
 
-## 6. Benign corpus — target what actually breaks rules
+1. Build the identifier list mechanically first: grep for the domain, the account name,
+   every `@`-bearing string, and the `wp-config.php` constants. **Review that list by
+   hand** — this is the step where a missed identifier survives.
+2. Substitute deterministically from the same out-of-repo mapping, so cross-file references
+   still resolve: a page cache that references the domain must still match the config, or
+   the corpus stops being a coherent site.
+3. Prefer length-preserving replacements (`site21.tld` → `demo.tld`). The four known `OBF025`
+   findings are a false-positive fixture and must survive unchanged.
+4. Replace `wp-content/uploads` with generated placeholders — correct extensions, plausible
+   sizes, no customer bytes. Keep the directory structure; upload-path placement is itself
+   a signal.
+5. Delete the DB dump rather than sanitise it. A WordPress dump is mostly customer content;
+   generate a SQL fixture instead if one is needed.
 
-The existing `trail-data/CMS` is 51,294 files of stock WordPress, Joomla and Magento, and
-it produces **zero findings**. That is worth knowing: stock CMS core is not what breaks
-these rules. Every false positive analysed this session came from somewhere else —
-protobuf-generated PHP, webpack development bundles, Freemius, Symfony polyfills, icon
-fonts, Twilio docblocks, composer's bootstrap.
+**Verify:** grep the sanitised tree for every identifier → zero hits; re-scan and confirm
+*exactly* the 4 known `OBF025` findings; file count and directory shape unchanged; and a
+second person greps for the identifier list independently.
 
-So "download more CMS" should mean **the plugin, theme and vendor ecosystem**, in this
-order:
+Then rename to something generic (`Sites/demo-wp/`) and record in the corpus README that it
+is a sanitised real site, and what was replaced.
 
-1. **Vendored third-party trees** — the actual FP source. `composer install` on
+## 6. Benign corpus — keep the stock trees, add what actually breaks rules
+
+`trail-data/CMS` exists to prove no rule fires on clean software, and it does that job:
+51,294 files of stock WordPress, Joomla and Magento, **zero findings**. It stays, and every
+new core version added strengthens it — a rule change that starts flagging stock core is
+caught here and nowhere else.
+
+The point is only that stock core is not where the risk is. Every false positive analysed
+this session came from somewhere the stock trees do not reach: protobuf-generated PHP,
+webpack development bundles, Freemius, Symfony polyfills, icon fonts, Twilio docblocks,
+composer's own bootstrap. So expanding the benign corpus means expanding *outward* from
+core, in this order:
+
+1. **Vendored third-party trees** — the measured FP source. `composer install` on
    WooCommerce, a Laravel skeleton, a Symfony skeleton; `npm install` a WordPress block
    plugin so `node_modules` and dev bundles are present.
-2. **Top WordPress plugins by install count**, ~50 of them, and the ones already known to
-   trip rules: WooCommerce, Wordfence, Elementor, WPForms, Yoast, Freemius-based plugins,
-   WP Fastest Cache, RevSlider, Site Kit, TranslatePress, Akeeba.
-3. **Icon fonts and minified assets** — two OBF038 false positives came from these.
-4. **Additional CMS**: Drupal, PrestaShop, OpenCart, phpMyAdmin, TYPO3.
-5. **Only then** more core versions, and mainly *old* ones — an outdated core is what a
-   real host looks like.
+2. **Top WordPress plugins by install count**, ~50, and specifically the ones already known
+   to trip rules: WooCommerce, Wordfence, Elementor, WPForms, Yoast, any Freemius-based
+   plugin, WP Fastest Cache, RevSlider, Site Kit, TranslatePress, Akeeba, unyson.
+3. **Icon fonts and minified assets** — two `OBF038` false positives came from these.
+4. **More CMS**: Drupal, PrestaShop, OpenCart, phpMyAdmin, TYPO3.
+5. **Older core versions** of what is already there — an outdated core is what a real host
+   looks like.
 
 **Do not commit the downloads.** Commit a lockfile and a fetch script:
 
@@ -357,17 +437,17 @@ corpus/benign/sources.jsonl
 ```
 
 `corpus/fetch-benign.sh` reads it, downloads, verifies the hash, unpacks. That keeps the
-repo small and makes the benign side *reproducible*, which is what turns "it worked on my
-server" into a number someone else can regenerate.
+repo small and makes the benign half *reproducible* — which is what turns "it worked on my
+server" into a number someone else can regenerate. It is also the half that can run in
+public CI with no malware present at all.
 
----
-
-## 7. Pack it
+## 7. Pack it, and publish it
 
 Requirements: append a sample without rewriting anything, dedupe, never execute, integrity
-checkable, and let a test runner read one sample fast.
+checkable, let a test runner read one sample fast — and be publishable from a public
+GitHub pipeline.
 
-**Recommendation: content-addressed store + JSONL index + per-family `.tar.zst` shards.**
+**Layout: content-addressed store + JSONL index + per-family `.tar.zst` shards.**
 
 ```
 corpus/
@@ -377,24 +457,60 @@ corpus/
   shards/malicious-webshells-001.tar.zst
   shards/benign-vendor-004.tar.zst
   fetch-benign.sh
+  generate-archives.sh
   SOURCES.md
 ```
 
-- **Content-addressed** gives free dedupe (8 identical backdoor copies → one blob) and
-  integrity by construction.
-- **Append = one new blob + one index line.** No existing file is rewritten, which is what
-  makes "easily add more files" true. A single monolithic archive fails this test.
-- **`.tar.zst` shards** for distribution: good ratio, fast random-ish access, ubiquitous
-  tooling. Cap shards at ~200 MB so a shard can be added or replaced independently.
-- **The index and expectations are public; the malicious blobs are not.** Committing live
-  webshells to a public repo will trip contributors' AV on clone and can get the
-  repository flagged. Publish the index, the expectations and the benign fetch script;
-  distribute malicious shards as an encrypted release asset or out-of-band, with the
-  passphrase documented. A contributor can then run the benign half and the regression
-  expectations without holding malware.
-- `sensitive`-tier samples never enter a shard at all — index row only.
+- **Content-addressed** gives free dedupe (the `titi` backdoor was 8 identical copies → one
+  blob) and integrity by construction.
+- **Append = one new blob + one index line.** Nothing existing is rewritten, which is what
+  makes "easily add more files" true. A single monolithic archive fails that test.
+- **`.tar.zst` shards**, capped ~200 MB, so a shard can be added or replaced independently.
 
----
+### 7.1 A password on a public archive is not confidentiality
+
+The goal is a public GitHub pipeline, so this has to be said plainly: **if CI can open the
+archive, so can anyone.** The passphrase has to be readable by the workflow, and a workflow
+is public. Encrypting the corpus with a strong password does not keep secrets in it secret.
+
+What a password *does* buy, and these are real:
+
+- **stops GitHub's and AV vendors' scanners flagging the repository** as malware-hosting,
+  which can get it blocked;
+- **stops contributors' endpoint AV quarantining files on clone**;
+- **stops accidental execution and casual scraping.**
+
+So: use it, for those reasons, and do not treat it as a control on sensitive data.
+
+**Masking is the actual control.** Nothing sensitive goes into a published shard unmasked —
+that is what §4.1's tags and §5's rules are for, and why `publishable` is a computed field
+rather than a human's assertion. A sample that cannot be masked (`pii`, `content`) is not
+published at all; it stays local with an index row and a hash, and the test that needed it
+gets a synthesised stand-in.
+
+Practically, that means two shard classes:
+
+| shard | contents | where |
+|---|---|---|
+| public | benign, and masked malicious with `publishable: true` | release asset, zstd + password |
+| local | anything `pii`/`content`, or malicious not yet masked | never leaves this machine |
+
+The index lists both, with `publishable` saying which is which, so the suite can report
+"3,410 of 3,462 samples verified, 52 local-only" rather than silently testing less than it
+claims.
+
+### 7.2 The gate that makes this safe
+
+Before any shard is built, a check that fails the build rather than warns:
+
+- every sample in a public shard has `publishable: true`;
+- no `pii` or `content` tag appears in a public shard;
+- a secret scan over the unpacked public shards — the same identifier list from §5, plus
+  generic detectors for keys, bcrypt hashes, JWTs, private keys, `DB_PASSWORD` — returns
+  zero hits;
+- every sample still produces its `expect.must_detect` set after masking.
+
+That last one is what stops masking from silently destroying the corpus's value.
 
 ## 8. Golden test suite
 
@@ -448,17 +564,29 @@ are local and verified.
 
 ---
 
-## 10. Open questions for you
+## 10. Decisions taken, and what is still open
 
-1. **Retention scope.** Are we authorised to keep customer content on this machine for
-   corpus work, and for how long? §4.3's answer changes if the answer is "not at all" —
-   the plan then extracts payloads and deletes carriers immediately.
-2. **Publication.** Is the malicious half intended to be publicly downloadable? If yes,
-   every sample needs a sanitisation pass of its own (webshells embed the victim's paths,
-   domains and e-mail addresses), which is a substantial extra step not costed here.
-3. **The archives.** 25 GB of customer site backups containing live credentials — pull
-   selected members only (§2.3), or take the containers for completeness?
-4. **`acct33-lyxbosa-quarantine` and the other five `lyxbosa-*` families.** They were
-   assembled from this scanner's own hits, so scoring against them is circular, and one of
-   them was 25% upstream code. Re-review, or drop them from the golden set and keep them
-   as FP fixtures only?
+Recorded so the plan is not re-litigated:
+
+| question | decision |
+|---|---|
+| Metadata as well as bytes? | **Yes, and first.** §2.1 — it is the only truly unrecoverable part |
+| Are the infected files "customer content"? | **No.** They are malicious data. They still get a sensitivity pass, because they carry the customer's paths, domains and addresses (§5.1) |
+| Public corpus? | **Yes**, a public GitHub pipeline is the goal. Masking is the control; the archive password is for AV and scanner noise, not confidentiality (§7.1) |
+| Site backups as corpus data? | **No.** Too large, real data, not cleanable. Members only, and archive fixtures are generated (§2.3) |
+| Samples this scanner found itself? | **Keep all of them** — they are real malware. Provenance is recorded in `discovered_by` so recall can also be reported excluding them (§4.4) |
+| Stock CMS trees? | **Keep and extend.** They are the clean-software baseline; the ecosystem is added alongside, not instead (§6) |
+
+Still open, and each changes the work:
+
+1. **Retention authority.** Are we cleared to hold the raw `incoming/` tree — customer
+   paths, credentials, some personal content — on this machine while classification runs,
+   and for how long? If the answer is "as briefly as possible", §4 reorders to extract and
+   mask first and delete the raw tree immediately, which is slower but holds less.
+2. **Masking effort on the malicious half.** §5.1 is per-sample work on ~1,700 files. It is
+   the largest single cost in this plan and it is what publication requires. Worth deciding
+   whether the first public release ships the *benign* half plus expectations only — which
+   already gives a runnable public suite and a reproducible FP number — with the malicious
+   shards following once masked.
+3. **Who reviews the media queue**, and against what standard. §4.3 shrinks it to a contact
+   sheet, but the "is there a recognisable person or document in this" call is yours.

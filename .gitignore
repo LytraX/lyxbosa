@@ -39,3 +39,6 @@ CMakeUserPresets.json
 
 # vcpkg binary cache used by the Linux container build
 /.vcpkg-cache/
+
+# Local docs
+docs/local/
