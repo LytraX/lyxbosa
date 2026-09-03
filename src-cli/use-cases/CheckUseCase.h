@@ -67,6 +67,15 @@ public:
 
         auto result = scanner.scanFile(filePath);
 
+        // "No matches found" must mean the file was read and nothing matched. A file
+        // that was never read has not been cleared, and saying otherwise here is the
+        // same silent skip the scan path reports by reason.
+        if (result.skipReason && result.matches.empty() && members.empty()) {
+            terminal_.print(Terminal::warning(), "Not scanned ({}): {}\n",
+                            skipReasonLabel(*result.skipReason), filePath.string());
+            return 1;
+        }
+
         if (result.matches.empty() && members.empty()) {
             terminal_.print(Terminal::success(), "No matches found in: {}\n", filePath.string());
             return 0;

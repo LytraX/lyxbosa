@@ -144,6 +144,10 @@ CSV gained `skipped` and `skip_reason` columns, appended so positional consumers
 working, and now emits a row for a skipped file — which it previously did not, because
 it wrote one row per match and a skipped file has none.
 
+`check` says so too. It used to print "No matches found" for a file it had never read,
+which is the same silent skip one file at a time; an oversize or unreadable file now
+reports `Not scanned (over size limit)` and exits `1`.
+
 Excluded files are always *counted*, so you can tell whether a pattern took effect, but
 only *listed* when you ask: globs are how people cut `node_modules` out of a scan, and
 on a real tree the excluded files outnumber the findings by orders of magnitude.
@@ -283,7 +287,7 @@ lyxbosa init-config > lyxbosa.yaml
 | Code | Meaning |
 |------|---------|
 | `0` | No matches found, or the command was cancelled |
-| `1` | Error: invalid arguments, missing file, invalid configuration, or a refused unsafe operation |
+| `1` | Error: invalid arguments, missing file, invalid configuration, a file that could not be scanned, or a refused unsafe operation |
 | `2` | Matches found |
 | `130` | Interrupted with Ctrl+C (the partial report is still written) |
 
