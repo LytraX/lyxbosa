@@ -1512,6 +1512,28 @@ TEST(RepairedRuleTest, UserAgentCloakingNeedsCrawlersAndAFetchAndAnEmitter) {
         R"($c=curl_exec(curl_init('https://spam.example/x.txt')); echo $c; exit; })"));
 }
 
+// OBF005: the shape is right, but the folded value is what makes it a finding.
+TEST(RepairedRuleTest, StrrevReportsOnlyWhenItSpellsSomethingSensitive) {
+    auto gate = [](std::string_view matched) {
+        MatchContext ctx;
+        ctx.content = matched;
+        ctx.filePath = "/var/www/wp-content/themes/x/includes/utils.php";
+        ctx.matchOffset = 0;
+        ctx.matchLine = 1;
+        ctx.matchColumn = 1;
+        ctx.matchedText = matched;
+        return MatchEngine::applyContextFilter("OBF005", ctx);
+    };
+
+    // ThemeREX spelling "iframe", with a comment between the fragments.
+    EXPECT_FALSE(gate("strrev( 'e'  // a container name\n  . 'mar'\n  . 'fi' )"));
+    EXPECT_FALSE(gate("strrev('t' . 'pircs')"));            // "script"
+
+    // The technique: the folded value names something dangerous.
+    EXPECT_TRUE(gate("strrev(\"noi\".\"tcnuf\".\"_eta\".\"erc\")"));  // create_function
+    EXPECT_TRUE(gate("strrev('edoced_' . '46esab')"));      // base64_decode
+}
+
 // ============================================================================
 // Regressions found by rescanning the whole production tree
 //
