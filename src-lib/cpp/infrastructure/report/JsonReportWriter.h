@@ -21,7 +21,7 @@ public:
     }
 
     void onFile(const FileResult& result) override {
-        if (result.matches.empty() && !result.skippedSize) {
+        if (result.matches.empty() && !result.skipped()) {
             return;
         }
 
@@ -32,7 +32,14 @@ public:
         out_ << "      \"path\": ";
         writeString(out_, pathForDisplay(result.path));
         out_ << ",\n";
-        out_ << "      \"skipped\": " << (result.skippedSize ? "true" : "false") << ",\n";
+        // `skipped` keeps meaning exactly what it always did, so every existing
+        // consumer reads this report unchanged; `skipReason` is additive and
+        // present only when there is one.
+        out_ << "      \"skipped\": " << (result.skipped() ? "true" : "false") << ",\n";
+        if (result.skipReason) {
+            out_ << "      \"skipReason\": \"" << skipReasonToString(*result.skipReason)
+                 << "\",\n";
+        }
         out_ << "      \"quarantined\": " << (result.quarantined ? "true" : "false") << ",\n";
         out_ << "      \"matches\": [";
 
@@ -73,12 +80,26 @@ public:
         out_ << "  \"totalFilesScanned\": " << result.totalFilesScanned << ",\n";
         out_ << "  \"totalDirectoriesScanned\": " << result.totalDirectoriesScanned << ",\n";
         out_ << "  \"filesWithMatches\": " << result.filesWithMatches << ",\n";
-        out_ << "  \"filesSkippedSize\": " << result.filesSkippedSize << ",\n";
+        out_ << "  \"filesSkippedSize\": " << result.filesSkippedSize() << ",\n";
+        writeFilesSkipped(result);
         out_ << "  \"filesQuarantined\": " << result.filesQuarantined << ",\n";
         writeArchives(result.archives);
         out_ << "  \"durationMs\": " << result.duration().count() << "\n";
         out_ << "}\n";
         out_.flush();
+    }
+
+    // Files not scanned, by reason - shaped exactly like archives.membersSkipped so
+    // the two levels read the same way. Emitted unconditionally, because
+    // filesSkippedSize already is, and that key stays above it for compatibility.
+    void writeFilesSkipped(const ScanResult& result) {
+        out_ << "  \"filesSkipped\": {\n";
+        out_ << "    \"total\": " << result.skips.total() << ",\n";
+        out_ << "    \"size\": " << result.skips.count(SkipReason::Size) << ",\n";
+        out_ << "    \"excluded\": " << result.skips.count(SkipReason::Excluded) << ",\n";
+        out_ << "    \"unreadable\": " << result.skips.count(SkipReason::Unreadable) << "\n";
+        out_ << "  },\n";
+        out_ << "  \"directoriesUnreadable\": " << result.directoriesUnreadable << ",\n";
     }
 
     // Archive handling, including every member that was not scanned and why.
@@ -95,12 +116,12 @@ public:
         out_ << "    \"membersScanned\": " << stats.membersScanned << ",\n";
         out_ << "    \"bytesExpanded\": " << stats.bytesExpanded << ",\n";
         out_ << "    \"membersSkipped\": {\n";
-        out_ << "      \"policy\": " << stats.skippedPolicy << ",\n";
-        out_ << "      \"size\": " << stats.skippedSize << ",\n";
-        out_ << "      \"budget\": " << stats.skippedBudget << ",\n";
-        out_ << "      \"ratio\": " << stats.skippedRatio << ",\n";
-        out_ << "      \"depth\": " << stats.skippedDepth << ",\n";
-        out_ << "      \"corrupt\": " << stats.skippedCorrupt << "\n";
+        out_ << "      \"policy\": " << stats.skippedPolicy() << ",\n";
+        out_ << "      \"size\": " << stats.skippedSize() << ",\n";
+        out_ << "      \"budget\": " << stats.skippedBudget() << ",\n";
+        out_ << "      \"ratio\": " << stats.skippedRatio() << ",\n";
+        out_ << "      \"depth\": " << stats.skippedDepth() << ",\n";
+        out_ << "      \"corrupt\": " << stats.skippedCorrupt() << "\n";
         out_ << "    }\n";
         out_ << "  },\n";
     }

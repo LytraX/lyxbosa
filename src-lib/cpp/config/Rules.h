@@ -45,6 +45,16 @@ struct ScanConfig {
     bool followSymlinks = false;
     std::vector<std::string> include;
     std::vector<std::string> exclude;
+
+    // Emit a per-file record for every file the include/exclude globs rejected.
+    //
+    // Off by default, and the default matters: globs are how people cut
+    // node_modules out of a scan, so on a real tree this can be hundreds of
+    // thousands of records - larger than the findings by orders of magnitude.
+    // The *count* is always reported either way, so an operator can still tell
+    // whether an exclude pattern is doing what they think; this switch is for
+    // when they need to know exactly which files it took.
+    bool reportExcluded = false;
 };
 
 // Archive scanning settings.

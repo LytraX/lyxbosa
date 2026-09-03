@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 // TuiReporter.h - Full-screen scan UI on the alternate screen buffer.
 //
 // The alternate screen is the only way to keep the status block visible while
@@ -82,7 +84,7 @@ public:
     void onFinding(const FileResult& result) {
         Row row;
         row.path = pathForDisplay(result.path);
-        row.skipped = result.skippedSize;
+        row.skipReason = result.skipReason;
         row.quarantined = result.quarantined;
         for (const auto& match : result.matches) {
             switch (match.severity) {
@@ -126,7 +128,7 @@ private:
         size_t high = 0;
         size_t medium = 0;
         size_t low = 0;
-        bool skipped = false;
+        std::optional<SkipReason> skipReason;
         bool quarantined = false;
     };
 
@@ -253,8 +255,10 @@ private:
     ftxui::Element renderRow(const Row& row, int width) const {
         using namespace ftxui;
 
-        if (row.skipped) {
-            return text("  - " + truncateTail(row.path, width - 14) + " (skipped)")
+        if (row.skipReason) {
+            const std::string reason(skipReasonToString(*row.skipReason));
+            return text("  - " + truncateTail(row.path, width - 16 - static_cast<int>(reason.size()))
+                        + " (skipped: " + reason + ")")
                    | color(Color::GrayDark);
         }
 

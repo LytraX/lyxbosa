@@ -5,6 +5,7 @@
 #include "FileWalker.h"
 #include "MatchEngine.h"
 #include "ScanResult.h"
+#include "SkipReason.h"
 #include "Interrupt.h"
 #include <filesystem>
 #include <functional>
@@ -32,8 +33,11 @@ struct ScanProgress {
 
     size_t filesWithMatches = 0;
     size_t totalMatchCount = 0;     // Total matches found so far
-    size_t filesSkippedSize = 0;
     size_t filesQuarantined = 0;
+
+    // Files not scanned, by reason - the file-level counterpart of `archives`
+    // below, so the display can name a skip instead of only counting one kind.
+    SkipTally skips;
 
     // Live severity breakdown, so the display can show what kind of trouble it
     // is finding rather than just how much.
@@ -96,6 +100,14 @@ public:
 
 private:
     // Read file content
+    // Thrown by readFile when the file is past maxSize. Distinct from a read
+    // failure, because the two are different skip reasons and used to be the same
+    // empty string.
+    struct OversizeFile {};
+
+    // Reads the whole file. Throws rather than returning empty: an empty string is
+    // indistinguishable from an empty file, and treating it as content is how an
+    // unreadable file came to be reported as scanned and clean.
     std::string readFile(const std::filesystem::path& path, uint64_t maxSize);
 
     // Scan a file, keeping the bytes that were read. The content is needed twice:

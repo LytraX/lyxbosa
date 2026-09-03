@@ -106,6 +106,53 @@ Progress treats an archive as the directory it is: a zip's central directory giv
 exact member count before anything is inflated, and a `.tar.gz` — which has no index —
 reports its position in compressed bytes, which the filesystem already knows exactly.
 
+### Skipped files
+
+A file that was not scanned is a fact about the scan's coverage, and the report says
+which of three things happened to it:
+
+| reason | meaning |
+|---|---|
+| `size` | larger than `scan.max_file_size` |
+| `excluded` | rejected by `scan.include` / `scan.exclude` |
+| `unreadable` | `stat` or `open` failed — permissions, a race, a dead mount |
+
+This is the same treatment archive members already got, one level up. The summary
+reads the same way for both:
+
+```
+Files scanned: 1303725
+Directories parsed: 280704
+Files with matches: 1751
+Files not scanned: 512 (487 over size limit, 18 excluded by filters, 7 unreadable)
+Directories unreadable: 2
+Archives opened: 168 (91234 members scanned, 12.4 GB expanded)
+Members not scanned: 4102 (3980 not code, 118 over size limit, 4 corrupt)
+```
+
+In JSON, `skipped` and `filesSkippedSize` keep exactly the meanings they always had,
+and the detail is additive — a per-file `skipReason` when there is one, and a
+`filesSkipped` object shaped like `archives.membersSkipped`:
+
+```json
+"filesSkippedSize": 487,
+"filesSkipped": { "total": 512, "size": 487, "excluded": 18, "unreadable": 7 },
+"directoriesUnreadable": 2
+```
+
+CSV gained `skipped` and `skip_reason` columns, appended so positional consumers keep
+working, and now emits a row for a skipped file — which it previously did not, because
+it wrote one row per match and a skipped file has none.
+
+Excluded files are always *counted*, so you can tell whether a pattern took effect, but
+only *listed* when you ask: globs are how people cut `node_modules` out of a scan, and
+on a real tree the excluded files outnumber the findings by orders of magnitude.
+
+```yaml
+scan:
+  report_excluded: false   # true = emit a per-file record for every excluded file
+```
+
 ### Key Features
 
 - Recursive directory scanning with configurable file size limits (default 5 MB) and symlink control.

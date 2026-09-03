@@ -101,6 +101,10 @@ ScanConfig parseScanConfig(const YAML::Node& node) {
         sc.followSymlinks = node["follow_symlinks"].as<bool>();
     }
 
+    if (node["report_excluded"]) {
+        sc.reportExcluded = node["report_excluded"].as<bool>();
+    }
+
     if (node["include"] && node["include"].IsSequence()) {
         for (const auto& inc : node["include"]) {
             sc.include.push_back(inc.as<std::string>());
@@ -290,6 +294,13 @@ scan:
   recursive: true
   max_file_size: 5MB
   follow_symlinks: false
+
+  # List every file the filters below rejected, not just count them.
+  #
+  # The count is always reported. This adds a per-file record for each one, which
+  # on a tree where a glob cuts node_modules is far larger than the findings - so
+  # it is off unless you need to know exactly which files a pattern took.
+  report_excluded: false
 
   # File filters
   #

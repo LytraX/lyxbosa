@@ -42,8 +42,12 @@ public:
 
     // Print a file result (verbose mode)
     void printFileResult(const FileResult& result) const {
-        if (result.skippedSize) {
-            styled(Terminal::muted(), "[-] {} (skipped - size limit)\n", pathForDisplay(result.path));
+        if (result.skipped()) {
+            const auto reason = *result.skipReason;
+            const auto style = skipReasonIsUnexpected(reason) ? Terminal::warning()
+                                                              : Terminal::muted();
+            styled(style, "[-] {} (skipped - {})\n",
+                   pathForDisplay(result.path), skipReasonLabel(reason));
             return;
         }
 
@@ -70,9 +74,11 @@ public:
     // Print a file result in compact single-line format
     // Format: [!] path/to/file.php  C:2 H:5 M:3 L:1
     void printFileResultCompact(const FileResult& result) const {
-        if (result.skippedSize) {
-            styled(Terminal::muted(), "[-] {} (skipped)\n",
-                   truncatePath(pathForDisplay(result.path), width_ > 15 ? width_ - 15 : 20));
+        if (result.skipped()) {
+            // The compact line is width-constrained, so it takes the short name.
+            styled(Terminal::muted(), "[-] {} (skipped: {})\n",
+                   truncatePath(pathForDisplay(result.path), width_ > 24 ? width_ - 24 : 20),
+                   skipReasonToString(*result.skipReason));
             return;
         }
 
@@ -122,7 +128,18 @@ public:
         plain("Files scanned: {}\n", result.totalFilesScanned);
         plain("Directories parsed: {}\n", result.totalDirectoriesScanned);
         plain("Files with matches: {}\n", result.filesWithMatches);
-        plain("Files skipped (size limit): {}\n", result.filesSkippedSize);
+
+        // Reads the same way as "Members not scanned" below, because it is the same
+        // fact one level up. Printed only when something was skipped, which drops
+        // the old unconditional "Files skipped (size limit): 0".
+        if (result.skips.total() > 0) {
+            plain("Files not scanned: {} ({})\n",
+                  result.skips.total(), formatSkipTally(result.skips));
+        }
+        if (result.directoriesUnreadable > 0) {
+            styled(Terminal::warning(), "Directories unreadable: {}\n",
+                   result.directoriesUnreadable);
+        }
 
         if (result.filesQuarantined > 0) {
             plain("Files quarantined: {}\n", result.filesQuarantined);
@@ -182,20 +199,8 @@ public:
             return;
         }
 
-        std::string reasons;
-        const auto add = [&reasons](size_t count, std::string_view label) {
-            if (count == 0) return;
-            if (!reasons.empty()) reasons += ", ";
-            reasons += fmt::format("{} {}", count, label);
-        };
-        add(stats.skippedPolicy, "not code");
-        add(stats.skippedSize, "over size limit");
-        add(stats.skippedBudget, "budget spent");
-        add(stats.skippedRatio, "compression ratio");
-        add(stats.skippedDepth, "too deeply nested");
-        add(stats.skippedCorrupt, "corrupt");
-
-        plain("Members not scanned: {} ({})\n", stats.totalSkipped(), reasons);
+        plain("Members not scanned: {} ({})\n",
+              stats.totalSkipped(), formatSkipTally(stats.skips));
     }
 
     // "512 B", "1.5 MB". ProgressModel has the same helper, but this header is

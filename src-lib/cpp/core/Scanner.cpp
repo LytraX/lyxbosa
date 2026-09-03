@@ -5,6 +5,7 @@
 #include <atomic>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <fmt/base.h>
 
@@ -153,7 +154,7 @@ ScanResult Scanner::scan() {
         progress.filesScanned = result.totalFilesScanned;
         progress.filesWithMatches = result.filesWithMatches;
         progress.totalMatchCount = result.totalMatches;
-        progress.filesSkippedSize = result.filesSkippedSize;
+        progress.skips = result.skips;
         progress.filesQuarantined = result.filesQuarantined;
         progress.criticalCount = result.criticalCount;
         progress.highCount = result.highCount;
@@ -230,8 +231,44 @@ ScanResult Scanner::scan() {
             return false;  // Stop walking
         }
 
-        const bool oversize =
-            config_.scan.maxFileSize > 0 && info.size > config_.scan.maxFileSize;
+        // An excluded file is not work and is not a finding: it is tallied so the
+        // operator can see their globs took effect, and only listed if they asked.
+        if (info.skip == SkipReason::Excluded) {
+            result.skips.skip(SkipReason::Excluded);
+            if (config_.scan.reportExcluded) {
+                FileResult excluded;
+                excluded.path = info.path;
+                excluded.skipReason = SkipReason::Excluded;
+                result.files.push_back(excluded);
+                if (fileResultCallback_) {
+                    fileResultCallback_(result.files.back());
+                }
+            }
+            return true;
+        }
+
+        // A file whose size could not even be read is not going to open either.
+        // Reporting it as scanned-and-clean is the silent skip this whole
+        // mechanism exists to stop.
+        if (info.skip == SkipReason::Unreadable) {
+            FileResult unreadable;
+            unreadable.path = info.path;
+            unreadable.skipReason = SkipReason::Unreadable;
+            result.skips.skip(SkipReason::Unreadable);
+            ++result.totalFilesScanned;
+            result.files.push_back(unreadable);
+
+            publishProgress(info.path, 0);
+            if (fileResultCallback_) {
+                fileResultCallback_(result.files.back());
+            }
+            return true;
+        }
+
+        // The walker is the single source of truth for whether a file is oversize,
+        // so this can no longer disagree with it - which is how a failed stat used
+        // to slip through as a scanned file.
+        const bool oversize = info.skip == SkipReason::Size;
 
         FileResult fileResult;
         fileResult.path = info.path;
@@ -246,6 +283,20 @@ ScanResult Scanner::scan() {
         if (!oversize) {
             fileResult = scanContent(info.path, content);
             fileResult.fileSize = info.size;
+
+            // scanContent could not open it. Report the skip rather than the
+            // empty match list, which would read as "scanned, clean".
+            if (fileResult.skipReason == SkipReason::Unreadable) {
+                result.skips.skip(SkipReason::Unreadable);
+                ++result.totalFilesScanned;
+                result.files.push_back(fileResult);
+
+                publishProgress(info.path, info.size);
+                if (fileResultCallback_) {
+                    fileResultCallback_(result.files.back());
+                }
+                return true;
+            }
         }
 
         archive::Kind kind = archive::Kind::None;
@@ -256,8 +307,8 @@ ScanResult Scanner::scan() {
         // Unchanged for everything that is not a container: past the size limit
         // it is reported, not scanned.
         if (kind == archive::Kind::None && oversize) {
-            fileResult.skippedSize = true;
-            ++result.filesSkippedSize;
+            fileResult.skipReason = SkipReason::Size;
+            result.skips.skip(SkipReason::Size);
             ++result.totalFilesScanned;
             result.files.push_back(fileResult);
 
@@ -341,7 +392,7 @@ ScanResult Scanner::scan() {
         return true;  // Continue walking
     };
 
-    result.totalDirectoriesScanned = walker.walk(fileCallback);
+    result.totalDirectoriesScanned = walker.walk(fileCallback, &result.directoriesUnreadable);
 
     if (counter.joinable()) {
         // countFiles polls the interrupt flag, so this returns promptly on Ctrl+C.
@@ -386,8 +437,20 @@ FileResult Scanner::scanContent(const std::filesystem::path& path, std::string& 
         auto matches = engine_.match(content, pathToUtf8(path));
         result.matches = std::move(matches);
 
+    } catch (const OversizeFile&) {
+        // Only reachable through `check` on a single file; the walk decides this
+        // before scanContent is called.
+        content.clear();
+        result.matches.clear();
+        result.skipReason = SkipReason::Size;
     } catch (const std::exception&) {
-        // Can't read file, return empty result
+        // A file that could not be read has not been cleared. This catch used to
+        // return an empty result, which the caller then counted as a scanned file
+        // with no matches - the scanner asserting a file was clean on the strength
+        // of never having seen a byte of it. The caller tallies the reason.
+        content.clear();
+        result.matches.clear();
+        result.skipReason = SkipReason::Unreadable;
     }
 
     return result;
@@ -447,7 +510,11 @@ void Scanner::setFileResultCallback(FileResultCallback callback) {
 std::string Scanner::readFile(const std::filesystem::path& path, uint64_t maxSize) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        return "";
+        // This used to `return ""`, which is the silent skip in its purest form: the
+        // empty string was then matched against every rule, found nothing, and the
+        // file was reported scanned and clean without a byte of it ever being read.
+        // scanContent turns this into SkipReason::Unreadable.
+        throw std::runtime_error("cannot open file");
     }
 
     // Get file size
@@ -457,7 +524,7 @@ std::string Scanner::readFile(const std::filesystem::path& path, uint64_t maxSiz
 
     // Check size limit
     if (maxSize > 0 && size > maxSize) {
-        return "";
+        throw OversizeFile{};
     }
 
     // Read entire file

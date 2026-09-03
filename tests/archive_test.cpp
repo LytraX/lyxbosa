@@ -442,7 +442,7 @@ TEST(ArchiveScannerTest, ZipBombTerminatesAndReportsTheReason) {
     // It stopped early...
     EXPECT_LT(result.archives.membersScanned, members.size());
     // ...and it said so, by reason, rather than falling silent.
-    EXPECT_GT(result.archives.skippedRatio + result.archives.skippedBudget, 0u);
+    EXPECT_GT(result.archives.skippedRatio() + result.archives.skippedBudget(), 0u);
     EXPECT_EQ(result.archives.archivesOpened, 1u);
 }
 
@@ -458,7 +458,7 @@ TEST(ArchiveScannerTest, MemberOverTheSizeLimitIsSkippedNotInflated) {
     scanner.setPreCount(false);
     const ScanResult result = scanner.scan();
 
-    EXPECT_EQ(result.archives.skippedSize, 1u);
+    EXPECT_EQ(result.archives.skippedSize(), 1u);
     EXPECT_EQ(result.archives.membersScanned, 1u);
 }
 
@@ -689,4 +689,158 @@ TEST(ArchiveScannerTest, DisablingArchivesRestoresOpaqueBytes) {
     for (const auto& file : result.files) {
         EXPECT_EQ(file.path.string().find('!'), std::string::npos);
     }
+}
+
+// ============================================================================
+// Skip reasons at the file level
+//
+// The archive layer got this right first: every member that is not scanned is
+// counted by reason. These are the same guarantees one level up, where a single
+// `bool skippedSize` used to stand for three different things - and where a file
+// the scanner could not open was reported as scanned and clean.
+// ============================================================================
+
+namespace {
+
+// Writes a file and returns its path. (The existing writeFile above returns void.)
+fs::path writeLooseFile(const fs::path& p, const std::string& content) {
+    fs::create_directories(p.parent_path());
+    std::ofstream out(p, std::ios::binary);
+    out.write(content.data(), static_cast<std::streamsize>(content.size()));
+    return p;
+}
+
+}  // namespace
+
+TEST(FileSkipReasonTest, OversizeFileIsReportedAsASizeSkip) {
+    TempDir dir;
+    writeLooseFile(dir.path() / "big.php", std::string(64 * 1024, 'a'));
+    writeLooseFile(dir.path() / "small.php", "<?php echo 1;");
+
+    AppConfig config = testConfig(dir.path());
+    config.scan.maxFileSize = 1024;
+    config.archives.enabled = false;
+
+    Scanner scanner(config);
+    scanner.setPreCount(false);
+    const ScanResult result = scanner.scan();
+
+    EXPECT_EQ(result.skips.count(SkipReason::Size), 1u);
+    EXPECT_EQ(result.filesSkippedSize(), 1u);
+    EXPECT_EQ(result.skips.total(), 1u);
+}
+
+// The bug this whole mechanism exists to stop. readFile used to return an empty
+// string when it could not open the file; the empty string then matched no rule,
+// and the file was counted as scanned with no findings - the scanner asserting a
+// file was clean without having read a byte of it.
+TEST(FileSkipReasonTest, UnreadableFileIsNotReportedAsScannedAndClean) {
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "root can read a mode-000 file, so there is nothing to deny";
+    }
+
+    TempDir dir;
+    const fs::path secret = writeLooseFile(dir.path() / "secret.php", "<?php echo 1;");
+    fs::permissions(secret, fs::perms::none);
+
+    AppConfig config = testConfig(dir.path());
+    config.archives.enabled = false;
+
+    Scanner scanner(config);
+    scanner.setPreCount(false);
+    const ScanResult result = scanner.scan();
+
+    // Restore before any assertion can leave the temp dir undeletable.
+    fs::permissions(secret, fs::perms::owner_read | fs::perms::owner_write);
+
+    EXPECT_EQ(result.skips.count(SkipReason::Unreadable), 1u);
+    ASSERT_EQ(result.files.size(), 1u);
+    EXPECT_TRUE(result.files[0].skipped());
+    EXPECT_EQ(result.files[0].skipReason, SkipReason::Unreadable);
+}
+
+// An excluded file is always counted, so an operator can tell whether a pattern
+// took effect - but it is only listed when they ask, because on a real tree the
+// excluded files outnumber the findings by orders of magnitude.
+TEST(FileSkipReasonTest, ExcludedFilesAreCountedAlwaysAndListedOnRequest) {
+    TempDir dir;
+    writeLooseFile(dir.path() / "keep.php", "<?php echo 1;");
+    writeLooseFile(dir.path() / "drop.php", "<?php echo 2;");
+
+    AppConfig config = testConfig(dir.path());
+    config.archives.enabled = false;
+    config.scan.exclude = {"drop.php"};
+
+    {
+        Scanner scanner(config);
+        scanner.setPreCount(false);
+        const ScanResult result = scanner.scan();
+        EXPECT_EQ(result.skips.count(SkipReason::Excluded), 1u);
+        EXPECT_EQ(result.totalFilesScanned, 1u);
+        for (const auto& file : result.files) {
+            EXPECT_NE(file.skipReason, SkipReason::Excluded) << "not listed by default";
+        }
+    }
+
+    config.scan.reportExcluded = true;
+    {
+        Scanner scanner(config);
+        scanner.setPreCount(false);
+        const ScanResult result = scanner.scan();
+        EXPECT_EQ(result.skips.count(SkipReason::Excluded), 1u);
+        EXPECT_EQ(result.totalFilesScanned, 1u) << "an excluded file is not work";
+        size_t listed = 0;
+        for (const auto& file : result.files) {
+            if (file.skipReason == SkipReason::Excluded) ++listed;
+        }
+        EXPECT_EQ(listed, 1u);
+    }
+}
+
+// A directory the scanner was pointed at and could not read is a fact about the
+// scan's coverage. directory_options::skip_permission_denied reported it as an
+// empty directory, which is indistinguishable from one that really is empty.
+TEST(FileSkipReasonTest, UnreadableDirectoryIsCounted) {
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "root can read a mode-000 directory";
+    }
+
+    TempDir dir;
+    writeLooseFile(dir.path() / "sub" / "inner.php", "<?php echo 1;");
+    const fs::path sub = dir.path() / "sub";
+    fs::permissions(sub, fs::perms::none);
+
+    AppConfig config = testConfig(dir.path());
+    config.archives.enabled = false;
+
+    Scanner scanner(config);
+    scanner.setPreCount(false);
+    const ScanResult result = scanner.scan();
+
+    fs::permissions(sub, fs::perms::owner_all);
+
+    EXPECT_EQ(result.directoriesUnreadable, 1u);
+}
+
+// The reasons the archive JSON object is keyed by must keep their spellings, or
+// every existing consumer of a report breaks silently.
+TEST(FileSkipReasonTest, ArchiveReasonSpellingsAreStable) {
+    EXPECT_EQ(skipReasonToString(SkipReason::Size), "size");
+    EXPECT_EQ(skipReasonToString(SkipReason::Depth), "depth");
+    EXPECT_EQ(skipReasonToString(SkipReason::Ratio), "ratio");
+    EXPECT_EQ(skipReasonToString(SkipReason::Budget), "budget");
+    EXPECT_EQ(skipReasonToString(SkipReason::Corrupt), "corrupt");
+    EXPECT_EQ(skipReasonToString(SkipReason::Policy), "policy");
+    EXPECT_EQ(skipReasonToString(SkipReason::Excluded), "excluded");
+    EXPECT_EQ(skipReasonToString(SkipReason::Unreadable), "unreadable");
+}
+
+TEST(FileSkipReasonTest, TallyFormatsInEnumOrderAndOmitsZeroes) {
+    SkipTally tally;
+    tally.skip(SkipReason::Size, 487);
+    tally.skip(SkipReason::Unreadable, 7);
+    EXPECT_EQ(formatSkipTally(tally), "487 over size limit, 7 unreadable");
+    EXPECT_EQ(tally.total(), 494u);
+
+    EXPECT_TRUE(formatSkipTally(SkipTally{}).empty()) << "nothing skipped prints nothing";
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/SkipReason.h"
+
 // ArchiveTypes.h - Vocabulary shared by the archive readers and the scanner.
 //
 // An archive is two different problems wearing one file extension. A payload
@@ -52,26 +54,14 @@ struct Entry {
 // Why a member was not scanned. Every skip carries one: silent skips are how the
 // goto-obfuscation family stayed invisible for so long, and an archive is exactly
 // the place where a scanner is tempted to give up quietly.
-enum class SkipReason {
-    Size,     // member larger than the per-member cap
-    Depth,    // nested deeper than max_depth
-    Ratio,    // archive expands faster than max_ratio
-    Budget,   // time or total-expansion budget spent
-    Corrupt,  // truncated, encrypted or otherwise unreadable
-    Policy    // not selected by the priority policy (see exhaustive)
-};
-
-constexpr std::string_view skipReasonToString(SkipReason r) {
-    switch (r) {
-        case SkipReason::Size:    return "size";
-        case SkipReason::Depth:   return "depth";
-        case SkipReason::Ratio:   return "ratio";
-        case SkipReason::Budget:  return "budget";
-        case SkipReason::Corrupt: return "corrupt";
-        case SkipReason::Policy:  return "policy";
-    }
-    return "unknown";
-}
+//
+// This enum now lives in core/SkipReason.h, shared with the file level, which grew
+// the same need. The names below are unqualified aliases so the reasons still read
+// as `SkipReason::Policy` throughout this layer, and the six spellings that reach
+// the `archives.membersSkipped` JSON object are unchanged.
+using SkipReason = lyxbosa::SkipReason;
+using lyxbosa::skipReasonToString;
+using lyxbosa::skipReasonLabel;
 
 // Everything the summary and the reports say about archive handling.
 struct Stats {
@@ -83,28 +73,20 @@ struct Stats {
     size_t membersScanned = 0;
     uint64_t bytesExpanded = 0;
 
-    size_t skippedSize = 0;
-    size_t skippedDepth = 0;
-    size_t skippedRatio = 0;
-    size_t skippedBudget = 0;
-    size_t skippedCorrupt = 0;
-    size_t skippedPolicy = 0;
+    // One tally instead of six counters. The named accessors are kept because the
+    // JSON writer and the archive tests read them by name.
+    lyxbosa::SkipTally skips;
 
-    void skip(SkipReason reason, size_t count = 1) {
-        switch (reason) {
-            case SkipReason::Size:    skippedSize += count; break;
-            case SkipReason::Depth:   skippedDepth += count; break;
-            case SkipReason::Ratio:   skippedRatio += count; break;
-            case SkipReason::Budget:  skippedBudget += count; break;
-            case SkipReason::Corrupt: skippedCorrupt += count; break;
-            case SkipReason::Policy:  skippedPolicy += count; break;
-        }
-    }
+    void skip(SkipReason reason, size_t count = 1) { skips.skip(reason, count); }
 
-    size_t totalSkipped() const {
-        return skippedSize + skippedDepth + skippedRatio +
-               skippedBudget + skippedCorrupt + skippedPolicy;
-    }
+    size_t skippedSize() const    { return skips.count(SkipReason::Size); }
+    size_t skippedDepth() const   { return skips.count(SkipReason::Depth); }
+    size_t skippedRatio() const   { return skips.count(SkipReason::Ratio); }
+    size_t skippedBudget() const  { return skips.count(SkipReason::Budget); }
+    size_t skippedCorrupt() const { return skips.count(SkipReason::Corrupt); }
+    size_t skippedPolicy() const  { return skips.count(SkipReason::Policy); }
+
+    size_t totalSkipped() const { return skips.total(); }
 
     void merge(const Stats& other) {
         archivesOpened     += other.archivesOpened;
@@ -112,12 +94,7 @@ struct Stats {
         archivesTruncated  += other.archivesTruncated;
         membersScanned     += other.membersScanned;
         bytesExpanded      += other.bytesExpanded;
-        skippedSize        += other.skippedSize;
-        skippedDepth       += other.skippedDepth;
-        skippedRatio       += other.skippedRatio;
-        skippedBudget      += other.skippedBudget;
-        skippedCorrupt     += other.skippedCorrupt;
-        skippedPolicy      += other.skippedPolicy;
+        skips.merge(other.skips);
     }
 };
 

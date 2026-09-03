@@ -8,6 +8,8 @@
 #include <cstdint>
 #include "config/Types.h"
 #include "archive/ArchiveTypes.h"
+#include "SkipReason.h"
+#include <optional>
 
 namespace lyxbosa {
 
@@ -45,8 +47,12 @@ struct FileResult {
     std::vector<FileMatch> matches;
     bool quarantined = false;
     std::string quarantinePath;  // where it was moved to, if quarantined
-    bool skippedSize = false;    // true if skipped due to size limit
+    // Empty when the file was scanned. A skip is never silent: every one of the
+    // three file-level reasons is recorded, so a report can say which.
+    std::optional<SkipReason> skipReason;
     uint64_t fileSize = 0;
+
+    bool skipped() const { return skipReason.has_value(); }
 };
 
 // True when a file carries at least one finding about its own content, as
@@ -69,7 +75,6 @@ struct ScanResult {
     size_t totalDirectoriesScanned = 0;
     size_t filesWithMatches = 0;
     size_t filesQuarantined = 0;
-    size_t filesSkippedSize = 0;
     size_t totalMatches = 0;
     uint64_t bytesScanned = 0;
 
@@ -77,6 +82,17 @@ struct ScanResult {
     // Silent skips are how a whole family of obfuscation stayed invisible; an
     // archive is exactly where a scanner is tempted to give up quietly.
     archive::Stats archives;
+
+    // Files that were not scanned, by reason - the file-level counterpart of
+    // archives.skips. `filesSkippedSize()` is kept so existing callers and the
+    // `filesSkippedSize` JSON key mean exactly what they always did.
+    SkipTally skips;
+
+    size_t filesSkippedSize() const { return skips.count(SkipReason::Size); }
+
+    // Directories the walk could not read at all. Not files, so not in the file
+    // tally - but the operator asked for this tree and did not get all of it.
+    size_t directoriesUnreadable = 0;
 
     // Timing
     std::chrono::steady_clock::time_point startTime;

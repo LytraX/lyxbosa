@@ -60,19 +60,20 @@ FileWalker::FileWalker(const ScanConfig& config)
     : config_(config) {
 }
 
-size_t FileWalker::walk(FileCallback callback) const {
+size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs) const {
     size_t dirCount = 0;
     bool stopped = false;
 
     for (const auto& dir : config_.directories) {
-        dirCount += walkDirectory(dir, callback, stopped);
+        dirCount += walkDirectory(dir, callback, stopped, unreadableDirs);
         if (stopped) break;
     }
 
     return dirCount;
 }
 
-size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped) const {
+size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,
+                                 size_t* unreadableDirs) const {
     namespace fs = std::filesystem;
 
     if (stopped || !fs::exists(dir) || !fs::is_directory(dir)) {
@@ -86,7 +87,16 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
     size_t dirCount = 1;
 
     std::error_code ec;
-    auto options = fs::directory_options::skip_permission_denied;
+
+    // Deliberately *not* skip_permission_denied. That option's whole job is to
+    // report a directory the scanner cannot read as no error at all, which left
+    // an unreadable tree indistinguishable from an empty one - the scan quietly
+    // covered less than the operator asked for and said nothing.
+    //
+    // The error_code overload of directory_iterator does not throw either way, so
+    // dropping the option costs nothing in robustness: the walk still continues
+    // past a directory it cannot open. It just knows that it did.
+    auto options = fs::directory_options::none;
     if (config_.followSymlinks) {
         options |= fs::directory_options::follow_directory_symlink;
     }
@@ -96,9 +106,9 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
 
         if (entry.is_directory(ec)) {
             if (config_.recursive && !entry.is_symlink(ec)) {
-                dirCount += walkDirectory(entry.path(), callback, stopped);
+                dirCount += walkDirectory(entry.path(), callback, stopped, unreadableDirs);
             } else if (config_.recursive && config_.followSymlinks && entry.is_symlink(ec)) {
-                dirCount += walkDirectory(entry.path(), callback, stopped);
+                dirCount += walkDirectory(entry.path(), callback, stopped, unreadableDirs);
             }
             return !stopped;
         }
@@ -112,14 +122,16 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
             return true;
         }
 
-        // Check file size
-        auto fileSize = entry.file_size(ec);
-        if (ec || (config_.maxFileSize > 0 && fileSize > config_.maxFileSize)) {
-            // Still report it but mark as skipped due to size
-            FileInfo info;
-            info.path = entry.path();
-            info.size = fileSize;
-            info.isSymlink = entry.is_symlink(ec);
+        FileInfo info;
+        info.path = entry.path();
+        info.isSymlink = entry.is_symlink(ec);
+
+        // Filters first. An excluded file is excluded whatever its size - deciding
+        // that a 6 GB file the operator told us to ignore was "skipped for size"
+        // is backwards, and it is the size skip that gets read as a coverage gap.
+        if (!matchesFilters(entry.path())) {
+            info.size = 0;
+            info.skip = SkipReason::Excluded;
             if (!callback(info)) {
                 stopped = true;
                 return false;
@@ -127,15 +139,22 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
             return true;
         }
 
-        // Check filters
-        if (!matchesFilters(entry.path())) {
-            return true;
+        // `ec` and oversize are two different facts and must not share a branch.
+        // Conflated, a failed file_size() left `fileSize` unspecified (0 on
+        // libstdc++), so the file was reported as a size skip and then, because
+        // 0 > maxFileSize is false, read anyway - and reported scanned and clean.
+        std::error_code sizeEc;
+        auto fileSize = entry.file_size(sizeEc);
+        if (sizeEc) {
+            info.size = 0;
+            info.skip = SkipReason::Unreadable;
+        } else {
+            info.size = fileSize;
+            if (config_.maxFileSize > 0 && fileSize > config_.maxFileSize) {
+                info.skip = SkipReason::Size;
+            }
         }
 
-        FileInfo info;
-        info.path = entry.path();
-        info.size = fileSize;
-        info.isSymlink = entry.is_symlink(ec);
         if (!callback(info)) {
             stopped = true;
             return false;
@@ -147,8 +166,17 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
         for (const auto& entry : fs::directory_iterator(dir, options, ec)) {
             if (!processEntry(entry)) break;
         }
+        // directory_options::skip_permission_denied means the iterator swallows an
+        // unreadable subdirectory silently; `ec` is where it says so.
+        if (ec && unreadableDirs) {
+            ++*unreadableDirs;
+        }
     } catch (const fs::filesystem_error&) {
-        // Skip directories we can't access
+        // A directory the scanner was pointed at and could not read is a fact about
+        // the scan's coverage, not nothing.
+        if (unreadableDirs) {
+            ++*unreadableDirs;
+        }
     }
 
     return dirCount;
@@ -192,6 +220,11 @@ CountResult FileWalker::countFiles(const CountProgressCallback& onProgress,
     walk([&result, &onProgress, &augment](const FileInfo& info) {
         if (interrupted()) {
             return false;
+        }
+        // The walk now reports excluded files so they can be tallied; they are not
+        // work, so they must not enter the total the progress bar divides by.
+        if (info.skip == SkipReason::Excluded) {
+            return true;
         }
         ++result.files;
         result.bytes += info.size;

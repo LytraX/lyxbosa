@@ -13,10 +13,25 @@ public:
     explicit CsvReportWriter(std::ostream& out) : out_(out) {}
 
     void begin() override {
-        out_ << "file,rule,severity,original_severity,suppressed,category,line,column,quarantined\n";
+        out_ << "file,rule,severity,original_severity,suppressed,category,line,column,"
+                "quarantined,skipped,skip_reason\n";
     }
 
     void onFile(const FileResult& result) override {
+        // A skipped file has no matches, so the loop below never ran for one and CSV
+        // output listed none of them at all - 487 files invisible in the format an
+        // operator is most likely to pivot through a spreadsheet.
+        if (result.matches.empty() && result.skipReason) {
+            writeField(out_, pathForDisplay(result.path));
+            // rule,severity,original_severity,suppressed,category,line,column
+            out_ << ",,,,false,,,,";
+            out_ << (result.quarantined ? "true" : "false") << ",true,";
+            writeField(out_, skipReasonToString(*result.skipReason));
+            out_ << '\n';
+            out_.flush();
+            return;
+        }
+
         for (const auto& match : result.matches) {
             writeField(out_, pathForDisplay(result.path));       out_ << ',';
             writeField(out_, match.ruleName);                out_ << ',';
@@ -28,7 +43,11 @@ public:
             writeField(out_, match.category);                out_ << ',';
             out_ << match.line   << ',';
             out_ << match.column << ',';
-            out_ << (result.quarantined ? "true" : "false")  << '\n';
+            out_ << (result.quarantined ? "true" : "false")  << ',';
+            out_ << (result.skipped() ? "true" : "false")     << ',';
+            writeField(out_, result.skipReason ? skipReasonToString(*result.skipReason)
+                                               : std::string_view{});
+            out_ << '\n';
         }
         out_.flush();
     }

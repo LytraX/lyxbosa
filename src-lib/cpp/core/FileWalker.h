@@ -1,10 +1,12 @@
 #pragma once
 
 #include "config/Rules.h"
+#include "SkipReason.h"
 #include <filesystem>
 #include <vector>
 #include <string>
 #include <functional>
+#include <optional>
 
 namespace lyxbosa {
 
@@ -13,6 +15,11 @@ struct FileInfo {
     std::filesystem::path path;
     uint64_t size = 0;
     bool isSymlink = false;
+
+    // Empty means "scan it". The walker decides *why* a file is not scanned, so
+    // the scanner never has to re-derive it - which is how a failed stat used to
+    // be reported as an oversize file and then scanned anyway.
+    std::optional<SkipReason> skip;
 };
 
 // Callback function type for file iteration
@@ -47,10 +54,11 @@ public:
 
     // Walk all configured directories and call callback for each matching file
     // Returns the number of directories traversed
-    size_t walk(FileCallback callback) const;
+    size_t walk(FileCallback callback, size_t* unreadableDirs = nullptr) const;
 
     // Walk a single directory (stopped is set to true if callback returns false)
-    size_t walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped) const;
+    size_t walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,
+                         size_t* unreadableDirs = nullptr) const;
 
     // Count total files and bytes without processing (fast pre-scan). The
     // optional callback receives the running file count so a long count is not
