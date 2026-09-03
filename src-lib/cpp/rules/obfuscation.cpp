@@ -518,8 +518,21 @@ namespace detail_assembly {
                 // A name on the sensitive list, never written out in one piece
                 reason = "a security-sensitive PHP identifier";
             } else if (assembled.fragments >= 3 && !assembled.variable.empty() &&
+                       !assembled.viaVariables &&
                        analysis::isDynamicallyCalled(content, assembled.variable)) {
-                // Unknown name, but the result is what gets called
+                // Unknown name, but the result is what gets called.
+                //
+                // Every input has to be a literal. This branch reports a name the
+                // sensitive list does not know, so the folded value is the entire
+                // claim - and if a fragment came through a variable, the folder
+                // guessed at it rather than read it. Hummingbird's object cache
+                // sanitises a cache key with
+                // `$group = str_replace( ':', '-', $group );`, where `$group` is a
+                // function parameter; the folder picked up an unrelated
+                // `$group = 'default'` elsewhere in the file and reported that the
+                // code "assembles default at runtime". The sensitive-name branch
+                // above is unaffected, because there the name itself is the finding
+                // whether or not the folder had to trace a variable to reach it.
                 reason = "an identifier that is then called dynamically";
             } else if (assembled.fragments >= 5 && assembled.value.size() >= 8 &&
                        assembled.value.size() / assembled.fragments <= 3) {

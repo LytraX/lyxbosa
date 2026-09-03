@@ -15,6 +15,10 @@
 #include "system/CliArgs.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
+// drainReports() is called below. The declaration used to arrive only transitively
+// through TuiReporter.h, so -DLYXBOSA_TUI=OFF - the documented off-switch for the
+// minimal and static builds - did not compile.
+#include "infrastructure/TerminalInput.h"
 #include "core/Interrupt.h"
 #include "use-cases/ScanUseCase.h"
 #include "use-cases/CheckUseCase.h"
