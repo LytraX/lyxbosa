@@ -211,7 +211,11 @@ namespace detail_RCE011 {
           "array_map callback from user input", false,
           {"array_map", "$_get|$_post|$_request|$_cookie"} },
         // array_filter(array, callback) / array_reduce(array, callback): second argument.
-        { R"(((?i:array_filter)|(?i:array_reduce))\s*\(\s*[^,)]*,\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
+        // `[^,()]` and not `[^,)]`: the open paren has to be excluded too, or the data
+        // argument swallows a nested call and the superglobal inside *it* is read as
+        // the callback - `array_filter( array_map( 'absint', $_POST['imgs'] ) )` is a
+        // sanitiser, and it matched.
+        { R"(((?i:array_filter)|(?i:array_reduce))\s*\(\s*[^,()]*,\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
           "Array callback from user input", false,
           {"array_filter|array_reduce", "$_get|$_post|$_request|$_cookie"} },
     };

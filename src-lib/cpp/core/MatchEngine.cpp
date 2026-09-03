@@ -805,20 +805,12 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
             }
         }
 
-        // Parsing the decoded bytes as data is what legitimate code does with them.
-        static constexpr std::string_view kDataConsumers[] = {
-            "json_decode", "explode", "unserialize", "maybe_unserialize", "parse_str", "gzuncompress",
-        };
-        // Look a little before the match too - the consumer wraps the decode call.
-        const size_t start = (ctx.matchOffset > 120) ? ctx.matchOffset - 120 : 0;
-        const std::string_view around = ctx.content.substr(start, searchEnd - start);
-        for (auto consumer : kDataConsumers) {
-            if (around.find(consumer) != std::string_view::npos) {
-                return false;
-            }
-        }
-
-        return true;
+        // Nothing executes the result, so there is no finding. Double-encoding on its
+        // own is a transport habit, not an attack: Kirki passes form metadata this way,
+        // and OptinMonster double-decodes a value only to compare it against an API key.
+        // Enumerating the benign consumers was the wrong way round - there is no end to
+        // them - so the rule asks for the one thing that makes decoding dangerous.
+        return false;
     }
 
     // OBF021: Double variable function call
