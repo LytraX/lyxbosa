@@ -63,6 +63,14 @@ the technique (see [§0.9](#09-audit-existing-rules-for-over-fitting)).
 >
 > Its real value is durability, not yield: it collapses a whole class of future variants
 > rather than the four rules it happens to unlock here.
+>
+> **Update 2026-09-03 — the comment half is done without the normalizer.** The two live
+> samples that needed comment handling (§4 GAP-2 and GAP-4) are both detected now. Rather
+> than build the offset map, the eval family's `\s*` gap between a function name and its
+> `(` became a shared `LYX_GAP` fragment that also admits block comments, and the
+> `-*///` noise itself became a rule (`OBF038`). Whitespace collapse and escape decoding
+> are still unbuilt, and the normalizer is still the durable answer — but it is no longer
+> blocking any known sample.
 
 Add a normalization pass ahead of `MatchEngine`, producing a normalized buffer plus an
 offset map back to the original so reported positions stay truthful.
@@ -142,7 +150,7 @@ hits nearly every line. Ratio-gating took this from 5 CMS + 6 Sites FPs to zero.
 
 | Code | Detection | TP | Severity | Notes |
 |---|---|---:|---|---|
-| `OBF029` | chunked uniform base64 `.=` accumulation | 6 | `high` | ≥20 consecutive `$v .= "b64chunk";` to the *same* variable, ≤3 distinct chunk widths. Uniform width is what separates generated payloads from hand-written HTML building (`$html .= '<div>'`), which produced 5 CMS + 15 Sites FPs at a naive ≥12 with no width test. |
+| ✅ `OBF029` | chunked uniform base64 `.=` accumulation | 6 → **12** | `critical` | **Shipped 2026-09-03.** ≥20 consecutive appends to the *same* variable, ≤3 distinct widths, mean width <16, joined result pure base64. Shipped at `critical` rather than `high`: the live sample was a 268 KB webshell staged as 14,066 appends, and the four conditions together have no legitimate shape. Found 12 files in the corpus, not the 6 predicted — the whole "Smart Chunk" family was sitting undetected. 0 FP on CMS, Sites and the live sample corpus. |
 | `BD018` | stream wrapper in `include`/`require` | 6 | `critical` | `(include\|require)(_once)?` followed by `php://`, `data://`, `zip://`, `phar://`, `glob://`, `expect://`, `compress.*://`. **Requires Phase 1 escape decoding** — samples write it as `"\x7a\x69\x70\x3a\x2f\x2f…"`. |
 | `OBF030` | mixed hex/octal escape superglobal | 6 | `critical` | A literal of ≥4 consecutive `\xNN`/`\NNN` escapes **and** a variable-variable subscript `${$var}[`. Catches `array("\x5f\107\x45\x54")` → `${$x[0]}["of"]`. |
 | `SEO007` | gambling doorway keyword density | 6 | `high` | ≥8 occurrences of a localized gambling-spam keyword set (*slot gacor, situs slot, anti nawala, maxwin, judi bola, togel, rtp slot, link alternatif*). Samples carry 55–117. Density, not presence. |
@@ -155,7 +163,7 @@ hits nearly every line. Ratio-gating took this from 5 CMS + 6 Sites FPs to zero.
 | `BD022` | gsocket persistence marker | 2 | `high` | Literal `DO NOT REMOVE THIS LINE. SEED PRNG` — a known gs-netcat/gs-dbus IOC. |
 | `OBF032` | chained string-literal subscripts | 1 | `critical` | `("abc")[2].("def")[1].("ghi")[0]` — **≥3 chained, PHP only**. The unchained form cost 20 CMS + 50 Sites FPs. |
 | `OBF033` | self-referential dead-store padding | 1 | `medium` | ≥4 of `$x = str_replace("k","","k")`, `substr("k",7,0)`, `implode("k",array())`. Signature dilution. |
-| `SEO008` | user-agent cloaking + remote fetch | 1 | `high` | ≥2 crawler names (`googlebot`, `bingbot`, `ahrefsbot`, `mediapartners-google`, …) matched against `HTTP_USER_AGENT`, plus `curl_exec`/`wp_remote_get`/`file_get_contents('http…')`. Extends `SEO003` from htaccess to PHP. |
+| ✅ `SEO008` | user-agent cloaking + remote fetch | 1 → **3** | `high` | **Shipped 2026-09-03.** ≥3 crawler names (raised from 2 — caching and analytics plugins legitimately name one or two) matched against `HTTP_USER_AGENT`, *plus* a remote fetch, *plus* an emitter. All three are required because each alone is ordinary. Extends `SEO003` from htaccess to PHP, which is by far the more common form. 0 FP on CMS, Sites and the live sample corpus. |
 | `OBF034` | numeric `curl_setopt` constants | 1 | `high` | ≥3 of `curl_setopt($c, 10002, …)` — raw option integers instead of `CURLOPT_*` is deliberate opacity. |
 | `BD023` | `unlink(__FILE__)` | 1 | `high` | Single-use backdoors erase themselves. |
 | `DRP011` | `base64 -d \| sh` pipeline | 1 | `critical` | Shell persistence in `.bash_profile`/`.bashrc`. |
@@ -163,6 +171,8 @@ hits nearly every line. Ratio-gating took this from 5 CMS + 6 Sites FPs to zero.
 | `PY001` | Python CGI shell | 1 | `critical` | `cgi.FieldStorage()` + `os.popen*`/`os.system`/`subprocess.*`. **First Python rule** — the category does not exist today. |
 | `WS010` | obfuscator.io string-array JS | 1 | `high` | ≥2 of: `while(!![])`, ≥3 `parseInt(x(0x…))`, ≥3 hex-arithmetic groups `(-0x2b6*-0x4+…)`, `_0x[0-9a-f]{4,}` identifiers. |
 | `BD011` (extend) | bcrypt password gate | 1 | `high` | Add `'$2[aby]?$\d{2}$[./A-Za-z0-9]{53}'` + `password_verify`/`hash_equals`/`crypt`. Today `BD011` knows only md5 and sha1. |
+| ✅ `RCE014` | `eval` over a decryption call | **2** | `critical` | **Shipped 2026-09-03.** Not in the original plan. No rule paired `eval` with a *cipher*: a live sample held its payload as AES-128-ECB ciphertext and ran `eval(openssl_decrypt($data, 'AES-128-ECB', $kunci, 0))`. Covers `openssl_decrypt`, `mcrypt_decrypt`, `sodium_crypto_secretbox_open`, `openssl_open`. |
+| ✅ `OBF038` | generated noise comments | **4** | `high` | **Shipped 2026-09-03.** Not in the original plan; closes the `-*///` loader family (see §4 GAP-4) without needing the Phase 1 normalizer. ≥10 block comments, mean length <64, ≥70% of them "noise". Getting *noise* right is the whole rule: a first cut tested only for "no words" and took 88 FPs, because `/****/` banners, `/* @var int */` docblock fragments and `/* 1 << 128 */` arithmetic notes are all wordless. It now requires high character diversity in a short span, or a run of ≥4 distinct non-ASCII bytes — the latter bounded so icon-font CSS documenting one glyph per comment does not match. 0 FP on CMS, Sites and the live sample corpus. |
 | ✅ `OBF036` | binary payload in a text-declaring file | 40 | `high` | **Shipped.** Counts C0 controls only (never bytes ≥0x80, so UTF-8 in any script scores 0.000%); UTF-16/32 exempted by BOM or alternating-NUL. Gated to text extensions, minus `wflogs/` and `.sql`. |
 | ✅ `OBF037` | mixed octal/hex escaped string | 67 | `high` | **Shipped.** ≥8 escapes in one run with ≥2 of *each* notation. See [§0.9](#09-audit-existing-rules-for-over-fitting). |
 | ✅ `OBF015` (fix) | goto label may follow `;` with no space | +74 | — | **Shipped.** `\s+` → `\s*`. |

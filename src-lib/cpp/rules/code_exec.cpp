@@ -3,10 +3,23 @@
 
 namespace lyxbosa::rules::code_exec {
 
+// The gap between a function name and its opening paren.
+//
+// Every eval-family rule used to spell this `\s*`, which allows only whitespace -
+// so wedging a comment in defeated all of them at once. A live sample ran
+//
+//     /********/ /*******//****/@/***//*!50000*/eval/***//********/ /*******/(...)
+//
+// and matched nothing at all. `/*!50000*/` is MySQL's versioned-comment form,
+// which PHP reads as an ordinary comment; the rest is filler. Allowing comments in
+// the gap closes the technique for the whole family in one place, at the cost of
+// permitting something no legitimate code writes anyway.
+#define LYX_GAP R"__((?:\s|/\*(?:[^*]|\*+[^*/])*\*+/)*)__"
+
 // RCE001: eval with base64 decode
 namespace detail_RCE001 {
     static constexpr Pattern patterns[] = {
-        { R"((?i:eval)\s*\(\s*(?i:base64_decode)\s*\()",
+        { R"((?i:eval))" LYX_GAP R"(\(\s*(?i:base64_decode))" LYX_GAP R"(\()",
           "eval(base64_decode(", false,
           {"base64_decode", "eval"} },
     };
@@ -22,7 +35,7 @@ const BuiltinRule RCE001 {
 // RCE002: eval with gzinflate
 namespace detail_RCE002 {
     static constexpr Pattern patterns[] = {
-        { R"((?i:eval)\s*\(\s*(?i:gzinflate)\s*\()",
+        { R"((?i:eval))" LYX_GAP R"(\(\s*(?i:gzinflate))" LYX_GAP R"(\()",
           "eval(gzinflate(", false,
           {"gzinflate", "eval"} },
     };
@@ -59,7 +72,7 @@ const BuiltinRule RCE003 {
 // RCE004: eval with user input
 namespace detail_RCE004 {
     static constexpr Pattern patterns[] = {
-        { R"((?i:eval)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
+        { R"((?i:eval))" LYX_GAP R"(\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
           "eval with user input", false,
           {"eval", "$_get|$_post|$_request|$_cookie"} },
     };
@@ -75,7 +88,7 @@ const BuiltinRule RCE004 {
 // RCE005: assert with user input
 namespace detail_RCE005 {
     static constexpr Pattern patterns[] = {
-        { R"((?i:assert)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
+        { R"((?i:assert))" LYX_GAP R"(\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
           "assert with user input", false,
           {"assert", "$_get|$_post|$_request|$_cookie"} },
     };
@@ -216,7 +229,7 @@ const BuiltinRule RCE011 {
 // This is ALWAYS malicious - no legitimate use for eval(hex2bin())
 namespace detail_RCE012 {
     static constexpr Pattern patterns[] = {
-        { R"((?i:eval)\s*\(\s*(?i:hex2bin)\s*\()",
+        { R"((?i:eval))" LYX_GAP R"(\(\s*(?i:hex2bin))" LYX_GAP R"(\()",
           "eval(hex2bin(", false,
           {"hex2bin", "eval"} },
     };
@@ -250,9 +263,31 @@ const BuiltinRule RCE013 {
     .patterns = detail_RCE013::patterns,
 };
 
+// RCE014: eval over a decrypted payload
+//
+// No rule paired eval with a *cipher*. The sample that prompted this holds its
+// payload as AES-128-ECB ciphertext and runs
+// `eval(openssl_decrypt($data, 'AES-128-ECB', $kunci, 0))`, which every base64- and
+// gzinflate-shaped rule walked straight past. Decrypting a string and executing the
+// result has no honest use: a program that needs a secret decrypts data, not code.
+namespace detail_RCE014 {
+    static constexpr Pattern patterns[] = {
+        { R"((?i:eval))" LYX_GAP R"(\(\s*(?:(?i:openssl_decrypt)|(?i:mcrypt_decrypt)|(?i:sodium_crypto_secretbox_open)|(?i:openssl_open)))" LYX_GAP R"(\()",
+          "eval(<decrypt>(", false,
+          {"eval", "openssl_decrypt|mcrypt_decrypt|sodium_crypto_secretbox_open|openssl_open"} },
+    };
+}
+const BuiltinRule RCE014 {
+    .code = {Category::CodeExec, 14},
+    .name = "eval decrypted payload",
+    .description = "Detects eval() over the result of a decryption call - executing ciphertext",
+    .severity = Severity::Critical,
+    .patterns = detail_RCE014::patterns,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &RCE001, &RCE002, &RCE003, &RCE004, &RCE005,
-    &RCE006, &RCE007, &RCE008, &RCE009, &RCE010, &RCE011, &RCE012, &RCE013
+    &RCE006, &RCE007, &RCE008, &RCE009, &RCE010, &RCE011, &RCE012, &RCE013, &RCE014
 };
 
 const BuiltinRule* const* getAllRules() {
@@ -260,3 +295,5 @@ const BuiltinRule* const* getAllRules() {
 }
 
 } // namespace lyxbosa::rules::code_exec
+
+#undef LYX_GAP

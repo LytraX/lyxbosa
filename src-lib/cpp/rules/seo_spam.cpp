@@ -1,5 +1,8 @@
 #include "seo_spam.h"
+#include <algorithm>
 #include <array>
+#include <cctype>
+#include <string>
 
 namespace lyxbosa::rules::seo_spam {
 
@@ -123,8 +126,101 @@ const BuiltinRule SEO006 {
     .patterns = detail_SEO006::patterns,
 };
 
+// SEO008: PHP-level user-agent cloaking
+//
+// SEO003 knows only .htaccess RewriteCond cloaking. The far more common form is a
+// few lines of PHP prepended to a document-root index.php:
+//
+//     'bots' => 'Googlebot,bingbot,Slurp,DuckDuckBot,YandexBot,Baiduspider,...',
+//     $v_ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+//     if (_sys_validate($v_ua, $cdc_config['bots'])) {
+//         $content = _sys_sync($cdc_config['remote_url'], ...);
+//         if ($content) { echo $content; exit; }
+//     }
+//
+// Crawlers get gambling spam fetched from the operator's server; humans get the real
+// site, so the owner sees nothing wrong and the ranking damage is invisible from a
+// browser.
+//
+// All three conditions are required, because each alone is ordinary. Caching and
+// analytics plugins enumerate crawler user-agents; plenty of code fetches a remote
+// URL; plenty of code echoes a variable. What no legitimate plugin does is fetch
+// remote HTML and print it *only* to search engines.
+namespace detail_SEO008 {
+    constexpr size_t kMinCrawlerNames = 3;
+
+    // Names distinctive enough that seeing several together means a crawler list.
+    constexpr std::string_view kCrawlers[] = {
+        "googlebot", "bingbot", "slurp", "duckduckbot", "yandexbot", "baiduspider",
+        "ahrefsbot", "semrushbot", "mj12bot", "facebookexternalhit", "applebot",
+        "bingpreview", "mediapartners-google", "twitterbot", "petalbot", "sogou",
+    };
+
+    constexpr std::string_view kFetches[] = {
+        "curl_exec", "wp_remote_get", "wp_remote_post", "file_get_contents",
+        "fopen", "stream_context_create", "fsockopen",
+    };
+
+    constexpr std::string_view kEmitters[] = {
+        "echo", "print", "printf", "eval", "readfile", "include", "require",
+    };
+
+    bool containsLower(const std::string& haystack, std::string_view needle) {
+        return haystack.find(needle) != std::string::npos;
+    }
+
+    std::vector<MatchResult> detectUserAgentCloaking(std::string_view content) {
+        std::vector<MatchResult> out;
+
+        // Cheap guard: this analyzer has no literal gate, so it runs on every file.
+        const size_t uaAt = content.find("HTTP_USER_AGENT");
+        if (uaAt == std::string_view::npos) return out;
+
+        std::string lowered(content);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        size_t crawlers = 0;
+        for (auto name : kCrawlers) {
+            if (containsLower(lowered, name) && ++crawlers >= kMinCrawlerNames) break;
+        }
+        if (crawlers < kMinCrawlerNames) return out;
+
+        bool fetches = false;
+        for (auto fn : kFetches) {
+            if (containsLower(lowered, fn)) { fetches = true; break; }
+        }
+        if (!fetches) return out;
+
+        bool emits = false;
+        for (auto fn : kEmitters) {
+            if (containsLower(lowered, fn)) { emits = true; break; }
+        }
+        if (!emits) return out;
+
+        auto [line, col] = positionToLineCol(content, uaAt);
+        MatchResult r;
+        r.line = line;
+        r.column = col;
+        r.matched = content.substr(uaAt, std::min<size_t>(48, content.size() - uaAt));
+        r.note = "User-agent tested against " + std::to_string(crawlers) +
+                 "+ crawler names in a file that also fetches a remote URL and prints it - "
+                 "search engines are being served different content from visitors";
+        out.push_back(r);
+        return out;
+    }
+}
+const BuiltinRule SEO008 {
+    .code = {Category::SeoSpam, 8},
+    .name = "PHP user-agent cloaking",
+    .description = "Detects PHP that serves remotely fetched content only to search-engine crawlers",
+    .severity = Severity::High,
+    .patterns = {},
+    .analyzer = &detail_SEO008::detectUserAgentCloaking,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
-    &SEO001, &SEO002, &SEO003, &SEO004, &SEO005, &SEO006
+    &SEO001, &SEO002, &SEO003, &SEO004, &SEO005, &SEO006, &SEO008
 };
 
 const BuiltinRule* const* getAllRules() {

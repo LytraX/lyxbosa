@@ -10,8 +10,9 @@ extern const BuiltinRule SEO003;
 extern const BuiltinRule SEO004;
 extern const BuiltinRule SEO005;
 extern const BuiltinRule SEO006;
+extern const BuiltinRule SEO008;
 
-inline constexpr size_t RULE_COUNT = 6;
+inline constexpr size_t RULE_COUNT = 7;
 const BuiltinRule* const* getAllRules();
 
 } // namespace lyxbosa::rules::seo_spam

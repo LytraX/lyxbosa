@@ -17,8 +17,9 @@ extern const BuiltinRule RCE010;
 extern const BuiltinRule RCE011;
 extern const BuiltinRule RCE012;
 extern const BuiltinRule RCE013;
+extern const BuiltinRule RCE014;
 
-inline constexpr size_t RULE_COUNT = 13;
+inline constexpr size_t RULE_COUNT = 14;
 const BuiltinRule* const* getAllRules();
 
 } // namespace lyxbosa::rules::code_exec

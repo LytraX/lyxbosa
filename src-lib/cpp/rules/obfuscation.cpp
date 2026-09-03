@@ -769,12 +769,290 @@ const BuiltinRule OBF037 {
     .analyzer = &detail_OBF037::detectMixedEscapes,
 };
 
+// OBF029: payload staged as a long run of small `.=` appends
+//
+// The technique defeats every length-based and adjacency-based rule at once. A
+// 268 KB webshell on a live host was staged as 14,066 statements of
+// `$z .= "Skdze";`, then decoded and run:
+//
+//     $z = "";  $z .= "Skdze";  $z .= "mVYY2";  ... (14,066 lines)
+//     $fn = 'base64_decode';  $s1 = $fn($z);  $s2 = $fn($s1);  eval($s2);
+//
+// Nothing in the rule set saw it. RCE001 wants `eval(base64_decode(` adjacent, and
+// here the call is `eval($s2)`. DRP007 wants one literal of 500+ base64 characters,
+// and here there are 14,066 literals of five. OBF024/OBF025 fold *split* identifiers,
+// and 'base64_decode' is written out whole. OBF017 wants `return $var(`.
+//
+// So match the staging itself. Four conditions, each closing a different way an
+// honest program builds a string by appending:
+//
+//   * >=20 consecutive appends to the *same* variable. Interleaving another
+//     variable ends the run, because building two strings in a loop is ordinary.
+//   * at most 3 distinct fragment widths. This is the one that matters. A generator
+//     cuts a payload into fixed-size pieces; hand-written HTML building
+//     (`$html .= '<div>'; $html .= $title;`) has a different width every time, and
+//     without this test a naive threshold of 12 cost 5 CMS and 15 Sites false
+//     positives.
+//   * fragments averaging under 16 characters. Real text accumulation appends
+//     sentences and tags, not syllables.
+//   * the joined result is pure base64 alphabet. It is a payload, not prose.
+namespace detail_OBF029 {
+    constexpr size_t kMinRun = 20;
+    constexpr size_t kMaxDistinctWidths = 3;
+    constexpr size_t kMaxMeanWidth = 16;
+
+    inline bool isBase64Byte(unsigned char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+               (c >= '0' && c <= '9') || c == '+' || c == '/' || c == '=';
+    }
+
+    // One `$name .= "literal";` statement starting at or after `pos`.
+    struct Append {
+        size_t start = 0;       // offset of the '$'
+        size_t end = 0;         // one past the closing quote
+        std::string_view name;  // variable name, without the '$'
+        size_t width = 0;       // literal length
+        bool base64 = true;     // literal is entirely base64 alphabet
+    };
+
+    // Parses an append at exactly `i`, or returns false. Deliberately strict: this
+    // is a shape test, and anything it cannot read is not the shape.
+    bool parseAppend(std::string_view c, size_t i, Append& out) {
+        const size_t start = i;
+        if (i >= c.size() || c[i] != '$') return false;
+        ++i;
+        const size_t nameStart = i;
+        while (i < c.size() && (std::isalnum(static_cast<unsigned char>(c[i])) || c[i] == '_')) ++i;
+        if (i == nameStart) return false;
+        const std::string_view name = c.substr(nameStart, i - nameStart);
+
+        while (i < c.size() && (c[i] == ' ' || c[i] == '\t')) ++i;
+        if (i + 1 >= c.size() || c[i] != '.' || c[i + 1] != '=') return false;
+        i += 2;
+        while (i < c.size() && (c[i] == ' ' || c[i] == '\t')) ++i;
+
+        if (i >= c.size() || (c[i] != '"' && c[i] != '\'')) return false;
+        const char quote = c[i];
+        ++i;
+        const size_t litStart = i;
+        bool base64 = true;
+        while (i < c.size() && c[i] != quote) {
+            if (c[i] == '\\') return false;   // an escape means it is not a raw chunk
+            if (!isBase64Byte(static_cast<unsigned char>(c[i]))) base64 = false;
+            ++i;
+        }
+        if (i >= c.size()) return false;
+        const size_t width = i - litStart;
+        ++i;   // past the closing quote
+
+        while (i < c.size() && (c[i] == ' ' || c[i] == '\t')) ++i;
+        if (i >= c.size() || c[i] != ';') return false;
+        ++i;
+
+        out = Append{start, i, name, width, base64};
+        return true;
+    }
+
+    std::vector<MatchResult> detectChunkAccumulation(std::string_view content) {
+        std::vector<MatchResult> out;
+        // Cheap guard first: this analyzer has no literal gate to sit behind, so it
+        // runs on every file in the tree.
+        if (content.find(".=") == std::string_view::npos) return out;
+
+        size_t i = 0;
+        while (i < content.size()) {
+            Append first;
+            if (!parseAppend(content, i, first)) { ++i; continue; }
+
+            // Walk the run of appends to this same variable.
+            std::vector<size_t> widths;
+            size_t count = 0, totalWidth = 0;
+            bool allBase64 = true;
+            size_t cursor = first.start;
+            Append a = first;
+            const size_t runStart = first.start;
+            size_t runEnd = first.end;
+
+            while (true) {
+                ++count;
+                totalWidth += a.width;
+                allBase64 = allBase64 && a.base64;
+                if (std::find(widths.begin(), widths.end(), a.width) == widths.end()) {
+                    widths.push_back(a.width);
+                }
+                runEnd = a.end;
+
+                cursor = a.end;
+                while (cursor < content.size() &&
+                       (content[cursor] == ' ' || content[cursor] == '\t' ||
+                        content[cursor] == '\r' || content[cursor] == '\n')) {
+                    ++cursor;
+                }
+                Append next;
+                if (!parseAppend(content, cursor, next) || next.name != first.name) break;
+                a = next;
+            }
+
+            if (count >= kMinRun && allBase64 &&
+                widths.size() <= kMaxDistinctWidths &&
+                totalWidth / count < kMaxMeanWidth) {
+                auto [line, col] = positionToLineCol(content, runStart);
+                MatchResult r;
+                r.line = line;
+                r.column = col;
+                r.matched = content.substr(runStart, std::min<size_t>(runEnd - runStart, 64));
+                r.note = "Payload staged as " + std::to_string(count) +
+                         " consecutive appends to $" + std::string(first.name) +
+                         " of " + std::to_string(widths.size()) +
+                         (widths.size() == 1 ? " width" : " widths") +
+                         ", mean " + std::to_string(totalWidth / count) +
+                         " base64 characters";
+                out.push_back(r);
+                if (out.size() >= 8) return out;
+            }
+
+            i = (runEnd > i) ? runEnd : i + 1;
+        }
+
+        return out;
+    }
+}
+const BuiltinRule OBF029 {
+    .code = {Category::Obfuscation, 29},
+    .name = "Chunked payload accumulation",
+    .description = "Detects a payload staged as a long run of small uniform .= appends to one variable",
+    .severity = Severity::Critical,
+    .patterns = {},
+    .analyzer = &detail_OBF029::detectChunkAccumulation,
+};
+
+// OBF038: generated noise comments
+//
+// An obfuscator that wants to break every "identifier immediately followed by (",
+// "bracket immediately followed by (" and constant-folding rule at once can do it
+// by wedging a comment into every gap:
+//
+//     $evUV /*-9-mk%J,N3-*/// =/*- ╀⒬ qj╀⒬ -*/// "ra"/*-L>#$|d@^jy-*/// ."nge";
+//
+// Deobfuscated that is `$evUV = "ra"."nge";`, but no pattern in the rule set could
+// see it, and neither could the string-assembly folder. Rather than chase the
+// technique through every rule, match the noise itself: the comments are the tell.
+//
+// Three conditions together. A file needs many of them, they have to be short, and
+// their contents have to be the kind of thing no author writes - symbol soup with no
+// words in it. Minified assets carry long licence banners and sourcemap comments,
+// which have plenty of words and are few; this wants the opposite of both.
+namespace detail_OBF038 {
+    constexpr size_t kMinComments = 10;
+    constexpr size_t kMaxMeanLength = 64;
+    constexpr double kMinNoiseShare = 0.7;
+    constexpr size_t kMinNoisyLength = 8;
+    constexpr double kMinDistinctShare = 0.7;
+
+    // "Wordless" is necessary but nowhere near sufficient, and getting that wrong is
+    // what a first cut of this rule did: `/****/` banner rules, `/* @var int */`
+    // docblock fragments and `/* 1 << 128 */` arithmetic notes are all wordless, and
+    // WordPress core alone carries dozens. 88 false positives across CMS and Sites.
+    //
+    // What generated filler actually looks like is *high character diversity in a
+    // short span* - `-9-mk%J,N3-`, `-L>#$|d@^jy-` - or a run of non-ASCII symbols
+    // picked to be visually noisy. A banner is one character repeated; a docblock
+    // fragment reuses a small alphabet. Either signal alone is enough, because an
+    // obfuscator that avoids non-ASCII still cannot avoid the entropy.
+    bool looksGenerated(std::string_view body) {
+        // Symbol soup: ⓸④✞⇟ and friends. No author writes this in a comment.
+        //
+        // A *single* non-ASCII codepoint is not soup, though: icon-font CSS documents
+        // each glyph as `/* '\uE002' */`, which is one three-byte character between
+        // quotes, and RevSlider ships fifty of them in one stylesheet. Require several
+        // distinct ones, which is what a run of decorative symbols actually is.
+        {
+            size_t highBytes = 0;
+            bool seenHigh[128] = {};
+            size_t distinctHigh = 0;
+            for (unsigned char ch : body) {
+                if (ch < 0x80) continue;
+                ++highBytes;
+                if (!seenHigh[ch - 0x80]) { seenHigh[ch - 0x80] = true; ++distinctHigh; }
+            }
+            if (highBytes >= 6 && distinctHigh >= 4) return true;
+            if (highBytes > 0) return false;   // some non-ASCII, but not soup
+        }
+
+        if (body.size() < kMinNoisyLength) return false;
+
+        size_t letters = 0;
+        for (char ch : body) {
+            if (std::isalpha(static_cast<unsigned char>(ch))) {
+                if (++letters >= 4) return false;   // four letters in a row is a word
+            } else {
+                letters = 0;
+            }
+        }
+
+        bool seen[256] = {};
+        size_t distinct = 0;
+        for (unsigned char ch : body) {
+            if (!seen[ch]) { seen[ch] = true; ++distinct; }
+        }
+        return static_cast<double>(distinct) >=
+               kMinDistinctShare * static_cast<double>(body.size());
+    }
+
+    std::vector<MatchResult> detectNoiseComments(std::string_view content) {
+        std::vector<MatchResult> out;
+        if (content.find("/*") == std::string_view::npos) return out;
+
+        size_t comments = 0, noisy = 0, totalLength = 0;
+        size_t firstNoisy = std::string_view::npos;
+
+        size_t i = 0;
+        while ((i = content.find("/*", i)) != std::string_view::npos) {
+            const size_t close = content.find("*/", i + 2);
+            if (close == std::string_view::npos) break;
+            const std::string_view body = content.substr(i + 2, close - i - 2);
+            ++comments;
+            totalLength += body.size();
+            if (looksGenerated(body)) {
+                if (firstNoisy == std::string_view::npos) firstNoisy = i;
+                ++noisy;
+            }
+            i = close + 2;
+        }
+
+        if (comments < kMinComments) return out;
+        if (totalLength / comments > kMaxMeanLength) return out;
+        if (static_cast<double>(noisy) < kMinNoiseShare * static_cast<double>(comments)) return out;
+        if (noisy < kMinComments) return out;
+
+        auto [line, col] = positionToLineCol(content, firstNoisy);
+        MatchResult r;
+        r.line = line;
+        r.column = col;
+        r.matched = content.substr(firstNoisy, std::min<size_t>(48, content.size() - firstNoisy));
+        r.note = std::to_string(noisy) + " of " + std::to_string(comments) +
+                 " block comments carry no words, mean length " +
+                 std::to_string(totalLength / comments) +
+                 " - generated noise wedged between tokens to break signature matching";
+        out.push_back(r);
+        return out;
+    }
+}
+const BuiltinRule OBF038 {
+    .code = {Category::Obfuscation, 38},
+    .name = "Generated noise comments",
+    .description = "Detects wordless block comments wedged between tokens to defeat pattern matching",
+    .severity = Severity::High,
+    .patterns = {},
+    .analyzer = &detail_OBF038::detectNoiseComments,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF001, &OBF002, &OBF003, &OBF004, &OBF005,
     &OBF006, &OBF007, &OBF008, &OBF009, &OBF010,
     &OBF011, &OBF012, &OBF013, &OBF014, &OBF015, &OBF016,
     &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023,
-    &OBF024, &OBF025, &OBF036, &OBF037
+    &OBF024, &OBF025, &OBF029, &OBF036, &OBF037, &OBF038
 };
 
 const BuiltinRule* const* getAllRules() {
