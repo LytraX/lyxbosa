@@ -3,13 +3,19 @@
 Written for people running the scanner: what it detects, what it reports, and what a
 configuration or a calling script has to do differently.
 
-This file starts at the entry below. For anything earlier, the GitHub release notes
-carry a commit list that CI generates per tag. Versions are the git tags described in
+This file starts at 2.1.0. For anything earlier, the GitHub release notes carry a
+commit list that CI generates per tag. Versions are the git tags described in
 [docs/RELEASING.md](docs/RELEASING.md).
 
 ---
 
 ## Unreleased
+
+Nothing yet.
+
+## [2.1.0] - 2026-09-03
+
+Archive scanning, and 96% fewer false positives.
 
 ### Detection
 
@@ -151,3 +157,8 @@ because the writer emitted one row per match.
   file as clean and no longer does. This is the one change here that can alter the
   behaviour of an existing caller.
 - Configuration schema, CLI flags and every other exit code are unchanged.
+
+---
+
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/LytraX/lyxbosa/compare/v2.0.2...v2.1.0
