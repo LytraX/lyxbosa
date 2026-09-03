@@ -155,10 +155,16 @@ const BuiltinRule DRP009 {
 // More specific than DRP004 - catches variable concatenation
 namespace detail_DRP010 {
     static constexpr Pattern patterns[] = {
-        // $_SERVER['DOCUMENT_ROOT'] concatenated with variable (dynamic path)
-        { R"(\$_SERVER\s*\[\s*['"]DOCUMENT_ROOT['"]\s*\]\s*\.\s*['"]/['"]\s*\.\s*\$)",
-          "DOCUMENT_ROOT path building", false,
-          {"document_root", "_server"} },
+        // A write whose destination is built from DOCUMENT_ROOT.
+        //
+        // Building the path is not the finding - resolving a path under the document root is
+        // what any thumbnailer does, and matching the concatenation alone reported TimThumb's
+        // `if (@file_exists($_SERVER['DOCUMENT_ROOT'] . '/' . $src))`, which is a read. The
+        // write function is what makes it a drop.
+        { R"(((?i:file_put_contents)|(?i:fopen)|(?i:fwrite)|(?i:copy)|(?i:rename)|(?i:move_uploaded_file))\s*\([^;]{0,200}\$_SERVER\s*\[\s*['"]DOCUMENT_ROOT['"]\s*\]\s*\.\s*['"]/['"]\s*\.\s*\$)",
+          "Write to a DOCUMENT_ROOT path", false,
+          {"document_root", "_server",
+           "file_put_contents|fopen|fwrite|copy|rename|move_uploaded_file"} },
         // file_put_contents with DOCUMENT_ROOT and /index
         { R"((?i:file_put_contents)\s*\([^,]*DOCUMENT_ROOT[^,]*index)",
           "Writing to index in document root", false,

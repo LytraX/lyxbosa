@@ -1,6 +1,9 @@
 #include "MatchEngine.h"
 #include "utils/SafeText.h"
+#include "analysis/StringAssembly.h"
 #include <algorithm>
+#include <cctype>
+#include <vector>
 
 namespace lyxbosa {
 
@@ -108,9 +111,165 @@ bool MatchEngine::isInSqlQuery(std::string_view content, size_t offset) {
     return false;
 }
 
+// The body of the quoted string literal a match opens, e.g. the argument of
+// `eval("var x = ...")`. Returns an empty view when the match does not open one.
+//
+// Scans forward from the match for the first quote, then to its unescaped partner.
+// Bounded by maxLen: a rule asks this to look at what is being evaluated, not to walk
+// a whole minified bundle when the closing quote is missing.
+static std::string_view quotedLiteralAt(std::string_view content, size_t offset, size_t maxLen) {
+    if (offset >= content.size()) return {};
+
+    // The quote is inside the matched text - a few bytes in, after `eval(` and any space.
+    const size_t searchEnd = std::min(offset + 32, content.size());
+    size_t open = std::string_view::npos;
+    for (size_t i = offset; i < searchEnd; ++i) {
+        if (content[i] == '"' || content[i] == '\'') { open = i; break; }
+    }
+    if (open == std::string_view::npos) return {};
+
+    const char quote = content[open];
+    const size_t limit = std::min(open + 1 + maxLen, content.size());
+    for (size_t i = open + 1; i < limit; ++i) {
+        if (content[i] == '\\') { ++i; continue; }
+        if (content[i] == quote) return content.substr(open + 1, i - open - 1);
+    }
+    return content.substr(open + 1, limit - open - 1);
+}
+
+// Lowercased trailing extension of a path, including the dot ("" when there is none).
+static std::string lowerExtension(std::string_view filePath) {
+    std::string path(filePath);
+    std::transform(path.begin(), path.end(), path.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const auto dot = path.find_last_of("./\\");
+    if (dot == std::string::npos || path[dot] != '.') return {};
+    return path.substr(dot);
+}
+
+// Whether a file's type means the webserver serves it as data rather than executing it.
+// A `.php` is code; a `.html`, `.json` or `.log` is a document, and PHP or shell source
+// quoted inside one is a *record of* code, not code that runs.
+static bool isNonExecutableDataFile(std::string_view filePath) {
+    static constexpr std::string_view kDataExtensions[] = {
+        ".html", ".htm", ".xhtml", ".json", ".log", ".csv", ".tsv", ".xml", ".txt", ".md",
+    };
+    const std::string ext = lowerExtension(filePath);
+    for (auto candidate : kDataExtensions) {
+        if (ext == candidate) return true;
+    }
+    return false;
+}
+
+// Whether a match sits inside a JSON string *value* - i.e. the nearest unescaped quote
+// before it opens a string that a `:` introduced.
+//
+// This is what an access-log viewer, WAF dashboard or exported request table looks like:
+// the attack payload is the content of a `"data": "..."` field. Bounded backward scan,
+// because these documents are written as a single enormous line.
+static bool insideJsonStringValue(std::string_view content, size_t offset) {
+    if (offset == 0 || offset > content.size()) return false;
+
+    constexpr size_t kMaxLookback = 8192;
+    const size_t start = (offset > kMaxLookback) ? offset - kMaxLookback : 0;
+
+    for (size_t i = offset; i-- > start;) {
+        if (content[i] != '"') continue;
+
+        // A quote is escaped when an odd number of backslashes precedes it.
+        size_t backslashes = 0;
+        for (size_t j = i; j-- > start && content[j] == '\\';) ++backslashes;
+        if (backslashes % 2 == 1) continue;
+
+        // Nearest unescaped quote found: is it a value's opening quote?
+        size_t k = i;
+        while (k-- > start && (content[k] == ' ' || content[k] == '\t')) {}
+        return k >= start && k < content.size() && content[k] == ':';
+    }
+    return false;
+}
+
+// Whether a run of numbers rises monotonically - which is what makes it a *table* rather
+// than a payload.
+//
+// A byte table enumerates the character set in order: Symfony's intl-normalizer writes
+// `"\0\1\2\3\4\5\6\7\10\v\f\r\16\17\20...\37"` as its ASCII sort key, and phpinsight builds
+// its codepoint map as `chr(192) . chr(193) . chr(194) . ...`. An encoded payload spells out
+// arbitrary bytes, so its values do not ascend. Needs at least `minRun` values to conclude
+// anything - two ascending numbers are a coincidence.
+static bool isAscendingNumericRun(const std::vector<long>& values, size_t minRun) {
+    if (values.size() < minRun) return false;
+    for (size_t i = 1; i < values.size(); ++i) {
+        if (values[i] <= values[i - 1]) return false;
+    }
+    return true;
+}
+
+// Numeric values of the `\NNN` octal escapes in `text`, in order.
+static std::vector<long> octalEscapeValues(std::string_view text) {
+    std::vector<long> values;
+    for (size_t i = 0; i + 1 < text.size(); ++i) {
+        if (text[i] != '\\' || text[i + 1] < '0' || text[i + 1] > '7') continue;
+        size_t j = i + 1;
+        long value = 0;
+        while (j < text.size() && j <= i + 3 && text[j] >= '0' && text[j] <= '7') {
+            value = value * 8 + (text[j] - '0');
+            ++j;
+        }
+        values.push_back(value);
+        i = j - 1;
+    }
+    return values;
+}
+
+// Numeric arguments of the `chr(N)` calls in `text`, in order.
+static std::vector<long> chrArgumentValues(std::string_view text) {
+    std::vector<long> values;
+    size_t pos = 0;
+    while ((pos = text.find("chr", pos)) != std::string_view::npos) {
+        size_t i = pos + 3;
+        while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) ++i;
+        if (i >= text.size() || text[i] != '(') { pos += 3; continue; }
+        ++i;
+        while (i < text.size() && (text[i] == ' ' || text[i] == '\t')) ++i;
+        long value = 0;
+        bool anyDigit = false;
+        while (i < text.size() && text[i] >= '0' && text[i] <= '9') {
+            value = value * 10 + (text[i] - '0');
+            anyDigit = true;
+            ++i;
+        }
+        if (anyDigit) values.push_back(value);
+        pos = i;
+    }
+    return values;
+}
+
 // Apply context-aware filter for specific rules
 // Returns true if match should be kept, false to discard (false positive)
 bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchContext& ctx) {
+    // ------------------------------------------------------------------
+    // Family-wide: code-execution evidence quoted inside a data document.
+    //
+    // `cwp_stats/goaccess/*.html` are GoAccess traffic reports. They embed the whole
+    // request table as JSON, so every attack URL the site was ever probed with is in
+    // them verbatim - `"data": "/?up-time=eval(base64_decode(...));"`. The scanner was
+    // matching a log of somebody else's attack and calling it a webshell: 151 findings
+    // across eight rules on one production host, none of them code.
+    //
+    // Both conditions are required, and together they are narrow: the file must be a type
+    // the webserver serves rather than executes, *and* the match must be the content of a
+    // serialised field. A `.php` webshell is untouched by this whatever it contains.
+    if (isNonExecutableDataFile(ctx.filePath)) {
+        static constexpr std::string_view kExecutionFamilies[] = {"RCE", "WS", "DRP", "EXP", "BD"};
+        for (auto family : kExecutionFamilies) {
+            if (ruleCode.compare(0, family.size(), family) == 0 &&
+                insideJsonStringValue(ctx.content, ctx.matchOffset)) {
+                return false;
+            }
+        }
+    }
+
     // RCE009: Backtick command execution - DISABLED
     // This rule is fundamentally broken because:
     // 1. PHP/WordPress uses backticks in docblocks for inline code examples
@@ -135,6 +294,92 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         if (path.size() >= 3 && path.compare(path.size() - 3, 3, ".js") == 0) {
             return false;
         }
+    }
+
+    // DEFC006: JavaScript eval dynamic code
+    //
+    // webpack's `devtool: 'eval'` and `'eval-source-map'` wrap *every module* in
+    // `eval("var ...")`, so one shipped development bundle produces dozens of hits - 141
+    // findings on one host, from six plugins plus WordPress core's own
+    // `react-refresh-entry.js`.
+    //
+    // The evidence is inside the evaluated string itself: webpack writes its module
+    // plumbing (`__webpack_require__`), its `/*! ... */` request comments, and a
+    // `//# sourceURL=webpack:///` footer into the very text being evaluated. Taking the
+    // test from the literal rather than from the package path covers every bundler
+    // output, including plugins not yet written.
+    if (ruleCode == "DEFC006") {
+        static constexpr std::string_view kBundlerMarkers[] = {
+            "__webpack_require__", "sourceURL=webpack", "webpack:///", "/*! ",
+        };
+        // 64 KB is well past the largest module literal measured (29 KB) and still bounded.
+        const std::string_view evaluated = quotedLiteralAt(ctx.content, ctx.matchOffset, 64 * 1024);
+        for (auto marker : kBundlerMarkers) {
+            if (evaluated.find(marker) != std::string_view::npos) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // DRP002: Download and execute
+    //
+    // The pattern is the composer installation one-liner, which appears as *documentation*
+    // far more often than as an attack: composer-installers prints it in its "you did not
+    // install this with composer" error, and every PHP Dockerfile in existence runs it.
+    // 74 of 79 false positives on one host were one of four well-known installer URLs.
+    //
+    // DRP001 already carries a legitimateDomains list for exactly this reason; DRP002 was
+    // simply never given one. A real dropper pipes from a host no whitelist would carry -
+    // the two true positives on that host fetched `https://gsocket.io/x`.
+    if (ruleCode == "DRP002") {
+        static constexpr std::string_view kInstallerDomains[] = {
+            "getcomposer.org",
+            "raw.githubusercontent.com",
+            "get.symfony.com",
+            "cygwin.com",
+            "sh.rustup.rs",
+            "deb.nodesource.com",
+            "rpm.nodesource.com",
+            "install.python-poetry.org",
+        };
+        for (auto domain : kInstallerDomains) {
+            if (ctx.matchedText.find(domain) != std::string_view::npos) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // BD004: Config file reader
+    //
+    // Reading wp-config.php is not exfiltration - it is what every caching plugin does to
+    // add the WP_CACHE constant. WP Fastest Cache alone accounted for all 43 findings on
+    // one host, and the rule had no true positive anywhere in 1.3 M files.
+    //
+    // What makes reading a config a finding is where the contents go next. Note that
+    // `file_put_contents` is deliberately *not* an exfiltration signal: writing the config
+    // back is precisely the legitimate case (WP Fastest Cache's next statement is a
+    // str_replace and a write to the same path). The signals below all move the credentials
+    // somewhere the config never went - out over the network, into mail, into an encoding
+    // for transport, or through a regex that picks the database password out by name.
+    if (ruleCode == "BD004") {
+        static constexpr std::string_view kExfiltrationSignals[] = {
+            "DB_PASSWORD", "DB_USER", "DB_NAME", "DB_HOST",
+            "mail(", "wp_mail(",
+            "curl_setopt", "curl_exec", "fsockopen", "stream_socket_client",
+            "base64_encode", "gzcompress", "gzdeflate", "http_build_query",
+            "file_get_contents(\"http", "file_get_contents('http",
+        };
+        const size_t searchEnd = std::min(ctx.matchOffset + 400, ctx.content.size());
+        const std::string_view afterMatch =
+            ctx.content.substr(ctx.matchOffset, searchEnd - ctx.matchOffset);
+        for (auto signal : kExfiltrationSignals) {
+            if (afterMatch.find(signal) != std::string_view::npos) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // OBF036: Binary payload in text file
@@ -183,6 +428,102 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         if (path.size() >= 4 && path.compare(path.size() - 4, 4, ".sql") == 0) {
             return false;
         }
+
+        // macOS AppleDouble resource-fork stub. Unpacking a theme zip authored on a Mac
+        // leaves a `._name.php` beside every `name.php`; it inherits the .php suffix but
+        // is not PHP at all, it is the metadata half of the original file. Keyed on the
+        // four-byte magic rather than on `__MACOSX/`, so it still holds for a stub that
+        // was unpacked outside that directory.
+        if (ctx.content.size() >= 4 &&
+            static_cast<unsigned char>(ctx.content[0]) == 0x00 &&
+            static_cast<unsigned char>(ctx.content[1]) == 0x05 &&
+            static_cast<unsigned char>(ctx.content[2]) == 0x16 &&
+            static_cast<unsigned char>(ctx.content[3]) == 0x07) {
+            return false;
+        }
+
+        // Generated protobuf metadata. `protoc --php_out` emits the serialised
+        // FileDescriptorProto as a single-quoted PHP string, so a GPBMetadata class is
+        // legitimately half control bytes. This is by far the largest single source of
+        // OBF036 noise on a host that runs any Google plugin (Ads, Site Kit, Listings).
+        //
+        // Both tests read the file's own declaration rather than its path, so they hold
+        // for the vendored copies that rename `vendor/` to `third-party/`.
+        {
+            const std::string_view head = ctx.content.substr(0, std::min<size_t>(ctx.content.size(), 512));
+            if (head.find("Generated by the protocol buffer compiler") != std::string_view::npos ||
+                head.find("namespace GPBMetadata") != std::string_view::npos) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // BD013: Embedded private key
+    //
+    // The rule wants a key a backdoor uses to talk to its C2. What it found on a production
+    // host was documentation: Twilio's SDK spells out the APNs credential format in a
+    // docblock, `e.g. \`-----BEGIN RSA PRIVATE KEY-----MIIEpQIBAAKCAQEAuyf/...\``, and
+    // google/apiclient ships a test fixture key. 10 findings, no C2.
+    //
+    // isInComment() has existed since the first context filters and was simply never wired
+    // to this rule.
+    if (ruleCode == "BD013") {
+        if (isInComment(ctx.content, ctx.matchOffset)) {
+            return false;  // Documentation, not a key in use
+        }
+
+        std::string path(ctx.filePath);
+        std::transform(path.begin(), path.end(), path.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        // Fixture keys are generated to be published; that is what makes them fixtures.
+        static constexpr std::string_view kFixturePaths[] = {
+            "/tests/", "/test/", "testdata", "/fixtures/", "/fixture/",
+        };
+        for (auto fragment : kFixturePaths) {
+            if (path.find(fragment) != std::string::npos) {
+                return false;
+            }
+        }
+
+        // A private key inside ~/.ssh is a private key where private keys belong. Worth an
+        // operator's attention as hygiene, but it is not an embedded C2 credential, which is
+        // what this rule reports at critical.
+        if (path.find("/.ssh/") != std::string::npos) {
+            return false;
+        }
+
+        return true;
+    }
+
+    // BD010: Auto-update manipulation
+    //
+    // Zero true positives in 1.3 M files. `add_filter('auto_update_...')` is the documented
+    // WordPress API for opting a plugin in or out of its own updates, and WooCommerce,
+    // MonsterInsights, Cookiebot, LearnPress, LiteSpeed Cache and AIOSEO all call it. 14 of
+    // the 47 findings were not code at all - WPCode caches its snippet library as JSON that
+    // happens to contain the string - and one was a commented-out line.
+    //
+    // Malware that wants to stop updates overwrites wp-includes/update.php or sets
+    // WP_AUTO_UPDATE_CORE; it does not politely register a filter. The rule is kept only as
+    // a corroborator, narrowed to the one form that means *disabling* rather than managing,
+    // and demoted to Low - see the severity on the rule itself.
+    if (ruleCode == "BD010") {
+        if (isInComment(ctx.content, ctx.matchOffset)) {
+            return false;
+        }
+        // A JSON snippet library or a .txt readme is data quoting the API, not a call to it.
+        const std::string ext = lowerExtension(ctx.filePath);
+        static constexpr std::string_view kPhpExtensions[] = {
+            ".php", ".phtml", ".inc", ".module", ".install", ".theme", ".profile", ".engine",
+        };
+        bool isPhp = false;
+        for (auto candidate : kPhpExtensions) {
+            if (ext == candidate) { isPhp = true; break; }
+        }
+        if (!isPhp) return false;
 
         return true;
     }
@@ -339,6 +680,17 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
     // OBF002: chr() string building
     // False positives: Legitimate use in doctrine/inflector for character ranges
     if (ruleCode == "OBF002") {
+        // A codepoint table, not a hidden string. phpinsight's sentiment analyser writes its
+        // high-byte map as `chr(192) . chr(193) . chr(194) . ...`; the path-based vendor skip
+        // never saw it, because it is vendored as
+        // `plugins/*/includes/**/phpinsight/lib/PHPInsight/Sentiment.php`. Reading the values
+        // is what generalises - no allow-list can keep up with where a library gets copied.
+        // Three is enough here: the pattern already required four chained chr() calls to
+        // match at all, and the matched text ends on the fourth `chr` before its argument.
+        if (isAscendingNumericRun(chrArgumentValues(ctx.matchedText), 3)) {
+            return false;
+        }
+
         // Skip in vendor directories - third-party libraries
         if (ctx.filePath.find("/vendor/") != std::string_view::npos) {
             return false;  // Skip - vendor library
@@ -353,16 +705,173 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return true;
     }
 
+    // OBF016: Octal-encoded strings
+    //
+    // Same reasoning as OBF002: an ascending run is a table. Symfony's intl-normalizer
+    // polyfill ends its `$ASCII` sort key with `\0\1\2...\37`, which is 18 consecutive
+    // two-digit octal escapes and matched the rule's `{8,}` run requirement.
+    if (ruleCode == "OBF016") {
+        if (isAscendingNumericRun(octalEscapeValues(ctx.matchedText), 8)) {
+            return false;
+        }
+        return true;
+    }
+
+    // OBF009: Nested base64 decoding
+    //
+    // Double-encoding is a real transport habit, not necessarily an obfuscation: Kirki
+    // passes form metadata as `explode('|', base64_decode(base64_decode($x)))` and
+    // OptinMonster debug-dumps its rules the same way. What matters is whether the result is
+    // *executed* or parsed - the same consumer test OBF010 already applies.
+    if (ruleCode == "OBF009") {
+        const size_t searchEnd = std::min(ctx.matchOffset + 300, ctx.content.size());
+        const std::string_view nearby =
+            ctx.content.substr(ctx.matchOffset, searchEnd - ctx.matchOffset);
+
+        // An execution consumer keeps the finding whatever else is around it.
+        static constexpr std::string_view kExecutionConsumers[] = {
+            "eval", "assert(", "create_function", "preg_replace", "include", "require",
+        };
+        for (auto consumer : kExecutionConsumers) {
+            if (nearby.find(consumer) != std::string_view::npos) {
+                return true;
+            }
+        }
+
+        // Parsing the decoded bytes as data is what legitimate code does with them.
+        static constexpr std::string_view kDataConsumers[] = {
+            "json_decode", "explode", "unserialize", "maybe_unserialize", "parse_str", "gzuncompress",
+        };
+        // Look a little before the match too - the consumer wraps the decode call.
+        const size_t start = (ctx.matchOffset > 120) ? ctx.matchOffset - 120 : 0;
+        const std::string_view around = ctx.content.substr(start, searchEnd - start);
+        for (auto consumer : kDataConsumers) {
+            if (around.find(consumer) != std::string_view::npos) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // OBF021: Double variable function call
+    //
+    // `$a($b)` in a docblock is prose about an API, not a call: click-to-chat's animation
+    // helper documents itself with `* $a($a) - it like calling bounce('bounce')`. And a
+    // single `return (bool) $b($a);` in a comparer class is ordinary short-parameter code -
+    // real webshells use the construct repeatedly, or on data they took from the request.
+    if (ruleCode == "OBF021") {
+        if (isInComment(ctx.content, ctx.matchOffset)) {
+            return false;
+        }
+
+        // Corroboration: either the construct recurs, or a superglobal feeds it.
+        //
+        // Counts the rule's own shape, `$a($b)` with one-or-two-character names, by looking
+        // only at the bytes around each '$' - no search that could rescan the file.
+        auto isShortVariable = [](std::string_view s, size_t& i) {
+            if (i >= s.size() || s[i] != '$') return false;
+            size_t j = i + 1;
+            if (j >= s.size() || !std::isalpha(static_cast<unsigned char>(s[j]))) return false;
+            ++j;
+            if (j < s.size() && std::isdigit(static_cast<unsigned char>(s[j]))) ++j;
+            i = j;
+            return true;
+        };
+        size_t occurrences = 0;
+        for (size_t i = 0; i < ctx.content.size() && occurrences < 2; ++i) {
+            if (ctx.content[i] != '$') continue;
+            size_t p = i;
+            if (!isShortVariable(ctx.content, p)) continue;
+            while (p < ctx.content.size() && (ctx.content[p] == ' ' || ctx.content[p] == '\t')) ++p;
+            if (p >= ctx.content.size() || ctx.content[p] != '(') continue;
+            ++p;
+            while (p < ctx.content.size() && (ctx.content[p] == ' ' || ctx.content[p] == '\t')) ++p;
+            if (!isShortVariable(ctx.content, p)) continue;
+            while (p < ctx.content.size() && (ctx.content[p] == ' ' || ctx.content[p] == '\t')) ++p;
+            if (p < ctx.content.size() && ctx.content[p] == ')') ++occurrences;
+        }
+        if (occurrences >= 2) return true;
+
+        static constexpr std::string_view kSuperglobals[] = {
+            "$_GET", "$_POST", "$_REQUEST", "$_COOKIE", "$_SERVER", "$_FILES", "php://input",
+        };
+        for (auto superglobal : kSuperglobals) {
+            if (ctx.content.find(superglobal) != std::string_view::npos) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // BD001: Hidden admin creation
+    //
+    // A `.sql` dump is a record of rows, not code that inserts them - it cannot execute, so
+    // `INSERT INTO wp_users ... admin` in one is the site's own user table, backed up.
+    if (ruleCode == "BD001") {
+        const std::string ext = lowerExtension(ctx.filePath);
+        if (ext == ".sql" || ext == ".gz" || ext == ".bz2" || ext == ".dump") {
+            return false;
+        }
+        return true;
+    }
+
+    // DRP008: Archive dropper
+    //
+    // Writing a zip is only dropper behaviour when the attacker chose what goes in it or
+    // where it lands. TranslatePress exporting its own translation bundle as
+    // `file_put_contents("woocommerce-{$lang}.zip", file_get_contents($local_po))` is a
+    // plugin doing its job, and it was all 13 findings on one production host.
+    if (ruleCode == "DRP008") {
+        const size_t start = (ctx.matchOffset > 100) ? ctx.matchOffset - 100 : 0;
+        const size_t searchEnd = std::min(ctx.matchOffset + 300, ctx.content.size());
+        const std::string_view around = ctx.content.substr(start, searchEnd - start);
+
+        static constexpr std::string_view kDropperSignals[] = {
+            "$_GET", "$_POST", "$_REQUEST", "$_COOKIE", "$_FILES", "php://input",
+            "base64_decode", "gzinflate", "curl_exec",
+            "file_get_contents('http", "file_get_contents(\"http",
+        };
+        for (auto signal : kDropperSignals) {
+            if (around.find(signal) != std::string_view::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // OBF003: pack() hex obfuscation
     // False positives: Legitimate crypto libraries use pack('H*', ...) for binary data
     if (ruleCode == "OBF003") {
-        // Skip in vendor/crypto directories
-        if (ctx.filePath.find("/vendor/") != std::string_view::npos ||
-            ctx.filePath.find("phpseclib") != std::string_view::npos ||
-            ctx.filePath.find("/Crypt/") != std::string_view::npos ||
-            ctx.filePath.find("sodium") != std::string_view::npos ||
-            ctx.filePath.find("openssl") != std::string_view::npos) {
-            return false;  // Skip - crypto library
+        // Well-known constants that are *always* what they look like. The DER-encoded
+        // rsaEncryption OID accounted for all 30 findings on one production host - it is
+        // how firebase/php-jwt and phpseclib write an RSA algorithm identifier, and no
+        // payload is 15 bytes long. Checked first, because it holds wherever the file sits.
+        // The DER-encoded rsaEncryption AlgorithmIdentifier.
+        static constexpr std::string_view kRsaEncryptionOid = "300d06092a864886f70d0101010500";
+        if (ctx.matchedText.find(kRsaEncryptionOid) != std::string_view::npos) {
+            return false;
+        }
+
+        // Path tests are lowercased, because a vendored copy is as likely to be spelled
+        // `PHPSecLib` or `Crypt` as `phpseclib`. OBF036 already did this; OBF003 did not,
+        // which is why one capitalised copy inside Forminator kept reporting.
+        std::string path(ctx.filePath);
+        std::transform(path.begin(), path.end(), path.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+        // `third-party/` and `vendor-prefixed/` are the same thing as `vendor/`: Site Kit,
+        // Forminator, WPForms and Fluent SMTP all prefix their dependencies into one of
+        // these rather than leaving them under vendor/.
+        static constexpr std::string_view kLibraryPaths[] = {
+            "/vendor/", "third-party/", "third_party/", "vendor-prefixed/",
+            "phpseclib", "/crypt/", "sodium", "openssl", "php-jwt",
+        };
+        for (auto fragment : kLibraryPaths) {
+            if (path.find(fragment) != std::string::npos) {
+                return false;  // Skip - crypto library
+            }
         }
 
         return true;
@@ -447,7 +956,11 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
             line.find("htmlspecialchars") != std::string_view::npos ||
             line.find("strip_tags") != std::string_view::npos ||
             line.find("esc_html") != std::string_view::npos ||
-            line.find("esc_attr") != std::string_view::npos) {
+            line.find("esc_attr") != std::string_view::npos ||
+            // wp_kses is the one WordPress code actually reaches for, and it was the one
+            // missing: The7's icon shortcode writes
+            // `wp_kses( rawurldecode( base64_decode( $attributes['icon'] ) ), ... )`.
+            line.find("wp_kses") != std::string_view::npos) {
             return false;  // Skip - output sanitization context
         }
 
@@ -455,8 +968,40 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
     }
 
     // OBF005: strrev() function hiding
-    // Context filtering removed - rule pattern itself should be specific enough
-    // to detect malicious use (strrev building function names via concatenation)
+    //
+    // The pattern finds `strrev()` over concatenated literals, which is the right shape - but
+    // the shape alone is not the technique. What the technique produces is a *dangerous
+    // name*: `strrev("noi"."tcnuf"."_eta"."erc")` is "create_function". The ThemeREX theme
+    // family (veil, promo, catamaran, proguards, detailx, yacht-rental) uses the same trick
+    // to spell `strrev('e' . 'mar' . 'fi')` - "iframe" - which hides nothing worth hiding.
+    //
+    // So fold the literals and reverse them, exactly as PHP would, and ask whether the answer
+    // names something sensitive. analysis::isSensitiveIdentifier already owns that list and
+    // is shared with OBF024/OBF025.
+    if (ruleCode == "OBF005") {
+        // Concatenate the quoted literals inside the matched call. Comments between the
+        // fragments are skipped implicitly: they contribute no quoted text.
+        std::string folded;
+        const std::string_view text = ctx.matchedText;
+        for (size_t i = 0; i < text.size(); ++i) {
+            const char quote = text[i];
+            if (quote != '\'' && quote != '"') continue;
+            size_t j = i + 1;
+            std::string piece;
+            while (j < text.size() && text[j] != quote) {
+                if (text[j] == '\\' && j + 1 < text.size()) ++j;
+                piece.push_back(text[j]);
+                ++j;
+            }
+            if (j >= text.size()) break;   // unterminated - stop folding
+            folded += piece;
+            i = j;
+        }
+
+        if (folded.empty()) return true;   // nothing to fold: leave the match alone
+        std::reverse(folded.begin(), folded.end());
+        return analysis::isSensitiveIdentifier(folded);
+    }
 
 
     // CRED006: Suspicious TLD in URL

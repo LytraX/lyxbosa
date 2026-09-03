@@ -4,10 +4,17 @@
 namespace lyxbosa::rules::phishing {
 
 // PHI001: Phishing form targeting known services
-// Note: Pattern uses possessive [^...]*+ to avoid CTRE stack overflow on large files
+//
+// The gap between the form tag and the brand has to be bounded. With `.*?` and dot_nl it
+// spanned whole files, so any page carrying a `<form>` anywhere and the words "google" and
+// "password" anywhere later matched - a Mailchimp subscribe form, NextGEN's admin screen,
+// WPBakery's settings page, a page cache of a slider. 6 findings, none phishing.
+//
+// 1000 bytes is roughly one form's worth of markup: a brand-labelled password field belongs
+// to the form it is in, not to one several screens away.
 namespace detail_PHI001 {
     static constexpr Pattern patterns[] = {
-        { R"(<form[^>]*action\s*=\s*['"][^'"]*['"][^>]*>.*?(paypal|apple|microsoft|google|facebook|instagram|netflix)[^<]*password)",
+        { R"(<form[^>]*action\s*=\s*['"][^'"]*['"][^>]*>.{0,1000}?(?i:paypal|apple|microsoft|google|facebook|instagram|netflix)[^<]{0,200}(?i:password))",
           "Phishing form with brand name", false,
           {"password", "action", "<form"} },
     };

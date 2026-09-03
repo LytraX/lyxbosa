@@ -15,7 +15,16 @@ namespace detail_SEO001 {
         { R"(<a\s+[^>]*style\s*=\s*['"][^'"]*display\s*:\s*none[^'"]*['"][^>]*href\s*=\s*['"]https?://)",
           "Hidden link", false,
           {"display", "style", "none"} },
-        { R"(<div\s+[^>]*style\s*=\s*['"][^'"]*visibility\s*:\s*hidden[^'"]*['"][^>]*>.*?<a\s+)",
+        // Pattern 1's discipline applied to the wrapper-div form: the anchor must carry a
+        // literal external href and sit within a few tags of the hidden div.
+        //
+        // Unbounded, `.*?<a\s+` paired a hidden div with the next anchor *anywhere* later in
+        // the file - hundreds of lines away, in an unrelated block. That reported 22 files on
+        // one production host and found nothing: PixelYourSite's settings popovers
+        // (`<div id="pys-search_event" style="display: none; visibility: hidden">`) and the
+        // standard dark-mode-image trick in HTML e-mail, both of which are hidden layout
+        // wrappers with no link in them at all.
+        { R"(<div\s+[^>]*style\s*=\s*['"][^'"]*visibility\s*:\s*hidden[^'"]*['"][^>]*>\s*(?:<[^>]{0,200}>\s*){0,3}<a\s+[^>]*href\s*=\s*['"]https?://)",
           "Hidden div with links", false,
           {"visibility", "hidden", "style"} },
     };

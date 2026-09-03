@@ -406,11 +406,23 @@ const BuiltinRule OBF019 {
 
 // OBF022: Hex variable variable syntax
 // Malware uses ${"\x47\x4c\x4f\x42\x41\x4c\x53"} = $GLOBALS
-// This is ALWAYS malicious - legitimate code never uses hex escapes for variable names
+//
+// "Legitimate code never uses hex escapes for variable names" is true of PHP - but `${` also
+// opens a JavaScript template-literal substitution, and there the braces hold an arbitrary
+// expression. WordPress core's block-editor.js writes
+// `${"\xB6".repeat(value.length - 2)}` to pad a CSS selector display, which made 24 copies
+// of a 2.8 MB core asset critical findings.
+//
+// The brace content is the discriminator, not the file extension: a PHP variable-variable
+// holds nothing but the escaped string, whereas the JavaScript case is always a call or an
+// operator. Requiring the closing brace to follow the literal directly separates them
+// without having to guess the language from the path.
 namespace detail_OBF022 {
     static constexpr Pattern patterns[] = {
-        // ${"\x...} variable variable with hex escapes
-        { R"(\$\{["']\\x[0-9a-fA-F]{2})",
+        // ${"\x47\x4c..."} - the whole brace content is one hex-escaped string literal.
+        // Spelled as an alternation rather than a backreferenced quote, because RE2 has no
+        // backreferences and would leave the pattern silently uncompiled.
+        { R"(\$\{\s*(?:"(?:\\x[0-9a-fA-F]{2})+"|'(?:\\x[0-9a-fA-F]{2})+')\s*\})",
           "Hex variable variable syntax", false },
     };
 }
@@ -574,10 +586,31 @@ const BuiltinRule OBF025 {
 // UTF-16/UTF-32 are the one real trap: their ASCII range is half NUL bytes, so a
 // UTF-16 source file would score ~50%. Those are detected by BOM or by the
 // alternating-NUL signature and exempted before any measurement happens.
+//
+// The ratio alone is not enough, because a *byte table* also scores above it. Symfony's
+// polyfill-iconv charset maps (`from.us-ascii.php`) list every byte value 0x00-0x1F as an
+// array key, and captured terminal output stores its ANSI bytes one at a time; both clear
+// 2% while containing no payload at all. What separates them is adjacency, not density:
+// see kMinAdjacent below.
 namespace detail_OBF036 {
     constexpr double kRatioThreshold = 0.02;   // 2% of the file
     constexpr size_t kMinControlBytes = 8;     // ignore a stray control in a short file
     constexpr size_t kMinSize = 64;
+
+    // A stored payload - deflate stream, ciphertext, serialised descriptor - has a roughly
+    // uniform byte distribution, so its control bytes land next to each other: ~11% of byte
+    // values are counted-control, so ~21% of them have a control neighbour. A byte table has
+    // none, because every control byte is separated by the `=>` and `,` around it. Measured
+    // over this corpus: every one of the 50 real payloads scores >=5 adjacent pairs and
+    // >=9.8% adjacency, while the iconv tables and the nvm terminal-output fixtures score
+    // exactly 0 on both.
+    //
+    // Do NOT replace this with "require a long contiguous run". The payloads here are dense
+    // in *high* bytes, which this rule deliberately never counts, so their longest run of
+    // counted-control bytes is only 3-7. A >=32 run test scores 42 of 43 known payloads as
+    // clean while leaving the AppleDouble stubs (longest run 38) flagged - exactly backwards.
+    constexpr size_t kMinAdjacent = 2;
+    constexpr double kMinAdjacentRatio = 0.02;
 
     inline bool isControl(unsigned char c) {
         // C0 controls except tab (9), LF (10), FF (12), CR (13); plus DEL (127).
@@ -611,17 +644,26 @@ namespace detail_OBF036 {
         if (looksLikeWideEncoding(content)) return out;
 
         size_t controls = 0;
+        size_t adjacent = 0;
         size_t firstOffset = content.size();
+        bool prevWasControl = false;
         for (size_t i = 0; i < content.size(); ++i) {
-            if (isControl(static_cast<unsigned char>(content[i]))) {
+            const bool isCtl = isControl(static_cast<unsigned char>(content[i]));
+            if (isCtl) {
                 if (controls == 0) firstOffset = i;
                 ++controls;
+                if (prevWasControl) ++adjacent;
             }
+            prevWasControl = isCtl;
         }
 
         if (controls < kMinControlBytes) return out;
         double ratio = static_cast<double>(controls) / static_cast<double>(content.size());
         if (ratio <= kRatioThreshold) return out;
+
+        // Isolated control bytes are a table or escaped text, not a stored blob.
+        double adjacentRatio = static_cast<double>(adjacent) / static_cast<double>(controls);
+        if (adjacent < kMinAdjacent || adjacentRatio < kMinAdjacentRatio) return out;
 
         auto [line, col] = positionToLineCol(content, firstOffset);
         MatchResult r;
@@ -630,7 +672,8 @@ namespace detail_OBF036 {
         r.matched = std::string_view(content.data() + firstOffset, 1);
         r.note = "Source file carries " + std::to_string(controls) +
                  " control bytes (" + fmt::format("{:.1f}", ratio * 100.0) +
-                 "% of file) - a binary payload is stored inside declared text";
+                 "% of file, " + fmt::format("{:.0f}", adjacentRatio * 100.0) +
+                 "% adjacent) - a binary payload is stored inside declared text";
         out.push_back(r);
         return out;
     }

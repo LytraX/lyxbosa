@@ -60,9 +60,18 @@ const BuiltinRule DEFC003 {
 // Patterns: oncontextmenu="return false", document.onselectstart=...
 namespace detail_DEFC004 {
     static constexpr Pattern patterns[] = {
-        // oncontextmenu handler blocking
-        { R"(oncontextmenu\s*=\s*["']?\s*return\s+false)",
-          "Context menu disabled", false,
+        // oncontextmenu handler blocking, on the document/body/window - i.e. suppressing
+        // analysis of the *page*.
+        //
+        // An unqualified `oncontextmenu="return false"` also occurs on individual generated
+        // elements, which is ordinary UI work: mCustomScrollbar builds its scrollbar drag
+        // handles as `"<a href='#' class='" + classes[13] + "' oncontextmenu='return false;'"`
+        // so the handle does not open a context menu mid-drag. That is not defacement.
+        { R"((?:document|window|body)\s*\.\s*oncontextmenu\s*=\s*["']?\s*return\s+false)",
+          "Context menu disabled on the document", false,
+          {"oncontextmenu", "return", "false"} },
+        { R"(<body[^>]{0,300}oncontextmenu\s*=\s*["']?\s*return\s+false)",
+          "Context menu disabled on the body element", false,
           {"oncontextmenu", "return", "false"} },
         // document.oncontextmenu with Function
         { R"(document\.oncontextmenu\s*=\s*new\s+Function)",

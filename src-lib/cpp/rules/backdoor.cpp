@@ -24,11 +24,23 @@ const BuiltinRule BD001 {
 };
 
 // BD002: Cron-based persistence
+//
+// The technique is an attacker registering a cron *hook* they can then fire. The signature
+// is therefore positional: wp_schedule_event($timestamp, $recurrence, $hook), and only a
+// superglobal in the third argument means the attacker chose what runs.
+//
+// Matching a superglobal anywhere in the argument list instead cost 43 false positives on
+// one production host and found nothing: WP Fastest Cache's settings screen passes the
+// recurrence the admin picked from its own dropdown as argument two,
+// `wp_schedule_event($timestamp, $_POST["wpFastestCacheTimeOut"], $this->slug())`.
+//
+// Requiring two commas ahead of the superglobal is what excludes that, and `[^,)]` on the
+// leading arguments is what keeps the two commas from being found inside a nested call.
 namespace detail_BD002 {
     static constexpr Pattern patterns[] = {
-        { R"((?i:wp_schedule_event)\s*\([^)]*\$_(GET|POST|REQUEST))",
-          "Cron with user input", false,
-          {"wp_schedule_event", "$_get|$_post|$_request"} },
+        { R"((?i:wp_schedule_event)\s*\(\s*[^,)]*,\s*[^,)]*,\s*[^)]*\$_(GET|POST|REQUEST|COOKIE))",
+          "Cron hook name from user input", false,
+          {"wp_schedule_event", "$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule BD002 {
@@ -174,18 +186,25 @@ const BuiltinRule BD009 {
 };
 
 // BD010: Auto-update disable + backdoor
+//
+// Requiring `__return_false` as the callback is what makes this mean *disabling* updates
+// rather than managing them. Every plugin that ships an update policy calls this filter -
+// WooCommerce passes 'wc_prevent_dangerous_auto_updates', Cookiebot passes an object
+// method - and matching the filter name alone produced 47 findings and no true positive on
+// a 1.3 M-file host. See the context filter for the comment and file-type gates, and
+// Severity::Low: this is a corroborator, not a finding on its own.
 namespace detail_BD010 {
     static constexpr Pattern patterns[] = {
-        { R"(add_filter\s*\(\s*['"]auto_update_)",
-          "Auto-update filter manipulation", false,
-          {"auto_update_", "add_filter"} },
+        { R"(add_filter\s*\(\s*['"]auto_update_[a-z_]*['"]\s*,\s*['"]__return_false['"])",
+          "Auto-update disabled outright", false,
+          {"auto_update_", "add_filter", "__return_false"} },
     };
 }
 const BuiltinRule BD010 {
     .code = {Category::Backdoor, 10},
     .name = "Auto-update manipulation",
     .description = "Detects disabling of auto-updates (persistence technique)",
-    .severity = Severity::Medium,
+    .severity = Severity::Low,
     .patterns = detail_BD010::patterns,
 };
 

@@ -127,9 +127,15 @@ const BuiltinRule RCE007 {
 };
 
 // RCE008: shell_exec/system/passthru/exec with user input
+//
+// The function-name alternation must be anchored on the left. Unanchored, `exec` matches
+// any identifier ending in it and `system` matches any word ending in "system", so
+// `$db->exec($_POST['sql'])` and `wpvivid_backup_module_add_exec()` both read as shell
+// execution. `[^A-Za-z0-9_$>:]` rejects an identifier tail, a variable, a `->` method call
+// and a `::` static call; `^` covers a match at the very start of the file.
 namespace detail_RCE008 {
     static constexpr Pattern patterns[] = {
-        { R"(((?i:shell_exec)|(?i:system)|(?i:passthru)|(?i:exec)|(?i:popen))\s*\(\s*\$_(GET|POST|REQUEST|COOKIE))",
+        { R"((?:^|[^A-Za-z0-9_$>:])((?i:shell_exec)|(?i:system)|(?i:passthru)|(?i:exec)|(?i:popen))\s*\(\s*\$_(GET|POST|REQUEST|COOKIE))",
           "Shell command with user input", false,
           {"shell_exec|system|passthru|exec|popen", "$_get|$_post|$_request|$_cookie"} },
     };
@@ -178,11 +184,23 @@ const BuiltinRule RCE010 {
 };
 
 // RCE011: array_map/array_filter with user callback
+//
+// The rule is about a *callback* coming from user input, so it has to respect where each
+// function keeps its callback. array_map takes it first; array_filter and array_reduce take
+// it second, and their first argument is the data. Matching a superglobal in the first
+// position for all three read `array_filter($_POST['id'])` - which filters empty values out
+// of an array and takes no callback at all - as arbitrary code execution, for 12 findings
+// and no true positive on one production host.
 namespace detail_RCE011 {
     static constexpr Pattern patterns[] = {
-        { R"(((?i:array_map)|(?i:array_filter)|array_reduce)\s*\(\s*\$_(GET|POST|REQUEST))",
-          "Array function with user callback", false,
-          {"array_map|array_filter|array_reduce", "$_get|$_post|$_request"} },
+        // array_map(callback, array): the callback is the first argument.
+        { R"((?i:array_map)\s*\(\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
+          "array_map callback from user input", false,
+          {"array_map", "$_get|$_post|$_request|$_cookie"} },
+        // array_filter(array, callback) / array_reduce(array, callback): second argument.
+        { R"(((?i:array_filter)|(?i:array_reduce))\s*\(\s*[^,)]*,\s*\$_(GET|POST|REQUEST|COOKIE)\s*\[)",
+          "Array callback from user input", false,
+          {"array_filter|array_reduce", "$_get|$_post|$_request|$_cookie"} },
     };
 }
 const BuiltinRule RCE011 {
