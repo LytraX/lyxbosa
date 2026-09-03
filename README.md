@@ -113,7 +113,7 @@ which of three things happened to it:
 
 | reason | meaning |
 |---|---|
-| `size` | larger than `scan.max_file_size` |
+| `size` | larger than `scan.max_file_size` (default 25 MB) |
 | `excluded` | rejected by `scan.include` / `scan.exclude` |
 | `unreadable` | `stat` or `open` failed — permissions, a race, a dead mount |
 
@@ -157,9 +157,34 @@ scan:
   report_excluded: false   # true = emit a per-file record for every excluded file
 ```
 
+#### Why the size cap is 25 MB
+
+Measured on a production host of ~1.3 M files. Of the 423 files a 5 MB cap skipped,
+87% of the bytes were archives — which the cap does not govern at all, because an
+oversize container still has its index read — and most of the rest was PDFs, images and
+video. Only **36 files, 783 MB, were code or text**, and that is the whole decision.
+
+25 MB recovers 29 of those 36, including a 20.7 MB database dump, a 21.5 MB content
+import and 20.6 MB of page-cache HTML. The seven it still skips are logs: plugin
+failed-login records and `debug.log`/`laravel.log`, up to 140 MB. Going to 100 MB buys
+444 MB of log text and no additional finding on that host.
+
+The cap is raised rather than removed because a file is read whole into memory, so no
+cap means reading a 680 MB backup into RAM, and the tail past 25 MB is media, containers
+and logs.
+
+**Measured cost: +4.3% (24.3 → 25.4 min on that host), and zero new findings.** The
+change moved 230 files out of "not scanned" and read them; none of them matched anything.
+It is a coverage change, not a detection change — the point being that a file the scanner
+never opened should not be counted as clean.
+
+Raising the cap does not raise `archives.max_member_size`, which stays at 5 MB: a member
+is inflated into memory and shares one expansion budget with every other member of the
+same archive, so it wants the tighter bound.
+
 ### Key Features
 
-- Recursive directory scanning with configurable file size limits (default 5 MB) and symlink control.
+- Recursive directory scanning with configurable file size limits (default 25 MB) and symlink control.
 - Archive scanning: zip, tar, tar.gz and gz opened and scanned member by member, with
   bomb guards on decompressed bytes and an exposure finding for backups left in the
   tree. See [Archives](#archives).

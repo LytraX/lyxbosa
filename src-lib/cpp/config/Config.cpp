@@ -292,7 +292,9 @@ scan:
   directories:
     - /var/www
   recursive: true
-  max_file_size: 5MB
+  # Files larger than this are reported as skipped rather than read. Archives are
+  # not governed by it: a container past this size still has its index read.
+  max_file_size: 25MB
   follow_symlinks: false
 
   # List every file the filters below rejected, not just count them.

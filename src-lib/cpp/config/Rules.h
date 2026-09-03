@@ -41,7 +41,22 @@ struct RuleConfig {
 struct ScanConfig {
     std::vector<std::string> directories;
     bool recursive = true;
-    uint64_t maxFileSize = 5 * 1024 * 1024;  // 5MB default
+    // Per-file read cap. See README for the measurement behind 25 MB.
+    //
+    // 5 MB left 36 code and text files unscanned on one production host, including a
+    // 20.7 MB database dump, a 21.5 MB content import and 20.6 MB of page-cache HTML.
+    // 25 MB recovers 29 of the 36; the seven it still leaves are logs, and going higher
+    // buys 444 MB of log text and nothing else.
+    //
+    // Measured: +4.3% scan time and *zero* new findings on that host - 230 files stopped
+    // being skipped and were read, and none of them matched. This is a coverage change,
+    // not a detection one. It is here because "not scanned" must not read as "clean".
+    //
+    // A cap is kept rather than removed because readFile allocates the whole file: with
+    // no cap a 680 MB backup is read into memory, and the tail past 25 MB is media and
+    // containers. Containers are unaffected either way - Scanner::scan sniffs an oversize
+    // file's head and hands it to ArchiveScanner regardless of this value.
+    uint64_t maxFileSize = 25 * 1024 * 1024;
     bool followSymlinks = false;
     std::vector<std::string> include;
     std::vector<std::string> exclude;
@@ -68,7 +83,13 @@ struct ScanConfig {
 struct ArchiveConfig {
     bool enabled = true;
     size_t maxDepth = 2;                          // 1 = top-level archives only
-    uint64_t maxMemberSize = 0;                   // 0 = fall back to scan.max_file_size
+    // Pinned rather than 0 (= track scan.max_file_size) so that raising the loose-file
+    // cap to 25 MB does not silently raise the per-member cap with it. A member is
+    // inflated into memory and shares the 256 MB expansion budget with every other
+    // member of the same archive, so it wants a tighter bound than a loose file - and
+    // 5 MB is what this was, via the fallback, before the file cap moved. The largest
+    // webshell in the malware corpus is 843 KB.
+    uint64_t maxMemberSize = 5 * 1024 * 1024;     // 0 = fall back to scan.max_file_size
     uint64_t maxExpansion = 256ULL * 1024 * 1024; // 0 = unlimited
     uint64_t maxRatio = 100;                      // 0 = unlimited
     uint64_t timeBudgetSeconds = 60;              // 0 = unlimited

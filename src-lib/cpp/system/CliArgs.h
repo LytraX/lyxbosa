@@ -165,7 +165,7 @@ inline std::string CliArgs::getHelpText() {
         "Configuration:\n"
         "  Without --config the built-in default configuration is used. Write it to a\n"
         "  file with 'lyxbosa init-config > lyxbosa.yaml', edit it, then pass it with\n"
-        "  --config. The configuration file controls the maximum file size (5 MB by\n"
+        "  --config. The configuration file controls the maximum file size (25 MB by\n"
         "  default), include/exclude globs, symlink handling, enabled rule categories\n"
         "  and custom rules, quarantine, report output and email alerts.\n"
         "\n"

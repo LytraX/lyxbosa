@@ -399,6 +399,12 @@ Step 8 exists because `max_file_size` is 5 MB: the widened filter admits `.mp4`/
 a genuine large video is still skipped by size. The known polyglots are 5–6 KB. Catching a
 payload appended to a 50 MB video needs head/tail scanning, not a wider filter.
 
+> **Update 2026-09-03.** The default `max_file_size` is now 25 MB (see the README for the
+> measurement). That moves the threshold but not the argument: a 50 MB video is still
+> skipped, and reading a whole video to find 6 KB appended to it is the wrong shape of
+> work either way. Step 8 stands, and the cap change does not shrink it — what the cap
+> recovered on the measured host was 29 code and text files, not media.
+
 Steps 1–3 are **145 of the 185 misses (78%)** with no change to the matching architecture
 and no measured false positive. That is the first release; everything after it is
 diminishing returns on rising risk.

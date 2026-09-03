@@ -288,7 +288,7 @@ Capping *archive* size protects nothing: `42.zip` is 42 KB and expands to 4.5 PB
 
 | guard | default | why that number |
 |---|---|---|
-| per-member size | `scan.max_file_size` (5 MB) | consistent with loose files |
+| per-member size | 5 MB, pinned | was `scan.max_file_size` via the `0` fallback, which meant "consistent with loose files". Pinned on 2026-09-03 when the loose-file cap rose to 25 MB: a member is inflated into memory and shares one expansion budget with every other member of the same archive, so it wants the tighter bound. The largest webshell in the corpus is 843 KB. |
 | total expansion per archive | 256 MB | largest real archive expands to 16.9 MB |
 | compression ratio | 100:1 | corpus averages 3.2×; real site backups reach **5.6×** |
 | nesting depth | 2 | corpus contains **zero** nested archives |
