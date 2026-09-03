@@ -188,29 +188,6 @@ const BuiltinRule BD009 {
     .patterns = detail_BD009::patterns,
 };
 
-// BD010: Auto-update disable + backdoor
-//
-// Requiring `__return_false` as the callback is what makes this mean *disabling* updates
-// rather than managing them. Every plugin that ships an update policy calls this filter -
-// WooCommerce passes 'wc_prevent_dangerous_auto_updates', Cookiebot passes an object
-// method - and matching the filter name alone produced 47 findings and no true positive on
-// a 1.3 M-file host. See the context filter for the comment and file-type gates, and
-// Severity::Low: this is a corroborator, not a finding on its own.
-namespace detail_BD010 {
-    static constexpr Pattern patterns[] = {
-        { R"(add_filter\s*\(\s*['"]auto_update_[a-z_]*['"]\s*,\s*['"]__return_false['"])",
-          "Auto-update disabled outright", false,
-          {"auto_update_", "add_filter", "__return_false"} },
-    };
-}
-const BuiltinRule BD010 {
-    .code = {Category::Backdoor, 10},
-    .name = "Auto-update manipulation",
-    .description = "Detects disabling of auto-updates (persistence technique)",
-    .severity = Severity::Low,
-    .patterns = detail_BD010::patterns,
-};
-
 // BD011: Hardcoded password hash backdoor
 // Malware often has a hardcoded SHA1/MD5 hash to verify a secret password
 // Patterns: sha1($var) == 'hash' OR $var = sha1(...); if($var == 'hash')
@@ -388,7 +365,7 @@ const BuiltinRule BD017 {
 
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &BD001, &BD002, &BD003, &BD004, &BD005,
-    &BD006, &BD007, &BD008, &BD009, &BD010,
+    &BD006, &BD007, &BD008, &BD009,
     &BD011, &BD012, &BD013, &BD014, &BD015,
     &BD016, &BD017
 };

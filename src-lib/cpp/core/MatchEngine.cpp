@@ -594,36 +594,6 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return true;
     }
 
-    // BD010: Auto-update manipulation
-    //
-    // Zero true positives in 1.3 M files. `add_filter('auto_update_...')` is the documented
-    // WordPress API for opting a plugin in or out of its own updates, and WooCommerce,
-    // MonsterInsights, Cookiebot, LearnPress, LiteSpeed Cache and AIOSEO all call it. 14 of
-    // the 47 findings were not code at all - WPCode caches its snippet library as JSON that
-    // happens to contain the string - and one was a commented-out line.
-    //
-    // Malware that wants to stop updates overwrites wp-includes/update.php or sets
-    // WP_AUTO_UPDATE_CORE; it does not politely register a filter. The rule is kept only as
-    // a corroborator, narrowed to the one form that means *disabling* rather than managing,
-    // and demoted to Low - see the severity on the rule itself.
-    if (ruleCode == "BD010") {
-        if (isInComment(ctx.content, ctx.matchOffset)) {
-            return false;
-        }
-        // A JSON snippet library or a .txt readme is data quoting the API, not a call to it.
-        const std::string ext = lowerExtension(ctx.filePath);
-        static constexpr std::string_view kPhpExtensions[] = {
-            ".php", ".phtml", ".inc", ".module", ".install", ".theme", ".profile", ".engine",
-        };
-        bool isPhp = false;
-        for (auto candidate : kPhpExtensions) {
-            if (ext == candidate) { isPhp = true; break; }
-        }
-        if (!isPhp) return false;
-
-        return true;
-    }
-
     // CRED004: Keylogger injection (addEventListener keydown)
     // False positives: Legitimate keyboard event handling in web apps
     // Only flag if: keydown handler appears to capture and store/send key data
