@@ -1325,3 +1325,189 @@ TEST_F(LiteralGateTest, EmptyPrefilterAllowsEverything) {
     // compile() never called: scan returns empty, which means "run everything"
     EXPECT_TRUE(pf.allows(h, LiteralPrefilter::Present{}));
 }
+
+// ============================================================================
+// Rules repaired against the live production report
+//
+// Each case below is a real line from a real file - the false positive on the left,
+// the technique on the right. The pairing is the point: several of these rules had
+// a shape that matched the sample they were written from and nothing else.
+// ============================================================================
+
+namespace {
+
+bool ruleFires(const char* code, std::string_view content) {
+    const auto* rule = getRuleByCode(code);
+    EXPECT_NE(rule, nullptr) << code;
+    return rule && !rule->findMatches(content).empty();
+}
+
+}  // namespace
+
+// BD002: the superglobal has to be the *hook*, which is argument three.
+TEST(RepairedRuleTest, CronPersistenceNeedsTheHookNameNotTheRecurrence) {
+    // WP Fastest Cache: the admin picked the recurrence from the plugin's dropdown.
+    // Note the proposed fix `[^)]*,\s*\$` would have matched this on `, $this`.
+    EXPECT_FALSE(ruleFires("BD002",
+        R"(wp_schedule_event($timestamp, $_POST["wpFastestCacheTimeOut"], $this->slug());)"));
+    // The attacker choosing what runs.
+    EXPECT_TRUE(ruleFires("BD002",
+        R"(wp_schedule_event(time(), 'hourly', $_POST['hook']);)"));
+}
+
+// RCE008 / EXP009: the function alternation must not match an identifier tail.
+TEST(RepairedRuleTest, ShellExecutionAlternationIsAnchored) {
+    EXPECT_FALSE(ruleFires("RCE008", R"($db->exec($_POST['sql']);)"));
+    EXPECT_FALSE(ruleFires("RCE008", R"(wpvivid_backup_module_add_exec($_POST['x']);)"));
+    EXPECT_FALSE(ruleFires("RCE008", R"(function my_exec($_POST) {})"));
+
+    EXPECT_TRUE(ruleFires("RCE008", R"(system($_GET['cmd']);)"));
+    EXPECT_TRUE(ruleFires("RCE008", R"(  shell_exec($_POST['c']);)"));
+    EXPECT_TRUE(ruleFires("RCE008", R"(echo passthru($_REQUEST['q']);)"));
+}
+
+TEST(RepairedRuleTest, EmbeddedShellPayloadNeedsAQuotedOpenerAndASuperglobal) {
+    // rosell-dk/exec-with-fallback, matched at line 1 on its own docblock.
+    EXPECT_FALSE(ruleFires("EXP009",
+        "<?php\n\nnamespace ExecWithFallback;\n\n/**\n * Emulate exec() with proc_open()\n */\n"));
+    // The literal English phrase "Booking System (".
+    EXPECT_FALSE(ruleFires("EXP009",
+        "<?php\n/**\n * Plugin support: Woocommerce Easy Booking System (Importer support)\n */\n"));
+    // A payload written into a string, which is what the rule is for.
+    EXPECT_TRUE(ruleFires("EXP009",
+        R"($shell = '<?php system($_GET["c"]); ?>'; file_put_contents($p, $shell);)"));
+    EXPECT_TRUE(ruleFires("EXP009",
+        R"($p = "<?php passthru(\$_POST['x']);";)"));
+}
+
+// OBF022: ${...} is also a JavaScript template-literal substitution.
+TEST(RepairedRuleTest, HexVariableVariableIsNotAJsTemplateLiteral) {
+    // WordPress core block-editor.js, 24 copies of it on one host.
+    EXPECT_FALSE(ruleFires("OBF022",
+        R"(selector = `${selector.substring(0, o)}(${"\xB6".repeat(n - 2)})`;)"));
+    // PHP variable-variable: nothing but the escaped string inside the braces.
+    EXPECT_TRUE(ruleFires("OBF022", R"(${"\x47\x4c\x4f\x42\x41\x4c\x53"}['x'] = 1;)"));
+}
+
+// SEO001 pattern 2: a hidden wrapper div with no link in it is a layout wrapper.
+TEST(RepairedRuleTest, HiddenDivNeedsAnInlineExternalHref) {
+    // PixelYourSite's settings popover, and the dark-mode-image trick in HTML email.
+    EXPECT_FALSE(ruleFires("SEO001",
+        R"(<div id="pys-search_event" style="display: none; visibility: hidden">)"
+        R"(<h3>Search</h3></div><div class="x"><a href="#">help</a></div>)"));
+    EXPECT_FALSE(ruleFires("SEO001",
+        R"(<div class="dark-img" style="display:none; visibility:hidden;" align="center">)"
+        "\n<img src=\"logo.png\">\n</div>"));
+    // An injected spam block carries its destination inline.
+    EXPECT_TRUE(ruleFires("SEO001",
+        R"(<div style="visibility:hidden"><a href="https://spam.example/casino">x</a></div>)"));
+}
+
+// RCE011: each array function keeps its callback in a different position.
+TEST(RepairedRuleTest, ArrayCallbackRespectsArgumentPosition) {
+    // array_filter with one argument filters empty values; it takes no callback.
+    EXPECT_FALSE(ruleFires("RCE011", R"(if ( empty( array_filter( $_POST['id'] ) ) ) {)"));
+    EXPECT_FALSE(ruleFires("RCE011", R"($x = array_filter( $_POST['ht_ctc_pagelevel'] );)"));
+    // A nested sanitising call must not be read as the data argument.
+    EXPECT_FALSE(ruleFires("RCE011",
+        R"($a = array_filter( array_map( 'absint', $_POST['imgs'] ) );)"));
+
+    EXPECT_TRUE(ruleFires("RCE011", R"(array_map($_POST['cb'], $rows);)"));
+    EXPECT_TRUE(ruleFires("RCE011", R"(array_filter($rows, $_GET['cb']);)"));
+}
+
+// DRP010: building a path under DOCUMENT_ROOT is not a drop; writing to one is.
+TEST(RepairedRuleTest, DocumentRootDropNeedsAWrite) {
+    // TimThumb resolving a source path - a read.
+    EXPECT_FALSE(ruleFires("DRP010",
+        R"(if(@file_exists($_SERVER['DOCUMENT_ROOT'] . '/' . $src)) {)"));
+    EXPECT_TRUE(ruleFires("DRP010",
+        R"(file_put_contents($_SERVER['DOCUMENT_ROOT'] . '/' . $name, $payload);)"));
+}
+
+// DEFC004: suppressing the context menu on a generated element is ordinary UI work.
+TEST(RepairedRuleTest, ContextMenuBlockingMustTargetThePage) {
+    // mCustomScrollbar building its own drag handle.
+    EXPECT_FALSE(ruleFires("DEFC004",
+        R"(s=["<a href='#' class='"+c[13]+"' oncontextmenu='return false;' "+t+" />"];)"));
+    EXPECT_TRUE(ruleFires("DEFC004", R"(document.oncontextmenu = function(){return false;})"));
+    EXPECT_TRUE(ruleFires("DEFC004", R"(<body oncontextmenu="return false" onselectstart="x">)"));
+}
+
+// The comment gap: only whitespace used to be allowed between a name and its paren.
+TEST(RepairedRuleTest, EvalFamilySeesThroughInterleavedComments) {
+    EXPECT_TRUE(ruleFires("RCE001",
+        R"(@/*!50000*/eval/***//****/ /*x*/(base64_decode($p));)"));
+    EXPECT_TRUE(ruleFires("RCE004", R"(eval/**/(  $_POST['c'] );)"));
+    EXPECT_TRUE(ruleFires("RCE014",
+        R"(/********/ /****/@/***//*!50000*/eval/***/ /**/(openssl_decrypt($d,'AES-128-ECB',$k,0));)"));
+    // ...and the ordinary spelling still matches.
+    EXPECT_TRUE(ruleFires("RCE001", R"(eval(base64_decode($p));)"));
+}
+
+// OBF029: uniform width is what separates a staged payload from string building.
+TEST(RepairedRuleTest, ChunkAccumulationNeedsUniformBase64Fragments) {
+    std::string payload = "<?php\n$z = \"\";\n";
+    for (int i = 0; i < 40; ++i) payload += "$z .= \"Skdze\";\n";
+    payload += "$fn = 'base64_decode'; eval($fn($z));\n";
+    EXPECT_TRUE(ruleFires("OBF029", payload));
+
+    // Hand-written HTML building: a different width every time, and not base64.
+    std::string html = "<?php\n$out = '';\n";
+    const char* parts[] = {"<div class=\"row\">", "<span>", "</span>", "<p>Hello there</p>",
+                           "</div>", "<ul><li>one</li>", "<li>two</li></ul>", "<br/>"};
+    for (int i = 0; i < 40; ++i) html += std::string("$out .= '") + parts[i % 8] + "';\n";
+    EXPECT_FALSE(ruleFires("OBF029", html));
+
+    // A short run is not staging.
+    std::string few = "<?php\n$z = \"\";\n";
+    for (int i = 0; i < 10; ++i) few += "$z .= \"Skdze\";\n";
+    EXPECT_FALSE(ruleFires("OBF029", few));
+}
+
+// OBF038: "wordless" alone matched banner rules and docblock fragments.
+TEST(RepairedRuleTest, NoiseCommentsAreNotBannersOrDocblocks) {
+    // WordPress core view.js style banner separators.
+    std::string banners;
+    for (int i = 0; i < 30; ++i) banners += "/****/\nvar a" + std::to_string(i) + " = 1;\n";
+    EXPECT_FALSE(ruleFires("OBF038", banners));
+
+    // sodium_compat's arithmetic and @var notes.
+    std::string docblocks;
+    for (int i = 0; i < 30; ++i) {
+        docblocks += "/**\n * @var int\n */\n/* h = 0 */\n/* 1 << 128 */\n";
+    }
+    EXPECT_FALSE(ruleFires("OBF038", docblocks));
+
+    // Icon-font CSS documenting one glyph per comment.
+    std::string icons;
+    for (int i = 0; i < 30; ++i) {
+        icons += ".i" + std::to_string(i) + ":before { content: '\\e00" +
+                 std::to_string(i % 10) + "'; } /* '\xEE\xA0\x82' */\n";
+    }
+    EXPECT_FALSE(ruleFires("OBF038", icons));
+
+    // Generated filler: high character diversity, or distinct non-ASCII symbol runs.
+    std::string noise = "<?php ";
+    const char* junk[] = {"/*-9-mk%J,N3-*/", "/*-L>#$|d@^jy-*/", "/*-rVXGU=o-*/",
+                          "/*-@&B3Z#XU9-*/", "/*-{`Sd1E89-*/", "/*-@+.eA.DK-*/"};
+    for (int i = 0; i < 12; ++i) noise += std::string(junk[i % 6]) + "$a=1;";
+    EXPECT_TRUE(ruleFires("OBF038", noise));
+}
+
+// SEO008: each condition alone is ordinary; the combination is not.
+TEST(RepairedRuleTest, UserAgentCloakingNeedsCrawlersAndAFetchAndAnEmitter) {
+    // A caching plugin naming crawlers, with no remote fetch of content to print.
+    EXPECT_FALSE(ruleFires("SEO008",
+        R"(<?php $ua = $_SERVER['HTTP_USER_AGENT']; )"
+        R"(if (preg_match('/googlebot|bingbot|yandexbot/i', $ua)) { return true; })"));
+    // A file that fetches and echoes but does not look at the user agent at all.
+    EXPECT_FALSE(ruleFires("SEO008",
+        R"(<?php $r = curl_exec($ch); echo $r;)"));
+
+    EXPECT_TRUE(ruleFires("SEO008",
+        R"(<?php $bots='Googlebot,bingbot,YandexBot,Baiduspider,AhrefsBot';)"
+        R"($ua=$_SERVER['HTTP_USER_AGENT'] ?? '';)"
+        R"(if (preg_match('/'.str_replace(',','|',$bots).'/i',$ua)) {)"
+        R"($c=curl_exec(curl_init('https://spam.example/x.txt')); echo $c; exit; })"));
+}

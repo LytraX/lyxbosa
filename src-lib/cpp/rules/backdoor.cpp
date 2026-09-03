@@ -34,11 +34,14 @@ const BuiltinRule BD001 {
 // recurrence the admin picked from its own dropdown as argument two,
 // `wp_schedule_event($timestamp, $_POST["wpFastestCacheTimeOut"], $this->slug())`.
 //
-// Requiring two commas ahead of the superglobal is what excludes that, and `[^,)]` on the
-// leading arguments is what keeps the two commas from being found inside a nested call.
+// Requiring two commas ahead of the superglobal is what excludes that: WP Fastest Cache's
+// call has exactly two, and the text after the second is `$this->slug()`, which holds no
+// superglobal. The leading arguments allow parentheses, because a timestamp is normally
+// written `time()` or `strtotime('+1 hour')`; only the third is paren-bounded, so a nested
+// `foo($_POST['h'])` in the hook position still reports.
 namespace detail_BD002 {
     static constexpr Pattern patterns[] = {
-        { R"((?i:wp_schedule_event)\s*\(\s*[^,)]*,\s*[^,)]*,\s*[^)]*\$_(GET|POST|REQUEST|COOKIE))",
+        { R"((?i:wp_schedule_event)\s*\(\s*[^,]{0,200},\s*[^,]{0,200},\s*[^)]{0,200}\$_(GET|POST|REQUEST|COOKIE))",
           "Cron hook name from user input", false,
           {"wp_schedule_event", "$_get|$_post|$_request|$_cookie"} },
     };

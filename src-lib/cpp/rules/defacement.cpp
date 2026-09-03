@@ -67,7 +67,7 @@ namespace detail_DEFC004 {
         // elements, which is ordinary UI work: mCustomScrollbar builds its scrollbar drag
         // handles as `"<a href='#' class='" + classes[13] + "' oncontextmenu='return false;'"`
         // so the handle does not open a context menu mid-drag. That is not defacement.
-        { R"((?:document|window|body)\s*\.\s*oncontextmenu\s*=\s*["']?\s*return\s+false)",
+        { R"((?:document|window|body)\s*\.\s*oncontextmenu\s*=\s*(?:function\s*\([^)]{0,80}\)\s*\{\s*)?["']?\s*return\s+false)",
           "Context menu disabled on the document", false,
           {"oncontextmenu", "return", "false"} },
         { R"(<body[^>]{0,300}oncontextmenu\s*=\s*["']?\s*return\s+false)",
