@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -59,13 +60,15 @@ constexpr std::string_view skipReasonToString(SkipReason reason) {
 
 // The human-readable label, for the summary and the per-file lines. Phrased to
 // read after a count: "487 over size limit, 18 excluded by filters".
+// The six archive spellings are the ones printArchiveSummary already used, verbatim,
+// so the summary line an operator has been reading does not silently change wording.
 constexpr std::string_view skipReasonLabel(SkipReason reason) {
     switch (reason) {
         case SkipReason::Size:       return "over size limit";
         case SkipReason::Excluded:   return "excluded by filters";
         case SkipReason::Unreadable: return "unreadable";
-        case SkipReason::Depth:      return "nested too deep";
-        case SkipReason::Ratio:      return "expansion ratio";
+        case SkipReason::Depth:      return "too deeply nested";
+        case SkipReason::Ratio:      return "compression ratio";
         case SkipReason::Budget:     return "budget spent";
         case SkipReason::Corrupt:    return "corrupt";
         case SkipReason::Policy:     return "not code";
@@ -116,13 +119,27 @@ private:
     std::array<size_t, kSkipReasonCount> counts_{};
 };
 
+// The order each level presents its reasons in.
+//
+// Two arrays rather than enum order, because the archive line is pre-existing output:
+// it has always led with "not code", which is both the largest and the least alarming
+// reason, and reordering it would change what an operator reads for no gain. The file
+// level is new and leads with the size cap for the same reason - it is the common case.
+inline constexpr SkipReason kFileSkipOrder[] = {
+    SkipReason::Size, SkipReason::Excluded, SkipReason::Unreadable,
+};
+inline constexpr SkipReason kArchiveSkipOrder[] = {
+    SkipReason::Policy, SkipReason::Size, SkipReason::Budget,
+    SkipReason::Ratio, SkipReason::Depth, SkipReason::Corrupt,
+};
+
 // "487 over size limit, 18 excluded by filters, 7 unreadable" - the reasons that
-// actually occurred, in enum order, each with its count. Empty when nothing was
+// actually occurred, in the given order, each with its count. Empty when nothing was
 // skipped, so a caller can decide whether to print the line at all.
-inline std::string formatSkipTally(const SkipTally& tally) {
+inline std::string formatSkipTally(const SkipTally& tally,
+                                   std::span<const SkipReason> order) {
     std::string out;
-    for (size_t i = 0; i < kSkipReasonCount; ++i) {
-        const auto reason = static_cast<SkipReason>(i);
+    for (SkipReason reason : order) {
         const size_t n = tally.count(reason);
         if (n == 0) continue;
         if (!out.empty()) out += ", ";

@@ -839,8 +839,21 @@ TEST(FileSkipReasonTest, TallyFormatsInEnumOrderAndOmitsZeroes) {
     SkipTally tally;
     tally.skip(SkipReason::Size, 487);
     tally.skip(SkipReason::Unreadable, 7);
-    EXPECT_EQ(formatSkipTally(tally), "487 over size limit, 7 unreadable");
+    EXPECT_EQ(formatSkipTally(tally, kFileSkipOrder), "487 over size limit, 7 unreadable");
     EXPECT_EQ(tally.total(), 494u);
 
-    EXPECT_TRUE(formatSkipTally(SkipTally{}).empty()) << "nothing skipped prints nothing";
+    EXPECT_TRUE(formatSkipTally(SkipTally{}, kFileSkipOrder).empty())
+        << "nothing skipped prints nothing";
+
+    // The archive line is pre-existing output and must read exactly as it did: "not
+    // code" first, and the original wording for the ratio and depth guards.
+    SkipTally members;
+    members.skip(SkipReason::Policy, 3980);
+    members.skip(SkipReason::Size, 118);
+    members.skip(SkipReason::Ratio, 9);
+    members.skip(SkipReason::Depth, 5);
+    members.skip(SkipReason::Corrupt, 4);
+    EXPECT_EQ(formatSkipTally(members, kArchiveSkipOrder),
+              "3980 not code, 118 over size limit, 9 compression ratio, "
+              "5 too deeply nested, 4 corrupt");
 }

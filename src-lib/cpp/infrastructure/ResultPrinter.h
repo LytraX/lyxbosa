@@ -134,7 +134,7 @@ public:
         // the old unconditional "Files skipped (size limit): 0".
         if (result.skips.total() > 0) {
             plain("Files not scanned: {} ({})\n",
-                  result.skips.total(), formatSkipTally(result.skips));
+                  result.skips.total(), formatSkipTally(result.skips, kFileSkipOrder));
         }
         if (result.directoriesUnreadable > 0) {
             styled(Terminal::warning(), "Directories unreadable: {}\n",
@@ -200,7 +200,7 @@ public:
         }
 
         plain("Members not scanned: {} ({})\n",
-              stats.totalSkipped(), formatSkipTally(stats.skips));
+              stats.totalSkipped(), formatSkipTally(stats.skips, kArchiveSkipOrder));
     }
 
     // "512 B", "1.5 MB". ProgressModel has the same helper, but this header is
