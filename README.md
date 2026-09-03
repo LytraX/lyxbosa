@@ -121,13 +121,13 @@ This is the same treatment archive members already got, one level up. The summar
 reads the same way for both:
 
 ```
-Files scanned: 1303725
-Directories parsed: 280704
-Files with matches: 1751
-Files not scanned: 512 (487 over size limit, 18 excluded by filters, 7 unreadable)
+Files scanned: 482013
+Directories parsed: 39544
+Files with matches: 12
+Files not scanned: 208 (183 over size limit, 18 excluded by filters, 7 unreadable)
 Directories unreadable: 2
-Archives opened: 168 (91234 members scanned, 12.4 GB expanded)
-Members not scanned: 4102 (3980 not code, 118 over size limit, 4 corrupt)
+Archives opened: 41 (18022 members scanned, 3.1 GB expanded)
+Members not scanned: 906 (874 not code, 30 over size limit, 2 corrupt)
 ```
 
 In JSON, `skipped` and `filesSkippedSize` keep exactly the meanings they always had,
@@ -135,8 +135,8 @@ and the detail is additive — a per-file `skipReason` when there is one, and a
 `filesSkipped` object shaped like `archives.membersSkipped`:
 
 ```json
-"filesSkippedSize": 487,
-"filesSkipped": { "total": 512, "size": 487, "excluded": 18, "unreadable": 7 },
+"filesSkippedSize": 183,
+"filesSkipped": { "total": 208, "size": 183, "excluded": 18, "unreadable": 7 },
 "directoriesUnreadable": 2
 ```
 
