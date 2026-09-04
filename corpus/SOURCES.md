@@ -46,6 +46,23 @@ disk disagrees with the index. Run it after any change to either half.
 a publishability it cannot justify. It caught 103 such rows on its first run — samples that
 had been masked and gated but never actually reviewed, and 14 that carried `pii`.
 
+### The suite's binary is overridable, and two build directories are enough
+
+`corpus/verify.py` reads `$LYXBOSA_BIN`, falling back to `build-release/lyxbosa`. Set it when
+you are measuring a rule change against a build of your own:
+
+```
+LYXBOSA_BIN=$PWD/build/lyxbosa corpus/verify.py
+```
+
+This exists because the path used to be hardcoded, and that produced a bad instruction: two
+agents working this tree at once were told to use a *third* build directory, when `build`
+(debug) and `build-release` were already one each. The count of directories was never the
+problem. The problem is that a suite which can only read one path forces anyone measuring a
+change to rebuild the very binary the suite is reading, and a rebuild part-way through a run
+leaves the per-sample `check` calls straddling two binaries with nothing reporting an error.
+Overriding the path removes the conflict without inventing a directory to hold it.
+
 ### Any writer of either half goes through `indexio.py`
 
 `write_jsonl_atomic` for the write, `index_lock` around a read-modify-write. Not a style
