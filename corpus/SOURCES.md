@@ -2,7 +2,8 @@
 
 ```
 corpus/
-  index.jsonl                       the authority: one row per unique blob, 60,609 rows
+  index.jsonl                       the published half: one row per unique blob, 12,199 rows
+  make-summary.py                   regenerates index-summary.json from the two halves
   expect/                           golden expectations, per shard
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
   fetch-benign.sh                   downloads, verifies hashes, unpacks. Downloads are not committed
@@ -19,8 +20,8 @@ The index is **split in two, and both halves matter**:
 
 | file | rows | tracked? | what it is |
 |---|---|---|---|
-| `index.jsonl` | 10,018 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 50,591 | no | everything held back, with each row's blockers |
+| `index.jsonl` | 12,199 | yes | published samples — the ones a public suite can verify |
+| `local/index-local.jsonl` | 48,410 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 
 "index.jsonl is small and lives in git" and "the index lists every blob including local-only"
@@ -33,6 +34,12 @@ A row can carry several blockers and is counted under each, so the blocker count
 than the row count. That is deliberate: collapsing to one reason per row hides the specific,
 actionable blocker behind the generic one — which is exactly what happened when the gate first
 stored only the first reason and the encoded-layer failures disappeared behind "unreviewed".
+
+**`index-summary.json` is generated, not written.** It used to be maintained by hand, which
+is how it came to say `shipped-sample: 2353` in its reason codes while also saying
+`published_shipped_as_bytes: 6` — two claims that cannot both be true. `make-summary.py`
+computes it from the two halves, and `make-summary.py --check` fails non-zero if the file on
+disk disagrees with the index. Run it after any change to either half.
 
 `publishable` is **computed by `shard-gate.py`, never asserted by hand**. Running it with
 `--fix` recomputes every row; running it without arguments fails non-zero if any row claims
@@ -48,12 +55,13 @@ had been masked and gated but never actually reviewed, and 14 that carried `pii`
 | `stock-cms-hash-resolved-prior` | as above, and it resolves a prior corpus row that was tier `unverified` |
 | `media-polyglot` | media container carrying executable code |
 | `media-clean-not-published` | structurally clean media: no code, so a false positive or customer content |
+| `staging-directory-review` | a human opened the whole directory, confirmed it is attacker staging, and the sample passed both gates |
 
 ## The benign half is fetched, not shipped
 
-Of the 10,018 publishable rows, **10,012 are reproducible from a pinned source** and are
-therefore *not* shipped as blobs — they are an index row plus a lockfile entry. Only **6**
-samples ship as bytes.
+Of the 12,199 publishable rows, **12,126 are reproducible from a pinned source or from the
+stock CMS tree** and are therefore *not* shipped as blobs — they are an index row plus a
+lockfile entry. **73** samples ship as bytes: 6 polyglot fixtures and 67 staging samples.
 
 That is the point of §6: the benign half is a lockfile and a script, so anyone can
 regenerate it and get the same false-positive number, instead of taking ours on trust.
@@ -63,8 +71,8 @@ corpus/fetch-benign.sh              # download, verify, unpack
 VERIFY_ONLY=1 corpus/fetch-benign.sh   # re-check hashes already on disk
 ```
 
-`benign/sources.jsonl` currently pins **54 sources, 418 MB**: 33 WordPress plugins,
-15 themes, and 6 WordPress core versions including deliberately old ones, because an
+`benign/sources.jsonl` currently pins **86 sources**: 48 WordPress plugins,
+20 themes, and 18 WordPress core versions including deliberately old ones, because an
 outdated core is what a real host looks like. The plugin and theme list is not guesswork —
 it was taken from the corpus itself, by counting which slugs the unreviewed backlog actually
 contained. Pinning them mechanically decided **7,050 rows**, of which 2,940 were sitting in
@@ -77,6 +85,22 @@ upstream may have been replaced.
 
 `shards/malicious-polyglots-001.tar.zst` — 6 masked polyglot samples and 3 clean-carrier
 precision fixtures, 128 KB. Expectations in `expect/malicious-polyglots-001.json`.
+
+`shards/malicious-staging-001.tar.zst` — 67 samples from 14 confirmed attacker-staging
+directories, 3.0 MB, in 7 families: a fake-plugin loader that keeps its payload in files
+named as images, a WooCommerce card skimmer, a self-hiding fake core plugin, a forged
+update-header request gate, a forged-plugin auto-login backdoor, a fake theme of raw zlib
+blobs, and a timestamp-named theme stager. Expectations in
+`expect/malicious-staging-001.json`.
+
+**Sixty-four of the 67 are `known_miss`** — real malware this scanner does not detect at the
+recorded version. That is the point of shipping them: the corpus previously measured recall
+over six samples it already found. See `docs/RULE_CANDIDATES.md` §2.
+
+Nothing in this shard was masked, and that is a result rather than an omission: the
+independent identifier gate found nothing to mask, in the plaintext or in any of the 40
+statically decoded payload layers. Detection parity therefore holds by construction — the
+bytes are the bytes that were collected.
 
 Every sample in it is a **generated carrier plus an extracted payload**: no customer image
 or document bytes are present, verified by confirming no 64-byte run is shared with the

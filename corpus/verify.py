@@ -4,13 +4,20 @@
 
 One command, machine-readable output, every past mistake permanent.
 
-Two things this deliberately does differently from a naive suite:
+Three things this deliberately does differently from a naive suite:
 
-  * It reports precision and recall **over the reviewed set**, and prints the held count
-    beside them. A figure computed over a corpus that is mostly unreviewed, without saying
-    so, is the difference between "convincing empirical evidence" and a number someone can
-    check. `index-summary.json` is the denominator so the suite can state what it is *not*
+  * **It does not report precision at all**, and that is a decision rather than a gap. See the
+    long comment at the point where a naive suite would compute it.
+
+  * It reports recall and the false-positive rate **over the reviewed set**, and prints the
+    held count beside them. A figure computed over a corpus that is mostly unreviewed, without
+    saying so, is the difference between "convincing empirical evidence" and a number someone
+    can check. `index-summary.json` is the denominator so the suite can state what it is *not*
     testing.
+
+  * It reports **technique coverage**, which is the milestone that replaced "review N samples".
+    The question worth answering is not "what percentage" but "does it catch the things we have
+    seen", and that does not move when the benign corpus grows.
 
   * `known_miss` samples get their own column and never count as failures. A known miss that
     is still missed is the expected result; one that starts being detected is a *result*
@@ -77,7 +84,10 @@ def main():
            "benign": {"clean": 0, "false_positives": 0, "samples": 0},
            "vulnerable": {"detected": 0, "missed": 0, "samples": 0},
            "known_miss": {"expected": 0, "still_missed": 0, "newly_detected": 0, "samples": []},
+           "techniques": {"known": len(summary.get("techniques_known", {})),
+                          "covered_by_tested_samples": 0, "uncovered": []},
            "failures": [], "held": summary.get("local_only_blockers", {})}
+    tested_techniques = set()
 
     tmp = tempfile.mkdtemp(prefix="lyxbosa-corpus-")
     try:
@@ -102,6 +112,7 @@ def main():
                 res["failures"].append({"sample": r.get("family"), "why": "not present in any shard"})
                 continue
             got = check_rules(path)
+            tested_techniques |= set(r.get("technique") or [])
             res["malicious"]["samples"] += 1
             if known:
                 res["known_miss"]["expected"] += 1
@@ -230,6 +241,10 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    known_t = set(summary.get("techniques_known", {}))
+    res["techniques"]["covered_by_tested_samples"] = len(known_t & tested_techniques)
+    res["techniques"]["uncovered"] = sorted(known_t - tested_techniques)
+
     mal = res["malicious"]; ben = res["benign"]
     tested_mal = mal["detected"] + mal["missed"]
     res["recall"] = round(mal["detected"] / float(tested_mal), 4) if tested_mal else None
@@ -239,27 +254,35 @@ def main():
     res["false_positive_rate"] = (round(ben["false_positives"] / float(ben["samples"]), 6)
                                   if ben["samples"] else None)
 
-    # Precision as tp/(tp+fp) is only meaningful when the malicious and benign sets are
-    # commensurate. Right now they are not: a handful of shipped malicious samples against a
-    # six-figure benign sweep produces a number that looks catastrophic and means nothing.
-    # Emit it only when the malicious set is at least 1% the size of the benign set, and
-    # otherwise say why, rather than printing a figure that would have to be explained away.
-    tp = mal["detected"]; fp = ben["false_positives"]
-    MIN_MAL, MIN_BEN = 30, 1000
-    commensurate = (tested_mal and ben["samples"]
-                    and tested_mal >= MIN_MAL and ben["samples"] >= MIN_BEN
-                    and tested_mal >= 0.01 * ben["samples"])
-    if commensurate:
-        res["precision"] = round(tp / float(tp + fp), 4) if (tp + fp) else None
-        res["precision_note"] = None
-    else:
-        res["precision"] = None
-        res["precision_note"] = (
-            "not reported: %d malicious samples against %d benign files. Precision needs both "
-            "sets to be large enough to mean anything (at least %d malicious and %d benign) AND "
-            "commensurate in size, or tp/(tp+fp) is dominated by the size difference rather than "
-            "by detection quality. Use false_positive_rate, which is computed within one "
-            "population." % (tested_mal, ben["samples"], MIN_MAL, MIN_BEN))
+    # This suite does NOT report precision, and the omission is deliberate and permanent.
+    #
+    # Precision is tp/(tp+fp). It is only meaningful when the malicious-to-benign ratio in the
+    # measured set resembles the ratio an operator actually faces. On the production host this
+    # corpus came from, that ratio was roughly 37 true findings in 1.3 M files - about 1 in
+    # 35,000. Any hand-curated malicious set inflates it by orders of magnitude, so precision
+    # computed here would be a number about the corpus's composition, not about the scanner.
+    #
+    # An earlier version withheld it until the two sets were "commensurate" in size. That was
+    # the wrong repair, because reaching commensurability makes the figure worse rather than
+    # better: it means shrinking the benign side to a few hundred files, putting the ratio near
+    # 1:1 - tens of thousands of times more malicious than reality - and printing something
+    # flattering that means nothing. Reporting it unconditionally is no better: at 472 malicious
+    # samples and 8 false positives it reads 98.3%, and at 200 it reads 96%. The number moves
+    # with how much reviewing has been done, not with how good the scanner is.
+    #
+    # False-positive rate and recall are reported instead, because each is computed WITHIN one
+    # population and so does not depend on the ratio between the two. That is also why adding
+    # sources to benign/sources.jsonl does not move the goalposts: the FP denominator grows, the
+    # FP rate stays comparable, and recall is untouched.
+    #
+    # There is one place a precision figure is genuinely meaningful, and it is not here: a field
+    # scan of a real host, which supplies the real ratio. See CORPUS_PLAN.md section 8.
+    res["precision_not_reported"] = (
+        "by design. Precision needs the malicious-to-benign ratio of a real host (measured here: "
+        "about 1 in 35,000); a curated corpus cannot supply it, so the figure would describe the "
+        "corpus's composition rather than the scanner. False-positive rate and recall are each "
+        "computed within one population and are reported instead. Precision belongs to field "
+        "measurement, against a named host and scan.")
 
     # ---- regressions, against the baseline ----
     base = None
@@ -315,10 +338,6 @@ def main():
         print("  Recall            %s   (over %d reviewed malicious samples)"
               % ("%.2f%%" % (res["recall"] * 100) if res["recall"] is not None else "n/a",
                  tested_mal))
-        if res["precision"] is not None:
-            print("  Precision         %.2f%%" % (res["precision"] * 100))
-        else:
-            print("  Precision         not reported — see below")
         print("  False-positive rate %s  (%d of %d benign files)"
               % ("%.4f%%" % (res["false_positive_rate"] * 100)
                  if res["false_positive_rate"] is not None else "n/a",
@@ -331,6 +350,9 @@ def main():
                 print("  FP REGRESSIONS   %d fixed false positives have returned" % f["regressed"])
         print("  Known misses     %d expected · %d newly detected"
               % (res["known_miss"]["expected"], res["known_miss"]["newly_detected"]))
+        t = res["techniques"]
+        print("  Techniques       %d of %d known techniques covered by a tested sample"
+              % (t["covered_by_tested_samples"], t["known"]))
         if "regressions" in res:
             r = res["regressions"]
             if r.get("recall_delta_note"):
@@ -341,11 +363,13 @@ def main():
                       % (r["new_failures"],
                          "n/a" if r["recall_delta"] is None else "%+.4f" % r["recall_delta"]))
         print()
-        if res.get("precision_note"):
-            print()
-            print("  Precision withheld: %s" % res["precision_note"][:76])
-            for extra in [res["precision_note"][i:i+76] for i in range(76, len(res["precision_note"]), 76)]:
-                print("                      %s" % extra)
+        print()
+        print("  Precision is not reported. It is not withheld pending more data - it is the")
+        print("  wrong measurement for a curated corpus. tp/(tp+fp) depends on the malicious-")
+        print("  to-benign ratio, which on a real host is about 1 in 35,000 and here is chosen")
+        print("  by whoever did the reviewing. Precision is a field-scan measurement, against a")
+        print("  named host and scan; the corpus measures false-positive rate and recall, each")
+        print("  computed within one population. See CORPUS_PLAN.md section 8.")
         if res.get("regressions", {}).get("recall_delta_note"):
             n = res["regressions"]
             print()
@@ -368,6 +392,12 @@ def main():
             print("  NEWLY DETECTED (a result, not a failure — promote into must_detect):")
             for s in res["known_miss"]["samples"]:
                 print("      %-34s now detects %s" % (s["sample"], ",".join(s["now_detects"])))
+        if res["techniques"]["uncovered"]:
+            print()
+            print("  TECHNIQUES WITH NO TESTED SAMPLE (%d) — the milestone's open items:"
+                  % len(res["techniques"]["uncovered"]))
+            for x in res["techniques"]["uncovered"]:
+                print("      %s" % x)
         if res["failures"]:
             print()
             print("  FAILURES (%d):" % len(res["failures"]))

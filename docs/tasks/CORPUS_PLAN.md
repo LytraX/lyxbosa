@@ -518,7 +518,7 @@ attacker-renamed directory (`wp-content__<hash>`) — the latter being an IOC wo
 
 Treat "the gate passes" as a claim about the gate until an independent check agrees.
 
-**The standing rule, because this is now five failures and not an anecdote.** Every one was
+**The standing rule, because this is now nine failures and not an anecdote.** Every one was
 caught by a gate; **none** was caught by reading the code — including the fifth, a field
 whose contents are account names *by construction*, which slipped through because the
 masking helper applied a four-character minimum. So:
@@ -530,7 +530,27 @@ masking helper applied a four-character minimum. So:
 - **Verification always uses a check that does not share the masker's own patterns.** Same
   regexes on both sides tests only that the code agrees with itself.
 
-A sixth failure should be assumed to exist in whatever field is added next.
+A further failure should be assumed to exist in whatever field is added next. Four more have
+occurred since this was written, taking the tally to nine — and, as predicted, every one was
+caught by a check and none by reading code. The eighth and ninth were not masking bugs at all
+but the same class of defect in adjacent machinery, which is why the rule is stated about
+*checks* rather than about masking:
+
+8. **`undecodable` conflated two different facts** — "there is an encoded layer I could not
+   open" and "there is no encoded layer at all" — and §5.4 then held the sample permanently on
+   the first reading. Of 380 blobs carrying it, 281 genuinely have an encoded layer and **99
+   have none**, so 99 samples were held for a reason that did not apply to them.
+9. **The sensitivity tagger matched PII field *names*, not values.** A skimmer reading
+   `$_POST['billing_phone']` contains the name of a personal field and nobody's phone number.
+   The fix was *not* to loosen the test until it agreed: a second, independent scan for
+   personal-data **values** was written and validated against four positive and four negative
+   controls **before** its answer was trusted. It fires on all four positives; on the seven
+   samples in question it finds nothing.
+
+Two of the nine were also caught in fields nobody expected to carry identifiers, and two more
+— the eighth and ninth — in code that was not the masker at all. The rule generalises: any
+check that decides what may be published is load-bearing, and none of them is reviewable by
+reading.
 
 **Two more have since occurred, both exactly as predicted.** The sixth was in the content
 masker, a new component that shipped without a gate: it rewrote the string literal
@@ -753,14 +773,71 @@ Corpus 2026-09-03  (index 6,412 samples · 3 shards · benign 214,880 files)
   vulnerable        10 /      10 detected
   rule-exact     2,061 / 2,104 matched the expected rule
 
-  Recall     99.34%    Precision   97.95%
+  Recall     99.34%    False-positive rate  0.0055%
+  Known FPs          6 expected · 0 newly fixed
   Known misses       3 expected · 0 newly detected
+  Techniques        44 of 47 known techniques covered by a tested sample
   Regressions        0 new · 0 fixed
 ```
 
 - **`rule-exact`** is the line that boolean suites miss: detected, but by the rule that
   should have detected it. A rule change that keeps a detection for the wrong reason shows
   up here.
+
+### The corpus measures false-positive rate and recall. A field scan measures precision.
+
+The suite reports no precision figure, and this is a decision rather than a gap to be closed
+later. It is worth stating plainly because the pull towards printing one is strong.
+
+Precision is `tp/(tp+fp)`. It is only meaningful when the malicious-to-benign ratio in the
+measured set resembles the ratio an operator actually faces. **On the production host this
+corpus came from, that was roughly 37 true findings in 1.3 M files — about 1 in 35,000.** No
+hand-curated set reproduces that, and every curated set inflates it by orders of magnitude.
+A precision figure computed on the corpus is therefore a statement about *the corpus's
+composition*, not about the scanner.
+
+Two repairs were considered and both are worse than not reporting it:
+
+- **Withhold until the two sets are "commensurate" in size.** This was implemented first and
+  is the more dangerous of the two, because satisfying it makes the number *less* honest:
+  commensurability means shrinking the benign side to a few hundred files, which puts the
+  ratio near 1:1 — tens of thousands of times more malicious than reality. It would print
+  something flattering that means nothing. It is the same error as quoting a raw 7.89%,
+  inverted.
+- **Report it unconditionally with the population sizes beside it.** This stops lying by
+  construction but produces a figure dominated by curation: at 472 malicious samples against
+  8 false positives it reads 98.3%; review 200 instead and it reads 96%. The number moves
+  with how much reviewing has been done, not with how good the scanner is, and publishing it
+  invites exactly the misreading this plan exists to avoid.
+
+**False-positive rate and recall are the honest pair, precisely because each is computed
+within one population.** 8 in 146,710 benign files. Detected over reviewed malicious. Neither
+depends on the ratio between the two sets, which is why neither inherits the coupling problem
+— and it is why adding sources to `benign/sources.jsonl` does not move a goalpost: the FP
+denominator grows, the FP rate stays comparable, and recall is untouched.
+
+There *is* one place a precision figure is genuinely meaningful, and it is not the corpus: a
+**field scan of a real host**, which supplies the real ratio by construction. On the 1.3 M-file
+tree above it is 37 true findings against 63 remaining false ones — precision around **37%**,
+which is low, and which is exactly what the operator experiences. That number belongs in
+field measurement, reported against a named host and a named scan. It does not belong in a
+curated suite, and the two must never be quoted as though they were the same measurement.
+
+### The milestone is technique coverage, not sample count
+
+The suite's stop condition was originally "precision starts printing". That was unreachable
+by construction — it required 1,467 reviewed malicious samples against a ceiling of 472, and
+the requirement *moved away* as the benign corpus grew. That is a defect in the milestone,
+not a shortfall in the work, and the repair is to replace it rather than to satisfy it.
+
+> **The malicious set covers every distinct technique currently known, recall is reported
+> over it, and the technique count is stated beside it.**
+
+That is checkable, it does not move when the benign corpus grows, and it maps to what someone
+actually wants to know about a scanner — not "what percentage" but "does it catch the things
+we have seen". `index-summary.json` carries `techniques_known` and `techniques_published`;
+the suite prints coverage and names every technique with no tested sample, so the remaining
+work is a list rather than a number.
 
 ### `known_fp` is the mirror of `known_miss`, and needs the same treatment
 

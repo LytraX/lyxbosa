@@ -6,11 +6,17 @@ the pinned benign trees before it becomes a rule. Recorded here so the evidence 
 between the session that found it and the session that acts on it.
 
 A candidate leaves this file in one of two ways: it becomes a rule with an FP number
-attached, or it gets a written reason why it cannot.
+attached, or it gets a written reason why it cannot. A closed candidate stays here with its
+number, because the measurement is the useful part and re-deriving it costs another review.
+
+| # | candidate | status |
+|---|---|---|
+| 1 | unpinnable plugin/theme slug | **closed** — 20% of unpinnable slugs are attacker staging, against a 50% bar |
+| 2 | magic bytes disagreeing with the extension, in a media directory | open — evidence recorded, no FP measurement yet |
 
 ---
 
-## 1. An unpinnable plugin or theme slug is a lead
+## 1. An unpinnable plugin or theme slug is a lead — **CLOSED 2026-09-04, measured 20%**
 
 **Signal.** A directory under `wp-content/plugins/` or `wp-content/themes/` whose slug
 corresponds to no known plugin or theme is anomalous **on placement alone**, before anything
@@ -138,3 +144,136 @@ That matters for this candidate specifically: the camouflage is exactly what a
 placement-based rule keys on, and it is the part the corpus is missing. Rule-driven
 collection captures what the rules already find. Anything a new rule would need to see has
 to be collected on a different basis — by directory, not by finding.
+
+### Result — measured 2026-09-04. **The candidate is closed.**
+
+The review is done. All 70 unpinnable slugs were decided by opening the directories and
+reading the files, not by scoring the names.
+
+| the directory is | slugs | |
+|---|---|---|
+| **attacker staging** — no upstream software of that name is in it, contents wholly hostile | **14** | **20.0%** |
+| **legitimate** — recognisable upstream, commercial or agency software | 53 | 75.7% |
+| **undecidable** — too little of the directory was collected to tell | 3 | 4.3% |
+
+**20.0%**, against a bar of 50% to survive and roughly 33% below which an operator learns to
+ignore the list. Even the most generous possible reading — counting all three undecidable
+directories as staging — gives **24.3%**, still below the floor. The candidate does not
+survive on any reading of its own numbers.
+
+**What the 53 legitimate ones were**, because the shape of the miss matters more than the
+count: premium plugins and themes absent from the public directory (Elementor Pro, WPML,
+Slider Revolution, WPBakery, The7's core plugin, BeTheme, Bridge, Akeeba); agency-built
+framework plugins and their child themes; and vendored library trees — the Freemius SDK and
+Redux appear under a dozen different slugs and are the known `OBF025` false-positive family.
+Every one of these is exactly the category §1 predicted would not pin. The prediction was
+right; what was not known was the proportion, and it is three quarters.
+
+### The fraction is not the real reason this dies. This is.
+
+**Forty of the 53 legitimate directories contained a hostile file anyway.** A webshell
+dropped into `revslider/`. Another into `pwa-for-wp/`. Another at
+`wp-seopress/vendor/psr/log/index.php`. Four into `under-construction-page/themes/`. A
+`goto`-obfuscated backdoor at `.pie.tif` inside a commercial theme. An `SC_TH` block appended
+to a child theme's `functions.php` in a dozen accounts at once.
+
+Every one of those directories is real, legitimate, vendor-shipped software. Every one of
+them would have appeared on the advisory's list — not because of what the attacker did, but
+because the slug does not happen to be in a lockfile. And on each of them the advisory's
+sentence, *"this directory matches no known registry"*, would have been **true and
+irrelevant**: the finding is not that the directory is the attacker's, it is that something
+was put inside a directory that is not.
+
+So the predicate fires on two populations that need opposite responses — *replace this
+directory, it is not yours* and *this directory is yours, something is hiding in it* — and it
+cannot tell them apart, because the thing it looks at is the same in both cases. **That is not
+a weak signal that better tuning would sharpen. It is the wrong question.** A signal with a
+disappointing precision figure can be improved; a signal that means one thing and fires on two
+cannot be, because there is nothing in what it measures to separate them.
+
+The 20% is worth having recorded, and the kill condition was right to demand it before the
+data was in. But had the fraction come back at 80%, this finding would still have closed the
+candidate — the advisory would have been right about four directories in five and still unable
+to say which of the two things it had found. Measuring the fraction was the cheap way to reach
+a conclusion that the structure of the predicate already implied.
+
+A list that cannot make that distinction is, in practice, a list of every unpinned plugin on
+the host — which on a real shared-hosting account is most of them.
+
+**Not narrowed, deliberately.** The temptation §1's kill condition warned about was real and
+specific: the 14 staging directories share visible traits — generated slugs, tiny file
+counts, no readme, an extension that disagrees with the magic bytes. Adding any of those as
+a condition would lift the fraction above 50% immediately. It would also be fitting the
+predicate to this one attacker's tooling, and the next incident's staging directory will
+have a plausible slug and a readme. The number stands as measured.
+
+**What survives.** The set difference against the lockfile remains what §1 said it always
+was — a triage aid for a human reading a queue. It ordered this review, it put the five
+generated-slug directories at the top, and it was worth having. It is not a detection, it is
+not an advisory with a severity, and it makes no claim to precision. Nothing further is owed
+to it.
+
+The 14 confirmed staging directories became corpus samples: 76 unique blobs, shipped in
+`corpus/shards/malicious-staging-001`. See §2, which is what the review turned up instead.
+
+---
+
+## 2. A file whose magic bytes disagree with its extension, in a directory of media
+
+**Status:** new, evidence below, **not implemented**. This replaces §1 as the thing the
+unpinnable-slug review was actually worth doing for.
+
+**Signal.** A file named `.png`, `.gif` or `.jpg`, sitting in a directory of images, whose
+first bytes are not that format's magic — and whose content is a long run of base64-alphabet
+characters rather than compressed image data.
+
+**Evidence.** The five generated-slug plugin directories in this corpus contain, between
+them, **40 files named `.png` or `.gif` in `assets/images/`. Not one is an image.** Every one
+begins with a three-byte ASCII cover prefix — the literal characters `PNG` or `GIF`, not
+`\x89PNG` or `GIF89a` — followed immediately by base64 text under a per-directory substituted
+alphabet:
+
+```
+bamotem.png   67055 B   first bytes: 'PNGl9u...'     (ASCII "PNG", not 89 50 4E 47)
+hotuhow.gif  213339 B   first bytes: 'PNGAtq...'     (named .gif, prefixed "PNG")
+thijemy.gif  445031 B   first bytes: 'GIFG6d...'
+```
+
+The cover prefix does not even agree with the extension in several cases, which is a second
+free signal. All 40 decode statically — no execution — to a working toolkit: a file manager,
+a WooCommerce billing-and-card skimmer, an obfuscated JavaScript injector, and four
+160,000-byte hash tables that are byte-identical across all five directories despite five
+different alphabets.
+
+**Measured detection: zero.** All 76 non-empty blobs across the 14 confirmed staging
+directories were checked individually with `check`, which reads the file it is given:
+
+```
+  scanned and detected                :  10
+  scanned and clean (a real miss)     :  66
+  the scanner declined to read        :   0
+```
+
+Sixty-six real misses, none of them a walker or extension skip. The loader, the payloads and
+the disguise are all present and all invisible.
+
+**Why this candidate does not have §1's problem.** §1 was killed by coupling: its precision
+was a property of the deployment's reference data, so two hosts running the same build would
+disagree. This predicate reads only the file's own bytes — magic against extension, and the
+character distribution after the prefix. It needs no lockfile, it behaves identically
+everywhere, and it cannot get quieter as a benign corpus grows.
+
+**What it needs before it ships.** A real false-positive measurement, and the FP population
+is known in advance and is not small: files with the wrong extension are common and usually
+innocent. A `.jpg` that is really a PNG because someone renamed it; `.gif` spacers that are
+actually 1×1 PNGs; SVGs named `.png`; WebP served as `.jpg`. The discriminator has to be the
+*second* half of the predicate — a long, high-entropy run drawn from the base64 alphabet
+where image data should be — not the mismatch alone. Measure against `trail-data/CMS`, the
+sanitised site corpus and every pinned tree, and report the number before writing the rule.
+
+**A note on where this came from.** These directories were collected *whole*, with their
+siblings, because they sat in a staging tree that was copied wholesale — not because a rule
+fired on them. Nothing in them fires a rule. Under the finding-driven collection that §2.3b
+of `docs/tasks/CORPUS_PLAN.md` warns about, this entire family would have been invisible:
+no rule matched, so nothing would have been collected, so the technique would never have
+entered the corpus. This is the first concrete case of that principle paying for itself.
