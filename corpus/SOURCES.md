@@ -46,6 +46,28 @@ disk disagrees with the index. Run it after any change to either half.
 a publishability it cannot justify. It caught 103 such rows on its first run — samples that
 had been masked and gated but never actually reviewed, and 14 that carried `pii`.
 
+### Any writer of either half goes through `indexio.py`
+
+`write_jsonl_atomic` for the write, `index_lock` around a read-modify-write. Not a style
+preference — both were paid for on 2026-09-04, when two sessions worked this tree at once.
+
+`shard-gate.py --fix` used to `open(path, "w")`, which truncates a 62 MB index before the
+first row lands. A concurrent reader measured 48,407 rows, then 14,148, then 79,467 — three
+moments of one write, and indistinguishable from corruption from the outside. It also saw
+fields that "appear nowhere in my sources" and were gone seconds later: another session's
+merge, half-written. The round stopped and reported possible corruption, which was the right
+call on the available evidence and cost the round anyway. **The tell is a
+`make-summary.py --check` that passes in one instant and fails the next.**
+
+The second failure mode did not fire and is the worse one. Two writers each doing a
+read-modify-write of the whole file means the last one silently drops the other's rows, and
+**every gate still passes** — a half-merged index is internally consistent, so no integrity
+check can catch it. Only the lock can.
+
+`python3 corpus/indexio.py --selftest` reproduces the torn read against the old write and
+shows it absent from the new one. It keeps the control on purpose: a test that only proves
+the new path is clean cannot tell you the old path was the cause.
+
 `reason` is a short code rather than prose, to keep the file a reasonable size:
 
 | code | meaning |

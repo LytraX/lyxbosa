@@ -9,7 +9,10 @@ The rule (§4.1): a sample is publishable when its verdict is not `unreviewed` A
 sensitivity tag is `clean`, `c2`, or has been masked and re-verified. `pii` and `content`
 are never publishable, because there is no substitution that makes them safe.
 """
-import json, sys, collections
+import json, os, sys, collections
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy
 
 ALWAYS_OK = {"clean", "c2"}
 NEVER = {"pii", "content"}
@@ -44,7 +47,7 @@ def evaluate(r):
     return (not why), why
 
 def main(path, apply_fix=False):
-    rows = [json.loads(l) for l in open(path)]
+    rows = read_jsonl(path)
     changed = 0
     viol = collections.Counter()
     examples = collections.defaultdict(list)
@@ -77,10 +80,26 @@ def main(path, apply_fix=False):
         for w, n in viol.most_common():
             print("  %-70s %5d  e.g. %s" % (w[:70], n, ", ".join(examples[w])))
     if apply_fix:
-        with open(path, "w") as fh:
-            for r in rows:
-                fh.write(json.dumps(r, sort_keys=True) + "\n")
+        # Atomic, and under the lock. This used to be open(path, "w"), which
+        # truncates a 62 MB index before the first row lands - see indexio.
+        write_jsonl_atomic(path, rows)
     return 1 if viol else 0
 
+USAGE = "usage: shard-gate.py <index.jsonl> [--fix]"
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1], "--fix" in sys.argv))
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if len(args) != 1:
+        sys.exit(USAGE)
+    fix = "--fix" in sys.argv
+    try:
+        if fix:
+            # Read under the same lock we write under: re-reading rows that
+            # another writer is mid-merge on and then rewriting the whole file
+            # is how the other session's appends would disappear.
+            with index_lock(args[0]):
+                sys.exit(main(args[0], True))
+        else:
+            sys.exit(main(args[0], False))
+    except LockBusy as exc:
+        sys.exit(str(exc))

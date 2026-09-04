@@ -12,3 +12,12 @@ benign/downloads/
 # Its counts are carried in the tracked index-summary.json, so the accounting survives
 # without the rows - see SOURCES.md.
 local/
+
+# Lock files and in-flight temp files from indexio.py. Both are transient by
+# construction - a stale .lock is a crashed writer, and a stale .tmp is a write
+# that never reached its os.replace(). Neither is repository content.
+*.lock
+*.tmp
+
+# Bytecode cache from importing indexio.py as a module.
+__pycache__/
