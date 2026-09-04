@@ -239,96 +239,50 @@ as clean.
   while the report accumulates in the file, and the file never contains a single escape
   sequence.
 
-## What the detection numbers actually are
+## Detection coverage
 
-Both halves are stated with their denominators, because a detection number without its
-denominator is not evidence — and because the denominator is where this kind of number
-usually goes wrong (see `docs/tasks/CORPUS_PLAN.md` §11).
-
-Run it yourself:
+Two figures, each stated with its denominator, each reproducible from a clean checkout:
 
 ```
 corpus/fetch-benign.sh     # download and hash-verify the pinned benign corpus
 corpus/verify.py           # run the golden suite
 ```
 
-### The false-positive side — checkable
+**False-positive rate: 0.0055% — 8 of 146,712 files.** The benign corpus is 86 sources
+pinned by version and sha256 in `corpus/benign/sources.jsonl` — 48 WordPress plugins, 20
+themes and 18 core versions. Nothing is shipped: the script downloads each one and fails
+hard on a hash mismatch, so the corpus regenerates anywhere and yields the same number. All
+8 are upstream library code (the Freemius SDK, an FPDF class), pinned as `known_fp`
+fixtures — a rule change that fixes one is reported, and a fixed one that comes back fails
+the suite. They stay counted inside the 8; pinning a defect does not remove it from its own
+total.
 
-**8 false positives across 146,711 files, a rate of 0.0055%.**
+**Detection: 10.0% — 13 of 130 confirmed-malicious samples.** The other 117 are recorded
+known misses: real malware this version does not catch, including a WordPress `db.php`
+drop-in family of 46 samples, a fake-plugin family whose payloads are named `.png`
+([docs/RULE_CANDIDATES.md](docs/RULE_CANDIDATES.md) §2), and the webshells staged outside
+the web root that [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) issue 3 rests on. The
+denominator is every reviewed malicious sample, so reviewing a family the scanner misses
+lowers this figure. That is intended — it measures coverage, not progress.
 
-Those files come from 86 pinned sources — 48 WordPress plugins, 20 themes and 18 core
-versions, each pinned by version and sha256 in `corpus/benign/sources.jsonl`. Nothing is
-shipped: `corpus/fetch-benign.sh` downloads them, verifies every hash and fails hard on a
-mismatch. Anyone can regenerate the same corpus and get the same number, which is the point
-— the figure is reproducible rather than reported.
+**Regression: 7 of 7 expected detections still firing.** A separate measurement over a
+separate denominator, the samples already known to be detected. It is not recall and is not
+quoted as one.
 
-All 8 are upstream library code (the Freemius SDK, an FPDF class). They are pinned as
-`known_fp` fixtures, so if a rule change fixes one the suite says so, and if a fixed one ever
-comes back it fails.
+**Precision is not reported.** `tp/(tp+fp)` moves with the malicious-to-benign ratio, which
+is about 1 in 35,000 on a real host and in any curated corpus is chosen by whoever did the
+reviewing. False-positive rate and detection are each computed within a single population,
+so neither depends on that ratio. Precision belongs to a field scan, which supplies the real
+ratio by construction.
 
-**They stay inside the 8.** All eight counted false positives are pinned, known, unfixed
-ones — pinning a defect does not remove it from the number it belongs to. That is worth
-saying because the mirror-image column got it the other way round for several rounds: known
-*misses* were being taken out of the recall denominator, which is what made that figure
-read 100%. See `docs/tasks/CORPUS_PLAN.md` §8.
+**Technique coverage: 60 of 60** distinct techniques in the reviewed set have a sample the
+suite checks. Read it as a staleness signal rather than completion — the denominator is
+enumerated from what has been reviewed, so it cannot see a technique in the blobs that have
+not been.
 
-### The malicious side — a number, and a small one
-
-**Detection is 15.5% — 13 of 84 confirmed-malicious samples. Of the rest, 71 are recorded as
-known misses: real malware this scanner does not catch at this version.**
-
-That is the number an earlier version of this suite did not print. It reported *"recall
-100%"*, which was true and meant nothing: `must_detect` is populated from the rescan, so a
-sample carried it *because* it was detected, and anything known not to be detected was moved
-to a `known_miss` column and out of the denominator. The figure could only ever fall if a
-working detection broke. It is still reported, under the name of what it actually is — a
-regression check — and 100% is the right answer there.
-
-The corpus holds 91,669 unique blobs; 12,202 are classified and 79,467 are still unreviewed.
-Almost all of the classified ones are benign by hash match against pinned upstream, so the
-reviewed *malicious* set is 84 samples — small, and stated rather than implied.
-
-**15.5% is expected to fall before it rises.** Reviewing a malware family this scanner does
-not catch adds samples to the denominator and none to the numerator, which is the correct
-behaviour for the measurement: it is meant to find gaps, not to confirm what already works.
-There are roughly 700 detected-but-unreviewed blobs left, so it will move.
-
-**Precision is not reported at all, and that is a decision rather than a gap.** Precision is
-`tp/(tp+fp)`, which only means something when the malicious-to-benign ratio resembles what an
-operator actually faces — on the production host this corpus came from, roughly 37 true
-findings in 1.3 M files, about 1 in 35,000. No curated set reproduces that. An earlier version
-withheld the figure until the two sets were "commensurate" in size, which was the worse
-repair: satisfying it means shrinking the benign side until the ratio is near 1:1, tens of
-thousands of times more malicious than reality, and printing something flattering that means
-nothing. Reporting it unconditionally is no better — it moves with how much reviewing has been
-done rather than with detection quality.
-
-False-positive rate and recall are reported instead because each is computed *within* one
-population, so neither depends on the ratio between them. Precision belongs to a field scan of
-a real host, which supplies the real ratio by construction; there it is about 37%, which is
-low, and which is what the operator experiences. The two must never be quoted as though they
-were the same measurement.
-
-The suite also refuses to print some things it could:
-
-- **A recall delta against the previous run is withheld** whenever the reviewed set changed
-  size, because a figure over a set that grew is not the same measurement.
-- **Known misses have their own column.** Seventy-one samples are real malware this scanner
-  does not detect at this version — an entire fake-plugin family among them, whose payloads
-  live in files named `.png` that are not images (`docs/RULE_CANDIDATES.md` §2), plus the two
-  webshells staged outside the webroot that `docs/KNOWN_ISSUES.md` issue 3 rests on. They
-  count as expected, not as failures — but they are counted, and they are the reason the
-  recall figure above is not evidence.
-- **Technique coverage is reported instead of a sample count**: 55 of 55 distinct techniques
-  in the reviewed set have a sample the suite actually checks. Read that as a staleness
-  signal, not as completion — the denominator is enumerated from what has been reviewed, so
-  it cannot see techniques in the ~700 detected blobs still unreviewed.
-
-### Why publish the half that is ready
-
-Because it can be verified today and can only improve. The benign half is a lockfile and a
-script; the malicious half needs human review of 48,477 blobs, and that number is printed
-next to every result until it comes down.
+The corpus holds 91,669 blobs, of which 12,249 are classified and 79,420 are unreviewed. Its
+construction, the classification rules and the reasoning behind each denominator are in
+[docs/tasks/CORPUS_PLAN.md](docs/tasks/CORPUS_PLAN.md).
 
 ## CLI Reference
 
