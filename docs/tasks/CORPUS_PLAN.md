@@ -1196,6 +1196,33 @@ must state what it could have caught, or it is not a check, it is a ritual.** Th
 existing verification passes in §2.4 are exhaustive and so are exempt; anything that samples
 is not.
 
+### Repairing a report does not repair the rows it was computed from
+
+The fourth instance was fixed in the reporting: the figure was renamed to a regression check
+and detection was recomputed over every reviewed sample. **943 rows still carried the
+artefact.** `expect.must_detect` had been written onto them by the scan that discovered them
+— the same mechanism, unchanged — while their `verdict` was still `unreviewed`. So 943 rows
+asserted that a sample *must* be detected when no human had ever looked at it.
+
+It never reached the headline: the numerator counts only `verdict: malicious`, so the figure
+was right for a reason unrelated to these rows being wrong. That is what let it sit. A defect
+that does not show up in the number it belongs to has nothing pulling on it.
+
+The distinction the repair turns on: **`expect` is an assertion and belongs to a reviewer;
+what a scan saw is an observation and belongs to the scan.** Those 943 rows now carry
+`observed_detection` — the rules, the severity, and a note saying it asserts nothing — and
+`expect` is absent until somebody sets a verdict. No information is lost; the triage value of
+"the scanner already flags this" is exactly as available as before. What is gone is the claim.
+
+`shard-gate.py` now **fails** on `verdict: unreviewed` carrying `expect.must_detect`, as a
+hard error rather than a publishability blocker — an unreviewed row is already unpublishable
+for a different reason, and routing it through that path would have hidden it behind the
+generic blocker, which is the mistake §8 records about storing only the first reason.
+
+The general form: when a measurement is repaired, ask separately whether the data it was
+computed from was repaired. The two are different jobs and only one of them is visible in the
+output.
+
 A sixth instance should be assumed to exist in whatever is measured next — the same standing
 assumption §5.3 makes about masking, and for the same reason: this class of error is invisible
 to reading the code, because the code computes exactly what it says it computes.

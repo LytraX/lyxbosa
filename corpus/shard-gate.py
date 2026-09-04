@@ -46,6 +46,26 @@ def evaluate(r):
         why.append("marked local_only: %s" % r["local_only"])
     return (not why), why
 
+# An assertion nobody sanctioned. `expect.must_detect` says a reviewed sample MUST be
+# detected and fails the suite when it is not; a row with verdict `unreviewed` has no
+# review behind it, so the field is asserting a judgement no human ever made.
+#
+# 943 rows were in this state, written by the scan that discovered them - the same
+# mechanism §11 records for the recall figure, where `must_detect` was populated from a
+# rescan so a sample carried it BECAUSE it was detected. That reporting was repaired and
+# these rows were not. What the scan saw belongs in `observed_detection`, which asserts
+# nothing; `expect` stays absent until a human sets a verdict.
+#
+# This is a hard failure rather than a publish blocker, because an unreviewed row is
+# already unpublishable for a different reason and the blocker would hide it.
+def integrityViolations(rows):
+    out = []
+    for r in rows:
+        exp = r.get("expect") or {}
+        if exp.get("must_detect") and r.get("verdict") == "unreviewed":
+            out.append(r["sha256"])
+    return out
+
 def main(path, apply_fix=False):
     rows = read_jsonl(path)
     changed = 0
@@ -79,11 +99,22 @@ def main(path, apply_fix=False):
         print("=== rows that claimed publishable but are not ===")
         for w, n in viol.most_common():
             print("  %-70s %5d  e.g. %s" % (w[:70], n, ", ".join(examples[w])))
+    bad = integrityViolations(rows)
+    print("unreviewed rows asserting must_detect :", len(bad))
+    if bad:
+        print()
+        print("=== INTEGRITY: expect.must_detect on a row with no review ===")
+        for sha in bad[:10]:
+            print("  %s" % sha[:12])
+        if len(bad) > 10:
+            print("  ... and %d more" % (len(bad) - 10))
+        print("  move these to observed_detection; expect stays absent until a verdict is set")
+
     if apply_fix:
         # Atomic, and under the lock. This used to be open(path, "w"), which
         # truncates a 62 MB index before the first row lands - see indexio.
         write_jsonl_atomic(path, rows)
-    return 1 if viol else 0
+    return 1 if (viol or bad) else 0
 
 USAGE = "usage: shard-gate.py <index.jsonl> [--fix]"
 
