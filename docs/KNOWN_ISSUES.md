@@ -95,8 +95,23 @@ world-writable system directory.
 **Why the scan could not see them.** The scanner is pointed at webroots, which is where
 served content lives and where a webshell has to be to receive an HTTP request. These files
 are not served directly. A staging directory outside the webroot is used precisely because
-it is not in the scan path: the payload is written there and pulled in at execution time by
-an `include`/`require`, a `auto_prepend_file` directive, or a cron entry. The detection
+it is not in the scan path: the payload is written there and pulled in at execution time.
+
+**Which execution path — one is now documented, two remain hypotheses.** This originally
+listed three candidates with no evidence between them: an `include`/`require`, an
+`auto_prepend_file` directive, or a cron entry. The corpus now settles one of them. The
+second sample's `placements` field records **five copies under a `recurrent-wp-cron-*`
+quarantine directory** — the containment operation isolated it as cron-related material, which
+is placement evidence for the cron path specifically. `include`/`require` and
+`auto_prepend_file` remain plausible and unevidenced.
+
+That distinction matters more than it looks, and it strengthens the case for the `--profile
+host` option below rather than the documentation one. **A cron-triggered payload does not need
+to be reachable by HTTP at all.** The usual mental model of a webshell — it must sit in the
+served tree so a request can reach it — is what makes a webroot-anchored scan feel sufficient.
+It is not sufficient for this sample: nothing about it needs to be servable, so no amount of
+scanning the webroot more thoroughly would find it, and the containment evidence says that is
+how it actually ran. The detection
 content of these files is unremarkable — the same rules that fire on any obfuscated PHP
 would have fired here. **Nothing about the rules failed. The walker was never given the
 directory.**

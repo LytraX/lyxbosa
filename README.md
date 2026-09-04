@@ -253,7 +253,7 @@ corpus/verify.py           # run the golden suite
 
 ### The false-positive side — checkable
 
-**8 false positives across 146,710 files, a rate of 0.0055%.**
+**8 false positives across 146,711 files, a rate of 0.0055%.**
 
 Those files come from 86 pinned sources — 48 WordPress plugins, 20 themes and 18 core
 versions, each pinned by version and sha256 in `corpus/benign/sources.jsonl`. Nothing is
@@ -267,24 +267,45 @@ ever comes back it fails.
 
 ### The malicious side — not yet a number
 
-**Recall is 100% over three reviewed samples. That is a smoke test, not evidence.**
+**Recall is 100% over seven reviewed samples, against 69 known misses. That ratio is the
+honest summary: the suite tests seven samples and records sixty-nine pieces of real malware
+it does not detect.**
 
-The corpus holds 60,609 unique blobs; 12,132 are classified and 48,477 are still unreviewed.
-Almost all of the classified ones are benign-by-hash-match, so the reviewed *malicious* set
-is currently tiny. A recall figure over three samples says nothing about the scanner, and
-publishing it as though it did would be worse than publishing nothing.
+The corpus holds 60,609 unique blobs; 12,202 are classified and 48,407 are still unreviewed.
+Almost all of the classified ones are benign by hash match against pinned upstream, so the
+reviewed *malicious* set is small. A recall figure over seven samples says nothing about the
+scanner, and publishing it as though it did would be worse than publishing nothing.
 
-The suite therefore refuses to print some numbers:
+**Precision is not reported at all, and that is a decision rather than a gap.** Precision is
+`tp/(tp+fp)`, which only means something when the malicious-to-benign ratio resembles what an
+operator actually faces — on the production host this corpus came from, roughly 37 true
+findings in 1.3 M files, about 1 in 35,000. No curated set reproduces that. An earlier version
+withheld the figure until the two sets were "commensurate" in size, which was the worse
+repair: satisfying it means shrinking the benign side until the ratio is near 1:1, tens of
+thousands of times more malicious than reality, and printing something flattering that means
+nothing. Reporting it unconditionally is no better — it moves with how much reviewing has been
+done rather than with detection quality.
 
-- **Precision is withheld**, with the reason printed in place of the figure. Three malicious
-  samples against 146,710 benign files makes `tp/(tp+fp)` a measure of the size difference,
-  not of detection quality — the first version of this code printed 7.89% and that number
-  was worthless. Precision needs both sets to be large in absolute terms *and* commensurate.
+False-positive rate and recall are reported instead because each is computed *within* one
+population, so neither depends on the ratio between them. Precision belongs to a field scan of
+a real host, which supplies the real ratio by construction; there it is about 37%, which is
+low, and which is what the operator experiences. The two must never be quoted as though they
+were the same measurement.
+
+The suite also refuses to print some things it could:
+
 - **A recall delta against the previous run is withheld** whenever the reviewed set changed
   size, because a figure over a set that grew is not the same measurement.
-- **Known misses have their own column.** Three samples in the corpus are real malware this
-  scanner does not detect, recorded rather than omitted (see `docs/KNOWN_ISSUES.md` issue 4).
-  They count as expected, not as failures — but they are counted.
+- **Known misses have their own column.** Sixty-nine samples are real malware this scanner
+  does not detect at this version — an entire fake-plugin family among them, whose payloads
+  live in files named `.png` that are not images (`docs/RULE_CANDIDATES.md` §2), plus the two
+  webshells staged outside the webroot that `docs/KNOWN_ISSUES.md` issue 3 rests on. They
+  count as expected, not as failures — but they are counted, and they are the reason the
+  recall figure above is not evidence.
+- **Technique coverage is reported instead of a sample count**: 55 of 55 distinct techniques
+  in the reviewed set have a sample the suite actually checks. Read that as a staleness
+  signal, not as completion — the denominator is enumerated from what has been reviewed, so
+  it cannot see techniques in the ~700 detected blobs still unreviewed.
 
 ### Why publish the half that is ready
 

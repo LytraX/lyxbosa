@@ -208,6 +208,8 @@ The general form is the more uncomfortable statement:
 
 > A corpus assembled from findings can only support rules resembling the ones that built it.
 
+(This is one of three appearances of the same property; see §11.)
+
 That is the `discovered_by` problem from §4.4 arriving from a different direction. There the
 concern was circularity in *measurement* — recall computed over samples the scanner found
 itself is close to 100% by construction. Here it is circularity in *capability*: a new rule
@@ -411,7 +413,8 @@ line, and it diffs and merges in git.
   ways: overall, and excluding samples this scanner found itself. A recall figure computed
   only over `lyxbosa-scan` samples is close to 100% by construction and would overstate
   what the tool does on malware it has never seen. Six families in the current corpus are
-  in that category, which is worth being able to say out loud rather than hide.
+  in that category, which is worth being able to say out loud rather than hide. This is one of
+  three appearances of the same property; see §11.
 - One row per *sample*; duplicates collapse to one row with a count.
 
 Migrate the existing `manifest.tsv` (4,198 rows) by mapping `tier/family/stored_as/decoder`
@@ -848,6 +851,21 @@ we have seen". `index-summary.json` carries `techniques_known` and `techniques_p
 the suite prints coverage and names every technique with no tested sample, so the remaining
 work is a list rather than a number.
 
+**Read `55 of 55` as a staleness signal, not as completion.** The denominator is enumerated
+from what has been reviewed, so the milestone self-satisfies: review nothing new and coverage
+stays at 100% for ever. What it actually asserts is narrow and worth stating in those words —
+*nothing currently in the reviewed set is untested*. It says nothing whatever about the ~700
+detected blobs across 183 technique clusters that are still unreviewed, and unknown techniques
+live precisely there, where this measurement cannot see them.
+
+So the number going **down** is the healthy outcome: it means a review round found a technique
+the corpus did not previously know about. A round that leaves it at 100% has either tested
+everything new or reviewed nothing, and the coverage figure cannot tell those apart. Pair it
+with the reviewed-sample count, which can.
+
+This is a specific case of a property that has now turned up three times in this project;
+see **§11**.
+
 ### `known_fp` is the mirror of `known_miss`, and needs the same treatment
 
 `known_miss` exists because a golden suite must be able to say *"we know we miss this"*.
@@ -1007,3 +1025,46 @@ Still open, and each changes the work:
    shards following once masked.
 3. **Who reviews the media queue**, and against what standard. §4.3 shrinks it to a contact
    sheet, but the "is there a recognisable person or document in this" call is yours.
+
+---
+
+## 11. One property, three appearances: a denominator the process chose for itself
+
+Three separate cautions in this plan are the same statement in different clothes. Each was
+found independently, each was handled correctly, and a fourth session would otherwise
+rediscover it a fourth time. So it is worth naming once, as a property rather than as three
+warnings:
+
+> **Any measurement whose denominator is enumerated by the same process that produces the
+> numerator is bounded by that process, not by reality.**
+
+The three instances:
+
+| where | the numerator | the denominator, and who chose it |
+|---|---|---|
+| §4.4 `discovered_by` | samples this scanner detects | samples this scanner found. Recall over them is close to 100% by construction |
+| §2.3b collect-by-directory | files the rules flagged | files the rules flagged. "A corpus assembled from findings can only support rules resembling the ones that built it" |
+| §8 technique coverage | techniques with a tested sample | techniques seen in the reviewed set. Review nothing and coverage is permanently 100% |
+
+In every case the figure is true, useful and worth reporting — and in every case it measures
+*the reach of the process*, not the reach of the scanner. None of the three is fixed by
+computing it more carefully, because the arithmetic is not what is wrong.
+
+What each of them needed instead was a **second, independently-sourced denominator**, and
+that is the general repair:
+
+- `discovered_by` records provenance, so recall can also be reported over the ~54,592 blobs
+  this scanner did *not* find;
+- collect-by-directory takes the siblings, so the corpus contains files no rule selected —
+  and the whole `fake-plugin-image-payload-loader` family exists only because of that;
+- technique coverage is paired with the reviewed-sample count and with the count of detected
+  blobs still unreviewed, so "55 of 55" cannot be read as completion.
+
+**The tell is always the same**: a number that cannot get worse no matter what happens in the
+world. Recall over self-found samples cannot fall; a finding-shaped corpus cannot contain a
+counterexample; technique coverage cannot drop while nothing is reviewed. When a measurement
+has no way to deliver bad news, the denominator is the thing to look at.
+
+A fourth instance should be assumed to exist in whatever is measured next — the same standing
+assumption §5.3 makes about masking, and for the same reason: this class of error is invisible
+to reading the code, because the code computes exactly what it says it computes.

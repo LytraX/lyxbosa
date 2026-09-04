@@ -353,6 +353,10 @@ def main():
         t = res["techniques"]
         print("  Techniques       %d of %d known techniques covered by a tested sample"
               % (t["covered_by_tested_samples"], t["known"]))
+        if t["known"] and t["covered_by_tested_samples"] == t["known"]:
+            print("                   (a staleness signal, not completion: the denominator is")
+            print("                    enumerated from the reviewed set, so it cannot see a")
+            print("                    technique in the blobs still unreviewed. CORPUS_PLAN §11)")
         if "regressions" in res:
             r = res["regressions"]
             if r.get("recall_delta_note"):
