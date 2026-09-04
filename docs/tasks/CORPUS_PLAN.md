@@ -109,6 +109,12 @@ for rec in d.get("files", []):
 PY
 ```
 
+**Do not order triage by mtime.** Captured mtimes are worth having and are not evidence of
+age: 94 files in this collection carry mtimes spread over 2015–2018 on content provably
+written in 2026, and they are not stomped to match their siblings (2 of 94 match one exactly,
+none within an hour), so the dropper set them from somewhere else. Any queue sorted
+oldest-first buries them.
+
 Also capture, in the same session, the things that explain the samples and are not files
 in the report:
 
@@ -1062,11 +1068,11 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, four appearances: a denominator the process chose for itself
+## 11. One property, five appearances: a measurement that cannot deliver bad news
 
-Four separate cautions in this plan are the same statement in different clothes. Each was
-found independently, and the fourth was found by reading the other three — which is the
-argument for naming it once, as a property rather than as a series of warnings:
+Five separate cautions in this plan share one diagnostic tell. Four of them are the same
+statement in different clothes; the fifth reaches the same place by a different mechanism and
+needs a different repair, which is exactly why they are worth listing together:
 
 > **Any measurement whose denominator is enumerated by the same process that produces the
 > numerator is bounded by that process, not by reality.**
@@ -1079,16 +1085,18 @@ The four instances:
 | §2.3b collect-by-directory | files the rules flagged | files the rules flagged. "A corpus assembled from findings can only support rules resembling the ones that built it" |
 | §8 technique coverage | techniques with a tested sample | techniques seen in the reviewed set. Review nothing and coverage is permanently 100% |
 | §8 recall, **as it used to be reported** | samples detected | samples carrying `must_detect` — and a sample carries `must_detect` *because* it was detected. Anything known not to be detected gets `known_miss` and leaves the denominator |
+| backup verification by spot check | files compared and found equal | eight files out of 191,141 — not a denominator fault at all, but a sample too small to fail. See below |
 
 In every case the figure is true, useful and worth reporting — and in every case it measures
 *the reach of the process*, not the reach of the scanner. None of them is fixed by computing
 it more carefully, because the arithmetic is not what is wrong.
 
-The four also split into two kinds, and they need different handling: the first three are
-denominators that **bound what a number can say**, and the repair is a second, independently
+They split into three kinds, and each takes a different repair. The first three are
+denominators that **bound what a number can say**; the repair is a second, independently
 sourced denominator. The fourth is a denominator that made a number **say something it did not
-mean**, and no second denominator fixes that — it has to be renamed. §8's note on the two
-`known_*` columns is the narrow, checkable version of the same lesson.
+mean**; no second denominator fixes that — it has to be renamed. §8's note on the two `known_*`
+columns is the narrow, checkable version of that one. The fifth is not a denominator problem at
+all, and is set out below.
 
 **The fourth was the headline, which is what made it the worst of them.** `Recall 100.00%`
 printed directly above `Known misses 69`, and the layout invites reading the first as the
@@ -1133,6 +1141,61 @@ A corollary worth keeping: **the honest number is usually the better advertiseme
 demonstrates a suite finding real gaps in the scanner it tests; 100% demonstrates a suite
 confirming what already works. The second is easier to print and worth less.
 
-A fourth instance should be assumed to exist in whatever is measured next — the same standing
+### The fifth is a power problem, not a denominator problem
+
+A backup was verified with an **eight-file spot check**, which passed, and the backup was
+reported verified. An exhaustive comparison of all **191,141** files then found **147
+differences**, concentrated in directories the eight-file sample had never touched.
+
+Nothing about the denominator was wrong: the check compared eight files and reported on eight
+files. The defect is that **a sample that small over a set that large could not have failed**.
+With 147 differences in 191,141 files the per-file probability of picking a differing one is
+about 0.00077, so the chance that eight independent draws contain even one is roughly 0.6%.
+The check was therefore about 99.4% likely to pass *whether or not the backup was sound*. It
+consumed effort and produced no information, and it did so while returning the word
+"verified".
+
+That is the same tell as the other four — a result that cannot get worse no matter what is
+true — reached from the opposite direction. The first four could not report bad news because
+of *what was counted*. This one could not because of *how little was*.
+
+**The repair is a stated power, and it is neither of the other two.** A sampling check should
+report the size of the difference it was capable of finding:
+
+> this check would have detected a discrepancy affecting at least *N* files with probability
+> *P*
+
+Eight files out of 191,141 detects a 1%-of-files discrepancy with probability **7.7%**, and a
+0.077% discrepancy — the real one — with probability 0.6%. Reaching 92% power against even
+that 1% discrepancy would take **251** draws, not eight. Stating that turns "verified" into
+"verified against defects larger than X", which is a claim someone can act on: they can decide
+X is too coarse and ask for more samples. A bare "verified" hides the question.
+
+The first draft of the sentence above said 92% rather than 7.7%, and the slip is worth
+keeping on the page. 92.3% is `0.99**8` — the probability the check *misses* a 1% discrepancy,
+not the probability it finds one. Inverting it flattered an eight-file sample by a factor of
+twelve, inside the very section arguing that overstated power is the defect. Which is the
+point: a stated power is only useful if the statement is checked as arithmetic, and "state
+your power" is not self-executing. Compute it, then compute what it would take to reach the
+power you actually wanted.
+
+**The degenerate case turned up in the same round, and the same repair catches it.** A
+checker in this round's tooling reported 0 problems over a set that was empty: its key list
+had been truncated at 14 entries and `verdict` sorts after `size`, so the field it filtered on
+was never in the list and the set it tested had nothing in it. Power zero, reported as a clean
+pass. Nothing about the logic was wrong — it correctly found no problems in no files.
+
+This is why the stated power has to include the *N*, not just the probability. "Checked 0
+samples" is impossible to misread; "no problems found" over the same 0 samples reads as a
+result. Any check in this project that reports a count of problems must report the count of
+things it examined beside it, and a reviewer should treat the second number as the one that
+says whether the first means anything.
+
+The general form, worth applying to any spot check in this project: **a check that samples
+must state what it could have caught, or it is not a check, it is a ritual.** The three
+existing verification passes in §2.4 are exhaustive and so are exempt; anything that samples
+is not.
+
+A sixth instance should be assumed to exist in whatever is measured next — the same standing
 assumption §5.3 makes about masking, and for the same reason: this class of error is invisible
 to reading the code, because the code computes exactly what it says it computes.

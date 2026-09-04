@@ -12,7 +12,8 @@ number, because the measurement is the useful part and re-deriving it costs anot
 | # | candidate | status |
 |---|---|---|
 | 1 | unpinnable plugin/theme slug | **closed** — 18.6% of unpinnable slugs are attacker staging, against a 50% bar |
-| 2 | magic bytes disagreeing with the extension, in a media directory | open — evidence recorded, no FP measurement yet |
+| 2 | magic bytes disagreeing with the extension, in a media directory | open — FP measured 2026-09-04: **0 in 18,669** for the two positive-identification forms |
+| 3 | one filename in two letter-cases in one directory | open — behaviour confirmed, impact not evidenced |
 
 ---
 
@@ -298,9 +299,44 @@ disagree. This predicate reads only the file's own bytes — magic against exten
 character distribution after the prefix. It needs no lockfile, it behaves identically
 everywhere, and it cannot get quieter as a benign corpus grows.
 
-**What it needs before it ships.** A real false-positive measurement, and the FP population
-is known in advance and is not small: files with the wrong extension are common and usually
-innocent. A `.jpg` that is really a PNG because someone renamed it; `.gif` spacers that are
+### The false-positive measurement, run 2026-09-04
+
+§2 said the FP population was known in advance and not small. Measured, it is small — but
+only for two of the three ways the signal can fire, and separating them is the whole result.
+
+| population | image files | mismatches |
+|---|---|---|
+| `trail-data/CMS` (stock WordPress, Joomla, Magento) | 837 | **9** |
+| `trail-data/CMS-ext` (86 pinned plugins, themes, cores) | 6,464 | **0** |
+| `trail-data/Sites/demo-wp` (the sanitised real site) | 3,458 | **0** |
+| the corpus's own undetected, unreviewed pool | 7,910 | **1** |
+
+All nine hits in the stock trees are Magento **test fixtures** — `empty.jpg`, `not-a.png`,
+`magento_additional_image_error.jpg`, a `logo.gif` under `_files/design/` — several of them
+zero bytes, all deliberately-invalid images used as negative test data.
+
+Every one of those nine, and the single corpus hit, comes from the *weakest* of the three
+sub-signals: **`image-extension-no-image-magic`**, which fires on any image-named file that
+does not start with a recognised image magic — including an empty file. The two sub-signals
+that positively identify a disguise fire **zero times** across all 18,669 files:
+
+- **`ascii-PNG-prefix`** — the bytes `PNG` in ASCII, which a real PNG never begins with (it
+  begins `\x89PNG`);
+- **`raw-zlib-stream`** — a `78 9c` deflate header where an image should be.
+
+So the predicate to take forward is the positive-identification pair, not the mismatch alone,
+and the FP number for it on these populations is **0 in 18,669**. The 40 known-malicious fake
+images in `malicious-staging-001` all match `ascii-PNG-prefix`.
+
+**A caution about that zero, from getting it wrong first.** The clustering pass that found
+this originally reported **213** mismatched GIFs in the undetected pool. Every one was an
+ordinary image. The feature tested `b[:3] in (b"PNG", b"GIF")` — and a real GIF *does* begin
+with the ASCII bytes `GIF`, because `GIF89a` is its magic. Only PNG has a binary magic; for
+GIF the tell is the version field, not the first three bytes. A feature written to support
+this candidate was manufacturing evidence for it, and the 213 collapsed to 1 once the test
+was corrected. The zero above is the corrected measurement.
+
+**What it still needs before it ships.** A `.jpg` that is really a PNG because someone renamed it; `.gif` spacers that are
 actually 1×1 PNGs; SVGs named `.png`; WebP served as `.jpg`. The discriminator has to be the
 *second* half of the predicate — a long, high-entropy run drawn from the base64 alphabet
 where image data should be — not the mismatch alone. Measure against `trail-data/CMS`, the
@@ -312,3 +348,77 @@ fired on them. Nothing in them fires a rule. Under the finding-driven collection
 of `docs/tasks/CORPUS_PLAN.md` warns about, this entire family would have been invisible:
 no rule matched, so nothing would have been collected, so the technique would never have
 entered the corpus. This is the first concrete case of that principle paying for itself.
+
+---
+
+## 3. One filename, two letter-cases, one directory
+
+**Status:** the behaviour is confirmed; the impact reported for it is **not** evidenced by
+this corpus, and the difference matters.
+
+**Signal.** A directory containing two files whose names differ only in case — `about.php`
+and `about.PHP` — carrying the same sha256. Cheap to compute, needs no reference data, and
+unlike §1 it enumerates nothing.
+
+**What the corpus actually holds.** 176 paths named `about.php` and 47 named `about.PHP`,
+223 in all, across one account's quarantined live tree. Forty-seven directories hold both
+spellings, and in **all 47 the pair is byte-identical** — that part of the report is exact.
+The 47 directories are scattered through the plugin tree, under a `wp-content` the attacker
+had renamed with a hex suffix.
+
+**But all 94 paired paths carry one sha256, and it is not a payload.** It is 894 bytes of
+HTML: the 404 page of a public paste service, complete with that service's stylesheet links
+and the requested path in the body. A dropper fetched a snippet into 47 plugin directories,
+twice each; the snippet had already been deleted; what landed 94 times was the error page.
+Nothing in the corpus references that host except these 94 identical files, so the payload
+was never retrieved at all.
+
+**Why that changes the reading.** The technique was reported as anti-remediation: two
+spellings survive a case-insensitive cleanup, so a case-sensitive host keeps a live copy
+after remediation looks complete. The mechanism is real and the reasoning is sound — but
+*this* evidence does not demonstrate it, because the file that would have survived is inert.
+What the corpus does demonstrate is the dropper's **behaviour**: it writes both spellings.
+That is worth recording, and it is worth detecting, but the two claims should not be quoted
+as one.
+
+The remaining 129 `.php`-only paths are mostly the genuine article — stock WordPress
+`about.php`, Yoast's admin page — with a handful of real webshells among them (a 1.1 MB
+`goto`-obfuscated one at 31 paths, an `OBF007` urldecode loader, a `gzuncompress` stager).
+Of the 22 distinct payloads across all 223 paths, **18 are undetected**.
+
+**One more fact, which is a caution rather than a candidate.** The 94 files carry mtimes
+spread over 2015–2018, on content that is provably from 2026. They are not stomped to match
+their siblings — only 2 of 94 match a sibling exactly, none within an hour — so the dropper
+set them from somewhere else. Any triage that ranks by mtime places these among the oldest,
+most-settled files on the host. **mtime is not evidence of age on a compromised host**, and
+nothing in this corpus should be ordered by it.
+
+**The inert file names the payload that never arrived.** The 404 body carries the path the
+dropper asked for: `/snippets/g8ofh3h3db/raw/alfapas.php`. So the campaign's intended payload
+is identified even though it was never retrieved — and `alfapas` is a plausible reference to
+the ALFA TEaM shell family, which would make this a fetch of a known off-the-shelf PHP
+webshell rather than of bespoke code. Recorded as a lead, not a finding: the name is
+suggestive and the bytes are gone, so nothing here confirms which shell it was. It is the
+useful half of a null result — the drop failed, and the corpus still learned what was being
+dropped.
+
+**And the artefact is itself a signal of a different kind, which may be worth more than the
+case collision.** A file in a plugin directory whose entire content is a paste service's error
+page means *a dropper ran here and failed*. That detects a compromise with no payload present
+— the class a content-based scanner is structurally blind to, because there is nothing
+malicious to match. It has not been measured and is not a candidate yet; the FP population
+would be saved error pages in general, which are rare in a plugin tree but not unheard of in
+caches and test fixtures. Logged here so the idea is not lost with the artefact.
+
+**What it needs before it ships.** An FP measurement, and the population to measure is not
+images but *case-insensitive filename collisions in general*: `README.md`/`readme.md`,
+`Makefile`/`makefile`, and vendored trees that legitimately ship both. That measurement has
+not been run. Until it is, this is a triage query, not a rule.
+
+**Evidence:** `manifest-incident.jsonl` holds all 223 rows. The artefact itself is published
+in `corpus/shards/benign-attacker-artefacts-001` as a `must_not_detect` fixture — an
+attacker-written file carrying no attacker-authored executable content is still not malware,
+and pinning that is the point. "No code" would be loose: the page does hold `<script src>`
+tags, but every one points at the paste service's own stylesheets and bundles. That is exactly
+why it earns a fixture — it is the boundary case, and a rule taught to flag it would flag the
+service's ordinary 404.
