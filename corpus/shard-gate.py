@@ -9,7 +9,7 @@ The rule (§4.1): a sample is publishable when its verdict is not `unreviewed` A
 sensitivity tag is `clean`, `c2`, or has been masked and re-verified. `pii` and `content`
 are never publishable, because there is no substitution that makes them safe.
 """
-import json, os, sys, collections
+import json, os, re, sys, collections
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy
@@ -58,6 +58,36 @@ def evaluate(r):
 #
 # This is a hard failure rather than a publish blocker, because an unreviewed row is
 # already unpublishable for a different reason and the blocker would hide it.
+# Two invariants for the published half, both checkable WITHOUT the account map - which
+# matters, because the map is gitignored and out of repo, so a gate that needed it could
+# never run for anyone else.
+#
+#   * a published row carries no `origin`. That field is the collection's record of a path
+#     on a customer host. It is not verifiable by a stranger and not ours to publish. Four
+#     rows had one, because a promotion built the new row out of the whole local row.
+#   * every `/home/<x>/` in a published row has <x> in `acctNN` form. A real account name
+#     surviving there is the failure this catches, and it does not need to know which names
+#     are real: anything that is not a pseudonym is wrong.
+#
+# Masking missed three client names for a year of collection because it keyed on full
+# account names while the incident-response directories used abbreviations -
+# `acct42-safe-repair-...` for the account mapped as `acct42`. Name matching is the wrong
+# shape of check; a positive assertion about the form of what is allowed is the right one.
+HOME_RE = re.compile(r'/home/([^/"]+)/')
+ACCT_RE = re.compile(r'acct\d+$')
+
+def publishedLeaks(rows):
+    out = []
+    for r in rows:
+        if r.get("origin") is not None:
+            out.append((r["sha256"], "carries origin"))
+            continue
+        for m in HOME_RE.finditer(json.dumps(r)):
+            if not ACCT_RE.match(m.group(1)):
+                out.append((r["sha256"], "unmasked home component: %s" % m.group(1)))
+                break
+    return out
+
 def integrityViolations(rows):
     out = []
     for r in rows:
@@ -110,11 +140,22 @@ def main(path, apply_fix=False):
             print("  ... and %d more" % (len(bad) - 10))
         print("  move these to observed_detection; expect stays absent until a verdict is set")
 
+    leaks = publishedLeaks(rows) if os.path.basename(path) == "index.jsonl" else []
+    if os.path.basename(path) == "index.jsonl":
+        print("published rows leaking a host path   :", len(leaks))
+    if leaks:
+        print()
+        print("=== PRIVACY: published rows must carry no host path ===")
+        for sha, why in leaks[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(leaks) > 10:
+            print("  ... and %d more" % (len(leaks) - 10))
+
     if apply_fix:
         # Atomic, and under the lock. This used to be open(path, "w"), which
         # truncates a 62 MB index before the first row lands - see indexio.
         write_jsonl_atomic(path, rows)
-    return 1 if (viol or bad) else 0
+    return 1 if (viol or bad or leaks) else 0
 
 USAGE = "usage: shard-gate.py <index.jsonl> [--fix]"
 
