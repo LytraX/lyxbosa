@@ -762,6 +762,36 @@ Corpus 2026-09-03  (index 6,412 samples · 3 shards · benign 214,880 files)
   should have detected it. A rule change that keeps a detection for the wrong reason shows
   up here.
 
+### `known_fp` is the mirror of `known_miss`, and needs the same treatment
+
+`known_miss` exists because a golden suite must be able to say *"we know we miss this"*.
+The same is true in the other direction, and it is easy to miss: **a known, unfixed false
+positive**.
+
+`expect.must_not_detect` pins a false positive that has been *fixed* — if the rule ever fires
+on that file again, that is a regression and the suite goes red. But the false positives you
+find in the field are, by definition, not fixed yet. Pinning them as `must_not_detect` on the
+day you find them makes the suite red immediately, for a defect everybody already knows
+about — the exact failure `known_miss` was written to prevent, arriving from the other side.
+
+So a false-positive fixture carries `known_fp: true` while the rule still fires:
+
+- a `known_fp` that **still fires** is the expected result, counted in its own column, never
+  a failure;
+- one that **stops firing** is a *result*: the rule got better. Surface it, then promote the
+  fixture to a plain `must_not_detect` so the fix is pinned and can never silently regress;
+- a plain `must_not_detect` that fires again **is** a regression, and is red.
+
+The two columns together are what let the suite report honestly on both axes at once:
+
+```
+  Known FPs        6 expected · 0 newly fixed
+  Known misses     3 expected · 0 newly detected
+```
+
+Neither is a failure. Both are measurements of where the scanner currently stands, and both
+turn into news the moment they change.
+
 ### Every count difference must carry an attributed cause
 
 A summary line that says a number changed is not a result until it says *why*. In a corpus
