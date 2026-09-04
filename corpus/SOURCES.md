@@ -2,7 +2,7 @@
 
 ```
 corpus/
-  index.jsonl                       the published half: one row per unique blob, 12,199 rows
+  index.jsonl                       the published half: one row per unique blob, 12,202 rows
   make-summary.py                   regenerates index-summary.json from the two halves
   expect/                           golden expectations, per shard
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
@@ -20,8 +20,8 @@ The index is **split in two, and both halves matter**:
 
 | file | rows | tracked? | what it is |
 |---|---|---|---|
-| `index.jsonl` | 12,199 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 48,410 | no | everything held back, with each row's blockers |
+| `index.jsonl` | 12,202 | yes | published samples — the ones a public suite can verify |
+| `local/index-local.jsonl` | 48,407 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 
 "index.jsonl is small and lives in git" and "the index lists every blob including local-only"
@@ -59,9 +59,10 @@ had been masked and gated but never actually reviewed, and 14 that carried `pii`
 
 ## The benign half is fetched, not shipped
 
-Of the 12,199 publishable rows, **12,126 are reproducible from a pinned source or from the
+Of the 12,202 publishable rows, **12,126 are reproducible from a pinned source or from the
 stock CMS tree** and are therefore *not* shipped as blobs — they are an index row plus a
-lockfile entry. **73** samples ship as bytes: 6 polyglot fixtures and 67 staging samples.
+lockfile entry. **76** samples ship as bytes: 7 polyglot fixtures, 67 staging samples and 2
+outside-webroot wrappers.
 
 That is the point of §6: the benign half is a lockfile and a script, so anyone can
 regenerate it and get the same false-positive number, instead of taking ours on trust.
@@ -97,7 +98,26 @@ blobs, and a timestamp-named theme stager. Expectations in
 recorded version. That is the point of shipping them: the corpus previously measured recall
 over six samples it already found. See `docs/RULE_CANDIDATES.md` §2.
 
-Nothing in this shard was masked, and that is a result rather than an omission: the
+`shards/malicious-outside-webroot-001.tar.zst` — the two hex-digest wrappers from `/var/tmp`
+that `docs/KNOWN_ISSUES.md` issue 3 rests on. Polymorphic siblings in two different accounts;
+each rewrites a plugin inside the webroot while keeping three state files outside it. Both are
+`known_miss`. Account paths masked length-preservingly, both gates pass over the plaintext and
+the ~98 KB decoded stage, detection parity verified per sample.
+
+These two rows carry a **`placements`** field, which exists because of them. The index is
+content-addressed and kept one example path per blob; these blobs have 16 and 14 paths, and the
+one shown was an IR quarantine copy. `/var/tmp` — the placement that is the entire finding —
+was invisible. `placements` records the count per placement class, so a placement-based claim
+has something to rest on.
+
+`shards/malicious-polyglots-002.tar.zst` — one fixture plus one clean carrier. A 510-byte
+"Priv8 Uploader" PHP block injected straight after a real image's JFIF header and terminated
+with `__halt_compiler()` so PHP ignores the ~140 KB of image that follows. The image is
+customer content and is **not** shipped: the payload is paired with a generated 166-byte
+baseline JPEG. Parity was measured rather than assumed — original `OBF036`; payload alone
+nothing; generated carrier alone nothing; generated carrier plus payload `OBF036`.
+
+Nothing in the staging shard was masked, and that is a result rather than an omission: the
 independent identifier gate found nothing to mask, in the plaintext or in any of the 40
 statically decoded payload layers. Detection parity therefore holds by construction — the
 bytes are the bytes that were collected.

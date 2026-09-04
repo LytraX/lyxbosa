@@ -164,6 +164,15 @@ webshells and the JPEG/PHP polyglot uploader were found.
 Nothing above ~100 MB comes across at all. Record its manifest row and, where a format
 sniffer is wanted later, a 2 MB head prefix.
 
+**"Not corpus data" is not "not evidence", and conflating the two cost a misclassification.**
+A slug in the 2026-09-04 review was recorded as attacker staging on the strength of the one
+hostile file collected from it. The rest of that directory was inside a 24 KB quarantine
+tarball — which this section correctly keeps out of the corpus, and which nobody therefore
+opened. It held the complete, unmodified wordpress.org plugin the directory had been renamed
+from, and the classification was wrong. Excluding an archive's *contents* from the sample set
+is right; excluding its *member list and members* from the evidence a reviewer reads is not,
+and §2.3 already captures both. Read them.
+
 **Archive fixtures get emulated, not collected.** The suite needs archive coverage — bombs,
 nested archives, malformed central directories, a container that is a copy of an installed
 site — and every one of those is better *generated* than harvested:

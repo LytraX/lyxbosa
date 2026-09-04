@@ -127,6 +127,24 @@ is recorded here rather than fixed in passing.
 **Until then:** do not describe a webroot scan's result as a host being clean, and when a
 host is known-compromised, sweep the staging directories by hand.
 
+**The two samples are now in the corpus, and they are measured misses.** Both ship in
+`corpus/shards/malicious-outside-webroot-001`, masked and gated, carrying
+`expect.known_miss` — checked per sample with `check`, which reads the file it is given, so
+this is a rule gap and not a walker skip. Reading them settles what the sweep could only
+suggest: each is a wrapper that rewrites a plugin *inside* the webroot (`$TR`) while keeping
+three state files *outside* it, in the owning account's `~/tmp`, named with the same hex
+digest and an incrementing final character. The two are polymorphic siblings — identical
+structure, different identifiers — in two different accounts.
+
+Their index rows also carry a `placements` count, which is new and exists because of them.
+The index is content-addressed and had kept one example path per blob; these two blobs have
+16 and 14 paths, and the one path each row showed was an IR quarantine copy. The placement
+that motivates this whole issue — `/var/tmp`, plus `~/.cache`, `~/tmp` and, for the second
+sample, five copies under a `recurrent-wp-cron-*` quarantine — was invisible in the index
+while being the entire finding. A corpus that flattens placement cannot support a
+placement-based rule, which is the same failure `docs/tasks/CORPUS_PLAN.md` §2.3b describes
+for sibling files, arriving through deduplication rather than through collection.
+
 ---
 
 ## 4. `OBF021` counts sibling dynamic calls, not nested ones

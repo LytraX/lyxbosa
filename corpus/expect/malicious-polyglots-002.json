@@ -1,0 +1,50 @@
+[
+ {
+  "name": "jpeg-injected-priv8-uploader",
+  "file": "samples/jpeg-injected-priv8-uploader.php",
+  "sha256": "087700635e833f642044bf7a26389e1f74ef5ba65f15773dba6591a788c73bd2",
+  "source_sha256": "5ef0a70688832a29e9f513330d65622d4979f65181e4d86bc59d481e26e7376e",
+  "size": 676,
+  "verdict": "malicious",
+  "family": "jpeg-injected-priv8-uploader",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "min_severity": "high",
+   "must_detect": [
+    "OBF036"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "polyglot",
+   "jfif-prefix",
+   "php-injected-after-jfif-header",
+   "halt-compiler",
+   "file-upload",
+   "public-webshell-reuse"
+  ],
+  "carrier": "generated 166-byte baseline JPEG; the payload is injected after the APP0/JFIF segment, mirroring the original's layout. The original's remaining ~140 KB is real image data and is NOT shipped.",
+  "carrier_load_bearing": false,
+  "detection_parity": "measured, not assumed: original OBF036; payload alone none; generated carrier alone none; generated carrier + payload OBF036",
+  "customer_bytes_in_fixture": "none; 0 sixty-four-byte runs shared with the original outside the payload",
+  "note": "the directory this came from, plugin-inmymine, is a RENAMED copy of the wordpress.org plugin 'Protect Uploads' - the uploader was dropped into it as install.php. Reuse of a public webshell, seen in three quarantine tarballs across two accounts plus this live copy in a third."
+ },
+ {
+  "name": "clean-carrier-jpeg",
+  "file": "carriers/clean-carrier-jpeg.jpg",
+  "sha256": "4cb4e5b8c98363f062c7d67f5268595303664e83e3c9a19cbf7e0dba6e888ab4",
+  "size": 166,
+  "verdict": "benign",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_not_detect": [
+    "*"
+   ]
+  },
+  "note": "a valid generated JPEG must produce no findings at all"
+ }
+]

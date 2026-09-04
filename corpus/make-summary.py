@@ -17,7 +17,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Reason codes whose samples ship as BYTES in a shard. Everything else is an index row plus
 # a lockfile entry, reproducible with fetch-benign.sh rather than shipped (SOURCES.md 6).
-SHIPPED = {"media-polyglot", "staging-directory-review"}
+SHIPPED = {"media-polyglot", "staging-directory-review", "outside-webroot-sweep"}
+# Adding a reason code without adding it here silently reclassifies its samples as
+# "reproducible from a pinned source", which is the opposite of the truth. --check catches a
+# stale summary; nothing catches a stale set, so keep this beside the shard that uses it.
 
 def build():
     pub = [json.loads(l) for l in open(os.path.join(HERE, "index.jsonl"))]

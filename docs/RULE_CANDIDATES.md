@@ -11,12 +11,12 @@ number, because the measurement is the useful part and re-deriving it costs anot
 
 | # | candidate | status |
 |---|---|---|
-| 1 | unpinnable plugin/theme slug | **closed** — 20% of unpinnable slugs are attacker staging, against a 50% bar |
+| 1 | unpinnable plugin/theme slug | **closed** — 18.6% of unpinnable slugs are attacker staging, against a 50% bar |
 | 2 | magic bytes disagreeing with the extension, in a media directory | open — evidence recorded, no FP measurement yet |
 
 ---
 
-## 1. An unpinnable plugin or theme slug is a lead — **CLOSED 2026-09-04, measured 20%**
+## 1. An unpinnable plugin or theme slug is a lead — **CLOSED 2026-09-04, measured 18.6%**
 
 **Signal.** A directory under `wp-content/plugins/` or `wp-content/themes/` whose slug
 corresponds to no known plugin or theme is anomalous **on placement alone**, before anything
@@ -152,16 +152,16 @@ reading the files, not by scoring the names.
 
 | the directory is | slugs | |
 |---|---|---|
-| **attacker staging** — no upstream software of that name is in it, contents wholly hostile | **14** | **20.0%** |
-| **legitimate** — recognisable upstream, commercial or agency software | 53 | 75.7% |
+| **attacker staging** — no upstream software of that name is in it, contents wholly hostile | **13** | **18.6%** |
+| **legitimate** — recognisable upstream, commercial or agency software | 54 | 77.1% |
 | **undecidable** — too little of the directory was collected to tell | 3 | 4.3% |
 
-**20.0%**, against a bar of 50% to survive and roughly 33% below which an operator learns to
+**18.6%**, against a bar of 50% to survive and roughly 33% below which an operator learns to
 ignore the list. Even the most generous possible reading — counting all three undecidable
-directories as staging — gives **24.3%**, still below the floor. The candidate does not
+directories as staging — gives **22.9%**, still below the floor. The candidate does not
 survive on any reading of its own numbers.
 
-**What the 53 legitimate ones were**, because the shape of the miss matters more than the
+**What the 54 legitimate ones were**, because the shape of the miss matters more than the
 count: premium plugins and themes absent from the public directory (Elementor Pro, WPML,
 Slider Revolution, WPBakery, The7's core plugin, BeTheme, Bridge, Akeeba); agency-built
 framework plugins and their child themes; and vendored library trees — the Freemius SDK and
@@ -171,7 +171,7 @@ right; what was not known was the proportion, and it is three quarters.
 
 ### The fraction is not the real reason this dies. This is.
 
-**Forty of the 53 legitimate directories contained a hostile file anyway.** A webshell
+**Forty-one of the 54 legitimate directories contained a hostile file anyway.** A webshell
 dropped into `revslider/`. Another into `pwa-for-wp/`. Another at
 `wp-seopress/vendor/psr/log/index.php`. Four into `under-construction-page/themes/`. A
 `goto`-obfuscated backdoor at `.pie.tif` inside a commercial theme. An `SC_TH` block appended
@@ -213,8 +213,28 @@ generated-slug directories at the top, and it was worth having. It is not a dete
 not an advisory with a severity, and it makes no claim to precision. Nothing further is owed
 to it.
 
-The 14 confirmed staging directories became corpus samples: 76 unique blobs, shipped in
-`corpus/shards/malicious-staging-001`. See §2, which is what the review turned up instead.
+The 13 confirmed staging directories became corpus samples: 75 unique blobs, of which 67 ship
+in `corpus/shards/malicious-staging-001` and 8 are held. See §2, which is what the review
+turned up instead.
+
+### One slug was reclassified after the fact, and the correction is instructive
+
+`plugin-inmymine` was first counted as staging. It is not. The only file collected from it was
+`install.php`, a JFIF/PHP "Priv8 Uploader By InMyMine" polyglot, and one hostile file in an
+otherwise empty-looking directory reads as staging. The rest of the directory was sitting in a
+quarantine tarball that had not been opened, **because §2.3 excludes archives as corpus data**.
+Inside it is the wordpress.org plugin *Protect Uploads* by alticreation — `readme.txt`, GPLv2
+`LICENSE.txt`, `includes/class-protect-uploads-*.php`, `class Alti_ProtectUploads`, stable tag
+0.3 — complete and unmodified, with `install.php` replaced.
+
+So the directory is a **renamed legitimate plugin**, which is one of the four reasons §1 already
+listed for a slug failing to pin. The fraction moves from 20.0% to 18.6% and the 40 becomes 41:
+the correction makes the candidate's case slightly worse, not better.
+
+The transferable lesson is about §2.3, not about this slug. *Archives are not corpus data* and
+*archives are not evidence* are different claims, and only the first is true. A quarantine
+tarball is 24 KB of exactly the directory context §2.3b says to collect, and the rule that keeps
+its contents out of the corpus should not also keep them out of the review.
 
 ---
 
