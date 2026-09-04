@@ -106,6 +106,39 @@ quarantining files on clone, and casual scraping and accidental execution get ha
 **Masking is the actual control.** Nothing enters a shard unmasked, which is what
 `shard-gate.py` exists to enforce.
 
+## Running the suite, and the review-round workflow
+
+```
+corpus/verify.py                      # full run
+corpus/verify.py --skip-benign        # fast: skips the 146k-file benign sweep
+corpus/verify.py --json               # machine-readable
+corpus/verify.py --update-baseline    # re-baseline after a review round
+```
+
+**Batch your reviews, then re-baseline.** This is a workflow consequence of the guard in
+§8, and it is worth choosing rather than discovering.
+
+Every batch of human review moves samples out of `unreviewed` and into the recall
+denominator. The suite correctly refuses to compare recall across a changed denominator — a
+figure over a set that grew is not the same measurement — so it withholds the delta and says
+why. That is the right behaviour, and it has a consequence: **reviewing in many small
+batches means never seeing a comparable recall figure**, because the denominator moves every
+run.
+
+So:
+
+- review in **larger, less frequent batches** when a comparable trend matters;
+- or run `--update-baseline` **once, deliberately, at the end of a review round**, which
+  makes the new set the reference point that subsequent runs compare against.
+
+What not to do is re-baseline on every run to make the withheld delta go away. The
+withholding is the signal that the population changed; suppressing it by moving the
+reference point each time gives a smooth-looking series that compares nothing.
+
+The same applies to the benign side, though less often: adding sources to
+`benign/sources.jsonl` changes the false-positive denominator, so the FP *rate* before and
+after a lockfile change are also not directly comparable.
+
 ## What is deliberately not here
 
 - **Archives.** §2.3: not corpus data. Members are collected individually and archive
