@@ -6,6 +6,7 @@
   "operator-report": 5
  },
  "families_published": {
+  "failed-fetch-404-artefact": 1,
   "fake-plugin-image-payload-loader": 52,
   "fake-theme-zlib-payload-blobs": 1,
   "forged-plugin-auto-login-backdoor": 2,
@@ -19,13 +20,14 @@
   "pdf-magic-fake-supercache-b": 1,
   "pdf-object-file-manager": 1,
   "png-text-chunk-curl-stager": 1,
+  "sc-db-dropin": 46,
   "self-hiding-fake-core-plugin": 3,
   "timestamp-theme-eval-stager": 1,
   "woocommerce-card-skimmer": 6
  },
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
- "known_miss": 71,
- "local_only": 79467,
+ "known_miss": 117,
+ "local_only": 79420,
  "local_only_blockers": {
   "an encoded layer is present and did not yield to any static decoder. Nothing was executed to find out, so the absence of a plaintext identifier is evidence the encoder worked, not evidence the sample is clean": 8,
   "carries content, which is not maskable and is never published": 4841,
@@ -38,43 +40,45 @@
   "encoded-layer gate did not pass": 9,
   "marked local_only: permanent": 304,
   "obfuscated and did not decode: held local-only permanently": 275,
-  "sensitivity not yet assessed": 73751,
-  "verdict is unreviewed: nothing leaves that state without a human": 79459
+  "sensitivity not yet assessed": 73704,
+  "verdict is unreviewed: nothing leaves that state without a human": 79412
  },
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
  "malicious_detected": 13,
  "malicious_detected_runnable": 7,
- "malicious_known_miss": 71,
+ "malicious_known_miss": 117,
  "malicious_no_expectation": 0,
- "malicious_reviewed": 84,
+ "malicious_reviewed": 130,
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
- "published": 12202,
- "published_fetched_not_shipped": 12126,
+ "published": 12249,
+ "published_fetched_not_shipped": 12173,
  "published_reason_codes": {
   "media-polyglot": 7,
   "outside-webroot-sweep": 2,
   "pinned-benign-hash": 9164,
   "staging-directory-review": 67,
   "stock-cms-hash": 2353,
-  "stock-cms-hash-resolved-prior": 609
+  "stock-cms-hash-resolved-prior": 609,
+  "undetected-pool-review": 47
  },
  "published_shipped_as_bytes": 76,
  "sensitivity_tags": {
-  "c2": 169,
-  "clean": 12572,
+  "c2": 170,
+  "clean": 12618,
   "content": 4841,
   "identity": 99,
   "path": 62,
   "pii": 35,
   "secret": 52,
   "undecidable": 275,
-  "unreviewed": 73751
+  "unreviewed": 73704
  },
  "techniques_known": {
   "auth-cookie-forge": 2,
-  "base64": 52,
+  "base64": 98,
   "base64-blob": 2,
   "base64-wrapped-stage": 2,
+  "campaign-marker": 46,
   "card-data-exfil": 8,
   "checkout-hook-removal": 8,
   "chr-arithmetic": 7,
@@ -87,6 +91,7 @@
   "executable-bit-set": 2,
   "extension-magic-mismatch": 52,
   "fake-plugin-header": 59,
+  "file-dropper": 46,
   "file-manager": 2,
   "file-upload": 4,
   "forged-docblock": 2,
@@ -105,6 +110,7 @@
   "pdf-header-prefix": 1,
   "pdf-magic-prefix": 2,
   "pdf-object-prefix": 1,
+  "per-file-substitution-cipher": 46,
   "php-extension-non-php": 4,
   "php-in-css-extension": 5,
   "php-ini-hardening-disable": 4,
@@ -112,6 +118,7 @@
   "plugin-list-hiding": 5,
   "png-text-chunk-embedding": 1,
   "polyglot": 7,
+  "polymorphic-identifiers": 46,
   "polymorphic-sibling": 2,
   "public-webshell-reuse": 2,
   "raw-zlib-stream": 4,
@@ -125,13 +132,15 @@
   "staged-outside-webroot": 2,
   "string-split-include": 52,
   "variable-function-call": 1,
-  "webroot-target-rewrite": 2
+  "webroot-target-rewrite": 2,
+  "wordpress-db-dropin-persistence": 46
  },
  "techniques_published": {
   "auth-cookie-forge": 2,
-  "base64": 52,
+  "base64": 98,
   "base64-blob": 2,
   "base64-wrapped-stage": 2,
+  "campaign-marker": 46,
   "card-data-exfil": 6,
   "checkout-hook-removal": 6,
   "chr-arithmetic": 5,
@@ -144,6 +153,7 @@
   "executable-bit-set": 2,
   "extension-magic-mismatch": 52,
   "fake-plugin-header": 57,
+  "file-dropper": 46,
   "file-manager": 1,
   "file-upload": 4,
   "forged-docblock": 2,
@@ -162,6 +172,7 @@
   "pdf-header-prefix": 1,
   "pdf-magic-prefix": 2,
   "pdf-object-prefix": 1,
+  "per-file-substitution-cipher": 46,
   "php-extension-non-php": 1,
   "php-in-css-extension": 3,
   "php-ini-hardening-disable": 1,
@@ -169,6 +180,7 @@
   "plugin-list-hiding": 3,
   "png-text-chunk-embedding": 1,
   "polyglot": 7,
+  "polymorphic-identifiers": 46,
   "polymorphic-sibling": 2,
   "public-webshell-reuse": 1,
   "raw-zlib-stream": 1,
@@ -182,12 +194,13 @@
   "staged-outside-webroot": 2,
   "string-split-include": 52,
   "variable-function-call": 1,
-  "webroot-target-rewrite": 2
+  "webroot-target-rewrite": 2,
+  "wordpress-db-dropin-persistence": 46
  },
  "total_blobs": 91669,
  "verdicts": {
-  "benign": 12126,
-  "malicious": 84,
-  "unreviewed": 79459
+  "benign": 12127,
+  "malicious": 130,
+  "unreviewed": 79412
  }
 }

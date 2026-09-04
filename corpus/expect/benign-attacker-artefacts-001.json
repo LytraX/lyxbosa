@@ -1,0 +1,25 @@
+[
+ {
+  "name": "failed-fetch-404-artefact",
+  "file": "samples/failed-fetch-404-artefact.html",
+  "sha256": "c5cee2fbb12b67f91b9837bfc93ff8fe2b624e563c62f9f5ea246bcc9be8641f",
+  "source_sha256": "c5cee2fbb12b67f91b9837bfc93ff8fe2b624e563c62f9f5ea246bcc9be8641f",
+  "size": 894,
+  "verdict": "benign",
+  "family": "failed-fetch-404-artefact",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "must_not_detect": [
+    "*"
+   ]
+  },
+  "technique": [
+   "dual-case-filename",
+   "remote-payload-fetch",
+   "paste-service-staging"
+  ],
+  "note": "attacker-WRITTEN but inert. A dropper fetched a payload from a public paste service into 47 plugin directories under two spellings, about.php and about.PHP; the snippet had already been deleted, so all 94 files hold the service's 404 page. Pinned must_not_detect: an attacker-written file that contains no code is still not malware, and the scanner must not be taught to flag inert HTML."
+ }
+]
