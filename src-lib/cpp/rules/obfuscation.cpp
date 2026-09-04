@@ -1078,12 +1078,204 @@ const BuiltinRule OBF038 {
     .analyzer = &detail_OBF038::detectNoiseComments,
 };
 
+// OBF039: a per-file substitution cipher
+//
+// A WordPress `db.php` drop-in campaign staged 46 samples this way and not one of
+// them matched a rule. Every dangerous identifier is ciphertext, resolved at
+// runtime through a table lookup:
+//
+//     $a = array('B5krieaUrIuUr', 'kgBkx6', 'wgMIx2uMar_2kxk', ...);
+//     $f = '_G'.'UAR'.'DNME'.'PLI'.'BS'.'64'. ... ;     // plaintext alphabet
+//     $t = 'a.'.'qL'.'h3'.'bORN'.'zsd'.'Wie'. ... ;     // cipher alphabet
+//     for ($j = 0; $j < strlen($e); $j++) {
+//         $p = strpos($t, $e[$j]);
+//         $r .= ($p === false) ? $e[$j] : $f[$p];
+//     }
+//
+// That table decodes to base64_decode, file_put_contents, mkdir, rename, unlink and
+// chmod - a file dropper in the drop-in WordPress loads before any plugin or theme.
+// Constant folding cannot reach it: OBF024/OBF025 resolve identifiers *concatenated*
+// from literals, and these are never written down at all. The alphabet is per-file,
+// so 43 of the 46 samples decode to distinct token sets and no literal, hash or
+// entropy signature spans the family.
+//
+// So match the decoder rather than the payload. Two conditions, and the first is the
+// one that carries the rule:
+//
+//   * the position `strpos` found is used as an INDEX INTO ANOTHER STRING. That is
+//     what separates substitution from validation. `strpos($allowed, $in[$i])` is an
+//     ordinary character whitelist and appears in real code, but it compares the
+//     position against false and throws it away. Using it to select a character out
+//     of a second alphabet is a cipher, and there is no honest reading of it.
+//   * at least one alphabet in the file is assembled from a run of short quoted
+//     literals. This one exists to protect a specific population: a base32/base58
+//     decoder performs exactly the same strpos-and-index dance, because that is what
+//     decoding *is*. What it does not do is hide its alphabet - it has no reason to,
+//     so it writes it as one literal. Without this test the rule fires on codec
+//     implementations in phpseclib-style libraries.
+namespace detail_OBF039 {
+    constexpr size_t kWindow = 256;            // strpos to the indexed use
+    constexpr size_t kMinFragments = 6;        // literals in an assembled alphabet
+    constexpr size_t kMaxFragmentWidth = 8;
+
+    inline bool isIdentByte(unsigned char c) {
+        return std::isalnum(c) != 0 || c == '_';
+    }
+
+    // One quoted literal starting at `i`, which must be the opening quote. Returns
+    // one past the closing quote, or npos; `width` is the byte count between them.
+    size_t readLiteral(std::string_view c, size_t i, size_t& width) {
+        if (i >= c.size() || (c[i] != '\'' && c[i] != '"')) return std::string_view::npos;
+        const char q = c[i];
+        size_t j = i + 1;
+        while (j < c.size()) {
+            if (c[j] == '\\') { j += 2; continue; }
+            if (c[j] == q) { width = j - i - 1; return j + 1; }
+            ++j;
+        }
+        return std::string_view::npos;
+    }
+
+    inline bool isSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }
+
+    // Longest run of short quoted literals joined by `.`:  'a.'.'qL'.'h3'.'bORN' -> 4
+    //
+    // Stops as soon as the threshold is reached. That matters: this is the only O(n)
+    // step in the rule, and it is deliberately reached last, after a file has already
+    // shown the strpos-index shape - so it never runs on the whole tree.
+    size_t longestConcatRun(std::string_view c) {
+        size_t best = 0;
+        size_t i = 0;
+        while (i < c.size()) {
+            if (c[i] != '\'' && c[i] != '"') { ++i; continue; }
+            size_t run = 0;
+            size_t j = i;
+            while (true) {
+                size_t width = 0;
+                const size_t end = readLiteral(c, j, width);
+                if (end == std::string_view::npos || width > kMaxFragmentWidth) break;
+                ++run;
+                size_t k = end;
+                while (k < c.size() && isSpace(c[k])) ++k;
+                if (k >= c.size() || c[k] != '.') break;
+                ++k;
+                while (k < c.size() && isSpace(c[k])) ++k;
+                if (k >= c.size() || (c[k] != '\'' && c[k] != '"')) break;
+                j = k;
+            }
+            if (run > best) best = run;
+            if (best >= kMinFragments) return best;
+            size_t width = 0;
+            const size_t end = readLiteral(c, i, width);
+            i = (end == std::string_view::npos) ? i + 1 : end;
+        }
+        return best;
+    }
+
+    std::vector<MatchResult> detectSubstitutionCipher(std::string_view content) {
+        std::vector<MatchResult> out;
+        // Cheap guards first: this analyzer has no literal gate, so it runs on every
+        // file in the tree. Two memmems, and both must hold for any cipher.
+        if (content.find("strpos") == std::string_view::npos) return out;
+        if (content.find(".=") == std::string_view::npos) return out;
+
+        size_t concatRun = 0;
+        bool concatChecked = false;
+
+        size_t at = content.find("strpos");
+        while (at != std::string_view::npos) {
+            const size_t next = content.find("strpos", at + 1);
+
+            // Whole word only.
+            if (at > 0 && isIdentByte(static_cast<unsigned char>(content[at - 1]))) { at = next; continue; }
+
+            size_t p = at + 6;
+            while (p < content.size() && (content[p] == ' ' || content[p] == '\t')) ++p;
+            if (p >= content.size() || content[p] != '(') { at = next; continue; }
+
+            // Walk the argument list tracking depth, remembering the top-level comma.
+            size_t depth = 0, comma = std::string_view::npos, close = std::string_view::npos;
+            for (size_t j = p; j < content.size() && j < p + kWindow; ++j) {
+                const char ch = content[j];
+                if (ch == '(') ++depth;
+                else if (ch == ')') { if (--depth == 0) { close = j; break; } }
+                else if (ch == ',' && depth == 1 && comma == std::string_view::npos) comma = j;
+            }
+            if (close == std::string_view::npos || comma == std::string_view::npos) { at = next; continue; }
+
+            // Second argument must be one character taken out of a string: `$in[$i]`.
+            const std::string_view arg2 = content.substr(comma + 1, close - comma - 1);
+            if (arg2.find('[') == std::string_view::npos ||
+                arg2.find('$') == std::string_view::npos) { at = next; continue; }
+
+            // The variable receiving the position: `$p = strpos(...`
+            size_t b = at;
+            while (b > 0 && (content[b - 1] == ' ' || content[b - 1] == '\t')) --b;
+            if (b == 0 || content[b - 1] != '=') { at = next; continue; }
+            --b;
+            while (b > 0 && (content[b - 1] == ' ' || content[b - 1] == '\t')) --b;
+            const size_t nameEnd = b;
+            while (b > 0 && isIdentByte(static_cast<unsigned char>(content[b - 1]))) --b;
+            if (b == 0 || content[b - 1] != '$' || nameEnd == b) { at = next; continue; }
+            const std::string_view target = content.substr(b, nameEnd - b);
+
+            // ...then used as an index into another string: `$f[$p]`. The byte before
+            // '[' must belong to a variable, so a bare `[$p]` subscript on an array
+            // does not qualify - that is ordinary indexed access, not substitution.
+            const std::string needle = "[$" + std::string(target) + "]";
+            const size_t windowEnd = std::min(content.size(), close + kWindow);
+            const std::string_view window = content.substr(close, windowEnd - close);
+            bool indexed = false;
+            for (size_t w = window.find(needle); w != std::string_view::npos;
+                 w = window.find(needle, w + 1)) {
+                const size_t abs = close + w;
+                if (abs > 0 && isIdentByte(static_cast<unsigned char>(content[abs - 1]))) {
+                    indexed = true;
+                    break;
+                }
+            }
+            if (!indexed || window.find(".=") == std::string_view::npos) { at = next; continue; }
+
+            // Only now pay for the alphabet scan.
+            if (!concatChecked) { concatRun = longestConcatRun(content); concatChecked = true; }
+            if (concatRun < kMinFragments) return out;
+
+            auto [line, col] = positionToLineCol(content, at);
+            MatchResult r;
+            r.line = line;
+            r.column = col;
+            r.matched = content.substr(at, std::min<size_t>(close + 1 - at, 64));
+            r.note = "Substitution cipher: the position strpos() found for $" +
+                     std::string(target) +
+                     " is used as an index into a second string and accumulated, and an "
+                     "alphabet in this file is assembled from " +
+                     std::to_string(concatRun) + " concatenated literals";
+            out.push_back(r);
+            if (out.size() >= 4) return out;
+            at = next;
+        }
+        return out;
+    }
+}
+const BuiltinRule OBF039 {
+    .code = {Category::Obfuscation, 39},
+    .name = "Substitution cipher decoder",
+    .description = "Detects a per-file substitution cipher: a strpos() position used as an index into a second, assembled alphabet",
+    .severity = Severity::Critical,
+    .patterns = {},
+    .analyzer = &detail_OBF039::detectSubstitutionCipher,
+};
+
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF001, &OBF002, &OBF003, &OBF004, &OBF005,
     &OBF006, &OBF007, &OBF008, &OBF009, &OBF010,
     &OBF011, &OBF012, &OBF013, &OBF014, &OBF015, &OBF016,
     &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023,
-    &OBF024, &OBF025, &OBF029, &OBF036, &OBF037, &OBF038
+    &OBF024, &OBF025, &OBF029, &OBF036, &OBF037, &OBF038,
+    &OBF039
 };
 
 const BuiltinRule* const* getAllRules() {
