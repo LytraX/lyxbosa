@@ -266,13 +266,34 @@ def main():
     if os.path.exists(a.baseline):
         base = json.load(open(a.baseline))
     if base:
-        res["regressions"] = {
-            "recall_delta": None if (res["recall"] is None or base.get("recall") is None)
-                            else round(res["recall"] - base["recall"], 4),
+        # §8's own rule applies to this comparison. A recall figure computed over a set whose
+        # membership changed is NOT comparable to the previous run's, and reporting a delta
+        # as though it were is how a suite starts lying quietly. So the denominator is
+        # compared first, and a bare delta is withheld when it moved.
+        base_n = (base.get("malicious", {}).get("detected", 0)
+                  + base.get("malicious", {}).get("missed", 0))
+        n_delta = tested_mal - base_n
+        reg = {
+            "reviewed_malicious_now": tested_mal,
+            "reviewed_malicious_before": base_n,
+            "reviewed_malicious_delta": n_delta,
             "new_failures": len(res["failures"]) - len(base.get("failures", [])),
             "known_miss_newly_detected": res["known_miss"]["newly_detected"]
                                          - base.get("known_miss", {}).get("newly_detected", 0),
         }
+        if n_delta != 0:
+            reg["recall_delta"] = None
+            reg["recall_delta_note"] = (
+                "withheld: the reviewed malicious set changed by %+d samples (%d -> %d), so "
+                "this run's recall is over a different population than the baseline's. The "
+                "two figures are not comparable; re-baseline deliberately, or compare only "
+                "the samples present in both runs."
+                % (n_delta, base_n, tested_mal))
+        else:
+            reg["recall_delta"] = (None if (res["recall"] is None or base.get("recall") is None)
+                                   else round(res["recall"] - base["recall"], 4))
+            reg["recall_delta_note"] = None
+        res["regressions"] = reg
     if a.update_baseline:
         os.makedirs(os.path.dirname(a.baseline), exist_ok=True)
         json.dump(res, open(a.baseline, "w"), indent=1, sort_keys=True)
@@ -312,15 +333,26 @@ def main():
               % (res["known_miss"]["expected"], res["known_miss"]["newly_detected"]))
         if "regressions" in res:
             r = res["regressions"]
-            print("  Regressions      %+d failures · recall delta %s"
-                  % (r["new_failures"],
-                     "n/a" if r["recall_delta"] is None else "%+.4f" % r["recall_delta"]))
+            if r.get("recall_delta_note"):
+                print("  Regressions      %+d failures · recall delta withheld"
+                      % r["new_failures"])
+            else:
+                print("  Regressions      %+d failures · recall delta %s"
+                      % (r["new_failures"],
+                         "n/a" if r["recall_delta"] is None else "%+.4f" % r["recall_delta"]))
         print()
         if res.get("precision_note"):
             print()
             print("  Precision withheld: %s" % res["precision_note"][:76])
             for extra in [res["precision_note"][i:i+76] for i in range(76, len(res["precision_note"]), 76)]:
                 print("                      %s" % extra)
+        if res.get("regressions", {}).get("recall_delta_note"):
+            n = res["regressions"]
+            print()
+            print("  Recall not comparable to baseline: reviewed malicious set went %d -> %d (%+d)."
+                  % (n["reviewed_malicious_before"], n["reviewed_malicious_now"],
+                     n["reviewed_malicious_delta"]))
+            print("  A recall figure over a set that grew is not the same measurement.")
         print()
         print("  Recall is over the REVIEWED set only.")
         print("  %d blobs are held and untested; the largest reasons:" % c["local_only"])

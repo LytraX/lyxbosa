@@ -239,6 +239,59 @@ as clean.
   while the report accumulates in the file, and the file never contains a single escape
   sequence.
 
+## What the detection numbers actually are
+
+Half of this is checkable today, and half is not. Both halves are stated, because a
+detection number without its denominator is not evidence.
+
+Run it yourself:
+
+```
+corpus/fetch-benign.sh     # download and hash-verify the pinned benign corpus
+corpus/verify.py           # run the golden suite
+```
+
+### The false-positive side — checkable
+
+**8 false positives across 146,710 files, a rate of 0.0055%.**
+
+Those files come from 86 pinned sources — 48 WordPress plugins, 20 themes and 18 core
+versions, each pinned by version and sha256 in `corpus/benign/sources.jsonl`. Nothing is
+shipped: `corpus/fetch-benign.sh` downloads them, verifies every hash and fails hard on a
+mismatch. Anyone can regenerate the same corpus and get the same number, which is the point
+— the figure is reproducible rather than reported.
+
+All 8 are upstream library code (the Freemius SDK, an FPDF class). They are pinned as
+`known_fp` fixtures, so if a rule change fixes one the suite says so, and if a fixed one
+ever comes back it fails.
+
+### The malicious side — not yet a number
+
+**Recall is 100% over three reviewed samples. That is a smoke test, not evidence.**
+
+The corpus holds 60,609 unique blobs; 12,132 are classified and 48,477 are still unreviewed.
+Almost all of the classified ones are benign-by-hash-match, so the reviewed *malicious* set
+is currently tiny. A recall figure over three samples says nothing about the scanner, and
+publishing it as though it did would be worse than publishing nothing.
+
+The suite therefore refuses to print some numbers:
+
+- **Precision is withheld**, with the reason printed in place of the figure. Three malicious
+  samples against 146,710 benign files makes `tp/(tp+fp)` a measure of the size difference,
+  not of detection quality — the first version of this code printed 7.89% and that number
+  was worthless. Precision needs both sets to be large in absolute terms *and* commensurate.
+- **A recall delta against the previous run is withheld** whenever the reviewed set changed
+  size, because a figure over a set that grew is not the same measurement.
+- **Known misses have their own column.** Three samples in the corpus are real malware this
+  scanner does not detect, recorded rather than omitted (see `docs/KNOWN_ISSUES.md` issue 4).
+  They count as expected, not as failures — but they are counted.
+
+### Why publish the half that is ready
+
+Because it can be verified today and can only improve. The benign half is a lockfile and a
+script; the malicious half needs human review of 48,477 blobs, and that number is printed
+next to every result until it comes down.
+
 ## CLI Reference
 
 ```
