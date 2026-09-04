@@ -1,5 +1,6 @@
 {
  "discovered_by_blobs": {
+  "directory-context": 31060,
   "lyxbosa-scan": 419,
   "manual-sweep": 60325,
   "operator-report": 5
@@ -24,7 +25,7 @@
  },
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
  "known_miss": 71,
- "local_only": 48407,
+ "local_only": 79467,
  "local_only_blockers": {
   "an encoded layer is present and did not yield to any static decoder. Nothing was executed to find out, so the absence of a plaintext identifier is evidence the encoder worked, not evidence the sample is clean": 8,
   "carries content, which is not maskable and is never published": 4841,
@@ -37,8 +38,8 @@
   "encoded-layer gate did not pass": 9,
   "marked local_only: permanent": 304,
   "obfuscated and did not decode: held local-only permanently": 275,
-  "sensitivity not yet assessed": 42691,
-  "verdict is unreviewed: nothing leaves that state without a human": 48399
+  "sensitivity not yet assessed": 73751,
+  "verdict is unreviewed: nothing leaves that state without a human": 79459
  },
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
  "malicious_detected": 13,
@@ -67,7 +68,7 @@
   "pii": 35,
   "secret": 52,
   "undecidable": 275,
-  "unreviewed": 42691
+  "unreviewed": 73751
  },
  "techniques_known": {
   "auth-cookie-forge": 2,
@@ -183,10 +184,10 @@
   "variable-function-call": 1,
   "webroot-target-rewrite": 2
  },
- "total_blobs": 60609,
+ "total_blobs": 91669,
  "verdicts": {
   "benign": 12126,
   "malicious": 84,
-  "unreviewed": 48399
+  "unreviewed": 79459
  }
 }

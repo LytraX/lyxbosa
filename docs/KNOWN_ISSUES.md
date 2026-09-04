@@ -97,24 +97,53 @@ served content lives and where a webshell has to be to receive an HTTP request. 
 are not served directly. A staging directory outside the webroot is used precisely because
 it is not in the scan path: the payload is written there and pulled in at execution time.
 
-**Which execution path — one is now documented, two remain hypotheses.** This originally
+**Which execution path — settled 2026-09-04, and it was none of the three.** This originally
 listed three candidates with no evidence between them: an `include`/`require`, an
-`auto_prepend_file` directive, or a cron entry. The corpus now settles one of them. The
-second sample's `placements` field records **five copies under a `recurrent-wp-cron-*`
-quarantine directory** — the containment operation isolated it as cron-related material, which
-is placement evidence for the cron path specifically. `include`/`require` and
-`auto_prepend_file` remain plausible and unevidenced.
+`auto_prepend_file` directive, or a cron entry. Placement evidence then favoured cron: the
+second sample's `placements` field records five copies under a `recurrent-wp-cron-*`
+quarantine directory. The directory-context collection resolved the question outright, by
+recovering the three state files each wrapper names in the owning account's `~/tmp` and by
+decoding the 185-entry `hex2bin` name table in full.
 
-That distinction matters more than it looks, and it strengthens the case for the `--profile
-host` option below rather than the documentation one. **A cron-triggered payload does not need
-to be reachable by HTTP at all.** The usual mental model of a webshell — it must sit in the
-served tree so a request can reach it — is what makes a webroot-anchored scan feel sufficient.
-It is not sufficient for this sample: nothing about it needs to be servable, so no amount of
-scanning the webroot more thoroughly would find it, and the containment evidence says that is
-how it actually ran. The detection
-content of these files is unremarkable — the same rules that fire on any obfuscated PHP
-would have fired here. **Nothing about the rules failed. The walker was never given the
-directory.**
+**The path that demonstrably ran is self-daemonisation.** The table carries a PHP-binary
+search (`/usr/bin/php`, `PHP_BINDIR`, `command -v php`, then `php -n -r 'echo PHP_SAPI;'` to
+reject `fpm`/`cgi`), then a spawn ladder — `nohup … & echo $!`, `setsid`, `setsid -w`,
+`sh -c`, `start-stop-daemon -S -b -m -p %PIDFILE%`, `daemonize`, and finally `pcntl_fork` +
+`posix_setsid` + `pcntl_exec` — over an exec-primitive ladder (`shell_exec`, `exec`, `system`,
+`passthru`, `popen`, `proc_open`) each guarded by a `disable_functions` read. The recovered log
+file contains those exact commands failing under resource exhaustion:
+`nohup: error while loading shared libraries: libc.so.6`, `sh: fork: retry: Resource
+temporarily unavailable`, and two segfaults of `'/usr/bin/php' -n -r 'echo PHP_SAPI;'`. The PID
+files hold recorded pids — evidence the spawn returned one, not that anything is still running.
+This is execution evidence, not placement inference.
+
+**Cron is real as intent and unevidenced as execution.** The same table carries
+`crontab -l 2>&1`, `no crontab`, `* * * * * `, `/tmp/.cron_`, `crontab ` and
+` > /dev/null 2>&1` — a per-minute installer. But no `/tmp/.cron_*` remnant exists on the host,
+and every one of the 50 accounts returns "no crontab". `include`/`require` and
+`auto_prepend_file` remain unevidenced and are now also unnecessary as explanations.
+
+**The staging-directory ladder is in the table too**, and it explains the placement census
+rather than being explained by it: `$HOME` via `posix_geteuid`/`posix_getpwuid`, then `.cache`,
+`/var/tmp`, `/tmp`, `DOCUMENT_ROOT`, `sys_get_temp_dir`. `~/.cache` 4 · `~/tmp` 2 · `/var/tmp` 1
+is that list, in that order, with copies falling wherever an attempt succeeded. The placement
+was not incidental; it is the malware's own fallback order, which is exactly the property a
+`--profile host` walk would need to cover.
+
+All of this strengthens the case for the `--profile host` option below rather than the
+documentation one. **A payload that daemonises does not need to be reachable by HTTP at all.**
+The usual mental model of a webshell — it must sit in the served tree so a request can reach it
+— is what makes a webroot-anchored scan feel sufficient. It is not sufficient for this sample:
+nothing about it needs to be servable, so no amount of scanning the webroot more thoroughly
+would find it. The detection content of these files is unremarkable — the same rules that fire
+on any obfuscated PHP would have fired here. **Nothing about the rules failed. The walker was
+never given the directory.**
+
+**One half of the sample is gone for good.** Each wrapper also names a target *inside* the
+webroot — a `.css` file in a plugin directory, whose original bytes and permissions it stores
+so it can restore them. Both target directories were removed before any collection pass and
+appear in no manifest this corpus holds. The wrapper, its state files and its intent survive;
+what it rewrote does not.
 
 **Impact.** Recall measured against a webroot-only scan overstates coverage on exactly the
 class of sample that matters most — attacker-staged, outside the served tree, and invisible

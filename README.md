@@ -278,7 +278,7 @@ to a `known_miss` column and out of the denominator. The figure could only ever 
 working detection broke. It is still reported, under the name of what it actually is — a
 regression check — and 100% is the right answer there.
 
-The corpus holds 60,609 unique blobs; 12,202 are classified and 48,407 are still unreviewed.
+The corpus holds 91,669 unique blobs; 12,202 are classified and 79,467 are still unreviewed.
 Almost all of the classified ones are benign by hash match against pinned upstream, so the
 reviewed *malicious* set is 84 samples — small, and stated rather than implied.
 

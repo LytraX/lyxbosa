@@ -133,17 +133,32 @@ leave the slug enumeration as what it always was — **a triage aid for a human 
 queue**, with no claim to precision at all. That is a genuinely useful thing to have, and it
 does not need to be a detection to earn its place.
 
-### A collection-scope note, worth keeping with this
+### A collection-scope note, worth keeping with this — **gap closed 2026-09-04**
 
-The corpus holds the four payload blobs from that directory but **not** the `style.css` and
-`screenshot.png` that disguised it — because collection was driven by the scan report, and
-those two files matched no rule, so nothing collected them. The payload survives and the
-camouflage does not.
+Until the directory pass, the corpus held the four payload blobs from that directory but
+**not** the `style.css` and `screenshot.png` that disguised it, because collection was driven
+by the scan report and those two files matched no rule. The payload survived and the camouflage
+did not.
 
-That matters for this candidate specifically: the camouflage is exactly what a
-placement-based rule keys on, and it is the part the corpus is missing. Rule-driven
-collection captures what the rules already find. Anything a new rule would need to see has
-to be collected on a different basis — by directory, not by finding.
+That mattered for this candidate specifically: the camouflage is exactly what a placement-based
+rule keys on, and it was the part the corpus was missing. Rule-driven collection captures what
+the rules already find. Anything a new rule would need to see has to be collected on a different
+basis — by directory, not by finding.
+
+A directory-context pass before the host was wiped collected all 13 files. Three of them are
+facts no rule would ever have surfaced, and all three are placement facts:
+
+- the disguise is a **byte-exact copy** of a real commercial child theme's `style.css`
+  (`Theme Name: FitnessBase`, `Template: consultstreet`) and a genuine 1000×750 PNG screenshot
+  — not an imitation, a copy;
+- the three legitimate files share an mtime of 2026-07-31, **three weeks older** than every
+  payload in the directory (2026-08-28);
+- **six of the thirteen files are zero bytes**, two of them under a second naming scheme
+  (`ORVX-*.php`) that appears nowhere else.
+
+The lesson survives the fix and is the reason the note stays: the corpus could only produce
+those three facts because someone went back for the directory. Had the host been wiped on
+schedule, the argument in this section would have stayed permanently unfalsifiable.
 
 ### Result — measured 2026-09-04. **The candidate is closed.**
 
