@@ -2,7 +2,8 @@
 
 ```
 corpus/
-  index.jsonl                       the authority: one row per unique blob, 60,609 rows
+  index.jsonl                       the published half: one row per unique blob, 12,202 rows
+  make-summary.py                   regenerates index-summary.json from the two halves
   expect/                           golden expectations, per shard
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
   fetch-benign.sh                   downloads, verifies hashes, unpacks. Downloads are not committed
@@ -19,8 +20,8 @@ The index is **split in two, and both halves matter**:
 
 | file | rows | tracked? | what it is |
 |---|---|---|---|
-| `index.jsonl` | 10,018 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 50,591 | no | everything held back, with each row's blockers |
+| `index.jsonl` | 12,202 | yes | published samples — the ones a public suite can verify |
+| `local/index-local.jsonl` | 79,467 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 
 "index.jsonl is small and lives in git" and "the index lists every blob including local-only"
@@ -34,10 +35,38 @@ than the row count. That is deliberate: collapsing to one reason per row hides t
 actionable blocker behind the generic one — which is exactly what happened when the gate first
 stored only the first reason and the encoded-layer failures disappeared behind "unreviewed".
 
+**`index-summary.json` is generated, not written.** It used to be maintained by hand, which
+is how it came to say `shipped-sample: 2353` in its reason codes while also saying
+`published_shipped_as_bytes: 6` — two claims that cannot both be true. `make-summary.py`
+computes it from the two halves, and `make-summary.py --check` fails non-zero if the file on
+disk disagrees with the index. Run it after any change to either half.
+
 `publishable` is **computed by `shard-gate.py`, never asserted by hand**. Running it with
 `--fix` recomputes every row; running it without arguments fails non-zero if any row claims
 a publishability it cannot justify. It caught 103 such rows on its first run — samples that
 had been masked and gated but never actually reviewed, and 14 that carried `pii`.
+
+### Any writer of either half goes through `indexio.py`
+
+`write_jsonl_atomic` for the write, `index_lock` around a read-modify-write. Not a style
+preference — both were paid for on 2026-09-04, when two sessions worked this tree at once.
+
+`shard-gate.py --fix` used to `open(path, "w")`, which truncates a 62 MB index before the
+first row lands. A concurrent reader measured 48,407 rows, then 14,148, then 79,467 — three
+moments of one write, and indistinguishable from corruption from the outside. It also saw
+fields that "appear nowhere in my sources" and were gone seconds later: another session's
+merge, half-written. The round stopped and reported possible corruption, which was the right
+call on the available evidence and cost the round anyway. **The tell is a
+`make-summary.py --check` that passes in one instant and fails the next.**
+
+The second failure mode did not fire and is the worse one. Two writers each doing a
+read-modify-write of the whole file means the last one silently drops the other's rows, and
+**every gate still passes** — a half-merged index is internally consistent, so no integrity
+check can catch it. Only the lock can.
+
+`python3 corpus/indexio.py --selftest` reproduces the torn read against the old write and
+shows it absent from the new one. It keeps the control on purpose: a test that only proves
+the new path is clean cannot tell you the old path was the cause.
 
 `reason` is a short code rather than prose, to keep the file a reasonable size:
 
@@ -48,12 +77,14 @@ had been masked and gated but never actually reviewed, and 14 that carried `pii`
 | `stock-cms-hash-resolved-prior` | as above, and it resolves a prior corpus row that was tier `unverified` |
 | `media-polyglot` | media container carrying executable code |
 | `media-clean-not-published` | structurally clean media: no code, so a false positive or customer content |
+| `staging-directory-review` | a human opened the whole directory, confirmed it is attacker staging, and the sample passed both gates |
 
 ## The benign half is fetched, not shipped
 
-Of the 10,018 publishable rows, **10,012 are reproducible from a pinned source** and are
-therefore *not* shipped as blobs — they are an index row plus a lockfile entry. Only **6**
-samples ship as bytes.
+Of the 12,202 publishable rows, **12,126 are reproducible from a pinned source or from the
+stock CMS tree** and are therefore *not* shipped as blobs — they are an index row plus a
+lockfile entry. **76** samples ship as bytes: 7 polyglot fixtures, 67 staging samples and 2
+outside-webroot wrappers.
 
 That is the point of §6: the benign half is a lockfile and a script, so anyone can
 regenerate it and get the same false-positive number, instead of taking ours on trust.
@@ -63,8 +94,8 @@ corpus/fetch-benign.sh              # download, verify, unpack
 VERIFY_ONLY=1 corpus/fetch-benign.sh   # re-check hashes already on disk
 ```
 
-`benign/sources.jsonl` currently pins **54 sources, 418 MB**: 33 WordPress plugins,
-15 themes, and 6 WordPress core versions including deliberately old ones, because an
+`benign/sources.jsonl` currently pins **86 sources**: 48 WordPress plugins,
+20 themes, and 18 WordPress core versions including deliberately old ones, because an
 outdated core is what a real host looks like. The plugin and theme list is not guesswork —
 it was taken from the corpus itself, by counting which slugs the unreviewed backlog actually
 contained. Pinning them mechanically decided **7,050 rows**, of which 2,940 were sitting in
@@ -77,6 +108,41 @@ upstream may have been replaced.
 
 `shards/malicious-polyglots-001.tar.zst` — 6 masked polyglot samples and 3 clean-carrier
 precision fixtures, 128 KB. Expectations in `expect/malicious-polyglots-001.json`.
+
+`shards/malicious-staging-001.tar.zst` — 67 samples from 14 confirmed attacker-staging
+directories, 3.0 MB, in 7 families: a fake-plugin loader that keeps its payload in files
+named as images, a WooCommerce card skimmer, a self-hiding fake core plugin, a forged
+update-header request gate, a forged-plugin auto-login backdoor, a fake theme of raw zlib
+blobs, and a timestamp-named theme stager. Expectations in
+`expect/malicious-staging-001.json`.
+
+**Sixty-four of the 67 are `known_miss`** — real malware this scanner does not detect at the
+recorded version. That is the point of shipping them: the corpus previously measured recall
+over six samples it already found. See `docs/RULE_CANDIDATES.md` §2.
+
+`shards/malicious-outside-webroot-001.tar.zst` — the two hex-digest wrappers from `/var/tmp`
+that `docs/KNOWN_ISSUES.md` issue 3 rests on. Polymorphic siblings in two different accounts;
+each rewrites a plugin inside the webroot while keeping three state files outside it. Both are
+`known_miss`. Account paths masked length-preservingly, both gates pass over the plaintext and
+the ~98 KB decoded stage, detection parity verified per sample.
+
+These two rows carry a **`placements`** field, which exists because of them. The index is
+content-addressed and kept one example path per blob; these blobs have 16 and 14 paths, and the
+one shown was an IR quarantine copy. `/var/tmp` — the placement that is the entire finding —
+was invisible. `placements` records the count per placement class, so a placement-based claim
+has something to rest on.
+
+`shards/malicious-polyglots-002.tar.zst` — one fixture plus one clean carrier. A 510-byte
+"Priv8 Uploader" PHP block injected straight after a real image's JFIF header and terminated
+with `__halt_compiler()` so PHP ignores the ~140 KB of image that follows. The image is
+customer content and is **not** shipped: the payload is paired with a generated 166-byte
+baseline JPEG. Parity was measured rather than assumed — original `OBF036`; payload alone
+nothing; generated carrier alone nothing; generated carrier plus payload `OBF036`.
+
+Nothing in the staging shard was masked, and that is a result rather than an omission: the
+independent identifier gate found nothing to mask, in the plaintext or in any of the 40
+statically decoded payload layers. Detection parity therefore holds by construction — the
+bytes are the bytes that were collected.
 
 Every sample in it is a **generated carrier plus an extracted payload**: no customer image
 or document bytes are present, verified by confirming no 64-byte run is shared with the
@@ -105,6 +171,39 @@ quarantining files on clone, and casual scraping and accidental execution get ha
 
 **Masking is the actual control.** Nothing enters a shard unmasked, which is what
 `shard-gate.py` exists to enforce.
+
+## Running the suite, and the review-round workflow
+
+```
+corpus/verify.py                      # full run
+corpus/verify.py --skip-benign        # fast: skips the 146k-file benign sweep
+corpus/verify.py --json               # machine-readable
+corpus/verify.py --update-baseline    # re-baseline after a review round
+```
+
+**Batch your reviews, then re-baseline.** This is a workflow consequence of the guard in
+§8, and it is worth choosing rather than discovering.
+
+Every batch of human review moves samples out of `unreviewed` and into the recall
+denominator. The suite correctly refuses to compare recall across a changed denominator — a
+figure over a set that grew is not the same measurement — so it withholds the delta and says
+why. That is the right behaviour, and it has a consequence: **reviewing in many small
+batches means never seeing a comparable recall figure**, because the denominator moves every
+run.
+
+So:
+
+- review in **larger, less frequent batches** when a comparable trend matters;
+- or run `--update-baseline` **once, deliberately, at the end of a review round**, which
+  makes the new set the reference point that subsequent runs compare against.
+
+What not to do is re-baseline on every run to make the withheld delta go away. The
+withholding is the signal that the population changed; suppressing it by moving the
+reference point each time gives a smooth-looking series that compares nothing.
+
+The same applies to the benign side, though less often: adding sources to
+`benign/sources.jsonl` changes the false-positive denominator, so the FP *rate* before and
+after a lockfile change are also not directly comparable.
 
 ## What is deliberately not here
 

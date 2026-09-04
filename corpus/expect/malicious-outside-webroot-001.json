@@ -1,0 +1,74 @@
+[
+ {
+  "name": "hex-digest-wrapper-outside-webroot-a",
+  "file": "samples/hex-digest-wrapper-outside-webroot-a.php",
+  "sha256": "782a8924be8af9eb06833f1ffff3ab7f66c1c5d2441945c80cd00f3f3474bac8",
+  "source_sha256": "3529f0f6b2cd5892cefdecca7b18b5ac0845f078fd9f5cceb8ee1969182102b1",
+  "size": 150076,
+  "verdict": "malicious",
+  "family": "hex-digest-wrapper-outside-webroot-a",
+  "sensitivity": [
+   "path"
+  ],
+  "technique": [
+   "staged-outside-webroot",
+   "hex-digest-directory-name",
+   "executable-bit-set",
+   "polymorphic-sibling",
+   "hex2bin-name-table",
+   "base64-wrapped-stage",
+   "chr-arithmetic",
+   "webroot-target-rewrite"
+  ],
+  "placements": {
+   "IR quarantine copy": 9,
+   "account home ~/.cache": 4,
+   "account home ~/tmp": 2,
+   "shared system temp (/var/tmp)": 1
+  },
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip. These are the samples KNOWN_ISSUES issue 3 rests on."
+  },
+  "masked": true,
+  "note": "account paths substituted length-preservingly; the payload stage is untouched"
+ },
+ {
+  "name": "hex-digest-wrapper-outside-webroot-b",
+  "file": "samples/hex-digest-wrapper-outside-webroot-b.php",
+  "sha256": "f0c984de49e8d2b5a34af89b594a5f67963e58ffc7dec433eb702bf6fdfbdd22",
+  "source_sha256": "37927df458e582164f3b797571345fc0f7756dbdb3e224fc311a320628edd01d",
+  "size": 148746,
+  "verdict": "malicious",
+  "family": "hex-digest-wrapper-outside-webroot-b",
+  "sensitivity": [
+   "path"
+  ],
+  "technique": [
+   "staged-outside-webroot",
+   "hex-digest-directory-name",
+   "executable-bit-set",
+   "polymorphic-sibling",
+   "hex2bin-name-table",
+   "base64-wrapped-stage",
+   "chr-arithmetic",
+   "webroot-target-rewrite"
+  ],
+  "placements": {
+   "IR quarantine copy": 6,
+   "account home ~/.cache": 2,
+   "cron-triggered copy": 5,
+   "shared system temp (/var/tmp)": 1
+  },
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip. These are the samples KNOWN_ISSUES issue 3 rests on."
+  },
+  "masked": true,
+  "note": "account paths substituted length-preservingly; the payload stage is untouched"
+ }
+]

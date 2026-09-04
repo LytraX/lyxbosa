@@ -239,6 +239,51 @@ as clean.
   while the report accumulates in the file, and the file never contains a single escape
   sequence.
 
+## Detection coverage
+
+Two figures, each stated with its denominator, each reproducible from a clean checkout:
+
+```
+corpus/fetch-benign.sh     # download and hash-verify the pinned benign corpus
+corpus/verify.py           # run the golden suite
+```
+
+**False-positive rate: 0.0055% — 8 of 146,712 files.** The benign corpus is 86 sources
+pinned by version and sha256 in `corpus/benign/sources.jsonl` — 48 WordPress plugins, 20
+themes and 18 core versions. Nothing is shipped: the script downloads each one and fails
+hard on a hash mismatch, so the corpus regenerates anywhere and yields the same number. All
+8 are upstream library code (the Freemius SDK, an FPDF class), pinned as `known_fp`
+fixtures — a rule change that fixes one is reported, and a fixed one that comes back fails
+the suite. They stay counted inside the 8; pinning a defect does not remove it from its own
+total.
+
+**Detection: 10.0% — 13 of 130 confirmed-malicious samples.** The other 117 are recorded
+known misses: real malware this version does not catch, including a WordPress `db.php`
+drop-in family of 46 samples, a fake-plugin family whose payloads are named `.png`
+([docs/RULE_CANDIDATES.md](docs/RULE_CANDIDATES.md) §2), and the webshells staged outside
+the web root that [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) issue 3 rests on. The
+denominator is every reviewed malicious sample, so reviewing a family the scanner misses
+lowers this figure. That is intended — it measures coverage, not progress.
+
+**Regression: 7 of 7 expected detections still firing.** A separate measurement over a
+separate denominator, the samples already known to be detected. It is not recall and is not
+quoted as one.
+
+**Precision is not reported.** `tp/(tp+fp)` moves with the malicious-to-benign ratio, which
+is about 1 in 35,000 on a real host and in any curated corpus is chosen by whoever did the
+reviewing. False-positive rate and detection are each computed within a single population,
+so neither depends on that ratio. Precision belongs to a field scan, which supplies the real
+ratio by construction.
+
+**Technique coverage: 60 of 60** distinct techniques in the reviewed set have a sample the
+suite checks. Read it as a staleness signal rather than completion — the denominator is
+enumerated from what has been reviewed, so it cannot see a technique in the blobs that have
+not been.
+
+The corpus holds 91,669 blobs, of which 12,249 are classified and 79,420 are unreviewed. Its
+construction, the classification rules and the reasoning behind each denominator are in
+[docs/tasks/CORPUS_PLAN.md](docs/tasks/CORPUS_PLAN.md).
+
 ## CLI Reference
 
 ```

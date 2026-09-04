@@ -1,0 +1,68 @@
+{
+ "benign": {
+  "clean": 146702,
+  "false_positive_rules": {
+   "OBF002": 1,
+   "OBF025": 26
+  },
+  "false_positives": 8,
+  "samples": 146710,
+  "skipped_breakdown": {
+   "excluded": 11993,
+   "size": 0,
+   "total": 11993,
+   "unreadable": 0
+  }
+ },
+ "corpus": {
+  "local_only": 48477,
+  "published": 12132,
+  "reviewed_fraction": 0.2002,
+  "total_blobs": 60609
+ },
+ "failures": [],
+ "false_positive_rate": 5.5e-05,
+ "fp_fixtures": {
+  "known_still_firing": 6,
+  "newly_fixed": 0,
+  "newly_fixed_samples": [],
+  "pinned": 6,
+  "regressed": 0,
+  "resolved": 6,
+  "unresolved": 0
+ },
+ "held": {
+  "carries content, which is not maskable and is never published": 4841,
+  "carries identity but no masking has been applied": 5,
+  "carries identity/path but no masking has been applied": 8,
+  "carries identity/path/secret but no masking has been applied": 4,
+  "carries identity/secret but no masking has been applied": 5,
+  "carries path but no masking has been applied": 7,
+  "carries pii, which is not maskable and is never published": 36,
+  "encoded-layer gate did not pass": 9,
+  "marked local_only: permanent": 409,
+  "obfuscated and did not decode: held local-only permanently": 380,
+  "sensitivity not yet assessed": 42759,
+  "verdict is unreviewed: nothing leaves that state without a human": 48477
+ },
+ "known_miss": {
+  "expected": 3,
+  "newly_detected": 0,
+  "samples": [],
+  "still_missed": 3
+ },
+ "malicious": {
+  "detected": 3,
+  "missed": 0,
+  "rule_exact": 3,
+  "samples": 6
+ },
+ "precision": null,
+ "precision_note": "not reported: 3 malicious samples against 146710 benign files. Precision needs both sets to be large enough to mean anything (at least 30 malicious and 1000 benign) AND commensurate in size, or tp/(tp+fp) is dominated by the size difference rather than by detection quality. Use false_positive_rate, which is computed within one population.",
+ "recall": 1.0,
+ "vulnerable": {
+  "detected": 0,
+  "missed": 0,
+  "samples": 0
+ }
+}

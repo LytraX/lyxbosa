@@ -11,7 +11,30 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- **A golden corpus and a reproducible suite** (`corpus/`). The benign half is 86 upstream
+  sources pinned by version and sha256 — nothing is committed, `corpus/fetch-benign.sh`
+  downloads and hash-verifies — so the false-positive rate regenerates anywhere and yields
+  the same number. `corpus/verify.py` runs it. See
+  [Detection coverage](README.md#detection-coverage).
+
+### Changed
+
+- **Detection is reported over every reviewed malicious sample.** It previously printed
+  `recall 100%`, which was true and meaningless: `must_detect` was populated from a rescan,
+  so a sample carried it *because* it had been detected, and anything known not to be
+  detected was moved to a `known_miss` column and out of the denominator. The figure could
+  only fall if a working detection broke. That measurement is still reported under the name
+  of what it is — a regression check — and the coverage figure is now stated over the whole
+  reviewed set, where it can deliver bad news.
+- **Precision is no longer reported at all.** It had been withheld until the malicious and
+  benign sets were "commensurate" in size, which was the worse repair: satisfying that means
+  shrinking the benign side until the ratio is near 1:1, tens of thousands of times more
+  malicious than a real host, and printing something flattering that means nothing.
+  `tp/(tp+fp)` belongs to a field scan, which supplies the real ratio by construction.
+- **Known false positives stay counted in the false-positive total.** Pinning a defect
+  records it; it does not remove it from the number it belongs to.
 
 ## [2.1.0] - 2026-09-03
 

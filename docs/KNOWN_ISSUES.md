@@ -95,26 +95,75 @@ world-writable system directory.
 **Why the scan could not see them.** The scanner is pointed at webroots, which is where
 served content lives and where a webshell has to be to receive an HTTP request. These files
 are not served directly. A staging directory outside the webroot is used precisely because
-it is not in the scan path: the payload is written there and pulled in at execution time by
-an `include`/`require`, a `auto_prepend_file` directive, or a cron entry. The detection
-content of these files is unremarkable — the same rules that fire on any obfuscated PHP
-would have fired here. **Nothing about the rules failed. The walker was never given the
-directory.**
+it is not in the scan path: the payload is written there and pulled in at execution time.
+
+**Which execution path — settled 2026-09-04, and it was none of the three.** This originally
+listed three candidates with no evidence between them: an `include`/`require`, an
+`auto_prepend_file` directive, or a cron entry. Placement evidence then favoured cron: the
+second sample's `placements` field records five copies under a `recurrent-wp-cron-*`
+quarantine directory. The directory-context collection resolved the question outright, by
+recovering the three state files each wrapper names in the owning account's `~/tmp` and by
+decoding the 185-entry `hex2bin` name table in full.
+
+**The path that demonstrably ran is self-daemonisation.** The table carries a PHP-binary
+search (`/usr/bin/php`, `PHP_BINDIR`, `command -v php`, then `php -n -r 'echo PHP_SAPI;'` to
+reject `fpm`/`cgi`), then a spawn ladder — `nohup … & echo $!`, `setsid`, `setsid -w`,
+`sh -c`, `start-stop-daemon -S -b -m -p %PIDFILE%`, `daemonize`, and finally `pcntl_fork` +
+`posix_setsid` + `pcntl_exec` — over an exec-primitive ladder (`shell_exec`, `exec`, `system`,
+`passthru`, `popen`, `proc_open`) each guarded by a `disable_functions` read. The recovered log
+file contains those exact commands failing under resource exhaustion:
+`nohup: error while loading shared libraries: libc.so.6`, `sh: fork: retry: Resource
+temporarily unavailable`, and two segfaults of `'/usr/bin/php' -n -r 'echo PHP_SAPI;'`. The PID
+files hold recorded pids — evidence the spawn returned one, not that anything is still running.
+This is execution evidence, not placement inference.
+
+**Cron is real as intent and unevidenced as execution.** The same table carries
+`crontab -l 2>&1`, `no crontab`, `* * * * * `, `/tmp/.cron_`, `crontab ` and
+` > /dev/null 2>&1` — a per-minute installer. But no `/tmp/.cron_*` remnant exists on the host,
+and every one of the 50 accounts returns "no crontab". `include`/`require` and
+`auto_prepend_file` remain unevidenced and are now also unnecessary as explanations.
+
+**The staging-directory ladder is in the table too**, and it explains the placement census
+rather than being explained by it: `$HOME` via `posix_geteuid`/`posix_getpwuid`, then `.cache`,
+`/var/tmp`, `/tmp`, `DOCUMENT_ROOT`, `sys_get_temp_dir`. `~/.cache` 4 · `~/tmp` 2 · `/var/tmp` 1
+is that list, in that order, with copies falling wherever an attempt succeeded. The placement
+was not incidental; it is the malware's own fallback order, which is exactly the property a
+`--profile host` walk would need to cover.
+
+All of this strengthens the case for the `--profile host` option below rather than the
+documentation one. **A payload that daemonises does not need to be reachable by HTTP at all.**
+The usual mental model of a webshell — it must sit in the served tree so a request can reach it
+— is what makes a webroot-anchored scan feel sufficient. It is not sufficient for this sample:
+nothing about it needs to be servable, so no amount of scanning the webroot more thoroughly
+would find it. The detection content of these files is unremarkable — the same rules that fire
+on any obfuscated PHP would have fired here. **Nothing about the rules failed. The walker was
+never given the directory.**
+
+**One half of the sample is gone for good.** Each wrapper also names a target *inside* the
+webroot — a `.css` file in a plugin directory, whose original bytes and permissions it stores
+so it can restore them. Both target directories were removed before any collection pass and
+appear in no manifest this corpus holds. The wrapper, its state files and its intent survive;
+what it rewrote does not.
 
 **Impact.** Recall measured against a webroot-only scan overstates coverage on exactly the
 class of sample that matters most — attacker-staged, outside the served tree, and invisible
 to the scan that produced the "clean" verdict. It also means a host can be reported clean
 while a live payload sits one `include` away from execution.
 
-**Shape of a fix — not implemented, recorded only.** Two options, and the second is
-probably the right one:
+**Shape of a fix — not implemented, recorded only. The choice between the two is now
+settled.** The cron evidence above decides it: a payload that never needs to be servable is
+not reachable by scanning the served tree more carefully, however well the documentation
+explains where to look. Option 1 tells an operator to go and look somewhere; option 2 looks.
+For this class of sample only the second one can work, so it is the design conclusion rather
+than the preference it was when both were guesses.
 
 1. **Documentation.** State plainly that a webroot scan is not a host scan, and give the
    directories worth adding: `/tmp`, `/var/tmp`, `/dev/shm`, per-account home directories
    outside the served tree (including `~/tmp`, `~/.cache` and dot-directories), and the
    system cron and systemd unit paths.
-2. **A scan profile that does it by default.** A `--profile host` (as against the implicit
-   `webroot`) that walks those locations as well, with the ownership signal made explicit:
+2. **A scan profile that does it by default — the chosen shape.** A `--profile host` (as
+   against the implicit `webroot`) that walks those locations as well, with the ownership
+   signal made explicit:
    a file in a shared temp directory owned by an unprivileged *web* account, carrying the
    executable bit, with a name that is a hex digest and no extension, is worth surfacing
    on placement alone — the same placement-and-permissions reasoning that several existing
@@ -126,6 +175,24 @@ is recorded here rather than fixed in passing.
 
 **Until then:** do not describe a webroot scan's result as a host being clean, and when a
 host is known-compromised, sweep the staging directories by hand.
+
+**The two samples are now in the corpus, and they are measured misses.** Both ship in
+`corpus/shards/malicious-outside-webroot-001`, masked and gated, carrying
+`expect.known_miss` — checked per sample with `check`, which reads the file it is given, so
+this is a rule gap and not a walker skip. Reading them settles what the sweep could only
+suggest: each is a wrapper that rewrites a plugin *inside* the webroot (`$TR`) while keeping
+three state files *outside* it, in the owning account's `~/tmp`, named with the same hex
+digest and an incrementing final character. The two are polymorphic siblings — identical
+structure, different identifiers — in two different accounts.
+
+Their index rows also carry a `placements` count, which is new and exists because of them.
+The index is content-addressed and had kept one example path per blob; these two blobs have
+16 and 14 paths, and the one path each row showed was an IR quarantine copy. The placement
+that motivates this whole issue — `/var/tmp`, plus `~/.cache`, `~/tmp` and, for the second
+sample, five copies under a `recurrent-wp-cron-*` quarantine — was invisible in the index
+while being the entire finding. A corpus that flattens placement cannot support a
+placement-based rule, which is the same failure `docs/tasks/CORPUS_PLAN.md` §2.3b describes
+for sibling files, arriving through deduplication rather than through collection.
 
 ---
 

@@ -1,0 +1,1290 @@
+[
+ {
+  "name": "sc-db-dropin-1477d9b0",
+  "file": "samples/sc-db-dropin-1477d9b0.php",
+  "sha256": "282023d75c63b27e654bb4516feb7c7b288b941e1db20275a1c51c110ceffd26",
+  "source_sha256": "282023d75c63b27e654bb4516feb7c7b288b941e1db20275a1c51c110ceffd26",
+  "size": 75266,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "1477d9b0",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-9365882a",
+  "file": "samples/sc-db-dropin-9365882a.php",
+  "sha256": "43437e5f8b68da8f967977be8a0b61a85383563731cd4c5f4e88ec078c9e2ef7",
+  "source_sha256": "43437e5f8b68da8f967977be8a0b61a85383563731cd4c5f4e88ec078c9e2ef7",
+  "size": 75213,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "9365882a",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-9ec7f151",
+  "file": "samples/sc-db-dropin-9ec7f151.php",
+  "sha256": "b2c320ffabdf517b7cb53d773c7033f0e8ac5cdd405ad40789112f63091bd66f",
+  "source_sha256": "b2c320ffabdf517b7cb53d773c7033f0e8ac5cdd405ad40789112f63091bd66f",
+  "size": 75239,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "9ec7f151",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-5e11edb7",
+  "file": "samples/sc-db-dropin-5e11edb7.php",
+  "sha256": "f975a8822a782c975e3ba3ce542ffb9ad346012c9a6f132f614d13345ad26846",
+  "source_sha256": "f975a8822a782c975e3ba3ce542ffb9ad346012c9a6f132f614d13345ad26846",
+  "size": 75253,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "5e11edb7",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-adb4ca70",
+  "file": "samples/sc-db-dropin-adb4ca70.php",
+  "sha256": "f5ba6634c6a718b63df618ba8447c9af1376f933df194e1fae78a98b71672012",
+  "source_sha256": "f5ba6634c6a718b63df618ba8447c9af1376f933df194e1fae78a98b71672012",
+  "size": 75427,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "adb4ca70",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-4006e531",
+  "file": "samples/sc-db-dropin-4006e531.php",
+  "sha256": "acf684609fad7b76bd2cb94f583d21ceb10f53385f8d65afdd9829e01bd30d4d",
+  "source_sha256": "acf684609fad7b76bd2cb94f583d21ceb10f53385f8d65afdd9829e01bd30d4d",
+  "size": 75371,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "4006e531",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-3ebd0101",
+  "file": "samples/sc-db-dropin-3ebd0101.php",
+  "sha256": "a0816f068b8512bc7b26f57f5dcff5861370e0343a3062db95fc2c74f3f2d2c7",
+  "source_sha256": "a0816f068b8512bc7b26f57f5dcff5861370e0343a3062db95fc2c74f3f2d2c7",
+  "size": 75316,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "3ebd0101",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-c0e4b1c5",
+  "file": "samples/sc-db-dropin-c0e4b1c5.php",
+  "sha256": "6d51f8e26aff38d2b67772a8b52d658943587c41d54ea7bc992b59a8c3e2a309",
+  "source_sha256": "6d51f8e26aff38d2b67772a8b52d658943587c41d54ea7bc992b59a8c3e2a309",
+  "size": 75299,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "c0e4b1c5",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-9435d6ca",
+  "file": "samples/sc-db-dropin-9435d6ca.php",
+  "sha256": "b4a8dfb9bda92ef5cb420d455880b712ca27efad979c8eaa43a81628a3e8dfa3",
+  "source_sha256": "b4a8dfb9bda92ef5cb420d455880b712ca27efad979c8eaa43a81628a3e8dfa3",
+  "size": 75425,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "9435d6ca",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-211e18e5",
+  "file": "samples/sc-db-dropin-211e18e5.php",
+  "sha256": "1e10c8d2f824380244227a5f18bff4d419337c465f0ce6724747b182677245c3",
+  "source_sha256": "1e10c8d2f824380244227a5f18bff4d419337c465f0ce6724747b182677245c3",
+  "size": 75493,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "211e18e5",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-43c1fcf5",
+  "file": "samples/sc-db-dropin-43c1fcf5.php",
+  "sha256": "a5526f47f32a8774bc58bd30adbf46b7227b983fa86d0bae203c18b837143dbd",
+  "source_sha256": "a5526f47f32a8774bc58bd30adbf46b7227b983fa86d0bae203c18b837143dbd",
+  "size": 75420,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "43c1fcf5",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-855a1165",
+  "file": "samples/sc-db-dropin-855a1165.php",
+  "sha256": "fe0d33d200b6fdb1e41bee9957db9bee743eaade8316e4e557ef9e8dbdd2950c",
+  "source_sha256": "fe0d33d200b6fdb1e41bee9957db9bee743eaade8316e4e557ef9e8dbdd2950c",
+  "size": 75308,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "855a1165",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-9b5bd36a",
+  "file": "samples/sc-db-dropin-9b5bd36a.php",
+  "sha256": "5161885aae5d19959f307a712e6cb0b632f321c13f9c5eab03916306e8e5628a",
+  "source_sha256": "5161885aae5d19959f307a712e6cb0b632f321c13f9c5eab03916306e8e5628a",
+  "size": 75349,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "9b5bd36a",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-9a348f9b",
+  "file": "samples/sc-db-dropin-9a348f9b.php",
+  "sha256": "c8ff8da5dea213abdffab6ef672d288e87f04d174dd7adb30962b5d71e660bad",
+  "source_sha256": "c8ff8da5dea213abdffab6ef672d288e87f04d174dd7adb30962b5d71e660bad",
+  "size": 75271,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "9a348f9b",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-cc5e525c",
+  "file": "samples/sc-db-dropin-cc5e525c.php",
+  "sha256": "150c699cd5b1c66bd9c8e3b8ff03315f20109122fc62dd14ba565ebe6b501bcd",
+  "source_sha256": "150c699cd5b1c66bd9c8e3b8ff03315f20109122fc62dd14ba565ebe6b501bcd",
+  "size": 75371,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "cc5e525c",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-4353b155",
+  "file": "samples/sc-db-dropin-4353b155.php",
+  "sha256": "e94a06c8e25eeac62f1094fd6a311897ca0c9fd24985f79fd64154ed7e057929",
+  "source_sha256": "e94a06c8e25eeac62f1094fd6a311897ca0c9fd24985f79fd64154ed7e057929",
+  "size": 75165,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "4353b155",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-174b8fbf",
+  "file": "samples/sc-db-dropin-174b8fbf.php",
+  "sha256": "3c7c674c39ea1e8840902bf63e0e4214ae91daa042d23b75f2659c041c74b1a3",
+  "source_sha256": "3c7c674c39ea1e8840902bf63e0e4214ae91daa042d23b75f2659c041c74b1a3",
+  "size": 75101,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "174b8fbf",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-8d62e42d",
+  "file": "samples/sc-db-dropin-8d62e42d.php",
+  "sha256": "5245c06ac167249888d56dc8a95810fe533b6deb835384e684ae2fd741682b52",
+  "source_sha256": "5245c06ac167249888d56dc8a95810fe533b6deb835384e684ae2fd741682b52",
+  "size": 75231,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "8d62e42d",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-6838b58f",
+  "file": "samples/sc-db-dropin-6838b58f.php",
+  "sha256": "fb006844558e513c01d38a3d3ced181ea45f99853684550262d3a1fd88fd453e",
+  "source_sha256": "fb006844558e513c01d38a3d3ced181ea45f99853684550262d3a1fd88fd453e",
+  "size": 75266,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "6838b58f",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-9bb8c8ca",
+  "file": "samples/sc-db-dropin-9bb8c8ca.php",
+  "sha256": "fe5614d67da727142a3982e87d3ee3bc936f310e274d1b69cc56c6bcd8ab7e2e",
+  "source_sha256": "fe5614d67da727142a3982e87d3ee3bc936f310e274d1b69cc56c6bcd8ab7e2e",
+  "size": 75239,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "9bb8c8ca",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-f708074a",
+  "file": "samples/sc-db-dropin-f708074a.php",
+  "sha256": "4621fc0d0efe77a624a3b181a3e312560c6c13903056eba0da6cd466dea77470",
+  "source_sha256": "4621fc0d0efe77a624a3b181a3e312560c6c13903056eba0da6cd466dea77470",
+  "size": 75249,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "f708074a",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-c7d0968d",
+  "file": "samples/sc-db-dropin-c7d0968d.php",
+  "sha256": "9bb65fe970f3727e6caa09c49171f1837b988ed292d0ed960fb3f949f9fcb72c",
+  "source_sha256": "9bb65fe970f3727e6caa09c49171f1837b988ed292d0ed960fb3f949f9fcb72c",
+  "size": 75165,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "c7d0968d",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-dcc840b8",
+  "file": "samples/sc-db-dropin-dcc840b8.php",
+  "sha256": "fa17eff48c3f35089dd331d2b1b4a91987ce56469f789f70452e3c6f4dd2a20d",
+  "source_sha256": "fa17eff48c3f35089dd331d2b1b4a91987ce56469f789f70452e3c6f4dd2a20d",
+  "size": 75083,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "dcc840b8",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-419700f0",
+  "file": "samples/sc-db-dropin-419700f0.php",
+  "sha256": "733bfb176dac3f26c9269bb4b34dac1a8e39e27ffb47db76d5641e650924c553",
+  "source_sha256": "733bfb176dac3f26c9269bb4b34dac1a8e39e27ffb47db76d5641e650924c553",
+  "size": 75374,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "419700f0",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-219dab56",
+  "file": "samples/sc-db-dropin-219dab56.php",
+  "sha256": "9c601f1472604ea94a34a8d27edab42b03c83a9d4fbbdb76d407fb495498f9c7",
+  "source_sha256": "9c601f1472604ea94a34a8d27edab42b03c83a9d4fbbdb76d407fb495498f9c7",
+  "size": 75242,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "219dab56",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-ce0a4339",
+  "file": "samples/sc-db-dropin-ce0a4339.php",
+  "sha256": "e26584b5818c014cc529d9920d40687d25ea94cc2559386e6e81fb75b4f6ac3f",
+  "source_sha256": "e26584b5818c014cc529d9920d40687d25ea94cc2559386e6e81fb75b4f6ac3f",
+  "size": 75392,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "ce0a4339",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-30d77309",
+  "file": "samples/sc-db-dropin-30d77309.php",
+  "sha256": "bf37c2b3833c580d9dee25ccbdeaafe0875958d1f1a76e7dd90b47392b30dcbe",
+  "source_sha256": "bf37c2b3833c580d9dee25ccbdeaafe0875958d1f1a76e7dd90b47392b30dcbe",
+  "size": 75049,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "30d77309",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-bf87d640",
+  "file": "samples/sc-db-dropin-bf87d640.php",
+  "sha256": "8591f862f9bfec30c810a02cea3d50b39a73c2afad34ae2cc09c584dec3f6775",
+  "source_sha256": "8591f862f9bfec30c810a02cea3d50b39a73c2afad34ae2cc09c584dec3f6775",
+  "size": 75326,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "bf87d640",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-16de01db",
+  "file": "samples/sc-db-dropin-16de01db.php",
+  "sha256": "972eaf9ae75fa17adcab3fda62d0af0e541a6eaa10d1fa900f7c613e9f128dc9",
+  "source_sha256": "972eaf9ae75fa17adcab3fda62d0af0e541a6eaa10d1fa900f7c613e9f128dc9",
+  "size": 75222,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "16de01db",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-8d5644af",
+  "file": "samples/sc-db-dropin-8d5644af.php",
+  "sha256": "755968ecf73373ce0405a8b18a80566554fdd55b57d423abd7ca101d75a1f353",
+  "source_sha256": "755968ecf73373ce0405a8b18a80566554fdd55b57d423abd7ca101d75a1f353",
+  "size": 75381,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "8d5644af",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-c0dd0873",
+  "file": "samples/sc-db-dropin-c0dd0873.php",
+  "sha256": "cf24130ad064a54dffe9893239b2d2da878cce33d0aa3b288ba5a2ac5c82797f",
+  "source_sha256": "cf24130ad064a54dffe9893239b2d2da878cce33d0aa3b288ba5a2ac5c82797f",
+  "size": 75429,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "c0dd0873",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-8064a3d4",
+  "file": "samples/sc-db-dropin-8064a3d4.php",
+  "sha256": "cb6514333194127628dabe55ad45d929ac489ee6a2a6f09539a8f847b7e19015",
+  "source_sha256": "cb6514333194127628dabe55ad45d929ac489ee6a2a6f09539a8f847b7e19015",
+  "size": 75227,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "8064a3d4",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-d5b5e3da",
+  "file": "samples/sc-db-dropin-d5b5e3da.php",
+  "sha256": "232be7b5212e2838d118dcbaea260bcb6a0b4cf9407419123a3a7771d8544125",
+  "source_sha256": "232be7b5212e2838d118dcbaea260bcb6a0b4cf9407419123a3a7771d8544125",
+  "size": 75237,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "d5b5e3da",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-a7981bec",
+  "file": "samples/sc-db-dropin-a7981bec.php",
+  "sha256": "7dbb34bda6906cfc60154d6bcd4143048189fe96b8be022cd37f6f896600bef5",
+  "source_sha256": "7dbb34bda6906cfc60154d6bcd4143048189fe96b8be022cd37f6f896600bef5",
+  "size": 75349,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "a7981bec",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-57c09e8d",
+  "file": "samples/sc-db-dropin-57c09e8d.php",
+  "sha256": "2a687c2fa1733cba4e1052c5bbc202724a027e1121d22f12b9973873e50d1ca6",
+  "source_sha256": "2a687c2fa1733cba4e1052c5bbc202724a027e1121d22f12b9973873e50d1ca6",
+  "size": 75073,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "57c09e8d",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-afdb5669",
+  "file": "samples/sc-db-dropin-afdb5669.php",
+  "sha256": "e20fd9d558ea972743e451a6f2fb62f166cc96e32ab9ec5db3c9860b432698b6",
+  "source_sha256": "e20fd9d558ea972743e451a6f2fb62f166cc96e32ab9ec5db3c9860b432698b6",
+  "size": 75428,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "afdb5669",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-831e31ed",
+  "file": "samples/sc-db-dropin-831e31ed.php",
+  "sha256": "cc8e8f9729a0725607367bd68618fdb0166a9a6a37577850fe292b1f4725d613",
+  "source_sha256": "cc8e8f9729a0725607367bd68618fdb0166a9a6a37577850fe292b1f4725d613",
+  "size": 75100,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "831e31ed",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-9ec7f151-0fdf2718",
+  "file": "samples/sc-db-dropin-9ec7f151-0fdf2718.php",
+  "sha256": "0fdf271891036f1fbcca037c946e1642b7d47cf044a7136266fc6f93c93ab656",
+  "source_sha256": "0fdf271891036f1fbcca037c946e1642b7d47cf044a7136266fc6f93c93ab656",
+  "size": 75413,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "9ec7f151",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-c0e4b1c5-c9545aaf",
+  "file": "samples/sc-db-dropin-c0e4b1c5-c9545aaf.php",
+  "sha256": "c9545aaf8a8f83643e3965f84a6d560f4c71d2fc99f40600196f03b68888223f",
+  "source_sha256": "c9545aaf8a8f83643e3965f84a6d560f4c71d2fc99f40600196f03b68888223f",
+  "size": 75273,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "c0e4b1c5",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-9a348f9b-5f3b68e1",
+  "file": "samples/sc-db-dropin-9a348f9b-5f3b68e1.php",
+  "sha256": "5f3b68e14b94a9b723cbf866ce5dc2ed3e618a41b6f3cbd944d9db5d8df250f9",
+  "source_sha256": "5f3b68e14b94a9b723cbf866ce5dc2ed3e618a41b6f3cbd944d9db5d8df250f9",
+  "size": 75237,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "9a348f9b",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-8d62e42d-c39b7a04",
+  "file": "samples/sc-db-dropin-8d62e42d-c39b7a04.php",
+  "sha256": "c39b7a0481bb8ca358812e7465fedb22cc54cefe4c734f0ca69d33deb000d696",
+  "source_sha256": "c39b7a0481bb8ca358812e7465fedb22cc54cefe4c734f0ca69d33deb000d696",
+  "size": 75302,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "8d62e42d",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-419700f0-d9507d19",
+  "file": "samples/sc-db-dropin-419700f0-d9507d19.php",
+  "sha256": "d9507d191321fdbfee7dac1646c1193ee29c151213e24394ae2e676c3499e8fa",
+  "source_sha256": "d9507d191321fdbfee7dac1646c1193ee29c151213e24394ae2e676c3499e8fa",
+  "size": 75276,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "419700f0",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-bf87d640-8fea6003",
+  "file": "samples/sc-db-dropin-bf87d640-8fea6003.php",
+  "sha256": "8fea6003cbde0291e3b45d4ad6f731db94f2e031beaf555a9a903339ad9516f2",
+  "source_sha256": "8fea6003cbde0291e3b45d4ad6f731db94f2e031beaf555a9a903339ad9516f2",
+  "size": 75298,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "bf87d640",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-29908050",
+  "file": "samples/sc-db-dropin-29908050.php",
+  "sha256": "16547cef9b459d3542aaa15646d4b0e3283eaa30266c5d52684e07e524f8ed44",
+  "source_sha256": "16547cef9b459d3542aaa15646d4b0e3283eaa30266c5d52684e07e524f8ed44",
+  "size": 75169,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "29908050",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-5e7baeb0",
+  "file": "samples/sc-db-dropin-5e7baeb0.php",
+  "sha256": "4343946f88d851afdce017fa9208892d8fe300661c6508380a0f3dccc2b46d61",
+  "source_sha256": "4343946f88d851afdce017fa9208892d8fe300661c6508380a0f3dccc2b46d61",
+  "size": 75239,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "5e7baeb0",
+  "masked": false
+ },
+ {
+  "name": "sc-db-dropin-6a8185a3",
+  "file": "samples/sc-db-dropin-6a8185a3.php",
+  "sha256": "f03fec7e97489c90ef12959fbcda25b7d32784cdadd1392a5e5161e4117bd591",
+  "source_sha256": "f03fec7e97489c90ef12959fbcda25b7d32784cdadd1392a5e5161e4117bd591",
+  "size": 75197,
+  "verdict": "malicious",
+  "family": "sc-db-dropin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [],
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+  },
+  "technique": [
+   "wordpress-db-dropin-persistence",
+   "per-file-substitution-cipher",
+   "polymorphic-identifiers",
+   "base64",
+   "file-dropper",
+   "campaign-marker"
+  ],
+  "campaign_marker": "6a8185a3",
+  "masked": false
+ }
+]

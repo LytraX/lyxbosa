@@ -109,6 +109,12 @@ for rec in d.get("files", []):
 PY
 ```
 
+**Do not order triage by mtime.** Captured mtimes are worth having and are not evidence of
+age: 94 files in this collection carry mtimes spread over 2015–2018 on content provably
+written in 2026, and they are not stomped to match their siblings (2 of 94 match one exactly,
+none within an hour), so the dropper set them from somewhere else. Any queue sorted
+oldest-first buries them.
+
 Also capture, in the same session, the things that explain the samples and are not files
 in the report:
 
@@ -164,6 +170,15 @@ webshells and the JPEG/PHP polyglot uploader were found.
 Nothing above ~100 MB comes across at all. Record its manifest row and, where a format
 sniffer is wanted later, a 2 MB head prefix.
 
+**"Not corpus data" is not "not evidence", and conflating the two cost a misclassification.**
+A slug in the 2026-09-04 review was recorded as attacker staging on the strength of the one
+hostile file collected from it. The rest of that directory was inside a 24 KB quarantine
+tarball — which this section correctly keeps out of the corpus, and which nobody therefore
+opened. It held the complete, unmodified wordpress.org plugin the directory had been renamed
+from, and the classification was wrong. Excluding an archive's *contents* from the sample set
+is right; excluding its *member list and members* from the evidence a reviewer reads is not,
+and §2.3 already captures both. Read them.
+
 **Archive fixtures get emulated, not collected.** The suite needs archive coverage — bombs,
 nested archives, malformed central directories, a container that is a copy of an installed
 site — and every one of those is better *generated* than harvested:
@@ -176,6 +191,52 @@ site — and every one of those is better *generated* than harvested:
 bomb from 64 KB. Extend that generator into a `corpus/generate-archives.sh` producing the
 fixture set, and pair each with its expected outcome (`ARC001` on a synthesised site copy,
 `skippedRatio`/`skippedBudget` on the bomb, `skippedCorrupt` on a truncated one).
+
+### 2.3b Collect by directory, not by finding
+
+**When a directory contains a finding, collect the whole directory.** This is a collection
+principle, not a refinement of §2.3, and getting it wrong is unrecoverable.
+
+Collection driven by a scan report captures the files the rules already flagged. Everything
+else in the same directory is skipped — and *the sibling files are the context a
+placement-based rule needs*. They are, by definition, individually unremarkable: that is
+what makes them camouflage, and it is exactly why no content rule fires on them.
+
+This was learned by losing it. A randomly-named theme directory in this collection
+held four zlib payload blobs, which the scanner flagged and which were duly collected. Live
+on the host the same directory also held a copy of a legitimate commercial theme's
+`style.css` and `screenshot.png` — the two files that made a fake theme look like a theme.
+Neither matched a rule, so neither was collected, and the host is now authorised for wipe.
+**The corpus has the payload and not the disguise**, which means it cannot support the
+placement rule the sample argues for (`docs/RULE_CANDIDATES.md` §1).
+
+The general form is the more uncomfortable statement:
+
+> A corpus assembled from findings can only support rules resembling the ones that built it.
+
+(This is one of four appearances of the same property; see §11.)
+
+That is the `discovered_by` problem from §4.4 arriving from a different direction. There the
+concern was circularity in *measurement* — recall computed over samples the scanner found
+itself is close to 100% by construction. Here it is circularity in *capability*: a new rule
+needs to see what the old rules ignored, and a finding-shaped collection has already thrown
+that away. Recording provenance fixes the first; only collecting differently fixes the
+second.
+
+**What to do next time, at collection:**
+
+- for every finding on disk, collect its **parent directory in full** — every sibling file,
+  with metadata, not just the flagged one;
+- keep the directory listing regardless, so the shape is recoverable even where the bytes
+  are too large or too sensitive to take (§2.1 already captures listings; this extends it to
+  bytes);
+- apply the usual exclusions to the *contents* — backups, huge media — but let the default be
+  take-the-directory rather than take-the-file;
+- for archive members, the equivalent is the member's directory prefix inside the container.
+
+The cost is bounded and small: webshells sit in directories of ordinary size, and the
+oversized cases are already excluded on other grounds. The cost of not doing it is that the
+context is gone the moment the host is wiped, and no amount of later analysis brings it back.
 
 ### 2.4 Verify before anyone deletes anything
 
@@ -338,7 +399,7 @@ line, and it diffs and merges in git.
  "sensitivity":["path","c2"],
  "masked":{"path":"account segment -> acct01","c2":"kept deliberately (IOC)"},
  "publishable":true,
- "origin":{"incident":"2026-08-22","account_hash":"a3f1",
+ "origin":{"incident":"<incident>","account_hash":"a3f1",
            "path":"/home/<acct01>/public_html/wp-admin.php",
            "mode":"0444","mtime":1782000000},
  "discovered_by":"lyxbosa-scan",
@@ -358,7 +419,8 @@ line, and it diffs and merges in git.
   ways: overall, and excluding samples this scanner found itself. A recall figure computed
   only over `lyxbosa-scan` samples is close to 100% by construction and would overstate
   what the tool does on malware it has never seen. Six families in the current corpus are
-  in that category, which is worth being able to say out loud rather than hide.
+  in that category, which is worth being able to say out loud rather than hide. This is one of
+  four appearances of the same property; see §11.
 - One row per *sample*; duplicates collapse to one row with a count.
 
 Migrate the existing `manifest.tsv` (4,198 rows) by mapping `tier/family/stored_as/decoder`
@@ -474,7 +536,7 @@ attacker-renamed directory (`wp-content__<hash>`) — the latter being an IOC wo
 
 Treat "the gate passes" as a claim about the gate until an independent check agrees.
 
-**The standing rule, because this is now five failures and not an anecdote.** Every one was
+**The standing rule, because this is now nine failures and not an anecdote.** Every one was
 caught by a gate; **none** was caught by reading the code — including the fifth, a field
 whose contents are account names *by construction*, which slipped through because the
 masking helper applied a four-character minimum. So:
@@ -486,7 +548,27 @@ masking helper applied a four-character minimum. So:
 - **Verification always uses a check that does not share the masker's own patterns.** Same
   regexes on both sides tests only that the code agrees with itself.
 
-A sixth failure should be assumed to exist in whatever field is added next.
+A further failure should be assumed to exist in whatever field is added next. Four more have
+occurred since this was written, taking the tally to nine — and, as predicted, every one was
+caught by a check and none by reading code. The eighth and ninth were not masking bugs at all
+but the same class of defect in adjacent machinery, which is why the rule is stated about
+*checks* rather than about masking:
+
+8. **`undecodable` conflated two different facts** — "there is an encoded layer I could not
+   open" and "there is no encoded layer at all" — and §5.4 then held the sample permanently on
+   the first reading. Of 380 blobs carrying it, 281 genuinely have an encoded layer and **99
+   have none**, so 99 samples were held for a reason that did not apply to them.
+9. **The sensitivity tagger matched PII field *names*, not values.** A skimmer reading
+   `$_POST['billing_phone']` contains the name of a personal field and nobody's phone number.
+   The fix was *not* to loosen the test until it agreed: a second, independent scan for
+   personal-data **values** was written and validated against four positive and four negative
+   controls **before** its answer was trusted. It fires on all four positives; on the seven
+   samples in question it finds nothing.
+
+Two of the nine were also caught in fields nobody expected to carry identifiers, and two more
+— the eighth and ninth — in code that was not the masker at all. The rule generalises: any
+check that decides what may be published is load-bearing, and none of them is reviewable by
+reading.
 
 **Two more have since occurred, both exactly as predicted.** The sixth was in the content
 masker, a new component that shipped without a gate: it rewrote the string literal
@@ -709,14 +791,150 @@ Corpus 2026-09-03  (index 6,412 samples · 3 shards · benign 214,880 files)
   vulnerable        10 /      10 detected
   rule-exact     2,061 / 2,104 matched the expected rule
 
-  Recall     99.34%    Precision   97.95%
-  Known misses       3 expected · 0 newly detected
+  Detection    13 /   84 reviewed malicious samples detected   (15.5%)
+  Regression    7 /    7 expected detections still firing
+  False-positive rate  0.0055%
+  Known FPs          6 expected · 0 newly fixed
+  Known misses      71 recorded · 69 of them re-run here · 0 newly detected
+  Techniques        55 of 55 known techniques covered by a tested sample
   Regressions        0 new · 0 fixed
 ```
+
+`Detection` and `Regression` are two different questions and only the second can honestly be
+100%: see §11. Reporting them under one name called "recall" put a tautology in the headline.
 
 - **`rule-exact`** is the line that boolean suites miss: detected, but by the rule that
   should have detected it. A rule change that keeps a detection for the wrong reason shows
   up here.
+
+### The corpus measures false-positive rate and recall. A field scan measures precision.
+
+The suite reports no precision figure, and this is a decision rather than a gap to be closed
+later. It is worth stating plainly because the pull towards printing one is strong.
+
+Precision is `tp/(tp+fp)`. It is only meaningful when the malicious-to-benign ratio in the
+measured set resembles the ratio an operator actually faces. **On the production host this
+corpus came from, that was roughly 37 true findings in 1.3 M files — about 1 in 35,000.** No
+hand-curated set reproduces that, and every curated set inflates it by orders of magnitude.
+A precision figure computed on the corpus is therefore a statement about *the corpus's
+composition*, not about the scanner.
+
+Two repairs were considered and both are worse than not reporting it:
+
+- **Withhold until the two sets are "commensurate" in size.** This was implemented first and
+  is the more dangerous of the two, because satisfying it makes the number *less* honest:
+  commensurability means shrinking the benign side to a few hundred files, which puts the
+  ratio near 1:1 — tens of thousands of times more malicious than reality. It would print
+  something flattering that means nothing. It is the same error as quoting a raw 7.89%,
+  inverted.
+- **Report it unconditionally with the population sizes beside it.** This stops lying by
+  construction but produces a figure dominated by curation: at 472 malicious samples against
+  8 false positives it reads 98.3%; review 200 instead and it reads 96%. The number moves
+  with how much reviewing has been done, not with how good the scanner is, and publishing it
+  invites exactly the misreading this plan exists to avoid.
+
+**False-positive rate and recall are the honest pair, precisely because each is computed
+within one population.** 8 in 146,710 benign files. Detected over reviewed malicious. Neither
+depends on the ratio between the two sets, which is why neither inherits the coupling problem
+— and it is why adding sources to `benign/sources.jsonl` does not move a goalpost: the FP
+denominator grows, the FP rate stays comparable, and recall is untouched.
+
+There *is* one place a precision figure is genuinely meaningful, and it is not the corpus: a
+**field scan of a real host**, which supplies the real ratio by construction. On the 1.3 M-file
+tree above it is 37 true findings against 63 remaining false ones — precision around **37%**,
+which is low, and which is exactly what the operator experiences. That number belongs in
+field measurement, reported against a named host and a named scan. It does not belong in a
+curated suite, and the two must never be quoted as though they were the same measurement.
+
+### The milestone is technique coverage, not sample count
+
+The suite's stop condition was originally "precision starts printing". That was unreachable
+by construction — it required 1,467 reviewed malicious samples against a ceiling of 472, and
+the requirement *moved away* as the benign corpus grew. That is a defect in the milestone,
+not a shortfall in the work, and the repair is to replace it rather than to satisfy it.
+
+> **The malicious set covers every distinct technique currently known, recall is reported
+> over it, and the technique count is stated beside it.**
+
+That is checkable, it does not move when the benign corpus grows, and it maps to what someone
+actually wants to know about a scanner — not "what percentage" but "does it catch the things
+we have seen". `index-summary.json` carries `techniques_known` and `techniques_published`;
+the suite prints coverage and names every technique with no tested sample, so the remaining
+work is a list rather than a number.
+
+**Read `55 of 55` as a staleness signal, not as completion.** The denominator is enumerated
+from what has been reviewed, so the milestone self-satisfies: review nothing new and coverage
+stays at 100% for ever. What it actually asserts is narrow and worth stating in those words —
+*nothing currently in the reviewed set is untested*. It says nothing whatever about the ~700
+detected blobs across 183 technique clusters that are still unreviewed, and unknown techniques
+live precisely there, where this measurement cannot see them.
+
+So the number going **down** is the healthy outcome: it means a review round found a technique
+the corpus did not previously know about. A round that leaves it at 100% has either tested
+everything new or reviewed nothing, and the coverage figure cannot tell those apart. Pair it
+with the reviewed-sample count, which can.
+
+This is a specific case of a property that has now turned up four times in this project;
+see **§11** — where the fourth instance is the recall figure this section used to print.
+
+### `known_fp` is the mirror of `known_miss`, and needs the same treatment
+
+`known_miss` exists because a golden suite must be able to say *"we know we miss this"*.
+The same is true in the other direction, and it is easy to miss: **a known, unfixed false
+positive**.
+
+`expect.must_not_detect` pins a false positive that has been *fixed* — if the rule ever fires
+on that file again, that is a regression and the suite goes red. But the false positives you
+find in the field are, by definition, not fixed yet. Pinning them as `must_not_detect` on the
+day you find them makes the suite red immediately, for a defect everybody already knows
+about — the exact failure `known_miss` was written to prevent, arriving from the other side.
+
+So a false-positive fixture carries `known_fp: true` while the rule still fires:
+
+- a `known_fp` that **still fires** is the expected result, counted in its own column, never
+  a failure;
+- one that **stops firing** is a *result*: the rule got better. Surface it, then promote the
+  fixture to a plain `must_not_detect` so the fix is pinned and can never silently regress;
+- a plain `must_not_detect` that fires again **is** a regression, and is red.
+
+The two columns together are what let the suite report honestly on both axes at once:
+
+```
+  Known FPs        6 expected · 0 newly fixed
+  Known misses    71 recorded · 69 of them re-run here · 0 newly detected
+```
+
+Neither is a failure. Both are measurements of where the scanner currently stands, and both
+turn into news the moment they change.
+
+### The two columns were built with opposite conventions, and only one was right
+
+This is the narrower lesson behind §11's fourth instance, and it is worth stating separately
+because it is easier to act on.
+
+The columns look symmetric and are not. **A `known_fp` sample stays inside the number it
+belongs to.** Measured: the benign sweep counts 8 false positives, and all 8 are pinned
+`known_fp` material — the whole figure is known, unfixed false positives, and reporting it as
+`0.0055%` is honest precisely because none of them was taken out. (The fixture list holds 6
+sha256 and matches 8 files, because `class-freemius.php` and `FreemiusBase.php` appear under
+several plugins; the store is content-addressed and the sweep is not.)
+
+**A `known_miss` sample was removed from its denominator entirely.** Same concept, mirrored
+layout, opposite effect: one column reports "here is a defect, and it is in the total", the
+other reported "here is a defect, and the total is computed as though it were not".
+
+The symmetry *was* checked — both columns exist, both stay green, both promote to a hard
+assertion when they change. What was never checked is what each does to its own denominator.
+So:
+
+> **When you build a mirror, check that the reflection behaves the same way, not just that it
+> is there.**
+
+And the reason nobody noticed for several rounds is worth recording too: **the false-positive
+side happened to be correct**, so there was nothing to contrast the other against. A pair
+where one half is right and the other is wrong looks, from a distance, exactly like a pair
+where both are right. Reviewing them side by side is what finds it; reviewing each on its own
+never will.
 
 ### Every count difference must carry an attributed cause
 
@@ -847,3 +1065,137 @@ Still open, and each changes the work:
    shards following once masked.
 3. **Who reviews the media queue**, and against what standard. §4.3 shrinks it to a contact
    sheet, but the "is there a recognisable person or document in this" call is yours.
+
+---
+
+## 11. One property, five appearances: a measurement that cannot deliver bad news
+
+Five separate cautions in this plan share one diagnostic tell. Four of them are the same
+statement in different clothes; the fifth reaches the same place by a different mechanism and
+needs a different repair, which is exactly why they are worth listing together:
+
+> **Any measurement whose denominator is enumerated by the same process that produces the
+> numerator is bounded by that process, not by reality.**
+
+The four instances:
+
+| where | the numerator | the denominator, and who chose it |
+|---|---|---|
+| §4.4 `discovered_by` | samples this scanner detects | samples this scanner found. Recall over them is close to 100% by construction |
+| §2.3b collect-by-directory | files the rules flagged | files the rules flagged. "A corpus assembled from findings can only support rules resembling the ones that built it" |
+| §8 technique coverage | techniques with a tested sample | techniques seen in the reviewed set. Review nothing and coverage is permanently 100% |
+| §8 recall, **as it used to be reported** | samples detected | samples carrying `must_detect` — and a sample carries `must_detect` *because* it was detected. Anything known not to be detected gets `known_miss` and leaves the denominator |
+| backup verification by spot check | files compared and found equal | eight files out of 191,141 — not a denominator fault at all, but a sample too small to fail. See below |
+
+In every case the figure is true, useful and worth reporting — and in every case it measures
+*the reach of the process*, not the reach of the scanner. None of them is fixed by computing
+it more carefully, because the arithmetic is not what is wrong.
+
+They split into three kinds, and each takes a different repair. The first three are
+denominators that **bound what a number can say**; the repair is a second, independently
+sourced denominator. The fourth is a denominator that made a number **say something it did not
+mean**; no second denominator fixes that — it has to be renamed. §8's note on the two `known_*`
+columns is the narrow, checkable version of that one. The fifth is not a denominator problem at
+all, and is set out below.
+
+**The fourth was the headline, which is what made it the worst of them.** `Recall 100.00%`
+printed directly above `Known misses 69`, and the layout invites reading the first as the
+result and the second as a footnote when the relationship is the reverse. Nothing was hidden —
+both numbers were on the screen — but the label did the misleading. That is worth separating
+out: the first three were denominators that bounded what a number *could* say; this one was a
+denominator that made a number say something it did not mean.
+
+The repair is to report both figures under honest names, because they answer different
+questions and only one of them can be tautological:
+
+```
+  Detection      13 / 84   reviewed malicious samples detected   (15.5%)
+  Regression      7 / 7    expected detections still firing
+  Known misses   71 recorded · 69 of them re-run here · 0 newly detected
+```
+
+**Detection** is over every reviewed malicious sample, detected or not. It falls when a family
+nothing catches is reviewed — which is the correct behaviour, not a problem to be smoothed —
+and it rises only when rules improve. It cannot be gamed by review order. **Regression** is the
+old figure under the name of what it always was; being 100% by construction is fine there,
+because reporting a break is its entire job.
+
+What each of them needed instead was a **second, independently-sourced denominator**, and
+that is the general repair:
+
+- `discovered_by` records provenance, so recall can also be reported over the ~54,592 blobs
+  this scanner did *not* find;
+- collect-by-directory takes the siblings, so the corpus contains files no rule selected —
+  and the whole `fake-plugin-image-payload-loader` family exists only because of that;
+- technique coverage is paired with the reviewed-sample count and with the count of detected
+  blobs still unreviewed, so "55 of 55" cannot be read as completion.
+
+**The tell is always the same**: a number that cannot get worse no matter what happens in the
+world. Recall over self-found samples cannot fall; a finding-shaped corpus cannot contain a
+counterexample; technique coverage cannot drop while nothing is reviewed; and a recall whose
+denominator excludes every known miss can only ever report a regression. When a measurement
+has no way to deliver bad news about the thing it appears to be about, the denominator is what
+to look at.
+
+A corollary worth keeping: **the honest number is usually the better advertisement.** 15.5%
+demonstrates a suite finding real gaps in the scanner it tests; 100% demonstrates a suite
+confirming what already works. The second is easier to print and worth less.
+
+### The fifth is a power problem, not a denominator problem
+
+A backup was verified with an **eight-file spot check**, which passed, and the backup was
+reported verified. An exhaustive comparison of all **191,141** files then found **147
+differences**, concentrated in directories the eight-file sample had never touched.
+
+Nothing about the denominator was wrong: the check compared eight files and reported on eight
+files. The defect is that **a sample that small over a set that large could not have failed**.
+With 147 differences in 191,141 files the per-file probability of picking a differing one is
+about 0.00077, so the chance that eight independent draws contain even one is roughly 0.6%.
+The check was therefore about 99.4% likely to pass *whether or not the backup was sound*. It
+consumed effort and produced no information, and it did so while returning the word
+"verified".
+
+That is the same tell as the other four — a result that cannot get worse no matter what is
+true — reached from the opposite direction. The first four could not report bad news because
+of *what was counted*. This one could not because of *how little was*.
+
+**The repair is a stated power, and it is neither of the other two.** A sampling check should
+report the size of the difference it was capable of finding:
+
+> this check would have detected a discrepancy affecting at least *N* files with probability
+> *P*
+
+Eight files out of 191,141 detects a 1%-of-files discrepancy with probability **7.7%**, and a
+0.077% discrepancy — the real one — with probability 0.6%. Reaching 92% power against even
+that 1% discrepancy would take **251** draws, not eight. Stating that turns "verified" into
+"verified against defects larger than X", which is a claim someone can act on: they can decide
+X is too coarse and ask for more samples. A bare "verified" hides the question.
+
+The first draft of the sentence above said 92% rather than 7.7%, and the slip is worth
+keeping on the page. 92.3% is `0.99**8` — the probability the check *misses* a 1% discrepancy,
+not the probability it finds one. Inverting it flattered an eight-file sample by a factor of
+twelve, inside the very section arguing that overstated power is the defect. Which is the
+point: a stated power is only useful if the statement is checked as arithmetic, and "state
+your power" is not self-executing. Compute it, then compute what it would take to reach the
+power you actually wanted.
+
+**The degenerate case turned up in the same round, and the same repair catches it.** A
+checker in this round's tooling reported 0 problems over a set that was empty: its key list
+had been truncated at 14 entries and `verdict` sorts after `size`, so the field it filtered on
+was never in the list and the set it tested had nothing in it. Power zero, reported as a clean
+pass. Nothing about the logic was wrong — it correctly found no problems in no files.
+
+This is why the stated power has to include the *N*, not just the probability. "Checked 0
+samples" is impossible to misread; "no problems found" over the same 0 samples reads as a
+result. Any check in this project that reports a count of problems must report the count of
+things it examined beside it, and a reviewer should treat the second number as the one that
+says whether the first means anything.
+
+The general form, worth applying to any spot check in this project: **a check that samples
+must state what it could have caught, or it is not a check, it is a ritual.** The three
+existing verification passes in §2.4 are exhaustive and so are exempt; anything that samples
+is not.
+
+A sixth instance should be assumed to exist in whatever is measured next — the same standing
+assumption §5.3 makes about masking, and for the same reason: this class of error is invisible
+to reading the code, because the code computes exactly what it says it computes.

@@ -1,4 +1,54 @@
 {
   "C_Cpp.default.cppStandard": "c++20",
-  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json"
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+
+  // trail-data/ and corpus/local/ hold the sample corpus: ~181k PHP files and ~48k
+  // symlinks in an 11 GB tree. They are gitignored, but .gitignore does not stop the
+  // editor: VS Code's file indexer runs ripgrep with --no-ignore --follow, so it walks
+  // the whole tree AND follows every symlink, and the language servers then try to parse
+  // what it finds. Measured on 2026-09-04: one such pass emitted 190 MB of pathnames,
+  // took the extension host past 3.8 GB, and exhausted 31 GB of RAM plus 8 GB of swap -
+  // the machine had to be restarted. These excludes are what keep that from recurring.
+  //
+  // watcherExclude stops the file watcher; search.exclude stops quick-open and search;
+  // files.exclude keeps them out of the explorer. All three are needed - each covers a
+  // different traversal.
+  "files.watcherExclude": {
+    "**/trail-data/**": true,
+    "**/corpus/local/**": true,
+    "**/corpus/blobs/**": true,
+    "**/corpus/shards/**": true,
+    "**/build/**": true,
+    "**/build-*/**": true,
+    "**/vcpkg_installed/**": true,
+    "**/node_modules/**": true
+  },
+  "search.exclude": {
+    "**/trail-data": true,
+    "**/corpus/local": true,
+    "**/corpus/blobs": true,
+    "**/corpus/shards": true,
+    "**/build": true,
+    "**/build-*": true,
+    "**/vcpkg_installed": true
+  },
+  // The single most important line here. trail-data/incoming/.../incident/ holds 47,855
+  // symlinks; with --follow (VS Code's default) ripgrep traverses every one of them and
+  // grows an inode set to match. Excludes filter what is REPORTED, not what is WALKED -
+  // measured after the excludes were in place, rg still climbed ~2.6 MB/s of RSS past
+  // 1 GB while emitting almost nothing. Turning off symlink following stops the walk.
+  "search.followSymlinks": false,
+
+  "files.exclude": {
+    "**/trail-data": true,
+    "**/vcpkg_installed": true
+  },
+
+  // The PHP language server would otherwise index every sample in the corpus - live
+  // webshells included - which is both enormous and pointless: this is a C++ project.
+  "php.problems.enabled": false,
+  "php.workspace.includePattern": "",
+  "files.associations": {
+    "**/trail-data/**": "plaintext"
+  }
 }
