@@ -7,7 +7,12 @@ highest-value improvement you could make" — plus a hard deadline: the incident
 about to be cleaned, and everything on it is unrecoverable after that.
 
 **Source of truth for collection:**
-`INCIDENT-HOST:/root/incident-2026-08-22/lyxbosa/lyxbosa-ltrx-report-03092026_1307.json`
+`<host>:/root/<incident>/lyxbosa/lyxbosa-ltrx-report-<stamp>.json`
+
+`<host>`, `<incident>` and `<stamp>` are placeholders: this file is tracked, and no customer
+hostname, account name or incident name goes in a tracked file. The real values — and the
+substitution needed to make every command below runnable verbatim — are in
+`trail-data/incoming/2026-09-03/SOURCE-OF-TRUTH.md`, which is gitignored.
 
 ---
 
@@ -39,7 +44,7 @@ df -h /home/lytrax/projects/LyxBoSa
 du -sh trail-data/CMS trail-data/Sites trail-data/Infected
 
 # What the report accounts for, by class
-ssh INCIDENT-HOST 'python3 - /root/incident-2026-08-22/lyxbosa/lyxbosa-ltrx-report-03092026_1307.json' <<'PY'
+ssh <host> 'python3 - /root/<incident>/lyxbosa/lyxbosa-ltrx-report-<stamp>.json' <<'PY'
 import json,sys,os,collections
 d=json.load(open(sys.argv[1]))
 f=d.get("files",[])
@@ -76,7 +81,7 @@ One pass on the server that writes a metadata record per file **and nothing else
 is the step whose output cannot be reconstructed later.
 
 ```bash
-ssh INCIDENT-HOST 'python3 - /root/incident-2026-08-22/lyxbosa/...json' <<'PY' > collect-manifest.jsonl
+ssh <host> 'python3 - /root/<incident>/lyxbosa/...json' <<'PY' > collect-manifest.jsonl
 import json,sys,os,hashlib,pwd,grp,stat
 d=json.load(open(sys.argv[1]))
 for rec in d.get("files", []):
@@ -124,16 +129,25 @@ comes with it.
 ```bash
 jq -r 'select(.reported_skipped==false) | .path' collect-manifest.jsonl > matched.paths
 mkdir -p trail-data/incoming/2026-09-03/tree
-rsync -a --files-from=matched.paths INCIDENT-HOST:/ trail-data/incoming/2026-09-03/tree/
+rsync -a --files-from=matched.paths <host>:/ trail-data/incoming/2026-09-03/tree/
 ```
 
 Two things learned the hard way in the session that produced this plan:
 
 - **`rsync --files-from` works; streaming `tar` over ssh does not.** Bulk-piping customer
   data off a production host trips the sandbox classifier. Use rsync.
-- **rsync preserves attacker-set permissions**, including mode `000` directories. Fix
-  readability locally *after* the manifest has recorded the originals:
-  `chmod -R u+rwX trail-data/incoming/`.
+- **rsync preserves attacker-set permissions**, including mode `000` directories — and
+  `chmod` afterwards does not converge at scale. `rsync -a` re-applies the source mode to
+  every directory it touches, so a chmod-then-retry loop keeps re-breaking what it just
+  fixed: measured at 7,971 errors, still 7,594 after five passes. Set the modes *during*
+  transfer instead, and let the manifest hold the originals:
+
+  ```bash
+  rsync -a --chmod=Du+rwx,Fu+rw --files-from=… <host>:/ dest/
+  ```
+
+  An aborted pass leaves `.~tmp~` files behind. Identify them against the manifest and
+  remove them before verifying, or they show up as orphans.
 
 ### 2.3 Archives: take the members, never the containers
 
@@ -258,6 +272,13 @@ Two consequences worth stating plainly:
 A sample is publishable when its verdict is not `unreviewed` **and** every sensitivity tag
 on it is either `clean`, `c2`, or has been masked and re-verified.
 
+> **Masking is not review.** Every gate can pass on a file nobody has looked at. The gates
+> answer *"does this leak"*; the verdict answers *"what is this"*. Conflating them is how an
+> unreviewed sample ships wearing a green tick — and it is not hypothetical: the §7.2 gate's
+> first run found **103 rows flagged publishable that were still `unreviewed`**, because the
+> masking pass had set the flag from its own gate results alone. This is precisely why
+> `publishable` is computed by one piece of code from this rule, and never asserted by hand.
+
 ### 4.2 Keep the human queue small by automating triage, not judgement
 
 Do not ask a person to look at 1,700 files. Ask them to look at the ones where automation
@@ -379,7 +400,7 @@ the mask instead of the malware.
 produces exactly its `expect.must_detect` set. If masking moved the verdict, the mask is
 wrong, not the rule.
 
-### 5.2 The site corpus (`trail-data/Sites/site21.tld`)
+### 5.2 The site corpus (`trail-data/Sites/<site>/`)
 
 22,414 files of a real site — the only whole realistic site in the corpus, which is why it
 is worth keeping and why it cannot stay as-is.
@@ -390,7 +411,7 @@ is worth keeping and why it cannot stay as-is.
 2. Substitute deterministically from the same out-of-repo mapping, so cross-file references
    still resolve: a page cache that references the domain must still match the config, or
    the corpus stops being a coherent site.
-3. Prefer length-preserving replacements (`site21.tld` → `demo.tld`). The four known `OBF025`
+3. Prefer length-preserving replacements (the real domain → `demo.tld`, same length). The four known `OBF025`
    findings are a false-positive fixture and must survive unchanged.
 4. Replace `wp-content/uploads` with generated placeholders — correct extensions, plausible
    sizes, no customer bytes. Keep the directory structure; upload-path placement is itself
@@ -404,6 +425,169 @@ second person greps for the identifier list independently.
 
 Then rename to something generic (`Sites/demo-wp/`) and record in the corpus README that it
 is a sanitised real site, and what was replaced.
+
+### 5.3 What a first masking attempt actually got wrong
+
+Recorded because every one of these passed a casual read and was caught only by a gate.
+The context was masking `origin.path` for the corpus index, which §4.4 puts in git.
+
+**Four failure modes, all in one implementation:**
+
+1. **No token boundaries.** A plain regex alternation of account names substituted on bare
+   substrings. One account's name is a substring of `ir-malware-samples` and another's of
+   `manual-sweep`, so both of those got rewritten. This corrupts unrelated data rather than
+   leaking, which is why it survives review — the output still *looks* masked.
+2. **A field nobody thought of.** `prior_corpus.family` carried names like
+   `<acct>-lyxbosa-quarantine` straight through. Masking was applied to the path field only,
+   because the path was the field the author was thinking about.
+3. **Only one identifier class handled.** Account names were mapped; **domains, the incident
+   name and the provider hostname were not**, so `okf.<acct>.gr` and the incident directory
+   name survived. Building the identifier list mechanically first (§5.2 step 1) found 92
+   domain-like strings that no one would have enumerated by hand.
+4. **Identifiers appear mid-token, not just as prefixes.** Quarantine tooling encodes the
+   original path into a flat filename — `_home_<acct>_public_html_wp-admin_index.php` — and
+   related forms appear as `php56-<acct>.conf.bak`, `wp-core-repair-test-<acct>-2026...` and
+   `villa-<acct>`. Prefix-and-exact-segment masking missed all of them; one account alone
+   leaked 164 times.
+
+**The two rules that come out of it:**
+
+- **An account name can appear anywhere inside a token, so boundary-aware masking is not
+  sufficient.** Masking must handle the encoded-path forms (`_home_<acct>_…`) and
+  delimiter-joined occurrences explicitly, not just segment prefixes.
+- **A colliding identifier must be masked positionally, with a gate that asserts precisely
+  that.** One account here had a two-character name identical to the CMS's own path prefix.
+  Substituting it as a token would have rewritten `wp-content`, `wp-admin`, `wp-includes` and
+  `LayerSlider/wp/` across tens of thousands of legitimate paths — corrupting the corpus to
+  hide one name. The workable rule is to mask it only in the position where it *can* be the
+  account (`/home/<acct>/`, and the underscore-encoded `_home_<acct>_` form), and to have the
+  gate check exactly that and nothing broader. A gate that is stricter than the masker can be
+  is a gate that can never pass.
+
+**Verification must not share the masker's regexes.** A self-check built from the same
+patterns passes while being wrong — it is testing that the code does what the code does.
+The check that found the real leaks was an independent one: a raw substring grep for every
+known identifier, whose hits were then explained one class at a time until only expected
+ones remained. In this corpus that meant enumerating all 140 distinct tokens following
+`/wp-` and confirming each was a WordPress script handle (`wp-polyfill`, `wp-emoji`) or an
+attacker-renamed directory (`wp-content__<hash>`) — the latter being an IOC worth keeping.
+
+Treat "the gate passes" as a claim about the gate until an independent check agrees.
+
+**The standing rule, because this is now five failures and not an anecdote.** Every one was
+caught by a gate; **none** was caught by reading the code — including the fifth, a field
+whose contents are account names *by construction*, which slipped through because the
+masking helper applied a four-character minimum. So:
+
+- **Masking correctness is not reviewable by inspection.** Do not accept "I checked it" for
+  a masking change, from a person or from a model.
+- **Every new field that can carry an identifier gets gate coverage before it is populated,
+  not after.** The gate is part of adding the field, not a follow-up.
+- **Verification always uses a check that does not share the masker's own patterns.** Same
+  regexes on both sides tests only that the code agrees with itself.
+
+A sixth failure should be assumed to exist in whatever field is added next.
+
+**Two more have since occurred, both exactly as predicted.** The sixth was in the content
+masker, a new component that shipped without a gate: it rewrote the string literal
+`"wp_based"` inside a webshell because the bare-token account rule matched a two-character
+account name against a `wp_`-prefixed identifier. The seventh was a *gate result* stored in
+the index — a field whose contents are, by construction, the names of the identifiers the
+gate just found. Storing the finding stored the leak. Gate results now record category and
+count only.
+
+That is two independent recurrences of the same root cause in fields nobody expected to
+carry identifiers. The rule stands and should be read as load-bearing.
+
+**It was, and it took eight days to appear.** Content masking — masking sample *bytes*
+rather than index paths — is a new component, and it shipped without a gate. Its first run
+rewrote the string literal `"wp_based"` to `"ha_based"` inside a webshell, because the
+bare-token account rule matched the two-character account name against a `wp_`-prefixed
+identifier. Same collision, same root cause, new component, and again invisible to reading.
+The fix is the same positional rule, and the content masker now has its own gate that shares
+no regexes with it.
+
+### 5.5 Never byte-mask an archive container
+
+Length-preserving substitution is safe on source files and fatal on archives. A tar header
+carries a checksum over its own bytes, and a gzip member is a compressed stream: changing a
+byte inside either does not "rename a thing", it corrupts the container. The container then
+stops parsing, and **every member-level detection disappears at once**.
+
+Measured, not predicted: masking a set of collected `.tar` and `.gz` files took one from 27
+firing rules to zero, and others from a dozen to zero. The plaintext gate passed on all of
+them, because the identifiers really had been substituted — the detection-parity check is
+what caught it. A gate that only asks "are the identifiers gone" would have called this a
+success.
+
+So: **archives are excluded from content masking entirely.** This costs nothing, because
+§2.3 already says archives are not corpus data — members are collected individually and
+archive fixtures are generated. If a masked archive is ever genuinely needed, the only
+correct route is to mask each member and repack, never to edit container bytes in place.
+
+### 5.6 Two gates and a parity check, because each catches a different thing
+
+The masking pass runs three independent checks, and every one of them has now caught
+something the others did not:
+
+| check | what it catches | caught here |
+|---|---|---|
+| plaintext gate | identifiers left in the visible bytes | a customer domain surviving because the regex lookbehind blocked a match after `.`, and another surviving because a lookahead blocked a match before a digit |
+| encoded-layer gate | identifiers inside base64/gzip/hex layers | 7 samples whose encoded payload still carried an account name or domain |
+| detection parity | masking that silently destroys the sample | 12 archives reduced from full detection to nothing |
+
+**Parity must be measured with `check` per sample, never inferred from a batch scan.** This
+is a requirement, not a preference. A batch `scan` cannot distinguish *"the walker declined
+to open this file"* from *"the scanner opened it and found nothing"* — both appear in the
+report as an absence. During this pass the batch comparison flagged 14 parity changes; two
+of them were pure artefacts of the masked copies' filenames, whose extensions were not in
+the include allow-list, so those files were never scanned at all. In the batch output they
+were indistinguishable from the twelve archives whose detection had genuinely been destroyed.
+Only `check`, which reads the file it is given, separated them.
+
+This is the same silent-skip class the `SkipReason` work exists to close, resurfacing one
+level up — in the measurement harness rather than in the scanner. Anywhere a verification
+step reads "no findings", it must first be able to prove the file was read.
+
+Two more rules follow. **Lookarounds in an identifier regex should err towards over-matching** —
+masking a few extra characters of an unrelated token costs nothing, leaving a customer
+domain costs everything; both misses above were caused by a lookaround that was too strict.
+And **a masked sample is publishable only when all three checks pass**, never on the
+strength of one.
+
+### 5.4 Length-preserving masking cannot reach an encoded payload
+
+A separate limit, discovered masking the polyglot samples, and it constrains what can be
+published rather than being a bug to fix.
+
+Plaintext masking substitutes identifiers in the bytes it can see. When a sample carries an
+encoded layer — base64, gzip, hex — any identifier *inside* that layer is invisible to it.
+Two samples in this corpus embed an IPv4 address inside a `base64+inflate` blob; masking the
+plaintext leaves it untouched, and the sample still carries it.
+
+The obvious repair does not work. Decoding, masking and re-encoding changes the encoded
+blob's length and bytes, which:
+
+- moves every offset after it, and `OBF029`/`OBF036` are offset- and distribution-sensitive;
+- changes the sample's hash, so it is no longer the sample that was collected;
+- can change the verdict, which is exactly the failure §5.1 warns about — the fixture would
+  be testing the mask rather than the malware.
+
+So the rule is: **a sample whose encoded layer carries a customer identifier is not
+publishable.** Not "mask harder" — the sample stays local-only with the reason recorded, and
+a synthesised stand-in is generated for any test that needed it, the same treatment `pii`
+and `content` already get.
+
+The masking pass therefore runs **two** gates, not one:
+
+1. a plaintext gate over the masked bytes, and
+2. an **encoded-layer gate** that decodes every static layer of the *masked* output and
+   re-checks it.
+
+A sample is publishable only when both pass. In this corpus, all six polyglots passed both —
+their only identifiers are `c2` hosts, which are kept deliberately — but two are still held,
+because an embedded IP inside the encoded layer is ambiguous between an attacker callback
+(`c2`, keep) and a customer host (`identity`, mask), and that call is not mechanical.
 
 ## 6. Benign corpus — keep the stock trees, add what actually breaks rules
 
@@ -526,12 +710,85 @@ Corpus 2026-09-03  (index 6,412 samples · 3 shards · benign 214,880 files)
   rule-exact     2,061 / 2,104 matched the expected rule
 
   Recall     99.34%    Precision   97.95%
+  Known misses       3 expected · 0 newly detected
   Regressions        0 new · 0 fixed
 ```
 
 - **`rule-exact`** is the line that boolean suites miss: detected, but by the rule that
   should have detected it. A rule change that keeps a detection for the wrong reason shows
   up here.
+
+### Every count difference must carry an attributed cause
+
+A summary line that says a number changed is not a result until it says *why*. In a corpus
+report, **"fewer files scanned", "fewer files present" and "files present but skipped" are
+indistinguishable**, and all three render as a smaller number.
+
+This has now bitten in three separate places in this project:
+
+- **In the scanner**, which is why `SkipReason` exists at all — a file the walker declined
+  to open looked exactly like a file that was scanned and found clean.
+- **In the masking harness**, where a batch scan reported 14 parity changes; two were
+  masked copies whose extensions were not in the include allow-list, so they were never
+  scanned, and they were indistinguishable in the report from twelve archives whose
+  detection had genuinely been destroyed. Only per-sample `check` separated them.
+- **In site sanitisation**, where the sanitised tree scanned 110 fewer files than the
+  original — entirely because a customer ZIP's many members had been replaced by a
+  placeholder with one member. On-disk counts were unchanged.
+
+So the suite must not print a bare delta. Any difference between two corpus states —
+sample counts, files scanned, findings, shard contents — is reported with a cause attributed
+to one of: *not present*, *present but not scanned* (with the reason), *scanned and clean*,
+or *scanned and changed*. A difference the suite cannot attribute is itself a finding and
+should be surfaced as one rather than smoothed into a total.
+
+**A check must verify what it appears to verify.** Two failures of this during the corpus
+work, both of which reported success while checking nothing of the sort:
+
+- `command -v zstd tar jq` was used as an all-present test. It is not one: it reported
+  success while `zstd` was absent, because the shell builtin's exit status does not mean
+  *"all of these exist"*. A check that looks like it verifies three things and verifies only
+  some of them is worse than no check, because it converts an absent dependency into a
+  silent fallback. Test dependencies one at a time, and fail on the first missing one — the
+  standard `fetch-benign.sh` already applies to `jq` and `sha256sum`.
+- The WordPress **themes** API is a different endpoint and response shape from the plugins
+  API. Reusing the plugins resolver against theme slugs returned 404 for all fourteen, and
+  because the loop logged and continued, the run "succeeded" with a lockfile that was simply
+  missing every theme. A resolver that skips is fine; a resolver that skips *everything* of
+  one kind and still exits zero is a silent partial result. Assert the expected count.
+
+The same rule applies to anything derived from those counts. A recall or precision figure
+computed across a set whose membership changed for an unattributed reason is not comparable
+to the previous run's, and reporting it as though it were is how a suite starts lying
+quietly.
+
+### `known_miss` is a separate column, never a failure
+
+Some samples in the index carry `expect.known_miss: true` with `must_detect: []`: they are
+real malware that this scanner, at the recorded version, does **not** detect. The first
+three are polyglots — two defeated by `KNOWN_ISSUES.md` issue 4, one a PHP payload inside a
+PNG `tEXt` chunk.
+
+They must be counted as **expected misses**, in their own column, and must not contribute to
+the failure count:
+
+- a `known_miss` sample that is still missed is the **expected** result — the suite stays
+  green, because nothing regressed;
+- a `known_miss` sample that starts being **detected** is a *result*, not a broken test. The
+  suite should surface it prominently — "1 newly detected" — and the fix is to clear the
+  flag and promote the observed rules into `must_detect`, pinning the new coverage;
+- a sample that was detected and stops being detected is a **regression**, and that is the
+  only one of the three that is red.
+
+Getting this wrong has a predictable failure mode: if expected misses are scored as
+failures, the suite reports red on the day it is introduced, everyone learns to ignore the
+red, and it stops being a signal at all. A suite that cannot express "we know we miss this"
+will be made to lie about it instead.
+
+This is also the honest way to state recall. Recall computed only over samples the scanner
+already finds is close to 100% by construction; the `known_miss` column is what stops the
+headline number from quietly excluding the cases that motivated the corpus. Report it
+alongside recall, not folded into it.
 - Wire it to the existing `.baseline/` mechanism — that already diffs JSON reports
   ignoring `durationMs`, and already caught real regressions this session.
 - **Every FP and FN found in the field becomes a row with `must_not_detect` /

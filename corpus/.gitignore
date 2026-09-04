@@ -1,0 +1,14 @@
+# Built shards are release assets, not repository content: they are reproducible from
+# index.jsonl plus the fixture generators, and committing binaries defeats §7's "append is
+# one new blob and one index line".
+shards/
+blobs/
+
+# Downloads fetched by fetch-benign.sh. §6: commit the lockfile and the script, never the
+# downloads - that is what makes the benign half reproducible rather than merely shipped.
+benign/downloads/
+
+# The local-only half of the index: rows for samples that are held and never published.
+# Its counts are carried in the tracked index-summary.json, so the accounting survives
+# without the rows - see SOURCES.md.
+local/

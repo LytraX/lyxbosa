@@ -1,0 +1,52 @@
+{
+ "discovered_by_blobs": {
+  "lyxbosa-scan": 420,
+  "manual-sweep": 60324,
+  "operator-report": 5
+ },
+ "generated_from": "the full index, which is local and not committed",
+ "known_miss": 3,
+ "local_only": 50591,
+ "local_only_blockers": {
+  "carries content, which is not maskable and is never published": 5121,
+  "carries identity but no masking has been applied": 5,
+  "carries identity/path but no masking has been applied": 8,
+  "carries identity/path/secret but no masking has been applied": 4,
+  "carries identity/secret but no masking has been applied": 5,
+  "carries path but no masking has been applied": 7,
+  "carries pii, which is not maskable and is never published": 36,
+  "encoded-layer gate did not pass": 9,
+  "marked local_only: permanent": 409,
+  "obfuscated and did not decode: held local-only permanently": 380,
+  "sensitivity not yet assessed": 44593,
+  "verdict is unreviewed: nothing leaves that state without a human": 50591
+ },
+ "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
+ "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
+ "published": 10018,
+ "published_fetched_not_shipped": 10012,
+ "published_reason_codes": {
+  "media-polyglot": 6,
+  "pinned-benign-hash": 7050,
+  "shipped-sample": 2353,
+  "stock-cms-hash-resolved-prior": 609
+ },
+ "published_shipped_as_bytes": 6,
+ "sensitivity_tags": {
+  "c2": 148,
+  "clean": 10307,
+  "content": 5121,
+  "identity": 99,
+  "path": 60,
+  "pii": 36,
+  "secret": 52,
+  "undecidable": 380,
+  "unreviewed": 44593
+ },
+ "total_blobs": 60609,
+ "verdicts": {
+  "benign": 10012,
+  "malicious": 6,
+  "unreviewed": 50591
+ }
+}

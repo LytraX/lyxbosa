@@ -1,0 +1,218 @@
+[
+ {
+  "name": "pdf-object-file-manager",
+  "file": "samples/pdf-object-file-manager.php",
+  "sha256": "bb33af9d2ec280e7f810d8373f1ccd7a4e6a9736ec9982498658c421a1ec94d3",
+  "size": 82184,
+  "source_sha256": "bb420f3a4a1e136bc1db53a00b5f4b07328bedfd3c6016e1490e80795789d704",
+  "verdict": "malicious",
+  "sensitivity": [
+   "c2",
+   "path"
+  ],
+  "expect": {
+   "min_severity": "critical",
+   "must_detect": [
+    "BD012",
+    "EXP006"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "polyglot",
+   "pdf-object-prefix",
+   "file-manager",
+   "remote-fetch"
+  ],
+  "carrier": "generated, contains no customer bytes"
+ },
+ {
+  "name": "pdf-magic-fake-supercache-b",
+  "file": "samples/pdf-magic-fake-supercache-b.php",
+  "sha256": "9bbe4a34dc6b72c081d3c0053229a7551105f14988120f022752ecd8dc844964",
+  "size": 5366,
+  "source_sha256": "9bbe4a34dc6b72c081d3c0053229a7551105f14988120f022752ecd8dc844964",
+  "verdict": "malicious",
+  "sensitivity": [
+   "c2",
+   "path"
+  ],
+  "expect": {
+   "known_miss": true,
+   "known_miss_issue": "KNOWN_ISSUES.md#4 (OBF021 misses nested dynamic calls)",
+   "known_miss_reason": "not detected by this scanner at the version recorded; verified with `check` on the file directly, so this is a rule gap and not a walker/extension skip. Counted as an expected miss by the golden suite, never as a failure (CORPUS_PLAN 8).",
+   "must_detect": [],
+   "must_not_detect": []
+  },
+  "technique": [
+   "polyglot",
+   "pdf-magic-prefix",
+   "fake-plugin-header",
+   "nested-variable-function-eval",
+   "base64-blob"
+  ],
+  "carrier": "generated, contains no customer bytes"
+ },
+ {
+  "name": "png-text-chunk-curl-stager",
+  "file": "samples/png-text-chunk-curl-stager.png",
+  "sha256": "b75d14e5c40eea406f710cfecfd2e93916585fde9757a1c2157f5645882b2cc1",
+  "size": 1917,
+  "source_sha256": "aa746073f3a267f7016fcd3bc195d66877ff5eec9301d7190d77e179afc5ed79",
+  "verdict": "malicious",
+  "sensitivity": [
+   "c2",
+   "path"
+  ],
+  "expect": {
+   "known_miss": true,
+   "known_miss_reason": "not detected by this scanner at the version recorded; verified with `check` on the file directly, so this is a rule gap and not a walker/extension skip. Counted as an expected miss by the golden suite, never as a failure (CORPUS_PLAN 8).",
+   "must_detect": [],
+   "must_not_detect": []
+  },
+  "technique": [
+   "polyglot",
+   "png-text-chunk-embedding",
+   "curl-stager",
+   "remote-payload-fetch"
+  ],
+  "carrier": "generated, contains no customer bytes"
+ },
+ {
+  "name": "pdf-magic-fake-supercache-a",
+  "file": "samples/pdf-magic-fake-supercache-a.php",
+  "sha256": "9437f7423b83469729f498ec81daa512d74079393301758be7f955ea48e84b6c",
+  "size": 5355,
+  "source_sha256": "9437f7423b83469729f498ec81daa512d74079393301758be7f955ea48e84b6c",
+  "verdict": "malicious",
+  "sensitivity": [
+   "c2",
+   "path"
+  ],
+  "expect": {
+   "known_miss": true,
+   "known_miss_issue": "KNOWN_ISSUES.md#4 (OBF021 misses nested dynamic calls)",
+   "known_miss_reason": "not detected by this scanner at the version recorded; verified with `check` on the file directly, so this is a rule gap and not a walker/extension skip. Counted as an expected miss by the golden suite, never as a failure (CORPUS_PLAN 8).",
+   "must_detect": [],
+   "must_not_detect": []
+  },
+  "technique": [
+   "polyglot",
+   "pdf-magic-prefix",
+   "fake-plugin-header",
+   "nested-variable-function-eval",
+   "base64-blob"
+  ],
+  "carrier": "generated, contains no customer bytes"
+ },
+ {
+  "name": "pdf-header-uploader-ui",
+  "file": "samples/pdf-header-uploader-ui.php",
+  "sha256": "01fca3142a7a55686f544fb2fadc8ac45955fad7e24cc5c8feb5b8b5e05751ac",
+  "size": 37844,
+  "source_sha256": "64672979265dbb8126738afc5b233a141d0315f9fd27992bbea3c13db64b3cb1",
+  "verdict": "malicious",
+  "sensitivity": [
+   "path"
+  ],
+  "expect": {
+   "min_severity": "critical",
+   "must_detect": [
+    "BD012"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "polyglot",
+   "pdf-header-prefix",
+   "file-upload",
+   "html-ui"
+  ],
+  "carrier": "generated, contains no customer bytes"
+ },
+ {
+  "name": "gif89a-dependency-injector",
+  "file": "samples/gif89a-dependency-injector.php",
+  "sha256": "b3776a5599c39f70329cf9baa81b41871ac3ffd73f20e01b74026fe54f716aa8",
+  "size": 132370,
+  "source_sha256": "b3776a5599c39f70329cf9baa81b41871ac3ffd73f20e01b74026fe54f716aa8",
+  "verdict": "malicious",
+  "sensitivity": [
+   "path"
+  ],
+  "expect": {
+   "min_severity": "critical",
+   "must_detect": [
+    "OBF021"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "polyglot",
+   "gif89a-magic-prefix",
+   "chr-array-string-building",
+   "variable-function-call"
+  ],
+  "carrier": "generated, contains no customer bytes"
+ },
+ {
+  "name": "clean-carrier-gif",
+  "file": "carriers/clean-carrier-gif.gif",
+  "sha256": "41730aa5c00c31ebff181208d6b883b364f776a7ed396dedf0a515d787c4cae0",
+  "size": 798,
+  "verdict": "benign",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [
+    "*"
+   ]
+  },
+  "technique": [
+   "clean-carrier-precision-fixture"
+  ],
+  "carrier": "generated"
+ },
+ {
+  "name": "clean-carrier-pdf",
+  "file": "carriers/clean-carrier-pdf.pdf",
+  "sha256": "9613d517e153fd1cfedf79544eea3e7fe0e9cb7b69fb6f7e25c6bc0c850aa35b",
+  "size": 335,
+  "verdict": "benign",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [
+    "*"
+   ]
+  },
+  "technique": [
+   "clean-carrier-precision-fixture"
+  ],
+  "carrier": "generated"
+ },
+ {
+  "name": "clean-carrier-png",
+  "file": "carriers/clean-carrier-png.png",
+  "sha256": "b749b1906b2adb87993ad592cb91a0e26835ba08c3a2bb4822972655979d82da",
+  "size": 1532,
+  "verdict": "benign",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [
+    "*"
+   ]
+  },
+  "technique": [
+   "clean-carrier-precision-fixture"
+  ],
+  "carrier": "generated"
+ }
+]
