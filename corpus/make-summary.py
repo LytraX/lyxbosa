@@ -57,6 +57,26 @@ def build():
         "malicious_no_expectation": sum(1 for r in allr if r.get("verdict") == "malicious"
                                         and not (r.get("expect") or {}).get("must_detect")
                                         and not (r.get("expect") or {}).get("known_miss")),
+        # Provenance split, section 11 in its newest place. `trail-data/Infected` is the tree
+        # the FIRST version of these rules was written against, so detection measured over it
+        # is partly a test of the rules against their own source material. The rows record
+        # that at import; these keys are what make the record usable, so the figure can be
+        # reported BOTH ways instead of only the flattering one.
+        "predates_ruleset_blobs": sum(1 for r in allr if r.get("predates_ruleset")),
+        "malicious_reviewed_excl_predates_ruleset": sum(
+            1 for r in allr if r.get("verdict") == "malicious" and not r.get("predates_ruleset")),
+        "malicious_detected_excl_predates_ruleset": sum(
+            1 for r in allr if r.get("verdict") == "malicious" and not r.get("predates_ruleset")
+            and (r.get("expect") or {}).get("must_detect")),
+        "malicious_known_miss_excl_predates_ruleset": sum(
+            1 for r in allr if r.get("verdict") == "malicious" and not r.get("predates_ruleset")
+            and (r.get("expect") or {}).get("known_miss")),
+        # Known misses by family, because one campaign can dominate the count and a bare
+        # total cannot show that. 495 of them are a single 2017 doorway campaign; without
+        # this key a reader has no way to see that from the summary alone.
+        "malicious_known_miss_by_family": dict(collections.Counter(
+            r.get("family", "<unfamilied>") for r in allr
+            if r.get("verdict") == "malicious" and (r.get("expect") or {}).get("known_miss"))),
         "discovered_by_blobs": dict(collections.Counter(
             d for r in allr for d in (r.get("discovered_by") or []))),
         "families_published": dict(collections.Counter(

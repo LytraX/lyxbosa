@@ -35,7 +35,13 @@ import json, os, re, sys, subprocess, argparse, collections, hashlib, tempfile, 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SCANNER = os.path.join(ROOT, "build-release", "lyxbosa")
+# The binary under test. Overridable, and that is the point: hardcoding it is what
+# made two agents working this tree at once need a third build directory. If the
+# suite can only ever read build-release, then anyone measuring a rule change has to
+# rebuild the same binary the suite is reading, and a rebuild mid-run leaves the
+# per-sample `check` calls straddling two binaries with nothing reporting an error.
+# Point LYXBOSA_BIN at your own build instead.
+SCANNER = os.environ.get("LYXBOSA_BIN") or os.path.join(ROOT, "build-release", "lyxbosa")
 
 def die(msg, code=2):
     print("error: %s" % msg, file=sys.stderr); sys.exit(code)

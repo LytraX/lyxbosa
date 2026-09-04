@@ -382,9 +382,34 @@ That is worth recording, and it is worth detecting, but the two claims should no
 as one.
 
 The remaining 129 `.php`-only paths are mostly the genuine article — stock WordPress
-`about.php`, Yoast's admin page — with a handful of real webshells among them (a 1.1 MB
-`goto`-obfuscated one at 31 paths, an `OBF007` urldecode loader, a `gzuncompress` stager).
-Of the 22 distinct payloads across all 223 paths, **18 are undetected**.
+`about.php`, Yoast's admin page — with a handful of real webshells among them. **Those
+webshells are all detected**, measured per sample with `check` on 2026-09-04:
+
+| sha256 | bytes | paths | returns |
+|---|---|---|---|
+| `46269b88…` | 1,099,089 | 31 | `OBF015`, `OBF016`, `OBF018`, `OBF037` — the `goto` shell |
+| `9cc75713…` | 1,102,493 | 4 | the same four — its sibling |
+| `7c5eedd7…` | 6,992 | 4 | `OBF007` — the urldecode loader |
+| `86fbaae9…` | 5,691 | 2 | `OBF006`, `OBF024`, `OBF025`, `OBF036` — the `gzuncompress` stager |
+
+**"22 distinct blobs, 18 undetected" is a separate claim from the sentence above it, and the
+word "payloads" in it was wrong.** Read together they say the four named shells are among the
+18 that no rule catches. They are the four that *are* caught. This section had already written
+down *the two claims should not be quoted as one* about its own case-collision finding, six
+lines earlier, and the next reader quoted these two as one anyway — which is the argument for
+putting the measurement in a table rather than in prose.
+
+Of the 18 undetected blobs, **17 are not payloads at all** — none carries a single dangerous
+construct, zero markers across all seventeen: 13 are stock WordPress `wp-admin/about.php`,
+`user/about.php` and `network/about.php` across versions, six byte-identical to pinned cores
+and nine already `verdict: benign` in the index; one is Yoast WPSEO 3.4's contributors page;
+one is Codestar Framework's `views/about.php`; one is `e3b0c442…`, the empty file, which
+occurs at 3,653 paths host-wide; and one is `c5cee2fb…`, the paste-service 404 already pinned
+`must_not_detect`.
+
+**One is real:** `79e638f4…`, 33,111 bytes at 12 `about.php` paths and 65 copies across nine
+accounts, a password-gated file manager with a remote-code stage. It is now detected by
+`OBF040`, `RCE015` and `WS010`.
 
 **One more fact, which is a caution rather than a candidate.** The 94 files carry mtimes
 spread over 2015–2018, on content that is provably from 2026. They are not stomped to match

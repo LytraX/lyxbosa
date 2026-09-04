@@ -1,5 +1,7 @@
 #include "code_exec.h"
 #include <array>
+#include <string>
+#include <vector>
 
 namespace lyxbosa::rules::code_exec {
 
@@ -289,9 +291,191 @@ const BuiltinRule RCE014 {
     .patterns = detail_RCE014::patterns,
 };
 
+// RCE015: eval implemented with the filesystem
+//
+// Every rule above this one keys on `eval` or a sibling that takes code as a string.
+// A remote-loader family sidesteps all of them by never calling one. It writes the
+// code it fetched to a path, includes the path, and deletes it:
+//
+//     $file_path = '.c';
+//     file_put_contents($file_path, $code);      // $code came off the network
+//     @require($file_path);
+//     @unlink($file_path);
+//
+// This is `eval` with extra steps, and the steps are the point: it survives
+// `disable_functions=eval`, it needs no `allow_url_include`, and it leaves nothing on
+// disk for the next scan to find. Seven distinct blobs in the malware trees do it,
+// with the include spelled `include`, `require` and `@require` between them.
+//
+// The rule is the three-way linkage on ONE path variable: written, included, then
+// unlinked - in that order, close together. Each part alone is ordinary. 1,073 files
+// in the benign trees include a bare variable, because that is how a plugin loads a
+// template.
+//
+// What separates the malware is ordering and distance, and both were measured rather
+// than guessed. Nine benign files put the same variable through an include and an
+// unlink. In eight of the nine the unlink comes *before* the include and never after,
+// so the delete-after-execute shape does not occur at all. In the ninth - OceanWP's
+// theme panel, reusing the common name `$file` in two unrelated functions - the
+// nearest following unlink is 10,738 bytes away. The malware's is 26. The window is
+// 400 bytes: twenty-six times inside the nearest benign pair and fifteen times outside
+// the malware's, which is margin rather than tuning.
+//
+// The write test is what takes those nine to zero on its own: not one of them ever
+// passes that variable to `file_put_contents`, because a template a plugin includes
+// is a file the plugin shipped, not one it just wrote. `fwrite` is deliberately NOT
+// accepted here - it takes a stream handle, not a path, so counting it would conflate
+// the handle with the filename and weaken the linkage the rule rests on.
+//
+// Identifier bytes include everything >= 0x80. That is not decoration: this family
+// ships two variants of the same shell, one naming the variable `$file_path` and one
+// naming it `$ファイルパス`, and a `\w`-based pattern silently matches only the first.
+namespace detail_RCE015 {
+    constexpr size_t kWindow = 400;      // include -> unlink, in bytes
+    constexpr size_t kMaxFindings = 4;
+
+    inline bool isIdentByte(unsigned char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+               (c >= '0' && c <= '9') || c == '_' || c >= 0x80;
+    }
+
+    inline bool isSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }
+
+    inline void skipSpace(std::string_view c, size_t& i) {
+        while (i < c.size() && isSpace(c[i])) ++i;
+    }
+
+    // A whole-word occurrence of `word` at `at`.
+    bool wholeWordAt(std::string_view c, size_t at, std::string_view word) {
+        if (at + word.size() > c.size()) return false;
+        if (c.compare(at, word.size(), word) != 0) return false;
+        if (at > 0 && isIdentByte(static_cast<unsigned char>(c[at - 1]))) return false;
+        const size_t after = at + word.size();
+        return after >= c.size() || !isIdentByte(static_cast<unsigned char>(c[after]));
+    }
+
+    // `$name` starting at `i` (which must be the '$'). Returns the name, or empty.
+    std::string_view readVar(std::string_view c, size_t i, size_t& end) {
+        if (i >= c.size() || c[i] != '$') return {};
+        size_t j = i + 1;
+        while (j < c.size() && isIdentByte(static_cast<unsigned char>(c[j]))) ++j;
+        if (j == i + 1) return {};
+        end = j;
+        return c.substr(i + 1, j - i - 1);
+    }
+
+    // `<call> ( $name )` at `at`, where `at` is the start of the call name.
+    // Returns the variable, or empty. `sep` is the byte that must follow the
+    // variable: ')' for unlink, ',' for a two-argument write.
+    std::string_view callOnVar(std::string_view c, size_t at, std::string_view name, char sep) {
+        if (!wholeWordAt(c, at, name)) return {};
+        size_t p = at + name.size();
+        skipSpace(c, p);
+        if (p >= c.size() || c[p] != '(') return {};
+        ++p;
+        skipSpace(c, p);
+        size_t end = 0;
+        const std::string_view v = readVar(c, p, end);
+        if (v.empty()) return {};
+        skipSpace(c, end);
+        if (end >= c.size() || c[end] != sep) return {};
+        return v;
+    }
+
+    // True if some `file_put_contents($var, ...)` names `var` anywhere in the file.
+    bool writtenAsPath(std::string_view c, std::string_view var) {
+        for (size_t at = c.find("file_put_contents"); at != std::string_view::npos;
+             at = c.find("file_put_contents", at + 1)) {
+            if (callOnVar(c, at, "file_put_contents", ',') == var) return true;
+        }
+        return false;
+    }
+
+    // `unlink($var)` in [from, to), naming `var`. Returns its offset or npos.
+    size_t unlinkOfVar(std::string_view c, std::string_view var, size_t from, size_t to) {
+        for (size_t at = c.find("unlink", from); at != std::string_view::npos && at < to;
+             at = c.find("unlink", at + 1)) {
+            if (callOnVar(c, at, "unlink", ')') == var) return at;
+        }
+        return std::string_view::npos;
+    }
+
+    std::vector<MatchResult> detectIncludeAndDelete(std::string_view content) {
+        std::vector<MatchResult> out;
+        // Cheap guards: no linkage exists without all three calls being present.
+        if (content.find("unlink") == std::string_view::npos) return out;
+        if (content.find("file_put_contents") == std::string_view::npos) return out;
+
+        static constexpr std::string_view kIncludes[] = {
+            "include_once", "require_once", "include", "require"
+        };
+
+        for (size_t i = 0; i < content.size(); ++i) {
+            if (content[i] != 'i' && content[i] != 'r') continue;
+
+            std::string_view kw;
+            for (const auto& candidate : kIncludes) {
+                if (wholeWordAt(content, i, candidate)) { kw = candidate; break; }
+            }
+            if (kw.empty()) continue;
+
+            // `include $f;`, `include($f);`, `@require($f);` - the '@' sits before the
+            // keyword and needs no special handling, it just is not an identifier byte.
+            size_t p = i + kw.size();
+            skipSpace(content, p);
+            const bool paren = (p < content.size() && content[p] == '(');
+            if (paren) { ++p; skipSpace(content, p); }
+            size_t varEnd = 0;
+            const std::string_view var = readVar(content, p, varEnd);
+            if (var.empty()) { i += kw.size() - 1; continue; }
+
+            size_t q = varEnd;
+            skipSpace(content, q);
+            if (paren) {
+                if (q >= content.size() || content[q] != ')') { i += kw.size() - 1; continue; }
+                ++q;
+                skipSpace(content, q);
+            }
+            if (q >= content.size() || content[q] != ';') { i += kw.size() - 1; continue; }
+            ++q;
+
+            const size_t stop = std::min(content.size(), q + kWindow);
+            const size_t at = unlinkOfVar(content, var, q, stop);
+            if (at == std::string_view::npos) { i += kw.size() - 1; continue; }
+            if (!writtenAsPath(content, var)) { i += kw.size() - 1; continue; }
+
+            auto [line, col] = positionToLineCol(content, i);
+            MatchResult r;
+            r.line = line;
+            r.column = col;
+            r.matched = content.substr(i, std::min<size_t>(at + 6 - i, 96));
+            r.note = "$" + std::string(var) +
+                     " is written with file_put_contents, executed with " +
+                     std::string(kw) + ", then unlinked " + std::to_string(at - q) +
+                     " bytes later - the file exists only to be run once, which is eval "
+                     "performed through the filesystem";
+            out.push_back(r);
+            if (out.size() >= kMaxFindings) return out;
+            i = at;
+        }
+        return out;
+    }
+}
+const BuiltinRule RCE015 {
+    .code = {Category::CodeExec, 15},
+    .name = "Include and delete a written file",
+    .description = "Detects a path written with file_put_contents, executed with include/require, then immediately unlinked - eval performed through the filesystem",
+    .severity = Severity::Critical,
+    .patterns = {},
+    .analyzer = &detail_RCE015::detectIncludeAndDelete,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &RCE001, &RCE002, &RCE003, &RCE004, &RCE005,
-    &RCE006, &RCE007, &RCE008, &RCE009, &RCE010, &RCE011, &RCE012, &RCE013, &RCE014
+    &RCE006, &RCE007, &RCE008, &RCE009, &RCE010, &RCE011, &RCE012, &RCE013, &RCE014,
+    &RCE015
 };
 
 const BuiltinRule* const* getAllRules() {

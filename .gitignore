@@ -1,5 +1,6 @@
 /build/
 /build-release/
+/build-rules/
 /build-release-portable/
 /build-static/
 /build-win-release*/

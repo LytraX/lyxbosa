@@ -9,7 +9,7 @@ The rule (§4.1): a sample is publishable when its verdict is not `unreviewed` A
 sensitivity tag is `clean`, `c2`, or has been masked and re-verified. `pii` and `content`
 are never publishable, because there is no substitution that makes them safe.
 """
-import json, os, sys, collections
+import json, os, re, sys, collections
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy
@@ -46,6 +46,92 @@ def evaluate(r):
         why.append("marked local_only: %s" % r["local_only"])
     return (not why), why
 
+# An assertion nobody sanctioned. `expect.must_detect` says a reviewed sample MUST be
+# detected and fails the suite when it is not; a row with verdict `unreviewed` has no
+# review behind it, so the field is asserting a judgement no human ever made.
+#
+# 943 rows were in this state, written by the scan that discovered them - the same
+# mechanism §11 records for the recall figure, where `must_detect` was populated from a
+# rescan so a sample carried it BECAUSE it was detected. That reporting was repaired and
+# these rows were not. What the scan saw belongs in `observed_detection`, which asserts
+# nothing; `expect` stays absent until a human sets a verdict.
+#
+# This is a hard failure rather than a publish blocker, because an unreviewed row is
+# already unpublishable for a different reason and the blocker would hide it.
+# Two invariants for the published half, both checkable WITHOUT the account map - which
+# matters, because the map is gitignored and out of repo, so a gate that needed it could
+# never run for anyone else.
+#
+#   * a published row carries no `origin`. That field is the collection's record of a path
+#     on a customer host. It is not verifiable by a stranger and not ours to publish. Four
+#     rows had one, because a promotion built the new row out of the whole local row.
+#   * every `/home/<x>/` in a published row has <x> in `acctNN` form. A real account name
+#     surviving there is the failure this catches, and it does not need to know which names
+#     are real: anything that is not a pseudonym is wrong.
+#
+# Masking missed three client names for a year of collection because it keyed on full
+# account names while the incident-response directories used abbreviations - a repair
+# directory named `<abbrev>-safe-repair-...` for an account mapped under its full name. Name
+# matching is the wrong shape of check; a positive assertion about the form of what is
+# allowed is the right one. (The example here used to name the real account: the commit that
+# scrubbed three client names left a fourth in the comment explaining the scrub.)
+# `/home\d*/`, not `/home/`. The largest account in the legacy Infected tree lives at
+# `/home2/<acct>/` - 13,982 occurrences in one error_log - and a `/home/`-only pattern does
+# not see it. The gate was narrower than the thing it was guarding, which is the failure mode
+# 5.3 records as "a gate that is stricter than the masker can be is a gate that can never
+# pass", in its mirror form: a gate looser in the wrong axis never fires at all.
+HOME_RE = re.compile(r'/home\d*/([^/"]+)/')
+ACCT_RE = re.compile(r'acct\d+$')
+
+# The same positive-form discipline, extended to the two components the legacy-tree import
+# introduces. Both state what is ALLOWED rather than hunting for what is not, and neither
+# needs the account map - which is the property that makes them runnable by a stranger.
+#
+#   * `site`   identifies the customer whose server a sample came from -> siteNN
+#   * `server` identifies the hosting provider's machine               -> srvNN
+#
+# Added WITH the fields, not after them: 5.3 says every new field that can carry an
+# identifier gets gate coverage before it is populated, and records two separate occasions
+# where a field nobody expected to carry identifiers carried them.
+SITE_RE = re.compile(r'^site\d+$')
+SERVER_RE = re.compile(r'^srv\d+$')
+FORM = (("site", SITE_RE, "siteNN"), ("server", SERVER_RE, "srvNN"))
+
+def formViolations(rows):
+    """Form of the masked components, over BOTH halves.
+
+    Cheap, map-free, and it runs on the local half too - a local row is not published, but it
+    is where the next promotion reads from, and a leak that is only caught at promotion time
+    has already been copied into whatever built the new row.
+    """
+    out = []
+    for r in rows:
+        for field, rx, want in FORM:
+            v = r.get(field)
+            if v is not None and not (isinstance(v, str) and rx.match(v)):
+                out.append((r["sha256"], "%s=%r is not in %s form" % (field, v, want)))
+    return out
+
+def publishedLeaks(rows):
+    out = []
+    for r in rows:
+        if r.get("origin") is not None:
+            out.append((r["sha256"], "carries origin"))
+            continue
+        for m in HOME_RE.finditer(json.dumps(r)):
+            if not ACCT_RE.match(m.group(1)):
+                out.append((r["sha256"], "unmasked home component: %s" % m.group(1)))
+                break
+    return out
+
+def integrityViolations(rows):
+    out = []
+    for r in rows:
+        exp = r.get("expect") or {}
+        if exp.get("must_detect") and r.get("verdict") == "unreviewed":
+            out.append(r["sha256"])
+    return out
+
 def main(path, apply_fix=False):
     rows = read_jsonl(path)
     changed = 0
@@ -79,11 +165,43 @@ def main(path, apply_fix=False):
         print("=== rows that claimed publishable but are not ===")
         for w, n in viol.most_common():
             print("  %-70s %5d  e.g. %s" % (w[:70], n, ", ".join(examples[w])))
+    bad = integrityViolations(rows)
+    print("unreviewed rows asserting must_detect :", len(bad))
+    if bad:
+        print()
+        print("=== INTEGRITY: expect.must_detect on a row with no review ===")
+        for sha in bad[:10]:
+            print("  %s" % sha[:12])
+        if len(bad) > 10:
+            print("  ... and %d more" % (len(bad) - 10))
+        print("  move these to observed_detection; expect stays absent until a verdict is set")
+
+    forms = formViolations(rows)
+    print("rows whose masked component is malformed :", len(forms))
+    if forms:
+        print()
+        print("=== FORM: site/server must be siteNN / srvNN ===")
+        for sha, why in forms[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(forms) > 10:
+            print("  ... and %d more" % (len(forms) - 10))
+
+    leaks = publishedLeaks(rows) if os.path.basename(path) == "index.jsonl" else []
+    if os.path.basename(path) == "index.jsonl":
+        print("published rows leaking a host path   :", len(leaks))
+    if leaks:
+        print()
+        print("=== PRIVACY: published rows must carry no host path ===")
+        for sha, why in leaks[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(leaks) > 10:
+            print("  ... and %d more" % (len(leaks) - 10))
+
     if apply_fix:
         # Atomic, and under the lock. This used to be open(path, "w"), which
         # truncates a 62 MB index before the first row lands - see indexio.
         write_jsonl_atomic(path, rows)
-    return 1 if viol else 0
+    return 1 if (viol or bad or leaks or forms) else 0
 
 USAGE = "usage: shard-gate.py <index.jsonl> [--fix]"
 

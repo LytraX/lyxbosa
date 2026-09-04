@@ -13,6 +13,26 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **`RCE015` (critical)** — a file written, executed with `include`/`require`, then
+  deleted. A remote loader fetches PHP over HTTPS, writes it to a path, includes the
+  path and unlinks it, which is `eval` performed through the filesystem: it needs no
+  `eval`, no `allow_url_include`, and leaves nothing behind for the next scan. The rule
+  is the three-way linkage on one path variable — written, included, unlinked, in that
+  order and within 400 bytes. Nine files across 279,337 in the benign trees put one
+  variable through both an include and an unlink; in eight the unlink comes *before* the
+  include, and the ninth is 10,731 bytes away.
+- **`OBF040` (high)** — a URL whose scheme word is cut in half. `'htt'.'ps://c.by'.'a61
+  .xy'.'z/'` folds to a C2 address that no search for `https://` will find. Assembling a
+  URL from concatenated literals is ordinary and 208 benign files do it; cutting between
+  two letters of `http`/`https` rather than at its punctuation is what the rule tests,
+  and it is what separates the malware from the one benign file that splits a scheme at
+  all (w3-total-cache, wrapping a message at the colon).
+- **`WS010` (high)** — a 404 a file tells about itself. The shell answers
+  `404 Not Found` and exits unless a magic request parameter is present, so it reads as
+  absent to every crawler, uptime probe and operator that fetches the URL. Benign code
+  that returns 404 decides on the state of a resource — `! is_file( $file )`,
+  `$current_blog->archived`; this decides on whether the caller knows a token.
+
 - **`OBF039` (critical)** — a per-file substitution cipher. A WordPress `db.php` drop-in
   campaign resolved every dangerous identifier at runtime through a table lookup, so nothing
   was written down for a pattern to match and the alphabet differed per file. It matches the
