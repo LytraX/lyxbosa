@@ -101,6 +101,13 @@ def main():
         for r in index:
             if not r.get("family"):
                 continue
+            # Select on the VERDICT, not on the presence of a family. A benign shipped sample
+            # has a family too - the first one to exist, an attacker-written but inert artefact,
+            # was scored here as a malicious sample that failed to be detected, which made the
+            # suite red for exactly the right outcome. Benign shipped samples are checked on the
+            # must_not_detect path below, where they belong.
+            if r.get("verdict") != "malicious":
+                continue
             exp = r.get("expect") or {}
             want = sorted(exp.get("must_detect", []))
             known = bool(exp.get("known_miss"))
