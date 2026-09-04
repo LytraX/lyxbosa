@@ -2,7 +2,7 @@
 
 ```
 corpus/
-  index.jsonl                       the published half: one row per unique blob, 12,202 rows
+  index.jsonl                       the published half: one row per unique blob, 12,264 rows
   make-summary.py                   regenerates index-summary.json from the two halves
   expect/                           golden expectations, per shard
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
@@ -10,6 +10,9 @@ corpus/
   shard-gate.py                     §7.2 — computes `publishable` and fails the build
   build-shard.sh                    packs a staged shard; requires zstd, fails hard without it
   local/index-local.jsonl           local-only rows (gitignored)
+  import-infected-tree.py           imports the legacy trail-data/Infected tree
+  infected_mask.py                  path masking for that tree; map is out of repo
+  verify-infected-mask.py           the independent masking check (shares no regex with it)
   index-summary.json                the denominator: counts and blockers, tracked
   shards/                           built shards (gitignored; release assets)
 ```
@@ -20,8 +23,8 @@ The index is **split in two, and both halves matter**:
 
 | file | rows | tracked? | what it is |
 |---|---|---|---|
-| `index.jsonl` | 12,202 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 79,467 | no | everything held back, with each row's blockers |
+| `index.jsonl` | 12,264 | yes | published samples — the ones a public suite can verify |
+| `local/index-local.jsonl` | 80,536 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 
 "index.jsonl is small and lives in git" and "the index lists every blob including local-only"
@@ -62,6 +65,47 @@ problem. The problem is that a suite which can only read one path forces anyone 
 change to rebuild the very binary the suite is reading, and a rebuild part-way through a run
 leaves the per-sample `check` calls straddling two binaries with nothing reporting an error.
 Overriding the path removes the conflict without inventing a directory to hold it.
+
+### The legacy `Infected` tree, and why its rows carry `predates_ruleset`
+
+`trail-data/Infected` is not the current incident. It is many older servers and older
+incidents, and it is **the material the first version of these rules was written against**.
+Detection measured over it is therefore partly a test of the rules against their own source
+material — CORPUS_PLAN §11 in a new place.
+
+So every row imported from it carries **`predates_ruleset: true`**, and `index-summary.json`
+carries the split:
+
+```
+malicious_reviewed        760      malicious_reviewed_excl_predates_ruleset   172
+malicious_detected        122      malicious_detected_excl_predates_ruleset    60
+        16.1%                                     34.9%
+```
+
+Both figures are true and they answer different questions. The field costs nothing to record
+now and cannot be reconstructed once the rows are indistinguishable, which is the whole
+argument for writing it at import rather than later.
+
+`malicious_known_miss_by_family` is there for the adjacent reason: 495 of the 638 known
+misses are a single 2017 doorway campaign, and a per-sample rate lets one family with many
+files dominate a figure that reads as capability. A bare total cannot show that.
+
+Three tools support the import, and the split between them is deliberate:
+
+| file | needs the map? | what it does |
+|---|---|---|
+| `import-infected-tree.py` | yes | reproduces the denominator, refuses to run if it moved, sniffs content, triages media structurally, indexes archive members and never containers, classifies with the evidence recorded |
+| `infected_mask.py` | yes | path masking, and `collisions()` — which proves *which* identifiers rewrite something they should not, against a real vocabulary |
+| `verify-infected-mask.py` | yes | the independent check. Shares no regex with the masker |
+
+`shard-gate.py` is the one that must **not** need the map, and does not: it asserts the
+*form* of what is allowed (`acctNN`, `siteNN`, `srvNN`), so a stranger can run it.
+
+**Directory names live in the map, not in the tools.** `import-infected-tree.py` is tracked,
+and a classification rule spelled `rel.startswith("<client>.gr/page/")` puts a customer's
+name in git exactly as surely as an unmasked index row would. The map holds the names; the
+tool reads roles. This is §5.3's "a field nobody thought of", one level out — it was not a
+field at all, it was the tool's own source.
 
 ### Any writer of either half goes through `indexio.py`
 
