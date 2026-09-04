@@ -95,6 +95,38 @@ If it were ever promoted to a severity-bearing rule, **that** is when it needs t
 measurement across `trail-data/CMS`, the sanitised site corpus and every pinned tree — and
 the coupling would need answering first, not the FP number.
 
+### Kill condition — written before the review, deliberately
+
+The unpinnable slugs are first in the human review queue because they are the highest-signal
+part of the backlog. That review **is** this candidate's precision measurement: it will
+establish what fraction of unpinnable slugs are genuine attacker staging, as against premium
+plugins, agency-built plugins, child themes and directories renamed by incident response.
+
+Recording the decision rule now, while nothing is at stake:
+
+> **If the malicious fraction of unpinnable slugs is low, this candidate is dead, and the
+> correct response is to close it — not to narrow it until it survives.**
+
+"Low" here means the advisory would name mostly legitimate directories on a real host. A
+sensible bar is **at least half** of unpinnable slugs being genuine staging; below roughly a
+third, an operator learns to ignore the list, and an advisory nobody reads protects nothing.
+
+The failure mode to guard against is specific and tempting. Once the data is in hand and the
+fraction is disappointing, the instinct is to rescue the idea by adding conditions — restrict
+it to slugs matching some name shape, exclude the premium ones, require a second signal, cap
+it to directories under a certain file count. Each narrowing looks like a refinement. What it
+actually does is fit the predicate to this corpus's particular attacker, and produce something
+that will not generalise to the next incident while carrying the authority of a measured rule.
+
+That is also precisely how a lookup ends up wearing a detection's clothes despite the
+reframing above: the advisory becomes a rule again by accretion, one reasonable-sounding
+condition at a time.
+
+So: if the fraction comes out low, write the number here, mark the candidate closed, and
+leave the slug enumeration as what it always was — **a triage aid for a human reading a
+queue**, with no claim to precision at all. That is a genuinely useful thing to have, and it
+does not need to be a detection to earn its place.
+
 ### A collection-scope note, worth keeping with this
 
 The corpus holds the four payload blobs from that directory but **not** the `style.css` and
