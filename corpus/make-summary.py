@@ -42,6 +42,21 @@ def build():
         "local_only_blockers": dict(collections.Counter(
             b for r in loc for b in (r.get("publish_blockers") or []))),
         "known_miss": sum(1 for r in allr if (r.get("expect") or {}).get("known_miss")),
+        # The detection denominator, over BOTH halves. It has to be every reviewed malicious
+        # sample, not just the ones carrying must_detect: must_detect is populated FROM the
+        # rescan, so a denominator built from it contains only samples that were detected and
+        # is 100% by construction. See CORPUS_PLAN section 11.
+        "malicious_reviewed": sum(1 for r in allr if r.get("verdict") == "malicious"),
+        "malicious_detected": sum(1 for r in allr if r.get("verdict") == "malicious"
+                                  and (r.get("expect") or {}).get("must_detect")),
+        "malicious_known_miss": sum(1 for r in allr if r.get("verdict") == "malicious"
+                                    and (r.get("expect") or {}).get("known_miss")),
+        # of the detected ones, how many ship and can therefore actually be re-run
+        "malicious_detected_runnable": sum(1 for r in pub if r.get("verdict") == "malicious"
+                                           and (r.get("expect") or {}).get("must_detect")),
+        "malicious_no_expectation": sum(1 for r in allr if r.get("verdict") == "malicious"
+                                        and not (r.get("expect") or {}).get("must_detect")
+                                        and not (r.get("expect") or {}).get("known_miss")),
         "discovered_by_blobs": dict(collections.Counter(
             d for r in allr for d in (r.get("discovered_by") or []))),
         "families_published": dict(collections.Counter(

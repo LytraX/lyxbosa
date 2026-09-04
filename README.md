@@ -241,8 +241,9 @@ as clean.
 
 ## What the detection numbers actually are
 
-Half of this is checkable today, and half is not. Both halves are stated, because a
-detection number without its denominator is not evidence.
+Both halves are stated with their denominators, because a detection number without its
+denominator is not evidence — and because the denominator is where this kind of number
+usually goes wrong (see `docs/tasks/CORPUS_PLAN.md` §11).
 
 Run it yourself:
 
@@ -265,16 +266,26 @@ All 8 are upstream library code (the Freemius SDK, an FPDF class). They are pinn
 `known_fp` fixtures, so if a rule change fixes one the suite says so, and if a fixed one
 ever comes back it fails.
 
-### The malicious side — not yet a number
+### The malicious side — a number, and a small one
 
-**Recall is 100% over seven reviewed samples, against 69 known misses. That ratio is the
-honest summary: the suite tests seven samples and records sixty-nine pieces of real malware
-it does not detect.**
+**Detection is 15.5% — 13 of 84 confirmed-malicious samples. Of the rest, 71 are recorded as
+known misses: real malware this scanner does not catch at this version.**
+
+That is the number an earlier version of this suite did not print. It reported *"recall
+100%"*, which was true and meant nothing: `must_detect` is populated from the rescan, so a
+sample carried it *because* it was detected, and anything known not to be detected was moved
+to a `known_miss` column and out of the denominator. The figure could only ever fall if a
+working detection broke. It is still reported, under the name of what it actually is — a
+regression check — and 100% is the right answer there.
 
 The corpus holds 60,609 unique blobs; 12,202 are classified and 48,407 are still unreviewed.
 Almost all of the classified ones are benign by hash match against pinned upstream, so the
-reviewed *malicious* set is small. A recall figure over seven samples says nothing about the
-scanner, and publishing it as though it did would be worse than publishing nothing.
+reviewed *malicious* set is 84 samples — small, and stated rather than implied.
+
+**15.5% is expected to fall before it rises.** Reviewing a malware family this scanner does
+not catch adds samples to the denominator and none to the numerator, which is the correct
+behaviour for the measurement: it is meant to find gaps, not to confirm what already works.
+There are roughly 700 detected-but-unreviewed blobs left, so it will move.
 
 **Precision is not reported at all, and that is a decision rather than a gap.** Precision is
 `tp/(tp+fp)`, which only means something when the malicious-to-benign ratio resembles what an
@@ -296,7 +307,7 @@ The suite also refuses to print some things it could:
 
 - **A recall delta against the previous run is withheld** whenever the reviewed set changed
   size, because a figure over a set that grew is not the same measurement.
-- **Known misses have their own column.** Sixty-nine samples are real malware this scanner
+- **Known misses have their own column.** Seventy-one samples are real malware this scanner
   does not detect at this version — an entire fake-plugin family among them, whose payloads
   live in files named `.png` that are not images (`docs/RULE_CANDIDATES.md` §2), plus the two
   webshells staged outside the webroot that `docs/KNOWN_ISSUES.md` issue 3 rests on. They

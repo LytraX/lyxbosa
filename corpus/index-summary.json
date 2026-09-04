@@ -23,7 +23,7 @@
   "woocommerce-card-skimmer": 6
  },
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
- "known_miss": 69,
+ "known_miss": 71,
  "local_only": 48407,
  "local_only_blockers": {
   "an encoded layer is present and did not yield to any static decoder. Nothing was executed to find out, so the absence of a plaintext identifier is evidence the encoder worked, not evidence the sample is clean": 8,
@@ -41,6 +41,11 @@
   "verdict is unreviewed: nothing leaves that state without a human": 48399
  },
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
+ "malicious_detected": 13,
+ "malicious_detected_runnable": 7,
+ "malicious_known_miss": 71,
+ "malicious_no_expectation": 0,
+ "malicious_reviewed": 84,
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
  "published": 12202,
  "published_fetched_not_shipped": 12126,

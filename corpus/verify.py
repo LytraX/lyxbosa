@@ -9,7 +9,12 @@ Three things this deliberately does differently from a naive suite:
   * **It does not report precision at all**, and that is a decision rather than a gap. See the
     long comment at the point where a naive suite would compute it.
 
-  * It reports recall and the false-positive rate **over the reviewed set**, and prints the
+  * **Detection and regression are separate lines.** Detection is over every reviewed
+    malicious sample; regression is over the ones already known to be detected, and only that
+    second one can be 100% by construction. Conflating them under the name "recall" is what
+    used to put a tautology in the headline.
+
+  * It reports detection and the false-positive rate **over the reviewed set**, and prints the
     held count beside them. A figure computed over a corpus that is mostly unreviewed, without
     saying so, is the difference between "convincing empirical evidence" and a number someone
     can check. `index-summary.json` is the denominator so the suite can state what it is *not*
@@ -247,6 +252,34 @@ def main():
 
     mal = res["malicious"]; ben = res["benign"]
     tested_mal = mal["detected"] + mal["missed"]
+
+    # Detection over EVERY reviewed malicious sample, which is the figure "recall" is normally
+    # taken to mean. The suite used to print detected/(detected+missed), where the denominator
+    # is the set carrying `must_detect` - and a sample carries `must_detect` because it was
+    # detected. Anything known not to be detected gets `known_miss` and leaves the denominator,
+    # so that figure was 100% by construction and could only ever report a regression. It was
+    # the fourth instance of CORPUS_PLAN section 11 and it was the headline.
+    #
+    # This one moves in both directions: reviewing a new family that nothing catches lowers it,
+    # which is correct, and it rises only when rules improve. It cannot be gamed by review
+    # order either, because every reviewed malicious sample is in the denominator whether or
+    # not it is detected.
+    res["detection"] = {
+        "detected": summary.get("malicious_detected", 0),
+        "reviewed": summary.get("malicious_reviewed", 0),
+        "known_miss": summary.get("malicious_known_miss", 0),
+        "verified_by_rerun": summary.get("malicious_detected_runnable", 0),
+        "recorded_only": (summary.get("malicious_detected", 0)
+                          - summary.get("malicious_detected_runnable", 0)),
+        "no_expectation": summary.get("malicious_no_expectation", 0),
+    }
+    res["detection"]["rate"] = (round(res["detection"]["detected"]
+                                      / float(res["detection"]["reviewed"]), 4)
+                                if res["detection"]["reviewed"] else None)
+    # the old figure, kept under the name of what it actually is
+    res["regression_check"] = {"expected": tested_mal, "still_firing": mal["detected"],
+                               "broken": mal["missed"]}
+
     res["recall"] = round(mal["detected"] / float(tested_mal), 4) if tested_mal else None
 
     # False-positive RATE is the meaningful precision-side number here, because it is
@@ -328,16 +361,23 @@ def main():
         print("Corpus  %d blobs · %d published · %d held local-only (%.1f%% reviewed)"
               % (c["total_blobs"], c["published"], c["local_only"], c["reviewed_fraction"] * 100))
         print()
-        print("  malicious    %6d / %-6d detected   %d missed"
+        print("  shard-run    %6d / %-6d detected   %d missed   (samples the suite executed)"
               % (mal["detected"], tested_mal, mal["missed"]))
         print("  benign       %6d / %-6d clean      %d false positives"
               % (ben["clean"], ben["samples"], ben["false_positives"]))
         print("  rule-exact   %6d / %-6d matched the expected rule"
               % (mal["rule_exact"], mal["detected"]))
         print()
-        print("  Recall            %s   (over %d reviewed malicious samples)"
-              % ("%.2f%%" % (res["recall"] * 100) if res["recall"] is not None else "n/a",
-                 tested_mal))
+        d = res["detection"]
+        print("  Detection      %4d / %-5d reviewed malicious samples detected   (%s)"
+              % (d["detected"], d["reviewed"],
+                 "%.1f%%" % (d["rate"] * 100) if d["rate"] is not None else "n/a"))
+        print("                 %d verified by re-running `check`; %d held local-only, so the"
+              % (d["verified_by_rerun"], d["recorded_only"]))
+        print("                 recorded result from the last rescan stands for those")
+        rc = res["regression_check"]
+        print("  Regression     %4d / %-5d expected detections still firing"
+              % (rc["still_firing"], rc["expected"]))
         print("  False-positive rate %s  (%d of %d benign files)"
               % ("%.4f%%" % (res["false_positive_rate"] * 100)
                  if res["false_positive_rate"] is not None else "n/a",
@@ -348,8 +388,9 @@ def main():
                   % (f["known_still_firing"], f["newly_fixed"]))
             if f["regressed"]:
                 print("  FP REGRESSIONS   %d fixed false positives have returned" % f["regressed"])
-        print("  Known misses     %d expected · %d newly detected"
-              % (res["known_miss"]["expected"], res["known_miss"]["newly_detected"]))
+        print("  Known misses   %4d recorded · %d of them re-run here · %d newly detected"
+              % (res["detection"]["known_miss"], res["known_miss"]["expected"],
+                 res["known_miss"]["newly_detected"]))
         t = res["techniques"]
         print("  Techniques       %d of %d known techniques covered by a tested sample"
               % (t["covered_by_tested_samples"], t["known"]))
@@ -360,10 +401,10 @@ def main():
         if "regressions" in res:
             r = res["regressions"]
             if r.get("recall_delta_note"):
-                print("  Regressions      %+d failures · recall delta withheld"
+                print("  Regressions      %+d failures · regression-rate delta withheld"
                       % r["new_failures"])
             else:
-                print("  Regressions      %+d failures · recall delta %s"
+                print("  Regressions      %+d failures · regression-rate delta %s"
                       % (r["new_failures"],
                          "n/a" if r["recall_delta"] is None else "%+.4f" % r["recall_delta"]))
         print()
@@ -377,12 +418,14 @@ def main():
         if res.get("regressions", {}).get("recall_delta_note"):
             n = res["regressions"]
             print()
-            print("  Recall not comparable to baseline: reviewed malicious set went %d -> %d (%+d)."
-                  % (n["reviewed_malicious_before"], n["reviewed_malicious_now"],
-                     n["reviewed_malicious_delta"]))
-            print("  A recall figure over a set that grew is not the same measurement.")
+            print("  Regression rate not comparable to baseline: the executed set went %d -> %d "
+                  "(%+d)." % (n["reviewed_malicious_before"], n["reviewed_malicious_now"],
+                              n["reviewed_malicious_delta"]))
+            print("  A figure over a set that grew is not the same measurement. Detection, above,")
+            print("  is different: its denominator is every reviewed malicious sample, so a fall")
+            print("  when a new family is reviewed is the correct reading, not an artefact.")
         print()
-        print("  Recall is over the REVIEWED set only.")
+        print("  Detection is over the REVIEWED set only.")
         print("  %d blobs are held and untested; the largest reasons:" % c["local_only"])
         for k, v in sorted(res["held"].items(), key=lambda x: -x[1])[:4]:
             print("      %-64s %6d" % (k[:64], v))

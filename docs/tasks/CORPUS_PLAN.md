@@ -208,7 +208,7 @@ The general form is the more uncomfortable statement:
 
 > A corpus assembled from findings can only support rules resembling the ones that built it.
 
-(This is one of three appearances of the same property; see §11.)
+(This is one of four appearances of the same property; see §11.)
 
 That is the `discovered_by` problem from §4.4 arriving from a different direction. There the
 concern was circularity in *measurement* — recall computed over samples the scanner found
@@ -414,7 +414,7 @@ line, and it diffs and merges in git.
   only over `lyxbosa-scan` samples is close to 100% by construction and would overstate
   what the tool does on malware it has never seen. Six families in the current corpus are
   in that category, which is worth being able to say out loud rather than hide. This is one of
-  three appearances of the same property; see §11.
+  four appearances of the same property; see §11.
 - One row per *sample*; duplicates collapse to one row with a count.
 
 Migrate the existing `manifest.tsv` (4,198 rows) by mapping `tier/family/stored_as/decoder`
@@ -785,12 +785,17 @@ Corpus 2026-09-03  (index 6,412 samples · 3 shards · benign 214,880 files)
   vulnerable        10 /      10 detected
   rule-exact     2,061 / 2,104 matched the expected rule
 
-  Recall     99.34%    False-positive rate  0.0055%
+  Detection    13 /   84 reviewed malicious samples detected   (15.5%)
+  Regression    7 /    7 expected detections still firing
+  False-positive rate  0.0055%
   Known FPs          6 expected · 0 newly fixed
-  Known misses       3 expected · 0 newly detected
-  Techniques        44 of 47 known techniques covered by a tested sample
+  Known misses      71 recorded · 69 of them re-run here · 0 newly detected
+  Techniques        55 of 55 known techniques covered by a tested sample
   Regressions        0 new · 0 fixed
 ```
+
+`Detection` and `Regression` are two different questions and only the second can honestly be
+100%: see §11. Reporting them under one name called "recall" put a tautology in the headline.
 
 - **`rule-exact`** is the line that boolean suites miss: detected, but by the rule that
   should have detected it. A rule change that keeps a detection for the wrong reason shows
@@ -863,8 +868,8 @@ the corpus did not previously know about. A round that leaves it at 100% has eit
 everything new or reviewed nothing, and the coverage figure cannot tell those apart. Pair it
 with the reviewed-sample count, which can.
 
-This is a specific case of a property that has now turned up three times in this project;
-see **§11**.
+This is a specific case of a property that has now turned up four times in this project;
+see **§11** — where the fourth instance is the recall figure this section used to print.
 
 ### `known_fp` is the mirror of `known_miss`, and needs the same treatment
 
@@ -1028,27 +1033,49 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, three appearances: a denominator the process chose for itself
+## 11. One property, four appearances: a denominator the process chose for itself
 
-Three separate cautions in this plan are the same statement in different clothes. Each was
-found independently, each was handled correctly, and a fourth session would otherwise
-rediscover it a fourth time. So it is worth naming once, as a property rather than as three
-warnings:
+Four separate cautions in this plan are the same statement in different clothes. Each was
+found independently, and the fourth was found by reading the other three — which is the
+argument for naming it once, as a property rather than as a series of warnings:
 
 > **Any measurement whose denominator is enumerated by the same process that produces the
 > numerator is bounded by that process, not by reality.**
 
-The three instances:
+The four instances:
 
 | where | the numerator | the denominator, and who chose it |
 |---|---|---|
 | §4.4 `discovered_by` | samples this scanner detects | samples this scanner found. Recall over them is close to 100% by construction |
 | §2.3b collect-by-directory | files the rules flagged | files the rules flagged. "A corpus assembled from findings can only support rules resembling the ones that built it" |
 | §8 technique coverage | techniques with a tested sample | techniques seen in the reviewed set. Review nothing and coverage is permanently 100% |
+| §8 recall, **as it used to be reported** | samples detected | samples carrying `must_detect` — and a sample carries `must_detect` *because* it was detected. Anything known not to be detected gets `known_miss` and leaves the denominator |
 
 In every case the figure is true, useful and worth reporting — and in every case it measures
-*the reach of the process*, not the reach of the scanner. None of the three is fixed by
-computing it more carefully, because the arithmetic is not what is wrong.
+*the reach of the process*, not the reach of the scanner. None of them is fixed by computing
+it more carefully, because the arithmetic is not what is wrong.
+
+**The fourth was the headline, which is what made it the worst of them.** `Recall 100.00%`
+printed directly above `Known misses 69`, and the layout invites reading the first as the
+result and the second as a footnote when the relationship is the reverse. Nothing was hidden —
+both numbers were on the screen — but the label did the misleading. That is worth separating
+out: the first three were denominators that bounded what a number *could* say; this one was a
+denominator that made a number say something it did not mean.
+
+The repair is to report both figures under honest names, because they answer different
+questions and only one of them can be tautological:
+
+```
+  Detection      13 / 84   reviewed malicious samples detected   (15.5%)
+  Regression      7 / 7    expected detections still firing
+  Known misses   71 recorded · 69 of them re-run here · 0 newly detected
+```
+
+**Detection** is over every reviewed malicious sample, detected or not. It falls when a family
+nothing catches is reviewed — which is the correct behaviour, not a problem to be smoothed —
+and it rises only when rules improve. It cannot be gamed by review order. **Regression** is the
+old figure under the name of what it always was; being 100% by construction is fine there,
+because reporting a break is its entire job.
 
 What each of them needed instead was a **second, independently-sourced denominator**, and
 that is the general repair:
@@ -1062,8 +1089,14 @@ that is the general repair:
 
 **The tell is always the same**: a number that cannot get worse no matter what happens in the
 world. Recall over self-found samples cannot fall; a finding-shaped corpus cannot contain a
-counterexample; technique coverage cannot drop while nothing is reviewed. When a measurement
-has no way to deliver bad news, the denominator is the thing to look at.
+counterexample; technique coverage cannot drop while nothing is reviewed; and a recall whose
+denominator excludes every known miss can only ever report a regression. When a measurement
+has no way to deliver bad news about the thing it appears to be about, the denominator is what
+to look at.
+
+A corollary worth keeping: **the honest number is usually the better advertisement.** 15.5%
+demonstrates a suite finding real gaps in the scanner it tests; 100% demonstrates a suite
+confirming what already works. The second is easier to print and worth less.
 
 A fourth instance should be assumed to exist in whatever is measured next — the same standing
 assumption §5.3 makes about masking, and for the same reason: this class of error is invisible

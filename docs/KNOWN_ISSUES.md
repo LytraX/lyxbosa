@@ -121,15 +121,20 @@ class of sample that matters most — attacker-staged, outside the served tree, 
 to the scan that produced the "clean" verdict. It also means a host can be reported clean
 while a live payload sits one `include` away from execution.
 
-**Shape of a fix — not implemented, recorded only.** Two options, and the second is
-probably the right one:
+**Shape of a fix — not implemented, recorded only. The choice between the two is now
+settled.** The cron evidence above decides it: a payload that never needs to be servable is
+not reachable by scanning the served tree more carefully, however well the documentation
+explains where to look. Option 1 tells an operator to go and look somewhere; option 2 looks.
+For this class of sample only the second one can work, so it is the design conclusion rather
+than the preference it was when both were guesses.
 
 1. **Documentation.** State plainly that a webroot scan is not a host scan, and give the
    directories worth adding: `/tmp`, `/var/tmp`, `/dev/shm`, per-account home directories
    outside the served tree (including `~/tmp`, `~/.cache` and dot-directories), and the
    system cron and systemd unit paths.
-2. **A scan profile that does it by default.** A `--profile host` (as against the implicit
-   `webroot`) that walks those locations as well, with the ownership signal made explicit:
+2. **A scan profile that does it by default — the chosen shape.** A `--profile host` (as
+   against the implicit `webroot`) that walks those locations as well, with the ownership
+   signal made explicit:
    a file in a shared temp directory owned by an unprivileged *web* account, carrying the
    executable bit, with a name that is a hex digest and no extension, is worth surfacing
    on placement alone — the same placement-and-permissions reasoning that several existing
