@@ -263,8 +263,14 @@ mismatch. Anyone can regenerate the same corpus and get the same number, which i
 — the figure is reproducible rather than reported.
 
 All 8 are upstream library code (the Freemius SDK, an FPDF class). They are pinned as
-`known_fp` fixtures, so if a rule change fixes one the suite says so, and if a fixed one
-ever comes back it fails.
+`known_fp` fixtures, so if a rule change fixes one the suite says so, and if a fixed one ever
+comes back it fails.
+
+**They stay inside the 8.** All eight counted false positives are pinned, known, unfixed
+ones — pinning a defect does not remove it from the number it belongs to. That is worth
+saying because the mirror-image column got it the other way round for several rounds: known
+*misses* were being taken out of the recall denominator, which is what made that figure
+read 100%. See `docs/tasks/CORPUS_PLAN.md` §8.
 
 ### The malicious side — a number, and a small one
 

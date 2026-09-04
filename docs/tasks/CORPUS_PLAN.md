@@ -895,11 +895,40 @@ The two columns together are what let the suite report honestly on both axes at 
 
 ```
   Known FPs        6 expected · 0 newly fixed
-  Known misses     3 expected · 0 newly detected
+  Known misses    71 recorded · 69 of them re-run here · 0 newly detected
 ```
 
 Neither is a failure. Both are measurements of where the scanner currently stands, and both
 turn into news the moment they change.
+
+### The two columns were built with opposite conventions, and only one was right
+
+This is the narrower lesson behind §11's fourth instance, and it is worth stating separately
+because it is easier to act on.
+
+The columns look symmetric and are not. **A `known_fp` sample stays inside the number it
+belongs to.** Measured: the benign sweep counts 8 false positives, and all 8 are pinned
+`known_fp` material — the whole figure is known, unfixed false positives, and reporting it as
+`0.0055%` is honest precisely because none of them was taken out. (The fixture list holds 6
+sha256 and matches 8 files, because `class-freemius.php` and `FreemiusBase.php` appear under
+several plugins; the store is content-addressed and the sweep is not.)
+
+**A `known_miss` sample was removed from its denominator entirely.** Same concept, mirrored
+layout, opposite effect: one column reports "here is a defect, and it is in the total", the
+other reported "here is a defect, and the total is computed as though it were not".
+
+The symmetry *was* checked — both columns exist, both stay green, both promote to a hard
+assertion when they change. What was never checked is what each does to its own denominator.
+So:
+
+> **When you build a mirror, check that the reflection behaves the same way, not just that it
+> is there.**
+
+And the reason nobody noticed for several rounds is worth recording too: **the false-positive
+side happened to be correct**, so there was nothing to contrast the other against. A pair
+where one half is right and the other is wrong looks, from a distance, exactly like a pair
+where both are right. Reviewing them side by side is what finds it; reviewing each on its own
+never will.
 
 ### Every count difference must carry an attributed cause
 
@@ -1054,6 +1083,12 @@ The four instances:
 In every case the figure is true, useful and worth reporting — and in every case it measures
 *the reach of the process*, not the reach of the scanner. None of them is fixed by computing
 it more carefully, because the arithmetic is not what is wrong.
+
+The four also split into two kinds, and they need different handling: the first three are
+denominators that **bound what a number can say**, and the repair is a second, independently
+sourced denominator. The fourth is a denominator that made a number **say something it did not
+mean**, and no second denominator fixes that — it has to be renamed. §8's note on the two
+`known_*` columns is the narrow, checkable version of the same lesson.
 
 **The fourth was the headline, which is what made it the worst of them.** `Recall 100.00%`
 printed directly above `Known misses 69`, and the layout invites reading the first as the
