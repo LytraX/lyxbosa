@@ -257,15 +257,16 @@ fixtures — a rule change that fixes one is reported, and a fixed one that come
 the suite. They stay counted inside the 8; pinning a defect does not remove it from its own
 total.
 
-**Detection: 10.0% — 13 of 130 confirmed-malicious samples.** The other 117 are recorded
-known misses: real malware this version does not catch, including a WordPress `db.php`
-drop-in family of 46 samples, a fake-plugin family whose payloads are named `.png`
-([docs/RULE_CANDIDATES.md](docs/RULE_CANDIDATES.md) §2), and the webshells staged outside
-the web root that [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) issue 3 rests on. The
-denominator is every reviewed malicious sample, so reviewing a family the scanner misses
-lowers this figure. That is intended — it measures coverage, not progress.
+**Detection: 45.4% — 59 of 130 confirmed-malicious samples.** The other 71 are recorded
+known misses: real malware this version does not catch, including a fake-plugin family whose
+payloads are named `.png` ([docs/RULE_CANDIDATES.md](docs/RULE_CANDIDATES.md) §2) and the
+webshells staged outside the web root that
+[docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) issue 3 rests on. The denominator is every
+reviewed malicious sample, so reviewing a family the scanner misses lowers this figure and
+shipping a rule for one raises it. Both directions are intended: it measures coverage, not
+progress.
 
-**Regression: 7 of 7 expected detections still firing.** A separate measurement over a
+**Regression: 53 of 53 expected detections still firing.** A separate measurement over a
 separate denominator, the samples already known to be detected. It is not recall and is not
 quoted as one.
 

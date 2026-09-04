@@ -1465,6 +1465,68 @@ TEST(RepairedRuleTest, ChunkAccumulationNeedsUniformBase64Fragments) {
     EXPECT_FALSE(ruleFires("OBF029", few));
 }
 
+// OBF039: the position strpos() found, used as an index into a second alphabet.
+//
+// Both negative cases are modelled on real files, not invented. They are the two
+// populations that reach the same shape honestly, and the second one is why the rule
+// carries an alphabet test at all: without it, 7 files across 279,337 in the CMS,
+// CMS-ext and Sites trees would match, every one of them ordinary code.
+TEST(RepairedRuleTest, SubstitutionCipherIsNotValidationOrAPlainCodec) {
+    // The db.php drop-in family: two assembled alphabets and a table lookup.
+    std::string cipher =
+        "<?php\n"
+        "$f = '_G'.'UAR'.'DNME'.'PLI'.'BS'.'64'.'gzde'.'coin'.'latW'.'COT/'.'pus.';\n"
+        "$t = 'a.'.'qL'.'h3'.'bORN'.'zsd'.'Wie'.'o_'.'pw'.'-BPD'.'Ur'.'Iu'.'2M';\n"
+        "$e = 'B5krieaUrIuUr'; $r = '';\n"
+        "for ($j = 0; $j < strlen($e); $j++) {\n"
+        "    $p = strpos($t, $e[$j]);\n"
+        "    $r .= ($p === false) ? $e[$j] : $f[$p];\n"
+        "}\n";
+    EXPECT_TRUE(ruleFires("OBF039", cipher));
+
+    // A character whitelist. Same strpos over an indexed character, but the position
+    // is compared against false and thrown away - it never indexes anything.
+    std::string validate =
+        "<?php\n"
+        "$allowed = 'abcdefghijklmnopqrstuvwxyz0123456789-_';\n"
+        "$out = '';\n"
+        "for ($i = 0; $i < strlen($in); $i++) {\n"
+        "    $p = strpos($allowed, $in[$i]);\n"
+        "    if ($p === false) { continue; }\n"
+        "    $out .= $in[$i];\n"
+        "}\n";
+    EXPECT_FALSE(ruleFires("OBF039", validate));
+
+    // A base58 decoder. It does index one alphabet by a position found in another --
+    // that is what decoding is -- but it writes the alphabet as one literal, because
+    // it has nothing to hide. This is the case that keeps the rule off phpseclib-style
+    // libraries, and the real near-misses measured a concatenation run of 1 against a
+    // threshold of 6.
+    std::string codec =
+        "<?php\n"
+        "$alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';\n"
+        "$digits = '0123456789abcdef';\n"
+        "$out = '';\n"
+        "for ($i = 0; $i < strlen($input); $i++) {\n"
+        "    $p = strpos($alphabet, $input[$i]);\n"
+        "    $out .= $digits[$p];\n"
+        "}\n";
+    EXPECT_FALSE(ruleFires("OBF039", codec));
+
+    // The alphabet test is not satisfied by any concatenation: a run of short
+    // literals has to be long. Three fragments is ordinary string building.
+    std::string shortRun =
+        "<?php\n"
+        "$digits = '0123456789abcdef';\n"
+        "$a = 'foo'.'bar'.'baz';\n"
+        "$out = '';\n"
+        "for ($i = 0; $i < strlen($in); $i++) {\n"
+        "    $p = strpos($a, $in[$i]);\n"
+        "    $out .= $digits[$p];\n"
+        "}\n";
+    EXPECT_FALSE(ruleFires("OBF039", shortRun));
+}
+
 // OBF038: "wordless" alone matched banner rules and docblock fragments.
 TEST(RepairedRuleTest, NoiseCommentsAreNotBannersOrDocblocks) {
     // WordPress core view.js style banner separators.

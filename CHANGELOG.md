@@ -13,6 +13,12 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **`OBF039` (critical)** — a per-file substitution cipher. A WordPress `db.php` drop-in
+  campaign resolved every dangerous identifier at runtime through a table lookup, so nothing
+  was written down for a pattern to match and the alphabet differed per file. It matches the
+  decoder instead: the position `strpos` finds used as an index into a second alphabet that
+  the file assembles from short literals. Closes 46 known misses and takes corpus detection
+  from 10.0% to 45.4%.
 - **A golden corpus and a reproducible suite** (`corpus/`). The benign half is 86 upstream
   sources pinned by version and sha256 — nothing is committed, `corpus/fetch-benign.sh`
   downloads and hash-verifies — so the false-positive rate regenerates anywhere and yields
