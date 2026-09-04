@@ -70,17 +70,30 @@ single pass over 70 slugs. Name-shape scoring is not the reliable half of this c
 The reliable half is the set difference against the lockfile; the naming score should be
 treated as a ranking aid for a human queue, not as a predicate.
 
-**Suggested shape if it is built.** Not a content rule. A *placement* check that emits a
-low-severity informational finding — "plugin/theme directory `X` matches no known slug" —
-carrying the directory's file count, the extension mix, and whether any file's magic bytes
-disagree with its extension. Those secondary facts are what separate the fake theme above
-from a client's bespoke plugin, and they cost nothing to compute once the directory has
-already been flagged.
+**Suggested shape: an advisory, not a rule.** The coupling above is the deciding argument,
+and it points somewhere specific.
 
-**Measure before shipping:** run it across `trail-data/CMS`, the sanitised site corpus and
-every pinned tree, and count how many legitimate directories it names. A check that fires on
-a real site's custom child theme on every scan will be switched off, and then it protects
-nothing.
+Every other detection in this scanner has precision as a property of *the pattern*. This one
+would have precision as a property of *the deployment's reference data*: two hosts running
+an identical build would reach different verdicts on the same directory, and a user with no
+lockfile would get nothing but noise. A severity-bearing finding that behaves that way is
+not really a detection — it is a lookup wearing a detection's clothes.
+
+Reframed as a **triage and reporting feature**, the problem dissolves. An advisory list —
+*"these 14 plugin/theme directories match no known registry"* — is allowed to depend on
+reference data, because that is what an advisory is. It carries no severity, does not enter
+the detection counts, and cannot be a false positive in the sense the rest of the suite
+means. It says "here is where to look first", which is exactly what it is good for.
+
+Concretely: no rule ID, no severity, no contribution to precision or recall. A separate
+report section listing unmatched directories, each with its file count, extension mix, and
+whether any file's magic bytes disagree with its extension. Those secondary facts are what
+separate a fake theme from a client's bespoke plugin, and they cost nothing once the
+directory is already listed.
+
+If it were ever promoted to a severity-bearing rule, **that** is when it needs the full FP
+measurement across `trail-data/CMS`, the sanitised site corpus and every pinned tree — and
+the coupling would need answering first, not the FP number.
 
 ### A collection-scope note, worth keeping with this
 

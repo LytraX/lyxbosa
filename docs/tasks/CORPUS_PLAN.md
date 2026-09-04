@@ -177,6 +177,50 @@ bomb from 64 KB. Extend that generator into a `corpus/generate-archives.sh` prod
 fixture set, and pair each with its expected outcome (`ARC001` on a synthesised site copy,
 `skippedRatio`/`skippedBudget` on the bomb, `skippedCorrupt` on a truncated one).
 
+### 2.3b Collect by directory, not by finding
+
+**When a directory contains a finding, collect the whole directory.** This is a collection
+principle, not a refinement of §2.3, and getting it wrong is unrecoverable.
+
+Collection driven by a scan report captures the files the rules already flagged. Everything
+else in the same directory is skipped — and *the sibling files are the context a
+placement-based rule needs*. They are, by definition, individually unremarkable: that is
+what makes them camouflage, and it is exactly why no content rule fires on them.
+
+This was learned by losing it. A randomly-named theme directory in this collection
+held four zlib payload blobs, which the scanner flagged and which were duly collected. Live
+on the host the same directory also held a copy of a legitimate commercial theme's
+`style.css` and `screenshot.png` — the two files that made a fake theme look like a theme.
+Neither matched a rule, so neither was collected, and the host is now authorised for wipe.
+**The corpus has the payload and not the disguise**, which means it cannot support the
+placement rule the sample argues for (`docs/RULE_CANDIDATES.md` §1).
+
+The general form is the more uncomfortable statement:
+
+> A corpus assembled from findings can only support rules resembling the ones that built it.
+
+That is the `discovered_by` problem from §4.4 arriving from a different direction. There the
+concern was circularity in *measurement* — recall computed over samples the scanner found
+itself is close to 100% by construction. Here it is circularity in *capability*: a new rule
+needs to see what the old rules ignored, and a finding-shaped collection has already thrown
+that away. Recording provenance fixes the first; only collecting differently fixes the
+second.
+
+**What to do next time, at collection:**
+
+- for every finding on disk, collect its **parent directory in full** — every sibling file,
+  with metadata, not just the flagged one;
+- keep the directory listing regardless, so the shape is recoverable even where the bytes
+  are too large or too sensitive to take (§2.1 already captures listings; this extends it to
+  bytes);
+- apply the usual exclusions to the *contents* — backups, huge media — but let the default be
+  take-the-directory rather than take-the-file;
+- for archive members, the equivalent is the member's directory prefix inside the container.
+
+The cost is bounded and small: webshells sit in directories of ordinary size, and the
+oversized cases are already excluded on other grounds. The cost of not doing it is that the
+context is gone the moment the host is wiped, and no amount of later analysis brings it back.
+
 ### 2.4 Verify before anyone deletes anything
 
 ```bash
@@ -338,7 +382,7 @@ line, and it diffs and merges in git.
  "sensitivity":["path","c2"],
  "masked":{"path":"account segment -> acct01","c2":"kept deliberately (IOC)"},
  "publishable":true,
- "origin":{"incident":"2026-08-22","account_hash":"a3f1",
+ "origin":{"incident":"<incident>","account_hash":"a3f1",
            "path":"/home/<acct01>/public_html/wp-admin.php",
            "mode":"0444","mtime":1782000000},
  "discovered_by":"lyxbosa-scan",
