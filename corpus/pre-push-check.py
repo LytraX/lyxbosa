@@ -22,13 +22,19 @@ WHAT IT CHECKS, and why each one is here rather than assumed:
                   /home<digits>/<x>/ pseudonymous.
 
 WHAT IT DOES NOT DO: it does not sweep for substrings. Four such sweeps were written during
-that incident and all four manufactured hits - `wp` matched 52,103 rows because of
-wp-content, `global` matched Elementor's global-widget files, `decons` matched a sentence
-describing that very collision because UpgradeConsumerSecret lowercases to contain it, and
-`anima` matched animate/animation/animating. Every one reported a leak where none existed,
-and a check whose output is coincidences is a check nobody finishes. So the leak predicate
-is imported from verify-infected-mask.py rather than rewritten here: containment for names
-long enough to be nothing else, whole alphabetic runs for short ones.
+that incident and all four manufactured hits. A two-letter account name matched 52,103 rows
+through `wp-content`. A six-letter label matched a plugin framework's own `global-*` files.
+Another six-letter label matched inside a stock Magento class name - including in the
+sentence describing that very collision. A five-letter label matched animate, animation and
+animating. Every one reported a leak where none existed, and a check whose output is
+coincidences is a check nobody finishes. So the leak predicate is imported from
+verify-infected-mask.py rather than rewritten here: containment for names long enough to be
+nothing else, whole alphabetic runs for short ones.
+
+The labels above are described by length rather than spelled out, and that is not fussiness.
+The first version of this docstring named two of them as examples, and this script refused
+its own push over it - a leak written into the tool built to catch leaks, which is the fifth
+time that shape occurred during the incident. Describe collisions; do not quote them.
 
 --inject is not optional decoration. Five checks written during that incident passed while
 being blind: a /home/-only regex that could not see /home2/, a per-ref sweep that could not
