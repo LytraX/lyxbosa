@@ -12,7 +12,9 @@ corpus/
   local/index-local.jsonl           local-only rows (gitignored)
   import-infected-tree.py           imports the legacy trail-data/Infected tree
   infected_mask.py                  path masking for that tree; map is out of repo
-  verify-infected-mask.py           the independent masking check (shares no regex with it)
+  incident_mask.py                  path masking for the current incident; map is out of repo
+  verify-infected-mask.py           the independent masking check, either tree: --map <path>
+  promote-gate.py                   §5.3 — the map-AWARE check, run when a row is promoted
   index-summary.json                the denominator: counts and blockers, tracked
   shards/                           built shards (gitignored; release assets)
 ```
@@ -96,16 +98,54 @@ Three tools support the import, and the split between them is deliberate:
 |---|---|---|
 | `import-infected-tree.py` | yes | reproduces the denominator, refuses to run if it moved, sniffs content, triages media structurally, indexes archive members and never containers, classifies with the evidence recorded |
 | `infected_mask.py` | yes | path masking, and `collisions()` — which proves *which* identifiers rewrite something they should not, against a real vocabulary |
-| `verify-infected-mask.py` | yes | the independent check. Shares no regex with the masker |
+| `verify-infected-mask.py` | yes | the independent check. Shares no regex with either masker |
+
+`incident_mask.py` is the same pair of jobs for the **current incident**, whose map and
+identifiers are different. Its widths are measured rather than chosen: each identifier gets
+the widest substitution its own collisions against the stock CMS trees permit, so a name
+that is also an English fragment is masked as a whole word while a distinctive one is masked
+anywhere in a token. Both maskers rewrite **nothing** in the 158,675 files of `trail-data/CMS`
+and `trail-data/CMS-ext`, which is what `--collisions` asserts.
 
 `shard-gate.py` is the one that must **not** need the map, and does not: it asserts the
 *form* of what is allowed (`acctNN`, `siteNN`, `srvNN`), so a stranger can run it.
+
+**That map-free property leaves one hole, and `promote-gate.py` is where it is closed.**
+Incident-response directories are named `<token>-<what was done>-<8 digits>-<6 digits>`, and
+the leading token is an account name often enough to matter and an operation verb most of
+the time. A published row carrying one leaks a customer, and neither map-free invariant sees
+it: it is not an `origin` field and it holds no `/home<digits>/`. A *form* rule cannot close
+it either — requiring that leading token to be a pseudonym flags **16,656** of the local
+half's rows to reach the **2,425** that actually named a customer, 85.4% false positives, on
+`live`, `ir`, `cross`, `renamed`, `post`, `orphaned`, `active`, `core`. The discriminator is
+the map and only the map, so the check runs where the map is: at promotion, over the exact
+text about to be written, recording category and count and never the identifier.
 
 **Directory names live in the map, not in the tools.** `import-infected-tree.py` is tracked,
 and a classification rule spelled `rel.startswith("<client>.gr/page/")` puts a customer's
 name in git exactly as surely as an unmasked index row would. The map holds the names; the
 tool reads roles. This is §5.3's "a field nobody thought of", one level out — it was not a
 field at all, it was the tool's own source.
+
+### `acct<unmapped:XXXX>` — what it means and why 16 of them stay
+
+A row carries `acct<unmapped:XXXX>` when the collection knew an account by its hash but no
+map named it. It is already a pseudonym, so it is not a leak; it is a gap in the map.
+
+The hash is `sha256(account_name)[:4]`, verified against all 85 known name/hash pairs with
+zero disagreements — which is what makes the gap closable at all. Feeding it the 76 distinct
+`/home*/<name>/` components from the whole-host manifest resolved **7 of 23** markers, every
+one of them to an account the map *already* held. Those rows said "unmapped" while the answer
+was on disk, so that was a masker gap rather than a map gap, and it is now substituted.
+
+**The remaining 16 are not chaseable from anything this corpus holds.** Their account names do
+not appear in the host manifest, which was taken after the incident: an account deleted or
+renamed between compromise and collection leaves rows that reference it and a filesystem that
+does not. Four hex characters is 65,536 values against 76 candidates, and there were zero
+collisions, so this is a genuine absence rather than an ambiguity.
+
+Do not resolve them by guessing. A wrong name attached to a real account's rows is worse than
+no name, because it is indistinguishable from a right one afterwards.
 
 ### Any writer of either half goes through `indexio.py`
 

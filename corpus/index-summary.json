@@ -65,8 +65,8 @@
   "verdict is unreviewed: nothing leaves that state without a human": 79595
  },
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
- "malicious_detected": 122,
- "malicious_detected_excl_predates_ruleset": 60,
+ "malicious_detected": 128,
+ "malicious_detected_excl_predates_ruleset": 66,
  "malicious_detected_runnable": 54,
  "malicious_known_miss": 638,
  "malicious_known_miss_by_family": {
@@ -100,8 +100,8 @@
  },
  "malicious_known_miss_excl_predates_ruleset": 112,
  "malicious_no_expectation": 0,
- "malicious_reviewed": 760,
- "malicious_reviewed_excl_predates_ruleset": 172,
+ "malicious_reviewed": 766,
+ "malicious_reviewed_excl_predates_ruleset": 178,
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
  "predates_ruleset_blobs": 1131,
  "published": 12264,
@@ -117,7 +117,7 @@
  },
  "published_shipped_as_bytes": 76,
  "sensitivity_tags": {
-  "c2": 791,
+  "c2": 797,
   "clean": 12780,
   "content": 5084,
   "identity": 293,
@@ -125,7 +125,7 @@
   "pii": 195,
   "secret": 83,
   "undecidable": 275,
-  "unreviewed": 73797
+  "unreviewed": 73791
  },
  "techniques_known": {
   "argument-injection": 1,
@@ -327,7 +327,7 @@
  "total_blobs": 92800,
  "verdicts": {
   "benign": 12445,
-  "malicious": 760,
-  "unreviewed": 79595
+  "malicious": 766,
+  "unreviewed": 79589
  }
 }
