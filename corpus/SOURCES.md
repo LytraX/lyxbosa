@@ -16,7 +16,10 @@ corpus/
   import-infected-tree.py           imports the legacy trail-data/Infected tree
   infected_mask.py                  path masking for that tree; map is out of repo
   incident_mask.py                  path masking for the current incident; map is out of repo
-  verify-infected-mask.py           the independent masking check, either tree: --map <path>
+  verify-infected-mask.py           the independent masking check for ROWS, either tree: --map <path>
+  content_mask.py                   §5.1 — masking of sample BYTES, length-preserving
+  verify-content-mask.py            the independent check for BYTES: plaintext, encoded layers, secrets
+  mask-samples.py                   runs §5.6's three checks over a batch and records the result
   promote-gate.py                   §5.3 — the map-AWARE check, run when a row is promoted
   index-summary.json                the denominator: counts and blockers, tracked
   shards/                           built shards (gitignored; release assets)
@@ -134,8 +137,88 @@ Three tools support the import, and the split between them is deliberate:
 identifiers are different. Its widths are measured rather than chosen: each identifier gets
 the widest substitution its own collisions against the stock CMS trees permit, so a name
 that is also an English fragment is masked as a whole word while a distinctive one is masked
-anywhere in a token. Both maskers rewrite **nothing** in the 158,675 files of `trail-data/CMS`
-and `trail-data/CMS-ext`, which is what `--collisions` asserts.
+anywhere in a token.
+
+**That last claim used to read "both maskers rewrite nothing in the 158,675 files of
+`trail-data/CMS` and `trail-data/CMS-ext`, which is what `--collisions` asserts", and
+`--collisions` did not assert it.** Its attribution loop required `real != token.lower()`,
+so the one case where an identifier IS a stock-CMS token was rewritten by `mask()` and then
+dropped on the way to the report: the check printed zero while the masker rewrote a stock
+token. One name in the current map is an ordinary five-letter English word that stock CMS
+trees use as a filename token, and `tiers()` had given it `C` — leading boundary plus a
+trailing non-letter — which fires on the whole word. `collisions()` now reports an exact hit
+and an unattributable rewrite instead of dropping either, so `incident_mask.py --collisions`
+reports **1**, truthfully, until the map's `mask_tier` is regenerated.
+
+`tiers()` is fixed in the same commit: an identifier that is exactly a stock-CMS token gets
+`D`, positional-only, which is §5.3's rule for a colliding name. That changes nothing on its
+own, because tiers are computed once and stored in the map, and the map is out of repo. Until
+it is regenerated the index masker keeps the stored tier. **The byte masker is not exposed to
+it**: `content_mask.ContentMasker` re-derives the tier from a vocabulary it is handed and
+demotes the name itself, and `mask-samples.py` treats a missing vocabulary as a hard failure
+rather than running without one.
+
+## Masking sample bytes
+
+Three tools, mirroring the row-masking triple, and the split is the same one: the masker
+needs the map, the check does not share the masker's patterns, and the driver runs all of
+§5.6's checks rather than the one that is convenient.
+
+| file | needs the map? | what it does |
+|---|---|---|
+| `content_mask.py` | yes | length-preserving substitution in sample bytes; **subclasses `incident_mask.Masker`**, so span selection is the same code and cannot drift between the two maskers |
+| `verify-content-mask.py` | yes | the independent gate: plaintext, every statically decoded layer, and a differential secret check. Shares nothing with either masker |
+| `mask-samples.py` | yes | masks a batch, runs all three gates plus per-sample detection parity, writes `masking` and only `masking` |
+
+Every substitution is length-preserving and the masker raises rather than returning a
+different length. A synthetic value carries a `mask…` marker wherever the identifier is long
+enough to hold one plus three characters of entropy — the same positive-form discipline
+`shard-gate.py` applies to rows, so a reader of shipped bytes can tell a masked account from
+a real one. The marker is deliberately **not** `acct`, `site`, `srv` or `demo`: those are the
+map's own namespaces, and an eight-character name masked to `acct1234` would alias a
+pseudonym the map has already given to someone else. At two characters of entropy the
+synthetics collided on the first run — `collisions_between_replacements()` caught it and
+refuses to run — which is why the floor is three and not wherever it looked reasonable.
+
+`mask-samples.py` will not record a pass it did not measure. Every `check` is per sample and
+carries a **read proof**: an empty rule set is accepted as "scanned and clean" only when the
+scanner also said so, and an unproven read raises rather than returning nothing. Parity is
+measured between the original and the masked bytes staged under **identical basenames**, so
+a filename-dependent rule cannot appear as a masking effect; the original is measured at its
+collection path as well, and any disagreement is reported as a filename effect rather than
+folded into the parity answer.
+
+### Two things the identifier gates do not answer, and what was done about each
+
+**A hex digest is not a secret just because it is a digest.** `content_mask.py` will mask
+one, and does not by default. Every hex digest adjudicated in this collection was something
+that must not be rewritten: two attacker file markers in comments, an example value in a
+panel's own help text, and a host-binding hash the payload compares against the victim
+file's contents at run time. No row's `secret` evidence names a hex digest — the evidence
+names bcrypt hashes, literal passwords, wp-config credentials and salts — so masking one
+destroys an IOC or a literal the sample's own logic depends on, for nothing. `--mask-hex-digests`
+turns it on for a round that has real ones. The same reasoning, and the same default, applies
+to `--mask-ipv4`: every dotted quad in these 39 samples was an RFC section number in a
+vendored docblock or the unspecified address.
+
+**The identifier gates say nothing about secrets, and a shape test cannot close that.**
+§5.1 requires a secret to be replaced by a synthetic of the same shape, so the output still
+contains something bcrypt-shaped and no test of the output alone can tell it from the
+original. What is checkable is the **difference**: `secret_gate()` asserts that no
+credential-shaped literal in the output is byte-identical to one in the input, over the
+plaintext and every decoded layer. It needs no knowledge of whose secret it is, and it fails
+loudly when a credential form the masker does not cover comes through untouched — which it
+did, on an attacker password literal assigned to a `$pass` variable the masker's keyword list
+did not have.
+
+This closes, for the rows it runs on, the hole recorded above as "the next round's job".
+It does **not** close it structurally: `shard-gate.evaluate()` still reads rows and not
+bytes, so it cannot require a secret gate it has no field for. Making it require
+`secret_gate == PASS` for a `secret`-tagged row is the right next step and belongs in its own
+round — 17 local rows are tagged `secret` with masking already applied and carry no
+`secret_gate`, so the rule would put all 17 into blocker drift until they are re-measured,
+and re-measuring rows this round did not touch is exactly the kind of blind `--fix` the gate
+exists to prevent.
 
 A shard's `MANIFEST.json` and its tracked copy in `expect/` both carry every sample's
 `expect`, which is three places one answer can be written and two of them can be wrong

@@ -197,11 +197,24 @@ def vocabulary(root):
 
 
 def tiers(names, vocab):
-    """The widest rule each identifier's own collisions permit. See the module docstring."""
+    """The widest rule each identifier's own collisions permit. See the module docstring.
+
+    The FIRST test used to be the length one, and the exact-match case fell through to `B`
+    or `C` - both of which rewrite a token that IS the identifier. An account name that is
+    also a stock-CMS filename token is the strongest collision there is, not a weak one, and
+    5.3's rule for a colliding name is positional and nothing broader. One name in the
+    current map is an ordinary five-letter English word that stock CMS trees use as a
+    filename token, and it was tiered `C`.
+
+    Changing this function does not change any masking on its own: tiers are computed once
+    and stored in the map, so the stored answer stands until the map is regenerated against
+    a vocabulary. `content_mask.ContentMasker` applies the same rule at construction time,
+    which is why the byte masker is not exposed to the stale tier.
+    """
     out = {}
     for n in names:
         low = n.lower()
-        if len(low) < 3:
+        if low in vocab or len(low) < 3:
             out[n] = "D"
         elif any(t != low and t.startswith(low) for t in vocab):
             out[n] = "C"
@@ -284,17 +297,31 @@ class Masker:
         The 5.3 check, and the reason the tiers are measured rather than guessed: it reports
         the token, the identifier that hit it and what it would become, so each can be
         judged instead of assumed safe.
+
+        It was blind in exactly one direction, and it is the direction with the worst
+        consequence. The attribution loop required `real != token.lower()`, so a token that
+        IS an identifier - an account name that is also an ordinary word used as a stock-CMS
+        filename token - was rewritten by `mask()` and then dropped on the way to the report.
+        `--collisions` printed zero while the masker rewrote a stock token, and SOURCES.md's
+        claim that this asserts "both maskers rewrite nothing in the stock trees" rested on
+        it. AGENTS.md: a check that has never been observed to fail is not yet a check, and
+        this one could not say the other thing about the strongest collision it can meet.
         """
         out = []
         for token in sorted(vocab):
             masked = self.mask(token)
             if masked == token:
                 continue
-            for real in self.pairs:
-                if real in token.lower() and real != token.lower():
+            for real in sorted(self.pairs, key=len, reverse=True):
+                if real in token.lower():
                     out.append({"token": token, "identifier_len": len(real),
-                                "becomes": masked})
+                                "exact": real == token.lower(), "becomes": masked})
                     break
+            else:
+                # Rewritten with no identifier inside it at all. Not attributable, so it is
+                # reported as itself rather than dropped: an unexplained rewrite is a finding.
+                out.append({"token": token, "identifier_len": None, "exact": False,
+                            "becomes": masked})
         return out
 
 

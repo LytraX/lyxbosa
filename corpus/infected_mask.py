@@ -8,7 +8,7 @@ infected-tree-mapping.json`); this module is useless without it, which is delibe
 CORPUS_PLAN 5.3 - and is why the GATE that checks the result asserts a *form* and needs no
 map at all.
 
-CORPUS_PLAN 5.3, the two rules that come out of nine recorded failures:
+CORPUS_PLAN 5.3, the two rules that come out of twelve recorded failures:
 
   * an identifier can appear anywhere inside a token, so this substitutes on a plain
     longest-first alternation rather than on segment prefixes, and covers the
@@ -111,14 +111,26 @@ class Masker:
         This is the 5.3 check: `wp` inside `wp_based`, one account's name inside
         `ir-malware-samples`. It reports the token, the identifier that hit it, and what it
         would become, so each can be judged rather than assumed safe.
+
+        The attribution loop used to require `real.lower() != token.lower()`, which silently
+        dropped the strongest collision there is - a token that IS an identifier, i.e. a name
+        that is also an ordinary word this vocabulary uses. `mask()` rewrites it and the
+        report said nothing, so the check could not fail in the one direction that matters
+        most. 5.3's tenth recorded failure, found in `incident_mask.py` and identical here.
         """
         out = []
         for token in sorted(set(vocabulary)):
             masked = self.mask(token)
             if masked == token:
                 continue
-            for real in self.pairs:
-                if real.lower() in token.lower() and real.lower() != token.lower():
-                    out.append({"token": token, "identifier": real, "becomes": masked})
+            for real in sorted(self.pairs, key=len, reverse=True):
+                if real.lower() in token.lower():
+                    out.append({"token": token, "identifier_len": len(real),
+                                "exact": real.lower() == token.lower(), "becomes": masked})
                     break
+            else:
+                # Rewritten with no identifier inside it. Not attributable, so reported as
+                # itself: an unexplained rewrite is a finding, not something to drop.
+                out.append({"token": token, "identifier_len": None, "exact": False,
+                            "becomes": masked})
         return out
