@@ -1,0 +1,222 @@
+[
+ {
+  "name": "seo-doorway-generator--eb5825e3",
+  "file": "samples/doorway-kit/joezd2.txt",
+  "sha256": "eb5825e316c90276f948251e3eb3f82b89f0c3d35ee78255aa5aff612a9e1673",
+  "source_sha256": "eb5825e316c90276f948251e3eb3f82b89f0c3d35ee78255aa5aff612a9e1673",
+  "size": 28160,
+  "verdict": "malicious",
+  "family": "seo-doorway-generator",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip.",
+   "must_detect": [],
+   "must_not_detect": []
+  },
+  "technique": [
+   "doorway-page-generation",
+   "implemented-not-active:crawler-cloaking",
+   "eval-of-generated-content"
+  ],
+  "masked": false,
+  "note": "shipped as collected from the legacy Infected tree; nothing was masked because the independent gate found nothing to mask"
+ },
+ {
+  "name": "seo-doorway-template--6550d05e",
+  "file": "samples/doorway-kit/new",
+  "sha256": "6550d05ea18bc3660fc100dec1d6410ca2efb86eea4d564263e0ea1f0759ea22",
+  "source_sha256": "6550d05ea18bc3660fc100dec1d6410ca2efb86eea4d564263e0ea1f0759ea22",
+  "size": 5020,
+  "verdict": "malicious",
+  "family": "seo-doorway-template",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip.",
+   "must_detect": [],
+   "must_not_detect": []
+  },
+  "technique": [
+   "doorway-page-template"
+  ],
+  "masked": false,
+  "note": "shipped as collected from the legacy Infected tree; nothing was masked because the independent gate found nothing to mask"
+ },
+ {
+  "name": "seo-doorway-deployer--666796ec",
+  "file": "samples/doorway-kit/new.php",
+  "sha256": "666796ecc750338f0a4d7d74f08111db6d470aab6efac8a6fbf46eb505046594",
+  "source_sha256": "666796ecc750338f0a4d7d74f08111db6d470aab6efac8a6fbf46eb505046594",
+  "size": 547,
+  "verdict": "malicious",
+  "family": "seo-doorway-deployer",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "must_detect": [
+    "BD018"
+   ],
+   "must_not_detect": [],
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "BD018",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip. RULE_CANDIDATES section 9 is measured against it: 3/3 recall, 0 FP over 207,311 files, 343 at risk, 95% bound 0.87%. Awaiting the rule."
+   }
+  },
+  "technique": [
+   "quarantine-reversal",
+   "htaccess-replacement",
+   "index-removal",
+   "payload-restore-from-sidecar",
+   "request-abort-survival",
+   "implemented-not-active:wp-login-injection"
+  ],
+  "masked": false,
+  "note": "shipped as collected from the legacy Infected tree; nothing was masked because the independent gate found nothing to mask"
+ },
+ {
+  "name": "seo-doorway-template--622e1cef",
+  "file": "samples/doorway-kit/news7",
+  "sha256": "622e1cefdb0a7283dd4794777cb035e5421a57c258caf07b9eee4f9c4c665198",
+  "source_sha256": "622e1cefdb0a7283dd4794777cb035e5421a57c258caf07b9eee4f9c4c665198",
+  "size": 5590,
+  "verdict": "malicious",
+  "family": "seo-doorway-template",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip.",
+   "must_detect": [],
+   "must_not_detect": []
+  },
+  "technique": [
+   "doorway-page-template"
+  ],
+  "masked": false,
+  "note": "shipped as collected from the legacy Infected tree; nothing was masked because the independent gate found nothing to mask"
+ },
+ {
+  "name": "seo-doorway-deployer--aa779503",
+  "file": "samples/doorway-kit/old.php",
+  "sha256": "aa779503a694b9384cef28700ba04b53275d291e8dcbe1eb5f7a50ab7941abd2",
+  "source_sha256": "aa779503a694b9384cef28700ba04b53275d291e8dcbe1eb5f7a50ab7941abd2",
+  "size": 415,
+  "verdict": "malicious",
+  "family": "seo-doorway-deployer",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "must_detect": [
+    "BD018"
+   ],
+   "must_not_detect": [],
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "BD018",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip. RULE_CANDIDATES section 9 is measured against it: 3/3 recall, 0 FP over 207,311 files, 343 at risk, 95% bound 0.87%. Awaiting the rule."
+   }
+  },
+  "technique": [
+   "quarantine-reversal",
+   "htaccess-replacement",
+   "index-removal",
+   "payload-restore-from-sidecar",
+   "request-abort-survival",
+   "implemented-not-active:wp-login-injection"
+  ],
+  "masked": false,
+  "note": "shipped as collected from the legacy Infected tree; nothing was masked because the independent gate found nothing to mask"
+ },
+ {
+  "name": "seo-doorway-deployer--aa1282ad",
+  "file": "samples/doorway-kit/old.txt",
+  "sha256": "aa1282adfe5f57367ab2c645833f4515123693cfc58cfc5e66a3be48f702aaf5",
+  "source_sha256": "aa1282adfe5f57367ab2c645833f4515123693cfc58cfc5e66a3be48f702aaf5",
+  "size": 415,
+  "verdict": "malicious",
+  "family": "seo-doorway-deployer",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "must_detect": [
+    "BD018"
+   ],
+   "must_not_detect": [],
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "BD018",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip. RULE_CANDIDATES section 9 is measured against it: 3/3 recall, 0 FP over 207,311 files, 343 at risk, 95% bound 0.87%. Awaiting the rule."
+   }
+  },
+  "technique": [
+   "quarantine-reversal",
+   "htaccess-replacement",
+   "index-removal",
+   "payload-restore-from-sidecar",
+   "request-abort-survival",
+   "implemented-not-active:wp-login-injection"
+  ],
+  "masked": false,
+  "note": "shipped as collected from the legacy Infected tree; nothing was masked because the independent gate found nothing to mask"
+ },
+ {
+  "name": "seo-doorway-generator--712e60ac",
+  "file": "samples/doorway-kit/oyptke.txt",
+  "sha256": "712e60aca405f726231f3481f5bbcfff744c44a5361c9cfcbcc4a17650e2918c",
+  "source_sha256": "712e60aca405f726231f3481f5bbcfff744c44a5361c9cfcbcc4a17650e2918c",
+  "size": 28113,
+  "verdict": "malicious",
+  "family": "seo-doorway-generator",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip.",
+   "must_detect": [],
+   "must_not_detect": []
+  },
+  "technique": [
+   "doorway-page-generation",
+   "implemented-not-active:crawler-cloaking",
+   "eval-of-generated-content"
+  ],
+  "masked": false,
+  "note": "shipped as collected from the legacy Infected tree; nothing was masked because the independent gate found nothing to mask"
+ },
+ {
+  "name": "seo-doorway-generator--5a0398d6",
+  "file": "samples/doorway-kit/troeiw.txt",
+  "sha256": "5a0398d6e73ae2299e746c6892daec1f76bf3064f3d04a7c5d3bed68bb3b7f5f",
+  "source_sha256": "5a0398d6e73ae2299e746c6892daec1f76bf3064f3d04a7c5d3bed68bb3b7f5f",
+  "size": 27879,
+  "verdict": "malicious",
+  "family": "seo-doorway-generator",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "known_miss": true,
+   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip.",
+   "must_detect": [],
+   "must_not_detect": []
+  },
+  "technique": [
+   "doorway-page-generation",
+   "implemented-not-active:crawler-cloaking",
+   "eval-of-generated-content"
+  ],
+  "masked": false,
+  "note": "shipped as collected from the legacy Infected tree; nothing was masked because the independent gate found nothing to mask"
+ }
+]

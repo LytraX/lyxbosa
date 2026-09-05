@@ -2,7 +2,7 @@
 
 ```
 corpus/
-  index.jsonl                       the published half: one row per unique blob, 12,264 rows
+  index.jsonl                       the published half: one row per unique blob, 12,272 rows
   make-summary.py                   regenerates index-summary.json from the two halves
   expect/                           golden expectations, per shard
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
@@ -27,8 +27,8 @@ The index is **split in two, and both halves matter**:
 
 | file | rows | tracked? | what it is |
 |---|---|---|---|
-| `index.jsonl` | 12,264 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 80,536 | no | everything held back, with each row's blockers |
+| `index.jsonl` | 12,272 | yes | published samples — the ones a public suite can verify |
+| `local/index-local.jsonl` | 80,528 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 
 "index.jsonl is small and lives in git" and "the index lists every blob including local-only"
@@ -49,9 +49,36 @@ computes it from the two halves, and `make-summary.py --check` fails non-zero if
 disk disagrees with the index. Run it after any change to either half.
 
 `publishable` is **computed by `shard-gate.py`, never asserted by hand**. Running it with
-`--fix` recomputes every row; running it without arguments fails non-zero if any row claims
-a publishability it cannot justify. It caught 103 such rows on its first run — samples that
+`--fix` recomputes every row; running it without arguments fails non-zero if the stored
+answer disagrees with the computed one. It caught 103 rows on its first run — samples that
 had been masked and gated but never actually reviewed, and 14 that carried `pii`.
+
+**It only looked one way for its first nine rounds, and that is the direction it did not
+need to look.** The gate failed when a row claimed publishable and was not, and was silent
+when a row was publishable and did not say so — so two operator review passes, six samples
+and eight, could set `verdict: malicious` and `sensitivity: ["c2"]` without re-running it,
+and fourteen rows kept `publishable: false` and kept recording *"verdict is unreviewed"* and
+*"sensitivity not yet assessed"* as their blockers long after both had stopped being true.
+Every run recomputed all fourteen, printed `publishable flags corrected: 14`, and exited 0.
+Nothing downstream could see past the record: `promote-pending.py` defers on the stored
+blocker and `index-summary.json` counts it, so a stale blocker is a stale denominator — the
+two blocker counts stood exactly 14 above the sensitivity and verdict tallies they are meant
+to mirror, which was the arithmetic tell nobody read.
+
+The gate now reports three classes and fails on any of them: **over-claimed** (stored true,
+computed false — the original rule), **under-claimed** (stored false, computed true — the
+fourteen), and **blocker drift** (the boolean agrees and the recorded reasons do not, which
+matters because §8's accounting is built out of the reasons). A `--fix` run that corrects
+anything exits **non-zero on purpose**: the correction is not the result, the result is that
+something upstream changed a verdict or a tag without re-running the gate. The green result
+is the plain run afterwards. `shard-gate.py --inject <index>` is the control, and it fails
+seven of its twelve cases against the pre-fix gate.
+
+The field stays **stored** rather than computed on read, and the reason is in the code: the
+published half is a tracked document a stranger reads without running anything, and
+`publish_blockers` has to be materialised anyway because it is where the denominator comes
+from. A stored derived value is a cache; the repair is not to stop storing it but to assert
+that it still equals its source.
 
 ### The suite's binary is overridable, and two build directories are enough
 
@@ -166,6 +193,30 @@ collisions, so this is a genuine absence rather than an ambiguity.
 Do not resolve them by guessing. A wrong name attached to a real account's rows is worse than
 no name, because it is indistinguishable from a right one afterwards.
 
+### A `c2`-only row skips every masking gate, and the tag is the only thing stopping it
+
+`evaluate()` computes `unmasked = tags - ALWAYS_OK - …`, and `ALWAYS_OK` is
+`{"clean", "c2"}`. So for a row tagged `c2` alone, `unmasked` is empty and the whole masking
+branch is skipped: no plaintext gate, no encoded-layer gate, no detection-parity check. A
+human typing `["c2"]` is the entire distance between those bytes and a public shard.
+
+That is not hypothetical. One row from the 2026-09-05 operator review was tagged `c2` alone
+while carrying an attacker password-gate hash — the class §7.2's secret scan must return zero
+hits on over a public shard. The scan cannot tell whose secret it is, so the tag has to
+reflect what the scan will find, and the corpus's only other sample with that technique
+already carried `c2+secret`. It has been re-tagged and is now blocked for the honest reason.
+
+**The structural hole is still open and is the next round's job.** `shard-gate.py` reads index
+rows, not bytes, so it cannot verify a content claim — the check belongs at publish time,
+where the bytes are in hand. Until then: `c2` and `clean` are the two tags that buy a row a
+free pass, so they are the two that need reading rather than trusting, and a review that sets
+either should say what it read.
+
+The general form, which this corpus has now paid for in three places: **a gate that trusts a
+field is only as good as whatever wrote the field.** The publishability boolean drifted
+because nothing asserted it against its source; the blocker strings drifted the same way; and
+the sensitivity tag can drift because nothing asserts it against the bytes.
+
 ### `pending-promotions.jsonl` — measured by one side, applied by the other
 
 A rules round measures which `known_miss` rows its new rules now detect. It does not flip
@@ -235,13 +286,14 @@ the new path is clean cannot tell you the old path was the cause.
 | `media-polyglot` | media container carrying executable code |
 | `media-clean-not-published` | structurally clean media: no code, so a false positive or customer content |
 | `staging-directory-review` | a human opened the whole directory, confirmed it is attacker staging, and the sample passed both gates |
+| `doorway-kit-review` | a human read one legacy-tree doorway kit end to end — deployers, generator, installed `.htaccess`, templates — and ruled on the whole kit |
 
 ## The benign half is fetched, not shipped
 
-Of the 12,202 publishable rows, **12,126 are reproducible from a pinned source or from the
+Of the 12,272 published rows, **12,188 are reproducible from a pinned source or from the
 stock CMS tree** and are therefore *not* shipped as blobs — they are an index row plus a
-lockfile entry. **76** samples ship as bytes: 7 polyglot fixtures, 67 staging samples and 2
-outside-webroot wrappers.
+lockfile entry. **84** samples ship as bytes: 7 polyglot fixtures, 67 staging samples, 8
+doorway-kit samples and 2 outside-webroot wrappers.
 
 That is the point of §6: the benign half is a lockfile and a script, so anyone can
 regenerate it and get the same false-positive number, instead of taking ours on trust.
@@ -290,6 +342,17 @@ content-addressed and kept one example path per blob; these blobs have 16 and 14
 one shown was an IR quarantine copy. `/var/tmp` — the placement that is the entire finding —
 was invisible. `placements` records the count per placement class, so a placement-based claim
 has something to rest on.
+
+`shards/malicious-doorway-kit-001.tar.zst` — the eight executable and template components
+of one 2017 SEO doorway kit from the legacy `Infected` tree, 12 KB. Three deployers, three
+generators and two presentation templates, shipped **as collected**: the independent gate
+found nothing to mask in any of them, in the plaintext or in the raw bytes, and the
+encoded-layer audit finds no region able to carry an identifier. Five are `known_miss`; the
+three deployers are the samples `BD018` closed, promoted in this shard's first round. This
+is the corpus's first published material from the legacy tree, so every row carries
+`predates_ruleset: true` — detection over them is partly a test of the rules against their
+own source material, and the summary reports the figure both ways for exactly that reason.
+Expectations in `expect/malicious-doorway-kit-001.json`.
 
 `shards/malicious-polyglots-002.tar.zst` — one fixture plus one clean carrier. A 510-byte
 "Priv8 Uploader" PHP block injected straight after a real image's JFIF header and terminated

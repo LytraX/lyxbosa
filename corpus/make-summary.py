@@ -17,7 +17,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Reason codes whose samples ship as BYTES in a shard. Everything else is an index row plus
 # a lockfile entry, reproducible with fetch-benign.sh rather than shipped (SOURCES.md 6).
-SHIPPED = {"media-polyglot", "staging-directory-review", "outside-webroot-sweep"}
+SHIPPED = {"media-polyglot", "staging-directory-review", "outside-webroot-sweep",
+           "doorway-kit-review"}
 # Adding a reason code without adding it here silently reclassifies its samples as
 # "reproducible from a pinned source", which is the opposite of the truth. --check catches a
 # stale summary; nothing catches a stale set, so keep this beside the shard that uses it.
@@ -41,6 +42,15 @@ def build():
             t for r in allr for t in (r.get("sensitivity") or []))),
         "local_only_blockers": dict(collections.Counter(
             b for r in loc for b in (r.get("publish_blockers") or []))),
+        # The residue the blocker table cannot show: rows in the local half that nothing
+        # blocks. They are held because no shard carries their bytes or because they are
+        # not classified far enough to ship, and neither of those is a `publish_blockers`
+        # entry - so without this key they are a count with no attributed cause, which is
+        # exactly what section 8 forbids. It read 0 for as long as the publishability gate
+        # was one-directional, because a row that became publishable was never recorded as
+        # having done so.
+        "local_only_publishable_no_blocker": sum(
+            1 for r in loc if r.get("publishable") is True),
         "known_miss": sum(1 for r in allr if (r.get("expect") or {}).get("known_miss")),
         # The detection denominator, over BOTH halves. It has to be every reviewed malicious
         # sample, not just the ones carrying must_detect: must_detect is populated FROM the
@@ -94,6 +104,11 @@ def build():
         "note": ("index.jsonl carries published samples only; the rest live in the gitignored "
                  "local/index-local.jsonl. This file is the denominator, so the suite can say "
                  "how much it is NOT testing. A suite that cannot say that overstates itself."),
+        "local_only_publishable_no_blocker_note": (
+            "rows held local-only that the section 7.2 gate does not block. Held for a "
+            "reason outside the gate's remit - no shard carries their bytes, or they lack "
+            "the family/technique classification a published row needs - so they appear "
+            "under no blocker and would otherwise be an unattributed count"),
         "local_only_blockers_note": ("a row may carry several blockers and is counted under "
                                      "each, so these sum to more than local_only. Reported this "
                                      "way deliberately: collapsing to one reason per row hides "
