@@ -663,6 +663,51 @@ than left to discover it. Two of those seven additionally carry an IR-quarantine
 that is not in the scanner's include list, so in a real scan they would never be opened —
 that is a walker fact, not a rule gap, and the two must not be counted against a rule.
 
+## 9. A `rename()` that undoes antivirus quarantine — **measured, and the strongest of these**
+
+**Signal.** A `rename()` whose *source* carries a quarantine suffix and whose *target* is an
+executable extension:
+
+```php
+if (file_exists("../oyptke.php.suspected")) rename("../oyptke.php.suspected", "../oyptke.php");
+```
+
+`.suspected` is the suffix cPanel and ImunifyAV append when they quarantine a file. This is
+code whose purpose is to reverse an antivirus action. There is no honest reading of it: a
+legitimate program has no reason to know that suffix exists, still less to undo it.
+
+**Measured, to the same standard as §4–§7.**
+
+| | value |
+|---|---|
+| recall | **3 of 3** — every deployer in the campaign directory |
+| false positives | **0** across 207,311 files in the three benign trees |
+| at-risk population | **343** files containing a `rename()` call |
+| 95% upper bound on the true rate | **0.87%** (rule of three over 343) |
+
+**The at-risk figure is what makes this shippable and §4 not.** The SEO triple also scored 0
+false positives over the same 207,311 files, but only 12 of them could ever have matched, so
+its bound is 25% and the zero says almost nothing. Here 343 files reached the first condition
+and none passed the second, which bounds the rate under 1%. Same headline zero, two entirely
+different amounts of evidence — and the at-risk column is where the difference lives.
+
+**Why it generalises where §4 does not.** §4 keys on the *output* of one 2017 campaign: 495
+rendered HTML pages from 3 templates, all of them presentation. This keys on an
+anti-remediation *behaviour*, which is orthogonal to the campaign that happens to carry it.
+The same three files also delete and replace `../.htaccess` and delete `../index.php`, so the
+deployer's job is to re-establish itself after cleanup — a thing worth catching whoever wrote
+it and whatever it re-establishes.
+
+**What it needs before it ships.** The three matching files are currently `verdict:
+unreviewed` and cannot become `must_detect` until a human rules on them (§4.1). They are
+attacker-authored deployers in a quarantined kit directory, so the verdict is not in doubt,
+but the judgement is not a tool's to record.
+
+**Evidence:** `trail-data/Infected/07ef/goren/{old.php,new.php,old.txt}`. Reproduce with
+`python3 corpus/fp-population.py --only unquarantine-rename <tree>...`, and run `--inject`
+first — the candidate ships with a positive control and the tool fails any candidate that has
+none.
+
 ## 8. The find: the campaign's executable half is unreviewed and unindexed as a family
 
 The 495 doorway pages sit in one directory. **Nine files in that same directory are not in

