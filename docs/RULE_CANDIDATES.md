@@ -12,8 +12,18 @@ number, because the measurement is the useful part and re-deriving it costs anot
 | # | candidate | status |
 |---|---|---|
 | 1 | unpinnable plugin/theme slug | **closed** — 18.6% of unpinnable slugs are attacker staging, against a 50% bar |
-| 2 | magic bytes disagreeing with the extension, in a media directory | open — FP measured 2026-09-04: **0 in 18,669** for the two positive-identification forms |
+| 2 | magic bytes disagreeing with the extension, in a media directory | open — FP re-measured 2026-09-05 over 207,311 files: **0**, 11,522 at risk. §2 |
 | 3 | one filename in two letter-cases in one directory | open — behaviour confirmed, impact not evidenced |
+| 4 | the SEO triple: `title` == `meta[keywords]` == `meta[description]` | open — 495/495 recall, **0 FPs but only 12 files at risk**; unmeasurable here. §4 |
+| 5 | a bundled mailer behind a hardcoded password literal | open — 29/29 recall, 0 FPs, 230 at risk. §5 |
+| 6 | `mail()` + `$_POST[…]` + a hardcoded address literal | open — reaches 1 file of a 7-file kit, 0 FPs, 175 at risk. §6 |
+| 7 | card CVC/CVV reaching a remote-fetch sink in one file | open — 1 FP in 465 at risk; the FP is a form builder. §7 |
+
+Candidates 4–7 come from review round 10, which characterised the five families holding 597
+of the 638 known misses. Every FP figure in this file from 2026-09-05 onward is produced by
+`corpus/fp-population.py`, which reports the **at-risk** sub-population beside the hit count
+so a zero cannot be read as stronger than it is, and which carries a `--inject` positive
+control because every headline it produced was a zero.
 
 ---
 
@@ -342,6 +352,28 @@ actually 1×1 PNGs; SVGs named `.png`; WebP served as `.jpg`. The discriminator 
 where image data should be — not the mismatch alone. Measure against `trail-data/CMS`, the
 sanitised site corpus and every pinned tree, and report the number before writing the rule.
 
+**Re-measured 2026-09-05, round 10, on a denominator eleven times larger.** Running the
+corrected positive-identification predicate — ASCII `PNG` where `\x89PNG` belongs, or ASCII
+`GIF` whose version field is neither `87a` nor `89a` — over `trail-data/CMS`, `CMS-ext` and
+`Sites`, **207,311 files, 11,522 of them at risk** (files that are or claim to be PNG/GIF):
+
+```
+false positives   0        95% upper bound on the true rate among at-risk files: 0.026%
+recall            40/40    every image-named payload in the five staging directories
+```
+
+This is the best-powered candidate in this file: the at-risk population is large and real,
+so the zero means something. Two details worth carrying into the rule:
+
+- **The predicate must be content-only.** The forged prefix does *not* track the file's own
+  extension — `.png` files carrying a `GIF` prefix and the reverse both occur. Requiring the
+  two to agree drops recall from 40/40 to 28/40. The extension is not part of the signal.
+- **The naive form is not free.** Plain extension/magic mismatch matches **17** of the 11,522:
+  eight JPEGs misnamed `.png`/`.gif`, five empty files, three Exif JPEGs and one PNG named
+  `.gif`. All seventeen are ordinary content, and adopting the naive form would roughly
+  triple the corpus's whole false-positive count to gain nothing — the positive-identification
+  form already reaches all 40 samples.
+
 **A note on where this came from.** These directories were collected *whole*, with their
 siblings, because they sat in a staging tree that was copied wholesale — not because a rule
 fired on them. Nothing in them fires a rule. Under the finding-driven collection that §2.3b
@@ -447,3 +479,220 @@ and pinning that is the point. "No code" would be loose: the page does hold `<sc
 tags, but every one points at the paste service's own stylesheets and bundles. That is exactly
 why it earns a fixture — it is the boundary case, and a rule taught to flag it would flag the
 service's ordinary 404.
+
+---
+
+# Round 10: the five families that are 597 of the 638 known misses
+
+Written for the agent that will implement rules, not for a reader of results. The five
+families were characterised in descending order of size. For each: what is invariant across
+**every** sample rather than merely common, which invariants a rule can key on, which are
+incidental, and the population against which its false positives have to be measured.
+
+All 605 rows in these six families were resolved to bytes and re-checked **individually**
+with `check` — exhaustively, not sampled, so no power statement is needed for the miss
+itself. The harness carries a control: two samples the suite records as detected are run
+first, and the sweep aborts if they do not come back detected. That control earned its keep
+immediately. The first version of the sweep passed all 605 paths to `check` in batches of
+40; `check` takes **one** file, so every batch died on an argument-parse error, no batch
+printed `No matches found`, and the harness reported **all 605 as detected** — the precise
+inverse of the truth, with no error surfaced. It is the §11 inverted-status-check failure
+reproduced exactly, and only a control that asserts the other direction catches it.
+
+Result of the corrected exhaustive run: **604 missed, 1 detected**, and the 1 is the single
+`woocommerce-card-skimmer` row that is *not* flagged `known_miss`. The index and the scanner
+agree row for row.
+
+## The count is not the opportunity: what the 604 actually are
+
+Before any discriminator, the distribution has a property that changes what is worth
+building. Classifying every known-miss row in these families by what the file *is*:
+
+| role | rows | share |
+|---|---|---|
+| static HTML, presentation only | 493 | 81.6% |
+| server-side code | 58 | 9.6% |
+| encoded payload blob (data, not code) | 40 | 6.6% |
+| text/data, translations, C source, native binaries, build artefacts | 13 | 2.2% |
+
+**Only 58 of 604 are server-side code** — the thing a PHP/web rule engine exists to match.
+And the row counts overstate the distinct material by a wide margin, in three different ways,
+each of which was verified rather than assumed:
+
+- **`seo-doorway-madxtube-2017`: 495 rows → 3 files.** Clustering the pages by tag skeleton
+  (all text and attribute values stripped) yields exactly **three** classes, of sizes
+  172 / 166 / 157, covering all 495. The three classes partition the family identically to
+  the three campaign hosts. 495 rows are one generator's output in three templates.
+- **`leaf-php-mailer-2.8`: 29 rows → 2 files.** 28 of the 29 differ **only** in bytes 22–32,
+  an eleven-character password literal; normalising `$password = "…"` collapses them to one
+  sha256. The 29th is a 98.7%-identical variant. This was flagged in advance and is
+  confirmed here by measurement.
+- **`phish-kit-verified-by-visa-2012`: 14 rows → 7 files → 1 exfil file.** Every file is
+  present twice, once loose and once as a member of an archive in the same tree; the copies
+  differ only in line-ending encoding (`\r\n` against a doubled `\r\r\n`), and normalising
+  runs of `\r` before `\n` collapses 14 to 7 exactly. Of those 7, exactly **one** carries the
+  exfiltration (`$_POST` + `mail()`); the other six are HTML presentation.
+
+So the honest reading of "638 known misses across 27 families" is that the five largest
+families contain, between them, on the order of **fifteen distinct pieces of attacker code**.
+That is a much better prospect than 597 — it means a handful of rules can close most of the
+number — and it is simultaneously a warning that closing the number is not the same as
+closing a capability gap. A rule for Leaf moves 29 rows and represents one file.
+
+> This is `known_miss_by_family` doing the job SOURCES.md built it for, one level deeper. A
+> per-family rate stops one campaign dominating a figure that reads as capability; a
+> per-*distinct-file* rate stops one file dominating a family.
+
+## 4. The SEO triple — 495 rows, and the one to be most careful with
+
+**Signal.** `<title>`, `meta[name=keywords]` and `meta[name=description]` all carry the
+**same string**, exactly, case-insensitively.
+
+**Recall: 495/495, no exceptions.** In 491 of the 495 that shared string is also the
+filename with hyphens replaced by spaces. That is not a coincidence to be keyed on
+separately — the generator, recovered from the same directory, contains
+`$key = str_replace("-", " ", $keyfromurl)`, so the filename relation and the meta relation
+are the same line of code seen from two ends.
+
+**What is incidental and must not be keyed on:**
+
+- *The campaign hosts.* No single one appears in more than **34.7%** of the family; the
+  three partition it into 172 / 166 / 157. A host list is an IOC for one 2017 campaign, it
+  covers a third of the family per entry, and it cannot get worse against a benign corpus
+  by construction, so its 0% FP rate carries no information.
+- *`meta[robots]`* — 66.5%, absent from a third of the family.
+- *Absence of `<script>`* — 100% here, but it is a property of these three templates, not of
+  doorway pages, and it costs nothing to omit.
+- *Extensionlessness* — 490/495 are extensionless, and separately **0 of 728 extensionless
+  benign files contain `<html>`**, which is a genuinely well-powered result (95% upper bound
+  0.41%). It is worth having as a *triage* query. It is not the discriminator, because it
+  keys on a deployment choice rather than on the artefact.
+
+**The false-positive population, and why this candidate cannot be recommended yet.** The
+right population for a rule about rendered page content is rendered page content. This
+corpus does not contain any. Measured over `trail-data/CMS`, `CMS-ext` and `Sites` —
+207,311 files — the triple matches **0**. That number is close to worthless, and
+`fp-population.py` is built to say why: only **12 files in 207,311 carry both a keywords and
+a description meta tag at all**, so the candidate was offered twelve chances to fail. The
+rule-of-three bound on the true rate among at-risk files is **25%**.
+
+Reporting "0 false positives in 207,311 files" here would be the §11 ritual in its purest
+form: a denominator four orders of magnitude larger than the set that could ever have
+matched.
+
+**What would actually measure it**, and this is the actionable request: a tree of *rendered*
+pages — a page-cache plugin's output directory (`wp-content/cache/`), a static-site
+generator's output, or any webroot where an SEO plugin has written meta tags into saved
+HTML. The failure mode to look for is specific and plausible: a site where the SEO fields
+were left to auto-fill from the post title would produce the triple honestly. Until such a
+source is pinned in `benign/sources.jsonl`, this candidate has 495/495 recall and **no
+measured precision**, and it should not ship on the strength of the zero.
+
+**A cheaper and better target exists in the same directory.** See §8.
+
+## 5. A bundled mailer behind a hardcoded password literal — 29 rows, 2 files
+
+**Signal.** A file that both bundles a mailer library (`PHPMailer`) and contains a
+hardcoded `$password = "…"` literal.
+
+**Recall 29/29. FP 0, against 230 at-risk files** (files bundling PHPMailer), 95% upper
+bound 1.3%. That is a real measurement: the at-risk population is populated, because
+bundling PHPMailer is ordinary plugin behaviour.
+
+**Why the alternatives lose:**
+
+- *The brand string* (`LeafMailer` / `Leaf PHP`, present in 29/29) gives 0 FPs too and is
+  trivially cheap. It is rejected as the primary because it is a label: a one-token rename in
+  the kit defeats it completely, and this kit is public, reused tooling that gets re-branded.
+  Keep it as a cheap confirmatory that names the family in the finding; do not let it be the
+  thing that decides.
+- *Bundled PHPMailer alone* — **225 FPs in 207,311**, 0.17% of at-risk. 225 false positives
+  to reach two files. This is the shape the round was warned about, and it is worth stating
+  as a ratio: the discriminator is **more common in ordinary plugin code than in malware**.
+  Rejected, and kept in `fp-population.py` as `REJECTED:embedded-phpmailer` so the rejection
+  stays reproducible instead of having to be re-derived.
+
+The password-literal conjunct is what turns a library into a gate, and a gate is the
+behaviour worth detecting: a mailer nobody but the operator can invoke.
+
+## 6. `mail()` reaching a hardcoded address — the phish kit's one live file
+
+**Signal.** `mail(` **and** `$_POST[…]` **and** a quoted e-mail address literal, in one file.
+
+**Recall 1/7 distinct files — and that is the correct target, not a shortfall.** Six of the
+seven files are HTML presentation. The kit deliberately splits the harvest form from the
+sender: the file carrying the card and identity field names contains no PHP logic, and the
+file that mails contains no form. **No single-file rule can see both halves**, and a rules
+agent should not spend effort trying to make one.
+
+**FP 0 against 175 at-risk files** (files calling `mail(`), 95% upper bound 1.7%.
+
+**Why the alternative loses, measured rather than cited.** The form-shaped candidate — a
+`<form>` carrying card/CVV/SSN field names — was measured over the same trees:
+**18 false positives to reach 1 distinct file**, a 90% false-positive rate, on Magento
+checkout templates, a payment form partial, and a consent form definition. The failure is
+structural, not a matter of tuning the field list: card field names in a `<form>` are what
+e-commerce *is*. Rejected, and retained as `REJECTED:form-with-card-field`.
+
+Dropping the address literal (`mail()` + `$_POST` alone) costs 30 FPs. The literal is what
+distinguishes exfiltration to a fixed drop from a contact form mailing the site's own owner.
+
+## 7. Card data reaching a remote-fetch sink — the WooCommerce skimmer
+
+**Signal.** A CVC/CVV field name, a `$_POST`/`$_REQUEST` read, and a remote-fetch sink
+(`file_get_contents`, `curl_exec`, `wp_remote_*`, `fsockopen`) in one file.
+
+The skimmer is a convincing fake payment gateway whose `process_payment` builds an array of
+card number, expiry, **CVC**, and the full billing and shipping record, then does
+`file_get_contents($url . urlencode(json_encode($data)))`. The CVC is the discriminator that
+matters: a legitimate gateway tokenises client-side and PCI DSS forbids retaining it, so
+server-side CVC in transit is close to definitionally wrong.
+
+**Recall 1/8 rows. FP 1, against 465 at-risk files.** The single false positive is a form
+builder that bundles field definitions and HTTP helpers in one large file — a plausible
+recurring shape, so expect this rule to need the sink and the source to be in the same
+function, not merely the same file.
+
+**Note what the other 7 rows are**: three translation catalogues, a 132-byte build artefact,
+a JS bundle and two more classes. They are `known_miss` rows for files that carry no
+detectable behaviour and never could. `ddos-flood-toolkit`'s 7 rows are the same story in a
+harder form — two stripped ELF binaries, two C source files, a target list, a README and a
+shell script, with **no PHP at all**. There is no per-file discriminator over a set whose
+members share nothing but a directory, and a rules agent should be told so plainly rather
+than left to discover it. Two of those seven additionally carry an IR-quarantine extension
+that is not in the scanner's include list, so in a real scan they would never be opened —
+that is a walker fact, not a rule gap, and the two must not be counted against a rule.
+
+## 8. The find: the campaign's executable half is unreviewed and unindexed as a family
+
+The 495 doorway pages sit in one directory. **Nine files in that same directory are not in
+the family**, carry `verdict: unreviewed` and **no family at all**, and are undetected. They
+are the part of the campaign that actually executes:
+
+- **three copies of the doorway generator**, ~28 KB of readable PHP each, staged with a
+  `.txt` extension. Each contains a crawler-user-agent test against four bot tokens with two
+  branches — render the spam page for a crawler, `header("Location: …")` to the campaign host
+  for a human. That is textbook **SEO cloaking**, it is one of the 33 techniques the suite
+  currently lists as having no tested sample, and it is far more generalisable than anything
+  keyed on the generator's output.
+- **two deployer scripts**, one of which restores a `.htaccess` and renames `*.php.suspected`
+  back to `*.php` — undoing an incident responder's quarantine. Anti-remediation behaviour,
+  detectable, and not represented anywhere in the corpus.
+- one `.htaccess` fragment, and three keyword/template data files.
+
+**Recommendation, and it is the highest-value item in this brief:** review those nine files
+and write the rule against the generator and the deployer, not against the 495 pages. One
+rule on the cloaking branch would cover the technique wherever it appears; a rule on the
+pages covers one 2017 campaign's output and, per §4, cannot currently have its precision
+measured at all.
+
+This was not visible from the index, because the index is content-addressed and these nine
+files were never grouped with the family they belong to. It was visible from listing the
+directory — which is §2.3b's argument for collecting siblings, paying off a second time.
+
+## What this brief deliberately does not do
+
+It recommends no rule for `ddos-flood-toolkit` (§7), and it recommends **against** shipping
+candidate 4 on its current measurement (§4). Both are results. A brief that returned five
+discriminators for five families, one per family, would be reporting the shape of the request
+rather than the shape of the evidence.
