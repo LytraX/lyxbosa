@@ -35,8 +35,9 @@ extern const BuiltinRule OBF037;
 extern const BuiltinRule OBF038;
 extern const BuiltinRule OBF039;
 extern const BuiltinRule OBF040;
+extern const BuiltinRule OBF041;
 
-inline constexpr size_t RULE_COUNT = 31;
+inline constexpr size_t RULE_COUNT = 32;
 const BuiltinRule* const* getAllRules();
 
 } // namespace lyxbosa::rules::obfuscation

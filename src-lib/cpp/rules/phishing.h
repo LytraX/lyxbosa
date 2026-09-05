@@ -12,8 +12,9 @@ extern const BuiltinRule PHI005;
 extern const BuiltinRule PHI006;
 extern const BuiltinRule PHI007;
 extern const BuiltinRule PHI008;
+extern const BuiltinRule PHI009;
 
-inline constexpr size_t RULE_COUNT = 8;
+inline constexpr size_t RULE_COUNT = 9;
 const BuiltinRule* const* getAllRules();
 
 } // namespace lyxbosa::rules::phishing

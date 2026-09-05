@@ -363,11 +363,59 @@ const BuiltinRule BD017 {
     .patterns = detail_BD017::patterns,
 };
 
+// BD018: a rename() that undoes a quarantine
+//
+// Three deployer scripts in a doorway-kit directory carry this line:
+//
+//     if (file_exists("../oyptke.php.suspected")) rename("../oyptke.php.suspected", "../oyptke.php");
+//
+// `.suspected` is the suffix cPanel and ImunifyAV append when they quarantine a file.
+// The rename is the quarantine run backwards. There is no honest reading of it: a
+// legitimate program has no reason to know that suffix exists, still less to undo it,
+// and the same three files also delete and re-install `../.htaccess` and delete
+// `../index.php` - the script's whole job is to re-establish the kit after a cleanup.
+//
+// WHY THIS IS IN BACKDOOR RATHER THAN WITH THE KIT THAT CARRIED IT. The samples come
+// from an SEO doorway campaign, but nothing here keys on doorways, on that campaign or
+// on its output. It keys on anti-remediation - reversing an incident responder's
+// action - which is orthogonal to whatever is being re-established and is worth
+// catching whoever wrote it.
+//
+// The condition that carries the rule is that BOTH ENDS matter, and each is worthless
+// alone:
+//
+//   * renaming *to* an executable extension is ordinary. wp-super-cache does exactly
+//     that - `rename( $tmp_config_filename, $tmp_config_filename . '.php' )` after a
+//     tempnam - and it is the only file in the 207,311 measured that renames anything
+//     to a `.php` at all. A rule on the target alone would be a rule against writing
+//     config files.
+//   * a quarantine suffix on the source is what makes it a reversal. Nothing in the
+//     benign trees renames a `.suspected`, `.quarantine`, `.infected`, `.virus`,
+//     `.malware` or `.bak_av` file at all, in either direction.
+//
+// Measured over trail-data/CMS, CMS-ext and Sites - 207,311 files, 343 of them at risk
+// (files containing a rename() call): 0 false positives, 95% upper bound 0.87%.
+// Recall 3 of 3, every deployer in the campaign directory.
+namespace detail_BD018 {
+    static constexpr Pattern patterns[] = {
+        { R"(rename\s*\(\s*[^,)]*\.(suspected|quarantine|infected|virus|malware|bak_av)[^,)]*,\s*[^)]*\.(php|phtml|php5|inc|module|cgi|pl|py|sh)\b)",
+          "rename() from a quarantine suffix back to an executable extension", true,
+          {"rename", "suspected|quarantine|infected|virus|malware|bak_av"} },
+    };
+}
+const BuiltinRule BD018 {
+    .code = {Category::Backdoor, 18},
+    .name = "Quarantine-reversing rename",
+    .description = "Detects a rename() whose source carries an antivirus quarantine suffix and whose target is an executable extension, which is a cleanup run backwards",
+    .severity = Severity::Critical,
+    .patterns = detail_BD018::patterns,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &BD001, &BD002, &BD003, &BD004, &BD005,
     &BD006, &BD007, &BD008, &BD009,
     &BD011, &BD012, &BD013, &BD014, &BD015,
-    &BD016, &BD017
+    &BD016, &BD017, &BD018
 };
 
 const BuiltinRule* const* getAllRules() {

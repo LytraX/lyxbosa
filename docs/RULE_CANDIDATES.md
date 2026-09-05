@@ -266,8 +266,19 @@ its contents out of the corpus should not also keep them out of the review.
 
 ## 2. A file whose magic bytes disagree with its extension, in a directory of media
 
-**Status:** new, evidence below, **not implemented**. This replaces §1 as the thing the
-unpinnable-slug review was actually worth doing for.
+**Status: SHIPPED 2026-09-05 as `OBF041`.** The positive-identification form below, content-only,
+is what shipped; recall 40/40 per sample with `check`, and 0 findings when the built scanner
+re-walked the three trees. This replaces §1 as the thing the unpinnable-slug review was
+actually worth doing for.
+
+> **Reproducing any of the five rules shipped from this file.** `corpus/fp-population.py`
+> measures the *candidate*; `tests/rule-fp-measure.py` measures the *rule*, by running the
+> built scanner over the same trees and counting `OBF041`, `WS011`, `BD018`, `PHI009` and
+> `CRED007` findings. They are different predicates over different file sets - the second
+> walks the scanner's include list, not every file - so both numbers are worth having.
+> Run `tests/rule-fp-measure.py --inject` first: it fires each rule through the whole scan
+> path and fails if the walker did not read every control file, which is what stops a zero
+> from being a measurement of the walker.
 
 **Signal.** A file named `.png`, `.gif` or `.jpg`, sitting in a directory of images, whose
 first bytes are not that format's magic — and whose content is a long run of base64-alphabet
@@ -545,6 +556,12 @@ closing a capability gap. A rule for Leaf moves 29 rows and represents one file.
 
 ## 4. The SEO triple — 495 rows, and the one to be most careful with
 
+**Status: DELIBERATELY NOT SHIPPED, 2026-09-05.** The round that implemented §2, §5, §6, §7
+and §9 left this one alone, on this section's own argument: 12 at-risk files is a 25%
+bound and the zero says almost nothing. Re-measured with the same script on the same day
+and the at-risk count is still 12. It stays a candidate until a tree of *rendered* pages
+is pinned in `benign/sources.jsonl`.
+
 **Signal.** `<title>`, `meta[name=keywords]` and `meta[name=description]` all carry the
 **same string**, exactly, case-insensitively.
 
@@ -592,6 +609,10 @@ measured precision**, and it should not ship on the strength of the zero.
 
 ## 5. A bundled mailer behind a hardcoded password literal — 29 rows, 2 files
 
+**Status: SHIPPED 2026-09-05 as `WS011`.** Recall 29/29 per sample with `check`, returning
+`{PHI009, WS011}` on each — §6's rule reaches the same 29, which is correct: the kit is a
+mailer and it mails to literals. 0 findings on the re-walked trees.
+
 **Signal.** A file that both bundles a mailer library (`PHPMailer`) and contains a
 hardcoded `$password = "…"` literal.
 
@@ -617,6 +638,10 @@ behaviour worth detecting: a mailer nobody but the operator can invoke.
 
 ## 6. `mail()` reaching a hardcoded address — the phish kit's one live file
 
+**Status: SHIPPED 2026-09-05 as `PHI009`.** Recall is the predicted 1 of 7 distinct files -
+`activate.php` and its archive twin - plus the 29 rows of §5. 0 findings on the re-walked
+trees.
+
 **Signal.** `mail(` **and** `$_POST[…]` **and** a quoted e-mail address literal, in one file.
 
 **Recall 1/7 distinct files — and that is the correct target, not a shortfall.** Six of the
@@ -638,6 +663,14 @@ Dropping the address literal (`mail()` + `$_POST` alone) costs 30 FPs. The liter
 distinguishes exfiltration to a fixed drop from a contact form mailing the site's own owner.
 
 ## 7. Card data reaching a remote-fetch sink — the WooCommerce skimmer
+
+**Status: SHIPPED 2026-09-05 as `CRED007`, narrowed.** The single false positive this
+section predicted a shape for is a form builder's ~46 KB bootstrap, and the shipped rule
+excludes it on the basis this section names: the security code must be the *subscript key
+of a request superglobal*, and the sink must be reachable from that read without leaving
+the enclosing brace block. That file reads no card code at all - it is two conditions
+away, not one. The narrowing is a strict subset of the measured predicate, so the same
+465-at-risk measurement bounds it: 0 of 465, 95% upper bound 0.65%.
 
 **Signal.** A CVC/CVV field name, a `$_POST`/`$_REQUEST` read, and a remote-fetch sink
 (`file_get_contents`, `curl_exec`, `wp_remote_*`, `fsockopen`) in one file.
@@ -664,6 +697,11 @@ that is not in the scanner's include list, so in a real scan they would never be
 that is a walker fact, not a rule gap, and the two must not be counted against a rule.
 
 ## 9. A `rename()` that undoes antivirus quarantine — **measured, and the strongest of these**
+
+**Status: SHIPPED 2026-09-05 as `BD018`, in backdoor rather than obfuscation** - it keys on
+anti-remediation behaviour, not on the campaign that carried it. Recall 3/3 per sample with
+`check`, returning `{BD018}` exactly. The three deployers were human-confirmed malicious on
+2026-09-05, so the review this section asked for has happened.
 
 **Signal.** A `rename()` whose *source* carries a quarantine suffix and whose *target* is an
 executable extension:

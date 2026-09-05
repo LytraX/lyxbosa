@@ -1448,6 +1448,105 @@ const BuiltinRule OBF040 {
     .analyzer = &detail_OBF040::detectSplitScheme,
 };
 
+// OBF041: an image signature spelled in ASCII where a binary one belongs
+//
+// Five generated-slug plugin directories staged 40 files named `.png` or `.gif` in
+// `assets/images/`. Not one is an image. Every one begins with a three-byte ASCII
+// cover word - the literal characters `PNG` or `GIF` - followed immediately by
+// base64 text under a per-directory substituted alphabet:
+//
+//     bamotem.png   67055 B   'PNGl9uOb0ghG8sDjtGSJ9s/n0UEjJOOY6vhjiEXBrHhBfZSl...'
+//     thijemy.gif  445031 B   'GIFG6deBVTiJ5ZMoCB5omSnWDguasdTCcFxWei8jNQ6acoS...'
+//
+// They decode statically - no execution - to a file manager, a card skimmer, a
+// JavaScript injector and four byte-identical hash tables. Nothing in them fires a
+// rule: the loader half is `include`d from a `.txt`, and the payload half is data.
+//
+// The predicate is the cover word, and it works because a real signature is not text:
+//
+//   * a PNG begins with the eight bytes 89 50 4E 47 0D 0A 1A 0A. The 0x89 is there
+//     precisely so a PNG cannot be mistaken for text, so a file whose first three
+//     bytes are the *printable* letters `PNG` is not a PNG and never was one;
+//   * a GIF does begin with the ASCII letters `GIF`, which is the trap this rule was
+//     nearly built on. A feature written to support it tested `first three bytes are
+//     PNG or GIF` and reported 213 forged GIFs in the undetected pool; every one was
+//     an ordinary image, because `GIF89a` starts that way by definition. For GIF the
+//     tell is the version field: the three bytes after `GIF` are `87a` or `89a` in
+//     every real one, and in the payloads they are whatever the base64 run starts
+//     with. Corrected, the 213 collapsed to 1.
+//
+// Two properties of this predicate were paid for by measurement and must survive edits:
+//
+//   * IT READS NOTHING BUT THE FIRST EIGHT BYTES - six for a GIF. In particular it
+//     does not consult the file's own extension. The forged word does not track it:
+//     `.png` files carrying a `GIF` cover and the reverse both occur, so requiring the
+//     two to agree drops recall from 40 of 40 to 28 of 40. The extension is not part
+//     of the signal.
+//   * THE MISMATCH ALONE IS NOT THE SIGNAL. Plain "named like an image, does not carry
+//     that image's magic" matches 18 of the 11,522 at-risk files in the benign trees:
+//     eight JFIF JPEGs misnamed `.png`, five empty files used as negative test
+//     fixtures, three Exif JPEGs and two real PNGs named `.gif`. All ordinary content,
+//     and adopting that form would roughly triple this scanner's whole false-positive
+//     count to reach samples the positive-identification form already reaches.
+//
+//     Eighteen, where RULE_CANDIDATES.md 2 counted seventeen. The extra one is a file
+//     whose entire name is `.gif`, which is a real PNG in a vendored JS theme; whether
+//     it has an extension at all depends on how the name is parsed, and the rule does
+//     not parse names, so it is 18 by this count and 17 by one that requires a stem.
+//
+// Measured over trail-data/CMS, CMS-ext and Sites - 207,311 files, 11,522 of them at
+// risk (files that are, or claim to be, PNG or GIF): 0 false positives, 95% upper
+// bound 0.026%. Recall 40 of 40.
+namespace detail_OBF041 {
+    // The eight bytes every PNG starts with, written as escapes so no editor or
+    // encoding step can quietly normalise the 0x89.
+    constexpr std::string_view kPngSignature{"\x89\x50\x4E\x47\x0D\x0A\x1A\x0A", 8};
+
+    std::vector<MatchResult> detectForgedImageSignature(std::string_view content) {
+        std::vector<MatchResult> out;
+        if (content.size() < 3) return out;
+
+        std::string_view word;
+        std::string_view expected;
+        if (content.compare(0, 3, "PNG") == 0) {
+            if (content.size() >= kPngSignature.size() &&
+                content.compare(0, kPngSignature.size(), kPngSignature) == 0) {
+                return out;                       // a real PNG, whatever it is named
+            }
+            word = "PNG";
+            expected = "the eight-byte signature 89 50 4E 47 0D 0A 1A 0A";
+        } else if (content.compare(0, 3, "GIF") == 0) {
+            const std::string_view version = content.substr(3, 3);
+            if (version == "87a" || version == "89a") {
+                return out;                       // a real GIF, whatever it is named
+            }
+            word = "GIF";
+            expected = "a version field of 87a or 89a";
+        } else {
+            return out;
+        }
+
+        MatchResult r;
+        r.line = 1;
+        r.column = 1;
+        r.matched = content.substr(0, std::min<size_t>(48, content.size()));
+        r.note = "The file opens with the ASCII letters \"" + std::string(word) +
+                 "\" standing in for " + std::string(expected) +
+                 " - a cover word written to survive a look at the first bytes, not a "
+                 "signature any encoder produces";
+        out.push_back(r);
+        return out;
+    }
+}
+const BuiltinRule OBF041 {
+    .code = {Category::Obfuscation, 41},
+    .name = "Forged image signature",
+    .description = "Detects a file opening with the ASCII letters PNG or GIF where a real image signature belongs, which is how a payload is disguised as an image",
+    .severity = Severity::High,
+    .patterns = {},
+    .analyzer = &detail_OBF041::detectForgedImageSignature,
+};
+
 
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF001, &OBF002, &OBF003, &OBF004, &OBF005,
@@ -1455,7 +1554,7 @@ static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF011, &OBF012, &OBF013, &OBF014, &OBF015, &OBF016,
     &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023,
     &OBF024, &OBF025, &OBF029, &OBF036, &OBF037, &OBF038,
-    &OBF039, &OBF040
+    &OBF039, &OBF040, &OBF041
 };
 
 const BuiltinRule* const* getAllRules() {

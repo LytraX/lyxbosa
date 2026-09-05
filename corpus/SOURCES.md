@@ -147,6 +147,28 @@ collisions, so this is a genuine absence rather than an ambiguity.
 Do not resolve them by guessing. A wrong name attached to a real account's rows is worse than
 no name, because it is indistinguishable from a right one afterwards.
 
+### `pending-promotions.jsonl` — measured by one side, applied by the other
+
+A rules round measures which `known_miss` rows its new rules now detect. It does not flip
+them: all index writes go through the corpus side, so a rules agent that also wrote the index
+would be two hands on one file. The measurement has to survive the gap between the two, and a
+number that lives only in a report does not — it is in a session scratchpad that gets cleared.
+
+So the rules side writes `corpus/pending-promotions.jsonl`: one row per sample, its sha256,
+the exact rule codes `check` returns for it, which index half it is in, and its publish
+blockers if any. The corpus side applies rows from it and **deletes each row as it is
+applied**. When the last row goes, so does the file. A non-empty file means work is owed; an
+absent file means none is.
+
+Each row's `now_detects` is measured per sample with `check`, never inferred from a batch
+scan, because `expect.must_detect` is compared to `check`'s output exactly and a batch scan
+does not tell you which rule fired on which file.
+
+Rows in the `local` half usually cannot be promoted immediately even though the detection is
+real: their blockers are masking and review, which are independent of whether a rule fires.
+That is why the file records the blocker rather than just the sha256 — otherwise the next
+reader has to re-derive why 34 of 75 did not move.
+
 ### Any writer of either half goes through `indexio.py`
 
 `write_jsonl_atomic` for the write, `index_lock` around a read-modify-write. Not a style
