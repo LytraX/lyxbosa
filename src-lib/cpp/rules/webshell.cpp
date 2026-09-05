@@ -1,5 +1,6 @@
 #include "webshell.h"
 #include <array>
+#include <cctype>
 #include <string>
 #include <vector>
 
@@ -360,10 +361,144 @@ const BuiltinRule WS010 {
     .analyzer = &detail_WS010::detectCloaked404,
 };
 
+// WS011: a bundled mailer library behind a hardcoded password gate
+//
+// A bulk-mailer kit was staged 29 times across five accounts, always as an `index.php`
+// three directories deep under a renamed `wp-includes`. Each one is ~170 KB: a whole
+// copy of PHPMailer, a compose-and-send web UI, and in front of both a password prompt
+// whose secret is a literal at the top of the file.
+//
+//     $password = "...";                                  // line 3
+//     $sessioncode = md5(__FILE__);
+//     if (!empty($password) and $_SESSION[$sessioncode] != $password) {
+//         if (isset($_REQUEST['pass']) and $_REQUEST['pass'] == $password) { ... }
+//         else { print "<form method=post>Password: ..."; exit; }
+//     }
+//     ...
+//     class PHPMailer { ... }                             // the bundled library
+//
+// 28 of the 29 differ only in bytes 22-32, an eleven-character password; normalising
+// that literal collapses those 28 to one sha256, and the 29th is a 98.7%-identical
+// variant. So this is two files' worth of attacker code, and the rule is written for
+// the shape rather than for the kit.
+//
+// WHAT THE RULE MUST NOT KEY ON, both measured rather than argued:
+//
+//   * THE BRAND. The kit's own name is in all 29 and gives 0 false positives too. It is
+//     rejected as the discriminator because it is a label: this is public, reused,
+//     re-branded tooling, and a one-token rename defeats it completely. Worth keeping as
+//     a confirmatory that names the family in a finding; not worth letting it decide.
+//   * THE BUNDLED LIBRARY ALONE. Bundling PHPMailer is ordinary plugin behaviour:
+//     225 files in the benign trees do it, 0.17% of the code files there. That is
+//     225 false positives to reach two files, and it is worth stating as a ratio -
+//     the shape is MORE COMMON IN ORDINARY PLUGIN CODE THAN IN MALWARE. Rejected, and
+//     kept reproducible as `REJECTED:embedded-phpmailer` in corpus/fp-population.py so
+//     nobody has to re-derive it.
+//
+// The password literal is what turns a library into a gate, and the gate is the thing
+// worth detecting: a mailer nobody but the operator can invoke. The two conjuncts
+// together are what 230 files bundling PHPMailer were offered and none passed. The
+// closest any of them come is instructive and all three are pinned in the test:
+// PHPMailer's own `POP3::popBeforeSmtp()` declares `$password = ''` as a default
+// parameter, WordPress's `pluggable.php` writes `$password = trim( $password );`, and
+// its `ms-functions.php` writes `$password = wp_generate_password( 12, false );`.
+// A secret assigned from an argument, a call or the empty string is not a secret
+// written down.
+//
+// Measured over trail-data/CMS, CMS-ext and Sites - 207,311 files, 230 of them at risk
+// (files bundling PHPMailer): 0 false positives, 95% upper bound 1.3%. Recall 29 of 29.
+namespace detail_WS011 {
+    constexpr size_t kMinSecret = 4;      // shorter than this is a flag, not a password
+    constexpr size_t kMaxSecret = 40;
+    constexpr size_t kMaxFindings = 4;
+
+    inline bool isIdentByte(unsigned char c) {
+        return std::isalnum(c) != 0 || c == '_';
+    }
+
+    inline bool isSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }
+
+    // A quoted run of `kMinSecret`..`kMaxSecret` bytes starting at `i`, which must be
+    // the opening quote. Returns one past the closing quote, or npos.
+    //
+    // The body may not contain a quote of either kind, which is what keeps this off
+    // interpolated or concatenated expressions: a secret written down is one literal.
+    size_t readSecret(std::string_view c, size_t i, size_t& width) {
+        if (i >= c.size() || (c[i] != '\'' && c[i] != '"')) return std::string_view::npos;
+        size_t j = i + 1;
+        while (j < c.size() && c[j] != '\'' && c[j] != '"') ++j;
+        if (j >= c.size()) return std::string_view::npos;
+        width = j - i - 1;
+        return j + 1;
+    }
+
+    std::vector<MatchResult> detectGatedMailer(std::string_view content) {
+        std::vector<MatchResult> out;
+        // Cheap guards first: this analyzer has no literal gate, so it runs on every
+        // file in the tree. The rarer of the two conjuncts goes first.
+        if (content.find("$password") == std::string_view::npos) return out;
+        if (content.find("PHPMailer") == std::string_view::npos) return out;
+
+        static constexpr std::string_view kName = "$password";
+        size_t at = content.find(kName);
+        while (at != std::string_view::npos) {
+            const size_t next = content.find(kName, at + 1);
+
+            // Whole variable only: `$passwordHash = "..."` is a different variable.
+            size_t p = at + kName.size();
+            if (p < content.size() && isIdentByte(static_cast<unsigned char>(content[p]))) {
+                at = next;
+                continue;
+            }
+
+            // A plain assignment. `==`, `!=` and `.=` are not one, and neither is
+            // `=>`; each of those puts something other than whitespace-then-quote on
+            // one side of the `=`.
+            while (p < content.size() && isSpace(content[p])) ++p;
+            if (p >= content.size() || content[p] != '=') { at = next; continue; }
+            ++p;
+            while (p < content.size() && isSpace(content[p])) ++p;
+
+            size_t width = 0;
+            const size_t end = readSecret(content, p, width);
+            if (end == std::string_view::npos || width < kMinSecret || width > kMaxSecret) {
+                at = next;
+                continue;
+            }
+
+            auto [line, col] = positionToLineCol(content, at);
+            MatchResult r;
+            r.line = line;
+            r.column = col;
+            // Deliberately reported without the secret's bytes: the finding names the
+            // gate, and a scan report is not the place to republish a credential.
+            r.matched = content.substr(at, p - at);
+            r.note = "This file bundles a PHPMailer implementation and gates it on a "
+                     "password written into the source as a " + std::to_string(width) +
+                     "-character literal - a mailer that only whoever planted it can "
+                     "invoke, which is not a shape a plugin bundling the library has";
+            out.push_back(r);
+            if (out.size() >= kMaxFindings) return out;
+            at = next;
+        }
+        return out;
+    }
+}
+const BuiltinRule WS011 {
+    .code = {Category::Webshell, 11},
+    .name = "Mailer behind a hardcoded password",
+    .description = "Detects a file that bundles a PHPMailer implementation and gates it on a password literal written into the source",
+    .severity = Severity::Critical,
+    .patterns = {},
+    .analyzer = &detail_WS011::detectGatedMailer,
+};
+
 // Static array of all rules
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &WS001, &WS002, &WS003, &WS004, &WS005,
-    &WS006, &WS007, &WS008, &WS009, &WS010
+    &WS006, &WS007, &WS008, &WS009, &WS010, &WS011
 };
 
 const BuiltinRule* const* getAllRules() {

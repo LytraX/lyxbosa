@@ -13,6 +13,53 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **`OBF041` (high)** — a file that opens with the ASCII letters `PNG` or `GIF` where a
+  real image signature belongs. A real PNG begins with the byte `0x89` precisely so it
+  cannot be read as text; a real GIF's version field is `87a` or `89a`. Forty files named
+  `.png`/`.gif` in five staged plugin directories are base64 payloads behind a three-byte
+  cover word, and the cover does not track the file's own name, so the rule reads content
+  only. Plain extension/magic mismatch would take 18 ordinary files — misnamed JPEGs and
+  empty test fixtures — to reach samples this already reaches. 0 of 11,522 at-risk files
+  in the benign trees.
+- **`WS011` (critical)** — a bundled mailer behind a password written into the source. A
+  bulk-mailer kit ships a whole copy of PHPMailer with a send UI and a password prompt
+  whose secret is a literal on line 3. Bundling PHPMailer alone is *more common in
+  ordinary plugin code than in malware* — 225 files in the benign trees do it — so the
+  gate is the rule, not the library and not the kit's brand, which one rename defeats.
+  0 of the 230 files that bundle the library.
+- **`BD018` (critical)** — a `rename()` that undoes a quarantine: a source carrying
+  `.suspected` (what cPanel and ImunifyAV append when they quarantine a file) and a
+  target with an executable extension. Anti-remediation, and there is no honest reading
+  of it — a legitimate program has no reason to know that suffix exists. Renaming *to*
+  `.php` is ordinary and wp-super-cache does it; renaming *from* a quarantine suffix
+  happens nowhere in 207,311 benign files. 0 of 343 files containing a `rename()`.
+- **`PHI009` (critical)** — `mail()` in a file that reads submitted fields out of a
+  superglobal and carries the recipient as a literal. Each conjunct is load-bearing:
+  without the address literal the shape costs 30 false positives, because WordPress's
+  own `wp_mail()` path reaches `mail()` and `$_REQUEST` in one file — but every address
+  it sends to arrives as an argument or through a filter; without the superglobal it
+  costs 24, on PHPMailer's own docblock example address. A CMS contact form takes its
+  recipient from configuration; a drop is written down. 0 of 175 files calling
+  `mail()`.
+- **`CRED007` (critical)** — a card security code read from the request and reaching a
+  remote-fetch sink without leaving the enclosing block. A fake payment gateway packs
+  the card number, expiry, CVC and the whole billing and shipping record into one array
+  and `file_get_contents` a remote URL with it. The CVC is the discriminator: a real
+  gateway tokenises client-side and PCI DSS forbids retaining it, so a server-side
+  security code in transit is close to definitionally wrong — while a card *token*
+  crossing a server is ordinary, which is why keying on "card" would take two honest
+  WooCommerce gateways. 0 of the 465 files carrying a card-code token.
+
+### Detection coverage
+
+The golden corpus now records **75 samples these five rules newly detect** — measured per
+sample with `check`, not inferred from a batch scan. 41 are in published shards; the other
+34 are held local-only on masking and review blockers that are independent of whether a rule
+fires. The corpus figure does not move until those rows are promoted, and
+`corpus/pending-promotions.jsonl` carries the list until they are.
+
+### Added
+
 - **`RCE015` (critical)** — a file written, executed with `include`/`require`, then
   deleted. A remote loader fetches PHP over HTTPS, writes it to a path, includes the
   path and unlinks it, which is `eval` performed through the filesystem: it needs no

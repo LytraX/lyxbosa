@@ -20,8 +20,9 @@ extern const BuiltinRule BD014;
 extern const BuiltinRule BD015;
 extern const BuiltinRule BD016;
 extern const BuiltinRule BD017;
+extern const BuiltinRule BD018;
 
-inline constexpr size_t RULE_COUNT = 16;
+inline constexpr size_t RULE_COUNT = 17;
 const BuiltinRule* const* getAllRules();
 
 } // namespace lyxbosa::rules::backdoor
