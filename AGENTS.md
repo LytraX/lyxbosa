@@ -17,9 +17,18 @@ comment gets around.
 python3 corpus/pre-push-check.py
 ```
 
-It exits non-zero and prints `REFUSE TO PUSH` if any tracked file or the published index
-carries a customer identifier. Takes about 3 seconds over ~160 files. If it refuses, fix the
-finding — do not push and do not reason your way past it.
+It exits non-zero and prints `REFUSE TO PUSH` if any tracked file, **any commit message
+about to be pushed**, or the published index carries a customer identifier. Takes about 3
+seconds over ~160 files. If it refuses, fix the finding — do not push and do not reason your
+way past it.
+
+**A commit message counts, and it is the harder half.** The first version of this script
+checked only files, reported SAFE TO PUSH, and a message naming three accounts was already on
+the remote — in the paragraph explaining the lesson about not naming them. A message is as
+permanent as a blob and worse to remove: once a pull request references the commit, its
+`refs/pull/*` ref is server-side, cannot be pushed to or deleted, and only deleting the
+repository clears it. So **run the check before opening a PR, not after** — that ordering is
+the whole reason to use a PR here rather than pushing to `master` directly.
 
 Prove it still works when you change it:
 

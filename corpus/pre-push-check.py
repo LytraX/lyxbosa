@@ -17,6 +17,12 @@ WHAT IT CHECKS, and why each one is here rather than assumed:
                   the check that was missing. The index halves had verifiers; the tracked
                   files - source, docs, committed JSON - had none, and a scan report is a
                   tracked file.
+  commit messages Every message about to be pushed. A message is as permanent as a blob and
+                  harder to remove: once a commit is referenced by a pull request, its
+                  `refs/pull/*` ref is server-side and cannot be pushed to or deleted. The
+                  first version of this script omitted this check, said SAFE TO PUSH, and a
+                  commit message naming three accounts had already reached the remote - in
+                  the paragraph explaining the very lesson about not naming them.
   published index Delegated to verify-infected-mask.py, which owns that question.
   gate invariants Delegated to shard-gate.py: no `origin` on a published row, every
                   /home<digits>/<x>/ pseudonymous.
@@ -61,6 +67,45 @@ MAPS = [os.path.join(ROOT, "trail-data/incoming/2026-09-03/private/account-mappi
 # label by coincidence and reveals nothing. Listed by the string that collides rather than by
 # the label, so this file names no customer.
 KNOWN_BENIGN_SEGMENTS = {"upgradeconsumersecret"}
+
+
+def messages_to_push(base="master"):
+    """(sha, message) for every commit on HEAD that `base` does not have.
+
+    Range rather than all history: rewriting a pushed message costs a force-push, and
+    rewriting one inside a pull-request ref costs the repository. What matters is what is
+    about to leave the machine.
+    """
+    head = subprocess.run(["git", "-C", ROOT, "rev-parse", "--abbrev-ref", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    if head == base:
+        base = "origin/%s" % base
+    out = subprocess.run(["git", "-C", ROOT, "log", "--format=%H%x00%B%x01",
+                          "%s..HEAD" % base], capture_output=True, text=True).stdout
+    recs = []
+    for rec in out.split("\x01"):
+        if "\x00" in rec:
+            sha, msg = rec.split("\x00", 1)
+            recs.append((sha.strip(), msg))
+    return recs
+
+
+def sweep_messages(recs, ids, keep):
+    hits = []
+    for sha, msg in recs:
+        for seg in set(_vim.segments_of(msg)):
+            low = seg.lower()
+            if low in keep or any(b in low for b in KNOWN_BENIGN_SEGMENTS):
+                continue
+            for ident in ids:
+                at = low.find(ident)
+                if at >= 0 and _vim._is_a_leak(low, ident, at):
+                    hits.append((sha[:12], seg[:50]))
+                    break
+            else:
+                continue
+            break
+    return hits
 
 
 def tracked_files():
@@ -154,6 +199,22 @@ def main():
             print("  %-26s MAP ABSENT - cannot certify" % os.path.basename(mp)); bad += 1
             continue
         bad += len(run_map(mp, paths))
+
+    print()
+    print("=== commit messages about to be pushed ===")
+    recs = messages_to_push()
+    if not recs:
+        print("  nothing ahead of master")
+    for mp in MAPS:
+        if not os.path.exists(mp): continue
+        m = json.load(open(mp))
+        hits = sweep_messages(recs, _vim.identifiers(m), _vim.keep_tokens(m))
+        print("  %-26s %d commit(s) -> %s"
+              % (os.path.basename(mp), len(recs),
+                 "PASS" if not hits else "%d MESSAGE(S) LEAKING" % len(hits)))
+        for sha, seg in hits[:10]:
+            print("      %s  segment: %s" % (sha, seg))
+        bad += len(hits)
 
     print()
     print("=== published index, delegated to the tools that own the question ===")
