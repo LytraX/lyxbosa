@@ -248,25 +248,36 @@ corpus/fetch-benign.sh     # download and hash-verify the pinned benign corpus
 corpus/verify.py           # run the golden suite
 ```
 
-**False-positive rate: 0.0055% — 8 of 146,712 files.** The benign corpus is 86 sources
-pinned by version and sha256 in `corpus/benign/sources.jsonl` — 48 WordPress plugins, 20
-themes and 18 core versions. Nothing is shipped: the script downloads each one and fails
-hard on a hash mismatch, so the corpus regenerates anywhere and yields the same number. All
-8 are upstream library code (the Freemius SDK, an FPDF class), pinned as `known_fp`
-fixtures — a rule change that fixes one is reported, and a fixed one that comes back fails
-the suite. They stay counted inside the 8; pinning a defect does not remove it from its own
-total.
+**False-positive rate: 0.0223% — 44 of 197,559 files.** The benign corpus is 136 sources
+pinned by version and sha256 in `corpus/benign/sources.jsonl` — 87 WordPress plugins, 22
+themes, 24 core versions and 3 trees of rendered HTML documentation. Nothing is shipped:
+the script downloads each one and fails hard on a hash mismatch, so the corpus regenerates
+anywhere and yields the same number. All 44 are upstream library code (mostly the Freemius
+SDK, plus an FPDF class and a handful of plugin internals), pinned as `known_fp` fixtures —
+a rule change that fixes one is reported, and a fixed one that comes back fails the suite.
+They stay counted inside the 44; pinning a defect does not remove it from its own total.
 
-**Detection: 45.4% — 59 of 130 confirmed-malicious samples.** The other 71 are recorded
-known misses: real malware this version does not catch, including a fake-plugin family whose
-payloads are named `.png` ([docs/RULE_CANDIDATES.md](docs/RULE_CANDIDATES.md) §2) and the
-webshells staged outside the web root that
-[docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) issue 3 rests on. The denominator is every
-reviewed malicious sample, so reviewing a family the scanner misses lowers this figure and
-shipping a rule for one raises it. Both directions are intended: it measures coverage, not
-progress.
+The rate rose because the denominator and the numerator grew together: 50 sources were
+added in one round, the versions taken from what was actually installed on collected hosts
+rather than from what upstream ships today. **A rate that rises when the corpus is
+honestly extended is the corpus working.** The previous figure, 8 of 146,712, was measured
+over a benign tree that did not contain most of the plugin versions the scanner meets.
 
-**Regression: 53 of 53 expected detections still firing.** A separate measurement over a
+**Detection: 22.2% — 172 of 774 confirmed-malicious samples.** The other 602 are recorded
+known misses: real malware this version does not catch. 495 of them are one 2017 SEO doorway
+campaign, and the rule that would close them is deliberately not written — see
+[docs/RULE_CANDIDATES.md](docs/RULE_CANDIDATES.md) §4, where it was measured against rendered
+documentation and took 494 false positives in 506 at-risk files. The remainder includes a
+fake-plugin family whose payloads are named `.png` (§2) and the webshells staged outside the
+web root that [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) issue 3 rests on.
+
+The denominator is every reviewed malicious sample, so reviewing a family the scanner misses
+lowers this figure and shipping a rule for one raises it. Both directions are intended: it
+measures coverage, not progress. It has read 10.0%, 15.5%, 16.5% and 45.4% at various points,
+and the earlier high figures were over denominators a tenth this size — which is why the
+sample count is quoted beside the percentage every time and not summarised as a trend.
+
+**Regression: 98 of 98 expected detections still firing.** A separate measurement over a
 separate denominator, the samples already known to be detected. It is not recall and is not
 quoted as one.
 
@@ -276,7 +287,7 @@ reviewing. False-positive rate and detection are each computed within a single p
 so neither depends on that ratio. Precision belongs to a field scan, which supplies the real
 ratio by construction.
 
-**Technique coverage: 60 of 60** distinct techniques in the reviewed set have a sample the
+**Technique coverage: 90 of 123** distinct techniques in the reviewed set have a sample the
 suite checks. Read it as a staleness signal rather than completion — the denominator is
 enumerated from what has been reviewed, so it cannot see a technique in the blobs that have
 not been.

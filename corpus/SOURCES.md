@@ -2,11 +2,12 @@
 
 ```
 corpus/
-  index.jsonl                       the published half: one row per unique blob, 12,272 rows
+  index.jsonl                       the published half: one row per unique blob, 44,544 rows
   make-summary.py                   regenerates index-summary.json from the two halves
   expect/                           golden expectations, per shard
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
   fetch-benign.sh                   downloads, verifies hashes, unpacks. Downloads are not committed
+  resolve-benign.py                 closes rows byte-identical to a file in a pinned source
   shard-gate.py                     §7.2 — computes `publishable` and fails the build
   make-shard-manifest.py            regenerates a shard's MANIFEST.json from the index
   promote-pending.py                applies pending-promotions.jsonl; re-measures every row
@@ -27,8 +28,8 @@ The index is **split in two, and both halves matter**:
 
 | file | rows | tracked? | what it is |
 |---|---|---|---|
-| `index.jsonl` | 12,272 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 80,528 | no | everything held back, with each row's blockers |
+| `index.jsonl` | 44,544 | yes | published samples — the ones a public suite can verify |
+| `local/index-local.jsonl` | 48,256 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 
 "index.jsonl is small and lives in git" and "the index lists every blob including local-only"
@@ -290,7 +291,7 @@ the new path is clean cannot tell you the old path was the cause.
 
 ## The benign half is fetched, not shipped
 
-Of the 12,272 published rows, **12,188 are reproducible from a pinned source or from the
+Of the 44,544 published rows, **44,460 are reproducible from a pinned source or from the
 stock CMS tree** and are therefore *not* shipped as blobs — they are an index row plus a
 lockfile entry. **84** samples ship as bytes: 7 polyglot fixtures, 67 staging samples, 8
 doorway-kit samples and 2 outside-webroot wrappers.
@@ -301,17 +302,70 @@ regenerate it and get the same false-positive number, instead of taking ours on 
 ```
 corpus/fetch-benign.sh              # download, verify, unpack
 VERIFY_ONLY=1 corpus/fetch-benign.sh   # re-check hashes already on disk
+corpus/fetch-benign.sh --inject     # the control: prove the hash gate can refuse
 ```
 
-`benign/sources.jsonl` currently pins **86 sources**: 48 WordPress plugins,
-20 themes, and 18 WordPress core versions including deliberately old ones, because an
-outdated core is what a real host looks like. The plugin and theme list is not guesswork —
-it was taken from the corpus itself, by counting which slugs the unreviewed backlog actually
-contained. Pinning them mechanically decided **7,050 rows**, of which 2,940 were sitting in
-quarantine directories while being ordinary stock plugin code.
+`benign/sources.jsonl` currently pins **136 sources**: 87 WordPress plugins, 22 themes,
+24 WordPress core versions including deliberately old ones because an outdated core is what
+a real host looks like, and 3 trees of rendered HTML.
+
+**The versions are derived, not chosen.** The first 86 sources pinned each slug at whatever
+upstream shipped that day, which pins the version a host is *least* likely to be running.
+The 50 added in round 11 were read off the installed copy on a collected host — a plugin's
+main-file `Version:` header, a theme's `style.css` header, core's
+`wp-includes/version.php` — and every one of them was confirmed by measurement rather than
+by argument: a version derived wrongly resolves nothing, and each of these resolved
+between 4 and 3,300 rows. Pinning them mechanically decided a further **32,272 rows**, of
+which 7,843 were sitting in quarantine directories while being ordinary stock code.
+
+**Deriving a version is not the same as being able to pin it.** 32 component versions
+across 27 slugs were identified on the collected hosts and could not be pinned: premium
+plugins and themes never distributed on wordpress.org, agency-built and site-specific
+code, one plugin whose directory was closed upstream, and two whose exact installed
+version wordpress.org no longer retains. They account for **17,667 blobs that no pinned
+source reaches**, and they are the reason this pass closed 32,272 rows rather than 50,000.
+Substituting a nearby version for the two that are merely unretained would be a guess that
+looks like work — a version pinned on a guess that happens not to match is
+indistinguishable from one that was never pinned.
+
+**`kind: rendered-html` exists for one reason and it is a measurement, not a corpus gap.**
+The stock trees are almost entirely source, so a discriminator keyed on `<title>` and
+`<meta>` had 12 files in 207,311 that could ever have matched it — a 25% rule-of-three
+bound dressed up as a zero. Three Texinfo-generated GCC manuals are now pinned, two that
+carry the meta tags and one older build that does not, which turned that bound into a
+measured 97.6% and closed `docs/RULE_CANDIDATES.md` §4. The third is a **control**: without
+a rendered-page tree that is *not* at risk, "rendered pages match" and "all HTML matches"
+are indistinguishable.
 
 A hash mismatch in `fetch-benign.sh` is a hard failure, never "probably a new version":
-upstream may have been replaced.
+upstream may have been replaced. The archive kind is read off the URL — `.zip` and
+`.tar.gz` — and a suffix the script does not recognise is refused rather than passed to
+`unzip` on the assumption it is close enough.
+
+### `resolve-benign.py`, and the 92% it implements
+
+92% of everything ever closed in this corpus was closed by exact hash against a pinned
+source; 8% by human review. Until round 11 the 92% had **no committed implementation** —
+it was done by an ad-hoc script in a collection directory, so `pinned-benign-hash` appeared
+as a reason code on thousands of published rows and nowhere in the repository. A mechanism
+that decides tens of thousands of rows has to be readable by whoever audits those rows.
+
+What it will and will not do:
+
+  * it closes a row only while the verdict is `unreviewed`. A human verdict is never
+    overridden by a hash;
+  * it **supersedes** a sensitivity tag rather than overwriting it, and records what the
+    tag was. 829 rows carried `content`, `c2`, `identity`, `secret`, `pii` or `undecidable`
+    and were byte-identical to a pinned release anyway — vendored SDKs contain API hosts
+    and key material, and plugin releases contain images. The tag described the bytes
+    correctly and their owner incorrectly, and hash identity is what settles it: the same
+    bytes are downloadable by anyone from the same pinned URL;
+  * it builds the published row from a **whitelist**, so it cannot carry an `origin`. Four
+    rows once did, because a promotion copied the whole local row and removed what it
+    remembered to remove;
+  * it prints separately every row whose collecting scan had already flagged it. Those are
+    **false positives on upstream code**, not closures to wave through — 25 of them this
+    round, and they are why the pinned `known_fp` list went from 6 sha256 to 31.
 
 ## Shards
 

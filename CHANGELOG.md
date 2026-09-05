@@ -11,6 +11,71 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ## Unreleased
 
+### Changed
+
+- **The false-positive denominator moved: 8 of 146,712 becomes 44 of 197,559, a rate of
+  0.0055% to 0.0223%.** `corpus/benign/sources.jsonl` grew from 86 pinned sources to 136.
+  The 50 additions are not a wider sample of what is popular — each version was read off
+  the copy actually installed on a collected host (a plugin's main-file `Version:` header,
+  a theme's `style.css`, core's `wp-includes/version.php`), so the benign corpus now
+  contains the versions the scanner meets rather than the versions upstream ships today.
+  **Both halves of the rate grew and the numerator grew faster**, which is the expected
+  direction: the previous benign tree could not have produced these findings because it
+  did not contain the code. All 44 are upstream library code and all 44 are pinned as
+  `known_fp` fixtures in `corpus/expect/benign-false-positives.json` — 24 of them new this
+  round, most inside vendored copies of the Freemius SDK. They stay counted inside the 44.
+  The figure is quoted in the README, which is updated to match. Anyone regenerating it
+  needs `corpus/fetch-benign.sh` again: the lockfile changed.
+
+- **One false positive was found already fixed, and is now pinned as fixed.** Stock
+  WordPress core 4.8.3's `wp-admin/includes/class-ftp-sockets.php` was flagged `BD005` by
+  the scan that collected it and is not flagged by the current ruleset. Nothing had been
+  able to notice, because the file was not in a pinned benign tree until 4.8.3 was pinned
+  this round. It carries a plain `must_not_detect` rather than `known_fp`, so the fix is
+  now a regression test: if `BD005` returns on stock core, the suite goes red.
+
+### Added
+
+- **`corpus/fetch-benign.sh` accepts `.tar.gz` sources as well as `.zip`.** The archive
+  kind is read off the URL and an unrecognised suffix is a hard failure rather than a
+  fall-through to `unzip` — CORPUS_PLAN §8's rule that a silent fallback is how two
+  artefacts that claim to be the same thing stop being the same thing. Unpacker
+  dependencies are now tested one at a time and only for the formats the lockfile actually
+  contains, which is the same lesson as the `command -v zstd tar jq` that reported success
+  while `zstd` was absent. `corpus/fetch-benign.sh --inject` is the positive control: five
+  hermetic cases over `file://` URLs, asserting that a good zip and a good tar.gz verify,
+  that a one-byte corruption of either is refused, and that an unknown suffix is refused.
+
+- **`corpus/resolve-benign.py` — the closure mechanism that decided 92% of this corpus now
+  exists in the repository.** Rows byte-identical to a file in a pinned source were being
+  closed by ad-hoc scripts in collection directories, so the reason code
+  `pinned-benign-hash` appeared on 9,168 published rows and nowhere in the tree. It closes
+  a row only when the verdict is still `unreviewed`, records superseded sensitivity tags
+  rather than overwriting them, builds the published row from a whitelist so it cannot
+  carry an `origin`, and prints separately any row whose collecting scan had already
+  flagged it — those are false positives on upstream code, not closures to wave through.
+  `--inject` is the control, nine cases.
+
+### Not added, and this is the round's main result
+
+- **The rule that would close 82% of the known misses will not be written.** 495 of the 602
+  samples this version misses are one 2017 SEO doorway campaign, and the candidate for them
+  was `title == meta[keywords] == meta[description]`, exactly. It scored **0 false positives
+  over 207,311 files** — and was refused twice, because only 12 of those files carried both
+  meta tags, so it had twelve chances to fail and a rule-of-three bound of 25%.
+
+  Round 11 pinned the population it actually needed: three trees of rendered HTML
+  documentation. Measured against those, the candidate takes **494 false positives in 506
+  at-risk files — 97.6%**. GNU Texinfo writes the node title into `<title>`,
+  `meta[description]` and `meta[keywords]` verbatim on every page it generates, so the
+  "discriminator" describes a documentation generator rather than a doorway page.
+
+  What that means for the headline: **detection will not rise much from 22.2% soon**, because
+  the largest single block of misses is now a family whose rule has been measured and
+  rejected rather than merely unwritten. A 495-sample jump was available at any point for the
+  price of shipping on twelve files' evidence.
+
+
 ### Fixed
 
 - **The publishability gate was only half a gate, and the half it was missing is the half

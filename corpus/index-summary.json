@@ -39,16 +39,16 @@
  },
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
  "known_miss": 602,
- "local_only": 80528,
+ "local_only": 48256,
  "local_only_blockers": {
-  "carries content, which is not maskable and is never published": 4931,
+  "carries content, which is not maskable and is never published": 4124,
   "carries content/pii, which is not maskable and is never published": 153,
   "carries identity but no masking has been applied": 166,
   "carries identity/path but no masking has been applied": 11,
   "carries identity/path/secret but no masking has been applied": 4,
   "carries identity/secret but no masking has been applied": 35,
   "carries path but no masking has been applied": 8,
-  "carries pii, which is not maskable and is never published": 42,
+  "carries pii, which is not maskable and is never published": 40,
   "carries secret but no masking has been applied": 2,
   "encoded-layer gate did not pass": 9,
   "marked local_only: archive container this pass could not open (unsupported format). Recorded as unopened rather than scanned-and-clean: 5.6 says an absence must first prove the file was read": 1,
@@ -61,11 +61,11 @@
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 4 members read; byte-masking a container corrupts it (5.5)": 1,
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 5 members read; byte-masking a container corrupts it (5.5)": 2,
   "marked local_only: benign customer-site cache metadata: no rule fires on it and it is not reproducible from a pinned source, so it is accounted for but not published": 144,
-  "marked local_only: permanent": 312,
+  "marked local_only: permanent": 311,
   "marked local_only: verdict proposed by an automated review pass on 2026-09-05; awaiting human confirmation before publication": 757,
-  "obfuscated and did not decode: held local-only permanently": 275,
-  "sensitivity not yet assessed": 73783,
-  "verdict is unreviewed: nothing leaves that state without a human": 79581
+  "obfuscated and did not decode: held local-only permanently": 274,
+  "sensitivity not yet assessed": 42343,
+  "verdict is unreviewed: nothing leaves that state without a human": 47309
  },
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
  "local_only_publishable_no_blocker": 5,
@@ -111,13 +111,13 @@
  "malicious_reviewed_excl_predates_ruleset": 178,
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
  "predates_ruleset_blobs": 1131,
- "published": 12272,
- "published_fetched_not_shipped": 12188,
+ "published": 44544,
+ "published_fetched_not_shipped": 44460,
  "published_reason_codes": {
   "doorway-kit-review": 8,
   "media-polyglot": 7,
   "outside-webroot-sweep": 2,
-  "pinned-benign-hash": 9168,
+  "pinned-benign-hash": 41440,
   "staging-directory-review": 67,
   "stock-cms-hash": 2353,
   "stock-cms-hash-resolved-prior": 609,
@@ -125,15 +125,15 @@
  },
  "published_shipped_as_bytes": 84,
  "sensitivity_tags": {
-  "c2": 805,
-  "clean": 12780,
-  "content": 5084,
-  "identity": 293,
+  "c2": 789,
+  "clean": 45049,
+  "content": 4277,
+  "identity": 279,
   "path": 66,
-  "pii": 195,
-  "secret": 84,
-  "undecidable": 275,
-  "unreviewed": 73783
+  "pii": 193,
+  "secret": 73,
+  "undecidable": 274,
+  "unreviewed": 42343
  },
  "techniques_known": {
   "argument-injection": 1,
@@ -354,8 +354,8 @@
  },
  "total_blobs": 92800,
  "verdicts": {
-  "benign": 12445,
+  "benign": 44717,
   "malicious": 774,
-  "unreviewed": 79581
+  "unreviewed": 47309
  }
 }

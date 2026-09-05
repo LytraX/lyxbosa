@@ -14,7 +14,7 @@ number, because the measurement is the useful part and re-deriving it costs anot
 | 1 | unpinnable plugin/theme slug | **closed** — 18.6% of unpinnable slugs are attacker staging, against a 50% bar |
 | 2 | magic bytes disagreeing with the extension, in a media directory | open — FP re-measured 2026-09-05 over 207,311 files: **0**, 11,522 at risk. §2 |
 | 3 | one filename in two letter-cases in one directory | open — behaviour confirmed, impact not evidenced |
-| 4 | the SEO triple: `title` == `meta[keywords]` == `meta[description]` | open — 495/495 recall, **0 FPs but only 12 files at risk**; unmeasurable here. §4 |
+| 4 | the SEO triple: `title` == `meta[keywords]` == `meta[description]` | **closed** — rendered pages pinned round 11: **494 FPs in 506 at risk (97.6%)**. Every page of a Texinfo manual. §4 |
 | 5 | a bundled mailer behind a hardcoded password literal | open — 29/29 recall, 0 FPs, 230 at risk. §5 |
 | 6 | `mail()` + `$_POST[…]` + a hardcoded address literal | open — reaches 1 file of a 7-file kit, 0 FPs, 175 at risk. §6 |
 | 7 | card CVC/CVV reaching a remote-fetch sink in one file | open — 1 FP in 465 at risk; the FP is a form builder. §7 |
@@ -554,13 +554,13 @@ closing a capability gap. A rule for Leaf moves 29 rows and represents one file.
 > per-family rate stops one campaign dominating a figure that reads as capability; a
 > per-*distinct-file* rate stops one file dominating a family.
 
-## 4. The SEO triple — 495 rows, and the one to be most careful with
+## 4. The SEO triple — **CLOSED 2026-09-05, measured 494 FPs in 506 at risk (97.6%)**
 
-**Status: DELIBERATELY NOT SHIPPED, 2026-09-05.** The round that implemented §2, §5, §6, §7
-and §9 left this one alone, on this section's own argument: 12 at-risk files is a 25%
-bound and the zero says almost nothing. Re-measured with the same script on the same day
-and the at-risk count is still 12. It stays a candidate until a tree of *rendered* pages
-is pinned in `benign/sources.jsonl`.
+**Status: MEASURED AND REJECTED, 2026-09-05 (round 11).** The rendered-page population
+this section asked for was found, pinned and measured. The candidate takes **494 false
+positives in 506 at-risk files — 97.6%**. It is not a discriminator; it is a description
+of what any generator does when one string fills all three fields. Do not ship it. The
+detail is below, under *The measurement this section asked for*.
 
 **Signal.** `<title>`, `meta[name=keywords]` and `meta[name=description]` all carry the
 **same string**, exactly, case-insensitively.
@@ -585,25 +585,78 @@ are the same line of code seen from two ends.
   0.41%). It is worth having as a *triage* query. It is not the discriminator, because it
   keys on a deployment choice rather than on the artefact.
 
-**The false-positive population, and why this candidate cannot be recommended yet.** The
-right population for a rule about rendered page content is rendered page content. This
-corpus does not contain any. Measured over `trail-data/CMS`, `CMS-ext` and `Sites` —
-207,311 files — the triple matches **0**. That number is close to worthless, and
-`fp-population.py` is built to say why: only **12 files in 207,311 carry both a keywords and
-a description meta tag at all**, so the candidate was offered twelve chances to fail. The
-rule-of-three bound on the true rate among at-risk files is **25%**.
+**The false-positive population, as it stood before round 11.** The right population for a
+rule about rendered page content is rendered page content. This corpus did not contain any.
+Measured over `trail-data/CMS`, `CMS-ext` and `Sites` — 207,311 files — the triple matched
+**0**. That number was close to worthless, and `fp-population.py` is built to say why: only
+**12 files in 207,311 carried both a keywords and a description meta tag at all**, so the
+candidate had been offered twelve chances to fail. The rule-of-three bound on the true rate
+among at-risk files was **25%**.
 
-Reporting "0 false positives in 207,311 files" here would be the §11 ritual in its purest
+Reporting "0 false positives in 207,311 files" would have been the §11 ritual in its purest
 form: a denominator four orders of magnitude larger than the set that could ever have
 matched.
 
-**What would actually measure it**, and this is the actionable request: a tree of *rendered*
-pages — a page-cache plugin's output directory (`wp-content/cache/`), a static-site
-generator's output, or any webroot where an SEO plugin has written meta tags into saved
-HTML. The failure mode to look for is specific and plausible: a site where the SEO fields
-were left to auto-fill from the post title would produce the triple honestly. Until such a
-source is pinned in `benign/sources.jsonl`, this candidate has 495/495 recall and **no
-measured precision**, and it should not ship on the strength of the zero.
+### The measurement this section asked for — run 2026-09-05, round 11
+
+The request was for a tree of *rendered* pages, and the failure mode named in advance was
+"a site where the SEO fields were left to auto-fill from the post title would produce the
+triple honestly". **A mainstream documentation generator does exactly that, on every page
+it writes.** GNU Texinfo's HTML output emits
+
+```html
+<title>Top (GNU Coreutils 9.11)</title>
+<meta name="description" content="Top (GNU Coreutils 9.11)">
+<meta name="keywords" content="Top (GNU Coreutils 9.11)">
+```
+
+— the node title, three times, verbatim. Three trees of it are now pinned in
+`benign/sources.jsonl` under `kind: rendered-html`, and the measurement is no longer a
+bound but a rate:
+
+| | before | after |
+|---|---|---|
+| examined | 207,311 | 263,408 |
+| **at risk** (carries both meta tags) | **12** | **506** |
+| **false positives** | **0** | **494** |
+| what can be said | 95% upper bound 25% | **measured 97.6% of at-risk files** |
+
+**Every one of the 494 is a page of a GCC manual.** 420 from `gcc-13.2.0/gcc-html`, 74 from
+`gcc-9.5.0/cpp-html` — every page of both, without exception.
+
+**The third pinned tree is the control, and it is why the 97.6% means something.**
+`gcc-4.9.4/cpp-html` is 72 rendered pages of the same manual built by an older Texinfo, and
+it contributes **0 at-risk files**: that Texinfo emitted neither meta tag. So the at-risk
+predicate is doing real work rather than counting all HTML, "rendered pages" are not
+at-risk by construction, and the 494 is a property of the generator's current behaviour
+rather than of documentation in general. The habit arrived with Texinfo 6 and is in every
+manual built since.
+
+**The 494 are not near-duplicates, and that was checked rather than assumed.** Clustering
+the 420 `gcc-html` pages on tag skeleton — the transform that collapsed 495 doorway rows to
+3 — yields **399 classes**, not 3. Structurally these are 399 distinct pages that each
+independently match. What they do share is one generator, so the honest reading is: many
+distinct chances to fail, one root cause.
+
+**Why this kills the candidate rather than sending it back for a discriminator.** The
+obvious repair is to add a negative term — Texinfo writes `<meta name="Generator"
+content="makeinfo">`, so exclude that. It keys on the benign population that happened to be
+pinned, and the next generator with the same habit defeats it. The finding underneath is
+structural: `title == keywords == description` is not a property of doorway pages. It is a
+property of *any* template that fills all three fields from one variable, which is what the
+doorway generator's own `$key = str_replace("-", " ", $keyfromurl)` does and what Texinfo
+does. A discriminator cannot separate two programs doing the same thing for different
+reasons.
+
+**And the cost of shipping it would have been concrete.** A customer hosting a copy of any
+Texinfo-built manual on a webroot — GCC, Bash, coreutils, Emacs — would get one critical
+SEO-doorway finding per page, hundreds to thousands of them, on documentation. That is the
+shape of false positive that makes people turn a scanner off.
+
+**Recall was never the problem and is unchanged at 495/495.** The 495 rows stay
+`known_miss`. Closing them needs something keyed on what the pages *do* — the family's
+tracking-pixel beacon, or its deployers, which §9 already measured and shipped — not on
+what their `<head>` looks like.
 
 **A cheaper and better target exists in the same directory.** See §8.
 

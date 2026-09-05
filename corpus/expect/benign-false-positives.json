@@ -1,98 +1,522 @@
 [
- {
-  "sha256": "74319d258ba9c4730547b29ff4310e4c2cb5b687cdb9dbb1e1db3466d49c75cf",
-  "expect": {
-   "must_detect": [],
-   "must_not_detect_when_fixed": [
-    "OBF025"
-   ]
-  },
-  "verdict": "benign",
-  "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
-  "observed_findings": 6,
-  "occurrences_in_pinned_trees": 1,
-  "example_path": "trail-data/CMS-ext/wp-plugin/tablepress-3.3.4/tablepress/libraries/freemius/includes/class-freemius.php",
-  "reproducible_via": "corpus/fetch-benign.sh",
-  "known_fp": true
- },
- {
-  "sha256": "7f524ba829dea977bd2bca22cbb017f18a3ec75669527e0a62aa4cb5a3eace1c",
-  "expect": {
-   "must_detect": [],
-   "must_not_detect_when_fixed": [
-    "OBF002"
-   ]
-  },
-  "verdict": "benign",
-  "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
-  "observed_findings": 1,
-  "occurrences_in_pinned_trees": 1,
-  "example_path": "trail-data/CMS-ext/wp-plugin/woo-order-export-lite-4.1.0/woo-order-export-lite/classes/FPDF/class-woe-fpdf.php",
-  "reproducible_via": "corpus/fetch-benign.sh",
-  "known_fp": true
- },
- {
-  "sha256": "9f7e58591a0ba6004bc1949a94d2c5e933bfd098e8adba50ca49755fc3719e18",
-  "expect": {
-   "must_detect": [],
-   "must_not_detect_when_fixed": [
-    "OBF025"
-   ]
-  },
-  "verdict": "benign",
-  "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
-  "observed_findings": 2,
-  "occurrences_in_pinned_trees": 1,
-  "example_path": "trail-data/CMS-ext/wp-plugin/tablepress-3.3.4/tablepress/libraries/freemius/includes/sdk/FreemiusBase.php",
-  "reproducible_via": "corpus/fetch-benign.sh",
-  "known_fp": true
- },
- {
-  "sha256": "b343b182c71760076526a7abc96558ac372af594a7e18528f28304d095a1eb35",
-  "expect": {
-   "must_detect": [],
-   "must_not_detect_when_fixed": [
-    "OBF025"
-   ]
-  },
-  "verdict": "benign",
-  "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
-  "observed_findings": 2,
-  "occurrences_in_pinned_trees": 1,
-  "example_path": "trail-data/CMS-ext/wp-plugin/robin-image-optimizer-2.0.6/robin-image-optimizer/libs/factory/freemius/includes/sdk/FreemiusBase.php",
-  "reproducible_via": "corpus/fetch-benign.sh",
-  "known_fp": true
- },
- {
-  "sha256": "b646cc13505e3d9487d4f57fe393e932ce332060ddba5c18bc4a82362484e5fe",
-  "expect": {
-   "must_detect": [],
-   "must_not_detect_when_fixed": [
-    "OBF025"
-   ]
-  },
-  "verdict": "benign",
-  "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
-  "observed_findings": 4,
-  "occurrences_in_pinned_trees": 2,
-  "example_path": "trail-data/CMS-ext/wp-plugin/shortcodes-ultimate-7.8.4/shortcodes-ultimate/freemius/includes/sdk/FreemiusBase.php",
-  "reproducible_via": "corpus/fetch-benign.sh",
-  "known_fp": true
- },
- {
-  "sha256": "f3cbeae6a457154be40d9030824fbdc1a05c293efd5f2836696127f41a7b1aa8",
-  "expect": {
-   "must_detect": [],
-   "must_not_detect_when_fixed": [
-    "OBF025"
-   ]
-  },
-  "verdict": "benign",
-  "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
-  "observed_findings": 12,
-  "occurrences_in_pinned_trees": 2,
-  "example_path": "trail-data/CMS-ext/wp-plugin/shortcodes-ultimate-7.8.4/shortcodes-ultimate/freemius/includes/class-freemius.php",
-  "reproducible_via": "corpus/fetch-benign.sh",
-  "known_fp": true
- }
+    {
+        "sha256": "74319d258ba9c4730547b29ff4310e4c2cb5b687cdb9dbb1e1db3466d49c75cf",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/tablepress-3.3.4/tablepress/libraries/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true
+    },
+    {
+        "sha256": "7f524ba829dea977bd2bca22cbb017f18a3ec75669527e0a62aa4cb5a3eace1c",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF002"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 1,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/woo-order-export-lite-4.1.0/woo-order-export-lite/classes/FPDF/class-woe-fpdf.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true
+    },
+    {
+        "sha256": "9f7e58591a0ba6004bc1949a94d2c5e933bfd098e8adba50ca49755fc3719e18",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 2,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/tablepress-3.3.4/tablepress/libraries/freemius/includes/sdk/FreemiusBase.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true
+    },
+    {
+        "sha256": "b343b182c71760076526a7abc96558ac372af594a7e18528f28304d095a1eb35",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 2,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/robin-image-optimizer-2.0.6/robin-image-optimizer/libs/factory/freemius/includes/sdk/FreemiusBase.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true
+    },
+    {
+        "sha256": "b646cc13505e3d9487d4f57fe393e932ce332060ddba5c18bc4a82362484e5fe",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 4,
+        "occurrences_in_pinned_trees": 2,
+        "example_path": "trail-data/CMS-ext/wp-plugin/shortcodes-ultimate-7.8.4/shortcodes-ultimate/freemius/includes/sdk/FreemiusBase.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true
+    },
+    {
+        "sha256": "f3cbeae6a457154be40d9030824fbdc1a05c293efd5f2836696127f41a7b1aa8",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 12,
+        "occurrences_in_pinned_trees": 2,
+        "example_path": "trail-data/CMS-ext/wp-plugin/shortcodes-ultimate-7.8.4/shortcodes-ultimate/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true
+    },
+    {
+        "sha256": "77f138932c70af0547949d5ead00f3b6899abbf0ebe406e7fe6ebfeb5c1cf249",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 3,
+        "example_path": "trail-data/CMS-ext/wp-plugin/woo-permalink-manager-2.3.7/woo-permalink-manager/freemius/includes/sdk/FreemiusBase.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "3247be17f3c8934d138cef489cdd2b523b7e103ac6022384bd4c3d384da0c44c",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 12,
+        "occurrences_in_pinned_trees": 2,
+        "example_path": "trail-data/CMS-ext/wp-plugin/the-events-calendar-6.0.9/the-events-calendar/common/vendor/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "b37a58a602ed5dfdee3d173c793e8d53f43fc02646eb73d310a37643ca7241a4",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 4,
+        "occurrences_in_pinned_trees": 2,
+        "example_path": "trail-data/CMS-ext/wp-plugin/robin-image-optimizer-1.4.2/robin-image-optimizer/libs/factory/freemius/includes/sdk/FreemiusBase.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "ef16acf9f4d95eab0f1a450f0c0924f9bfe9b1ca827b22cd363f0d7c3655edfb",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 12,
+        "occurrences_in_pinned_trees": 2,
+        "example_path": "trail-data/CMS-ext/wp-plugin/ignore-single-update-1.5/ignore-single-update/vendor/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "55e6cafea89a9fc3afd646055228d8800d23801813ee91c70f5a57a7b05a3406",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "EXP006"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 4,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/learnpress-4.2.3.2/learnpress/inc/class-lp-checkout.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "452e6e3608efbe7da4af49ac0bc7f3a9d583743fa9d47db9d00be5247792125d",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "EXP006"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 1,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/learnpress-4.2.3.2/learnpress/inc/class-lp-request-handler.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "b411e08eab5ea6e83938e37f61e5feac7d2e53588c743079f9b483c01c354827",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "EXP006"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 1,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/gallery-by-supsystic-1.20.1/gallery-by-supsystic/vendor/Rsc/Http/Request.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "07a74da127630a30b05403c996bd4742e66c02fb9f6aeb062f579091ebf436c8",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/woo-permalink-manager-2.3.7/woo-permalink-manager/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "95c443141afec07daf6c8003e00bbe7f13752e70ab23279200dde97288d4df38",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/ignore-single-update-1.8/ignore-single-update/vendor/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "993c61b5aa29f62b425823e84ff732b733081c23f2e722c88bd16b759167caed",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF014"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 1,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/robin-image-optimizer-1.4.2/robin-image-optimizer/includes/classes/class-rio-media-library.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "802b63f6c7f238f39c91dd599887f2821a492a8584b703397278608f64139d9a",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/ignore-single-update-1.6.1/ignore-single-update/vendor/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "7e854e0f63a1c5b83d1f3b2690d3c85669dae705a5a9688a57e1e32c44c0dc19",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF013"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 1,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/blog-designer-pack-2.2.7/blog-designer-pack/includes/bdp-ajax-functions.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "f1bb0b2a26a8a82fdab3b1455ef0443f453ef64495a423f0eaebcd9358f3f377",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/blog-designer-pack-2.2.7/blog-designer-pack/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "429bd0bf3650fa7e75556dd6b7774a9ba50524fcaa8ae1ae6b260559d3ae888c",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 2,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/blog-designer-pack-2.2.7/blog-designer-pack/freemius/includes/sdk/FreemiusBase.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "ddd67306719ff745ba1930fa6f1af426ef1e7a1f00478199d42bca602c5d052f",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/html5-video-player-2.5.36/html5-video-player/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "307fda827d86ff6c2a4c7210ff24a29d8b9af91367b81a3da395135a60a1e650",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "PHI008"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 1,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/strong-testimonials-2.51.6/strong-testimonials/includes/class-strong-testimonials-privacy.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "86ab329dd10d9027dabb09f81956f0f4d7a916ebe3db76fc32652a7aacf41a73",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/the-events-calendar-5.0.2.1/the-events-calendar/common/vendor/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "0ac552e7f50096fcfb7320d6eb0f04dedc13319785c5e459539182a824a80eea",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/ocean-extra-2.2.6/ocean-extra/includes/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "32db72865202e6d3e52b9988b1ae908a8cec2ac58f39b19f40442cf2c2a488ab",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "EXP006"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 4,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/learnpress-4.2.1.1/learnpress/inc/class-lp-checkout.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "e10442e91eefd242512a9e1ea4ef2b4fa43e790a3749e7e2a40ad53475048da8",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "EXP006"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 1,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/learnpress-4.2.1.1/learnpress/inc/class-lp-request-handler.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "b0e42f3f39698b606cfe375c9b2d3505da446631a9b4900ef91bba0e18a97d1b",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/menu-image-3.0.4/menu-image/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "de0574cda229f51cf71a844742d8df6d7cae78fd87a6ef20a15bf629818ad746",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 2,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/menu-image-3.0.4/menu-image/freemius/includes/sdk/FreemiusBase.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "f47ac5d8cc62514d18d9aeadcb75bb99bbf1a98f507f1025c3f5a9b5ff6fd7a0",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF018"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 1,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/forminator-1.57.2/forminator/library/abstracts/abstract-class-user.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "158d575411eeafb8510ba002173a9c9abdc0ffcbc9f75881dc8346749d2b8bf3",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect_when_fixed": [
+                "OBF025"
+            ]
+        },
+        "verdict": "benign",
+        "why": "upstream library code that a rule currently scores as malware. This is a KNOWN, unfixed false positive: the rule still fires today, so it is counted as expected and never as a failure. If it stops firing, that is a result - the fixture is promoted to a plain must_not_detect and the FP is pinned as fixed forever.",
+        "observed_findings": 6,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-plugin/add-search-to-menu-5.5.6/add-search-to-menu/includes/freemius/includes/class-freemius.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "known_fp": true,
+        "found_by": "corpus/resolve-benign.py, round 11: the file is byte-identical to a blob collected from a customer host, so the corpus row and the false positive are the same bytes"
+    },
+    {
+        "sha256": "a096c5f71bb8b582bae92e1d3c33dcf2b3640e17db2ba51c37dffa80fc4fc50b",
+        "expect": {
+            "must_detect": [],
+            "must_not_detect": [
+                "BD005"
+            ]
+        },
+        "verdict": "benign",
+        "why": "stock WordPress core, flagged BD005 by the collection scan that found the blob and NOT flagged by the ruleset at this revision. The rule was fixed between the two, and this round is the first time the corpus could see that: the file was not in a pinned benign tree until 4.8.3 was pinned. Pinned as a plain must_not_detect so the fix cannot silently regress (section 8).",
+        "observed_findings": 0,
+        "occurrences_in_pinned_trees": 1,
+        "example_path": "trail-data/CMS-ext/wp-core/wordpress-core-4.8.3/wordpress/wp-admin/includes/class-ftp-sockets.php",
+        "reproducible_via": "corpus/fetch-benign.sh",
+        "found_by": "corpus/resolve-benign.py, round 11"
+    }
 ]
