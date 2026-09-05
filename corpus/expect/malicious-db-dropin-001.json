@@ -11,10 +11,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -39,10 +44,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -67,10 +77,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -95,10 +110,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -123,10 +143,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -151,10 +176,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -179,10 +209,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -207,10 +242,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -235,10 +275,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -263,10 +308,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -291,10 +341,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -319,10 +374,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -347,10 +407,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -375,10 +440,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -403,10 +473,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -431,10 +506,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -459,10 +539,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -487,10 +572,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -515,10 +605,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -543,10 +638,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -571,10 +671,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -599,10 +704,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -627,10 +737,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -655,10 +770,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -683,10 +803,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -711,10 +836,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -739,10 +869,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -767,10 +902,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -795,10 +935,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -823,10 +968,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -851,10 +1001,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -879,10 +1034,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -907,10 +1067,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -935,10 +1100,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -963,10 +1133,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -991,10 +1166,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1019,10 +1199,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1047,10 +1232,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1075,10 +1265,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1103,10 +1298,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1131,10 +1331,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1159,10 +1364,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1187,10 +1397,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1215,10 +1430,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1243,10 +1463,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",
@@ -1271,10 +1496,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
-   "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF039",
+    "was": "no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker skip."
+   },
+   "must_detect": [
+    "OBF039"
+   ],
+   "must_not_detect": []
   },
   "technique": [
    "wordpress-db-dropin-persistence",

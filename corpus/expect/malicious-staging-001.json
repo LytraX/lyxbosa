@@ -101,10 +101,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -131,10 +136,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -161,10 +171,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -191,10 +206,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -221,10 +241,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -251,10 +276,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -281,10 +311,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -311,10 +346,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -401,10 +441,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -431,10 +476,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -461,10 +511,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -491,10 +546,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -521,10 +581,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -551,10 +616,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -581,10 +651,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -611,10 +686,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -701,10 +781,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -731,10 +816,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -761,10 +851,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -791,10 +886,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -821,10 +921,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -851,10 +956,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -881,10 +991,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -911,10 +1026,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1001,10 +1121,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1031,10 +1156,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1061,10 +1191,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1091,10 +1226,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1121,10 +1261,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1151,10 +1296,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1181,10 +1331,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1211,10 +1366,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1331,10 +1491,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1361,10 +1526,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1391,10 +1561,15 @@
    "c2"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1421,10 +1596,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1451,10 +1631,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1481,10 +1666,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1511,10 +1701,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1541,10 +1736,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF041"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "OBF041",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1685,10 +1885,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "CRED007"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-05",
+    "rule": "CRED007",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "checkout-hook-removal",

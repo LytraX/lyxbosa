@@ -286,6 +286,24 @@ def main():
                           - summary.get("malicious_detected_runnable", 0)),
         "no_expectation": summary.get("malicious_no_expectation", 0),
     }
+    # RECONCILE THE RECORDED FIGURE AGAINST WHAT THIS RUN OBSERVED.
+    #
+    # Everything above comes out of index-summary.json, so the Detection line is a
+    # RECORDED number, not a measured one - and for a long time it printed regardless of
+    # what the binary did. Pointed at a build containing none of the current rules, this
+    # suite reported `shard-run 7/95, 88 missed` and `Regression 7/95`, both correctly red,
+    # and directly above them `Detection 169/774 (21.8%)` with the sub-line "95 verified by
+    # re-running check" - when 7 had been verified and 88 had just failed. The headline
+    # figure, the one a stranger reads first, could not deliver bad news about the
+    # instrument. That is section 11 again, in the same place it was found the first time.
+    #
+    # The check is cheap because the two numbers are meant to be the same number: every row
+    # the summary counts as detected-and-runnable is a row this run executed and expected to
+    # detect. If they disagree, the recorded figure is not reproducible with this binary and
+    # printing it unqualified would be asserting something this run did not establish.
+    res["detection"]["observed_by_rerun"] = mal["detected"]
+    res["detection"]["reconciles"] = (mal["detected"]
+                                      == summary.get("malicious_detected_runnable", 0))
     res["detection"]["rate"] = (round(res["detection"]["detected"]
                                       / float(res["detection"]["reviewed"]), 4)
                                 if res["detection"]["reviewed"] else None)
@@ -385,9 +403,21 @@ def main():
         print("  Detection      %4d / %-5d reviewed malicious samples detected   (%s)"
               % (d["detected"], d["reviewed"],
                  "%.1f%%" % (d["rate"] * 100) if d["rate"] is not None else "n/a"))
-        print("                 %d verified by re-running `check`; %d held local-only, so the"
-              % (d["verified_by_rerun"], d["recorded_only"]))
-        print("                 recorded result from the last rescan stands for those")
+        if d.get("reconciles", True):
+            print("                 %d verified by re-running `check`; %d held local-only, so the"
+                  % (d["verified_by_rerun"], d["recorded_only"]))
+            print("                 recorded result from the last rescan stands for those")
+        else:
+            print("                 NOT RECONCILED: the index records %d of these as runnable,"
+                  % d["verified_by_rerun"])
+            print("                 and this run detected %d of them. The figure above is read"
+                  % d["observed_by_rerun"])
+            print("                 from index-summary.json and is NOT what this binary does.")
+            print("                 Rebuild, or point LYXBOSA_BIN at the build you mean.")
+            res["failures"].append({"sample": "detection", "why": "recorded figure does not "
+                                    "reconcile with this run",
+                                    "expected": d["verified_by_rerun"],
+                                    "got": d["observed_by_rerun"]})
         rc = res["regression_check"]
         print("  Regression     %4d / %-5d expected detections still firing"
               % (rc["still_firing"], rc["expected"]))

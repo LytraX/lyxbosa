@@ -35,7 +35,7 @@
   "woocommerce-card-skimmer": 6
  },
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
- "known_miss": 646,
+ "known_miss": 605,
  "local_only": 80536,
  "local_only_blockers": {
   "carries content, which is not maskable and is never published": 4931,
@@ -65,14 +65,14 @@
   "verdict is unreviewed: nothing leaves that state without a human": 79595
  },
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
- "malicious_detected": 128,
- "malicious_detected_excl_predates_ruleset": 66,
- "malicious_detected_runnable": 54,
- "malicious_known_miss": 646,
+ "malicious_detected": 169,
+ "malicious_detected_excl_predates_ruleset": 107,
+ "malicious_detected_runnable": 95,
+ "malicious_known_miss": 605,
  "malicious_known_miss_by_family": {
   "ddos-flood-toolkit": 7,
   "domain-spray-shell-deployer": 1,
-  "fake-plugin-image-payload-loader": 52,
+  "fake-plugin-image-payload-loader": 12,
   "fake-theme-zlib-payload-blobs": 1,
   "forged-plugin-auto-login-backdoor": 2,
   "halmahera-rogue-admin-cloaker": 1,
@@ -99,9 +99,9 @@
   "tiny-file-manager-drop": 1,
   "uploads-dir-docroot-uploader": 1,
   "webmail-phish-harvester": 6,
-  "woocommerce-card-skimmer": 7
+  "woocommerce-card-skimmer": 6
  },
- "malicious_known_miss_excl_predates_ruleset": 112,
+ "malicious_known_miss_excl_predates_ruleset": 71,
  "malicious_no_expectation": 0,
  "malicious_reviewed": 774,
  "malicious_reviewed_excl_predates_ruleset": 178,

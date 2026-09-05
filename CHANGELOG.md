@@ -11,6 +11,18 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ## Unreleased
 
+### Fixed
+
+- **The suite's headline detection figure could not fail.** `corpus/verify.py` built its
+  `Detection` line entirely out of `index-summary.json`, so it printed a recorded number
+  regardless of what the binary under test did. Pointed at a build containing none of the
+  current rules, the suite reported `shard-run 7/95, 88 missed` and `Regression 7/95` — both
+  correctly red — and directly above them `Detection 169/774 (21.8%)`, with the sub-line
+  "95 verified by re-running `check`" when 7 had been verified and 88 had just failed. The
+  figure a reader sees first was the one that could not deliver bad news about the
+  instrument. It now reconciles the recorded count against what the run actually detected,
+  says plainly that the number is read from the summary when they disagree, and fails.
+
 ### Added
 
 - **`OBF041` (high)** — a file that opens with the ASCII letters `PNG` or `GIF` where a
@@ -52,11 +64,31 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Detection coverage
 
-The golden corpus now records **75 samples these five rules newly detect** — measured per
-sample with `check`, not inferred from a batch scan. 41 are in published shards; the other
-34 are held local-only on masking and review blockers that are independent of whether a rule
-fires. The corpus figure does not move until those rows are promoted, and
-`corpus/pending-promotions.jsonl` carries the list until they are.
+**Corpus detection is 169 of 774 reviewed malicious samples (21.8%), up from 128 of 774
+(16.5%).** The five rules above measured 75 samples they newly detect; 41 of those were in
+published shards and are now promoted from `expect.known_miss` to `expect.must_detect`.
+
+The whole difference is those 41 rows and nothing else. The denominator did not move — 774
+reviewed malicious samples before and after — so this is the first round in which the figure
+rose rather than falling or holding: promoting a known miss whose rule now fires moves a
+sample from the denominator-only side to both sides. Known misses fall 646 → 605, the suite's
+executed set goes 54/54 → 95/95 with all 95 matching their expected rule exactly, and the
+false-positive rate is unchanged at 8 of 146,713 benign files. Technique coverage is also
+unchanged at 80 of 123, which is correct rather than surprising: a `known_miss` sample
+already contributed its techniques to both sides of that ratio.
+
+Each row was re-measured with `check` against the bytes the suite runs before being applied,
+because `expect.must_detect` is compared to `check`'s output exactly. `corpus/verify.py` now
+reports **0 newly detected** — the same figure a scanner built before these rules would
+report, so it is worth saying how the two are told apart: the run immediately before the
+promotion, using the same binary, reported 41, and running the promoted corpus against a
+pre-`OBF041` build turns 88 of the 95 executed samples red instead of printing the same
+numbers quietly.
+
+**34 samples are still owed** and stay in `corpus/pending-promotions.jsonl`: 29 blocked on
+masking they have not had, 3 on a sensitivity assessment, and 2 on a human verdict that only
+the operator can give. Their detection is real; none of those blockers is about whether a
+rule fires, which is why the file records the blocker rather than just the hash.
 
 ### Added
 
