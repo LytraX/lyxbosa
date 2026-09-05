@@ -306,8 +306,10 @@ def main():
     ap.add_argument("--worklist", help="jsonl of {sha256, path} for the samples to mask")
     ap.add_argument("--index", default=os.path.join(HERE, "local", "index-local.jsonl"))
     ap.add_argument("--stage", required=True, help="directory for the before/after copies")
-    ap.add_argument("--vocabulary", action="append", required=True,
-                    help="stock CMS tree, repeatable. Required: see build_vocabulary()")
+    ap.add_argument("--vocabulary", action="append", default=[],
+                    help="stock CMS tree, repeatable. Required to mask: see "
+                         "build_vocabulary(). NOT required by --inject, which tests the "
+                         "driver's refusals and never the collision reference")
     ap.add_argument("--map", default=incident_mask.MAP_PATH)
     ap.add_argument("--mask-ipv4", action="store_true",
                     help="also mask dotted quads outside comments. Off by default because "
@@ -323,14 +325,27 @@ def main():
     a = ap.parse_args()
 
     m = incident_mask.load_map(a.map)
-    vocab = build_vocabulary(a.vocabulary)
     os.makedirs(a.stage, exist_ok=True)
     print("scanner                      : %s" % json.dumps(binary_id()))
-    print("stock vocabulary tokens      : %d" % len(vocab))
 
     if a.inject:
+        # A control suite that cannot run without pointing at a 158,675-file tree is a
+        # control that gets skipped, and a skipped control is the state AGENTS.md is about.
+        # None of the four cases below is about the vocabulary: they test parity, the read
+        # proof and the hash check. So --inject synthesises one and says so. Masking still
+        # refuses to run without a real tree, because there the collision reference is the
+        # whole point.
+        vocab = a.vocabulary and build_vocabulary(a.vocabulary) or {"admin", "index",
+                                                                    "upload", "cache"}
+        print("stock vocabulary tokens      : %d%s"
+              % (len(vocab), "" if a.vocabulary else "  (synthetic; --inject reads no tree)"))
         print()
         return inject(m, vocab, a.stage)
+
+    if not a.vocabulary:
+        return ap.error("--vocabulary is required to mask; see build_vocabulary()")
+    vocab = build_vocabulary(a.vocabulary)
+    print("stock vocabulary tokens      : %d" % len(vocab))
 
     if not a.worklist:
         return ap.error("--worklist is required unless --inject")

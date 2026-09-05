@@ -42,6 +42,298 @@ independent locks rather than one.
 
 ### Added
 
+- **The secret gate is armed structurally (`corpus/shard-gate.py`).** A row tagged `secret`
+  whose masking is applied must now carry `masking.secret_gate == "PASS"` or it is not
+  publishable. Two blockers, not one: a recorded `FAIL` is a measurement that was taken and
+  did not pass, an absent result is a row whose masking predates the gate, and the repairs
+  differ — re-mask versus re-measure. Collapsing them would let a `--fix` run manufacture the
+  field, which is the blind fix the gate exists to prevent.
+
+  The rule sits **inside** the `applied` branch. A `secret`-tagged row with masking not
+  applied already carries one blocker for that cause, and §8 counts reasons rather than rows,
+  so a second reason for one cause is a double-counted denominator — the shape that left the
+  blocker tally 14 out for two rounds. There is a control for exactly that: a fixture with
+  `applied: false` and a `not_applicable_reason` must come back **clean**, and would report
+  `drift` if the rule fired twice.
+
+  Four control cases added, taking `--inject` from 12 to 16, all 16 passing. Run against the
+  pre-change `evaluate()` the same suite fails on exactly the two new positive cases, which
+  is the evidence that they test the new rule rather than the old one.
+
+- **`corpus/regen-tiers.py`** — recomputes a map's `mask_tier` and refuses to write unless
+  two separate things are provably true. The map is out of repo, cannot be recovered from
+  git, and `pre-push-check.py` builds its identifier list from it, so the write is the
+  dangerous part and the tier arithmetic is not.
+
+  **Assertion one, contents:** `identifiers()`, `keep_tokens()`, `pairs()`, every top-level
+  field but `mask_tier`, and `mask_tier`'s key set, all unchanged — then re-asserted by
+  reading the file back. Six mutations must be caught and one honest regeneration allowed;
+  a guard that rejects everything is not a guard either.
+
+  **Assertion two, meaning:** coverage per changed name over a real path population, refusing
+  a measured loss. This one exists because assertion one passed on a demotion that cost six
+  masked occurrences — a tier change moves no identifier, no pseudonym and no key, so a
+  contents check is structurally unable to see it. Refused **per name** rather than on the
+  net: a net lets one name's gain pay for another name's loss, and "the totals balance" is
+  not a statement about the name that stopped being masked. `--allow-coverage-loss` is the
+  override and has to be typed. The matchers are built by instantiating a real
+  `incident_mask.Masker` over a one-name map rather than by re-deriving the tier regexes, so
+  a coverage check cannot measure a width the masker does not use.
+
+### Changed
+
+- **The map's `mask_tier` regeneration was built, run, measured and rolled back.** `tiers()`
+  was fixed last round and tiers are stored, so the fix changed nothing until it was run. Of
+  134 identifiers exactly one moved, `C → D`: a five-character alphabetic account name that
+  *is* a stock-CMS filename token, which `C` rewrote as a whole word wherever it appeared. The
+  other 133 reproduce their stored value against the union of both trees, which is how the
+  vocabulary was identified — `trail-data/CMS` alone disagrees on a second name, so the stored
+  tiers were not generated from it. Every contents assertion passed and `--collisions` read 0.
+
+  **It was reverted on the measurement.** A tier is a substitution width, so the question is
+  how many real occurrences each width reaches. Over a census of 247,829 collected paths `C`
+  masks **29** occurrences of that name and `D` reaches **23**; over a 366,080-path population
+  including directory names, 34 against 30. The six lost are the name as a filename prefix
+  before `_` and the name between `-` and `.` — the `<account>_<something>` form that
+  incident-response directories and database dumps are named after. The cost in the other
+  direction measures **zero**: across 48,256 `origin.path` values the name occurs only as a
+  substring of a longer token, which `C`'s leading-boundary rule does not touch, and no
+  stock-CMS token was rewritten anywhere in either index. §5.6 holds that leaving a name costs
+  everything and over-masking costs nothing; a measured six against a measured zero only goes
+  one way. The map is back at `C`, `--collisions` reads **1** again, and the regenerated map
+  is kept as `account-mapping.json.20260905-postregen.bak` so the census stands.
+
+  **The 0 it would have read was not the resolution it looks like.** `vocabulary()` yields
+  bare tokens with no separator, and every tier-`D` rule requires one, so **no `D`-tier
+  identifier can ever be reported by `--collisions`**. The 0 would have meant the name left
+  the check's reach, not that the collision was resolved. The positive control on it is the
+  same check against the pre-regeneration map, same name and same vocabulary, still reading 1
+  — the tier is the only variable. `--collisions` asserts that no `A`/`B`/`C` identifier
+  rewrites a stock token, and is not evidence about `D`.
+
+  **The rollback does not reach sample bytes.** `content_mask.ContentMasker` re-derives the
+  tier from the vocabulary it is handed, and `mask-samples.py` always hands it one, so the
+  byte masker treats that name as `D` either way — masking a sample under both maps gives
+  byte-identical output while the masker's own self-demotion count drops 1 → 0. The row masker
+  now treats it as `C` and the byte masker as `D`, deliberately: over a row field the wrong
+  tier over-masks a path segment, over sample bytes it rewrites a working identifier in code.
+
+- **`--inject` no longer requires `--vocabulary`, in `regen-tiers.py` or in
+  `mask-samples.py`.** A control suite that cannot run without pointing at a 158,675-file
+  tree is a control that gets skipped, and a skipped control is the state AGENTS.md is about.
+  Neither suite's cases depend on what a stock CMS tree contains — they test refusals, the
+  contents assertion, the coverage refusal and the file mode, with tiers set by hand so each
+  case is about the guard rather than the arithmetic. Both now synthesise a small vocabulary
+  and say so in their output. Masking and regeneration still refuse to run without a real
+  tree, because there the collision reference is the whole point.
+
+- **13 of the 15 `secret`-tagged rows with no gate result were re-measured** with
+  `mask-samples.py`, not fixed. All 13 cleared the secret gate and held detection parity;
+  two of the 13 gained a `plaintext gate did not pass` blocker they had not recorded before.
+  **Two rows were refused**, each carrying one `wp-credential`-shaped literal that survived
+  masking byte-identical to its input, so they keep `applied: true` from a superseded run and
+  are now blocked by the new rule — the first time it has been observed to say no.
+
+  Local publishable moves 380 → 378 (the two refusals). `plaintext gate did not pass` 0 → 2
+  and `carries secret with masking applied but no secret_gate result was recorded` 0 → 2, in
+  `index-summary.json`. The three `no masking has been applied` blockers are unchanged at 31,
+  7 and 2, which is the double-counting control holding on real data. **No published figure
+  moves**: the published half carries zero `secret`-tagged rows and its gate run is unchanged
+  at 44,544 publishable, 0 stale.
+
+### Measured, not changed
+
+- **The stored tier's blast radius was nil, and the places it could have landed were
+  checked as censuses rather than samples.** This is what made the rollback cheap: the
+  `C` rule that is now back in force has not over-masked anything, anywhere, that can
+  still be observed. The `C → D` name is the only
+  identifier whose tier moved, so it is the only one that could have over-masked.
+  *Published rows*: 0 occurrences of its pseudonym in 44,544 rows. *Local rows*: 27
+  occurrences across 25 rows, every one in `origin.path`, and every one a genuine account
+  reference — 23 inside a tier-`D` positional slot, 4 outside one. Not a single stock-CMS
+  token was rewritten. Both sweeps read every string of every row, so their power to find an
+  occurrence is 1, bounded only by the index as it stands today: a row over-masked and later
+  overwritten would leave no trace in either.
+
+  *Sample bytes*: none, and for a reason worth stating precisely. Re-masking all 46 sources
+  from the round that masked them, with the vocabulary and without it, produced **identical
+  output for all 46** — but that comparison had no power as run, because the name does not
+  occur in any of the 46 files at all. Its power was established separately on constructed
+  inputs, where the same comparison reports a 5-byte difference for a bare token and for a
+  path segment. `ContentMasker._demote_stock_words` is why: masking one sample with the
+  pre-regeneration map and with the regenerated map gives the byte-identical result, and the
+  masker's own count of tiers it had to demote drops 1 → 0. The byte masker was never
+  exposed to the stored tier, which is what SOURCES.md claimed and had not shown.
+
+- **Why two rows moved `plaintext_gate` `PASS → FAIL`, which is not what it looks like.**
+  The recorded `PASS` was wrong; nothing regressed. Three measurements, in order.
+
+  *It is not the masker.* The old masked bytes differ from the new ones and cannot be
+  reproduced by any flag combination of the current masker. The superseded records'
+  `change_kinds` read `account, domain, email, hex-secret, ip`; today's read `account,
+  account-slot, docroot-slot, domain, email`. The slot maskers cover values no map can name,
+  so they mask strictly **more** — a masker that masks more cannot make a new identifier
+  survive. `incident_mask.py`'s span selection is also unchanged across the commit that
+  produced the old records: the only edits were to `tiers()` and `collisions()`, so `rx_a`,
+  `rx_b`, `rx_c`, `positional` and `mask()` are the same rules that were in force then.
+
+  *It is not the tier, and not the second map.* With the stored tier `C` and no vocabulary,
+  the current gate still fails both rows with 1 distinct identifier over 3 occurrences; the
+  demotion adds a second. Gating against the legacy map alone passes, so the finding comes
+  from the incident map.
+
+  *It is a standing boundary asymmetry between masker and gate.* The survivor is an
+  eight-character tier-`B` identifier, and all three of its occurrences are preceded by an
+  alphanumeric. The masker at `B` requires `(?<![A-Za-z0-9])` and will not substitute after a
+  letter or a digit; the gate treats a name of six characters or more as a leak by
+  containment at any position. The control is three lines: the same name after a separator is
+  masked and the gate passes, after a letter or after a digit it is left and the gate fails.
+  So the earlier gate — an uncommitted predecessor of `verify-content-mask.py` — passed bytes
+  that the committed predicate reports. **The earlier `PASS` was wrong.**
+
+  *And it is not a wholesale widening.* All 82 remaining residue rows were re-gated against
+  their source bytes: **79 still pass, 3 do not.** Those 3 plus the 2 already found make 5 of
+  95 residue rows carrying a `plaintext_gate: PASS` the current gate rejects. The 3 were
+  measured, not sampled, so the figure is exact for that population and says nothing about
+  rows outside it.
+
+  **Neither of the 2 changed a publishable count**, because both were already blocked on an
+  unreviewed verdict and a `pii` tag; removing the new blocker leaves three others standing.
+  **One of the 3 is not**: a row tagged `c2/identity` with `publishable: true` and no
+  blockers at all, whose recorded `PASS` does not survive. Its finding is a single
+  three-character identifier, which is exactly the length §5.3 records as producing
+  coincidences, so whether it is a real occurrence needs a human — that adjudication is what
+  the gate exists to demand. It is in neither the published half nor any shard, so nothing
+  has left the machine; it is one concrete instance of the 48 rows that are publishable on a
+  superseded gate result.
+
+- **The encoded-layer blocker reads 2 before and 2 after, and it is the same two rows.**
+  A count that holds while its membership turns over is the shape the blocker tally already
+  drifted on once, so it was established rather than assumed, in three steps. Only the 15
+  rows in the re-measure worklist — which is on disk — had their masking records touched, so
+  every other row's encoded verdict is unchanged by construction. Of the 24 rows in the index
+  carrying a non-`PASS` encoded gate, 22 are outside that worklist and none of them produces
+  the blocker, so they contributed 0 before and 0 after. Inside the worklist, a row whose
+  encoded verdict flipped in either direction would have changed its blocker set, and that is
+  precisely `shard-gate`'s blocker-drift class: it reported exactly 2 rows, and on both the
+  encoded blocker was present in the recorded set *and* the computed set, with only the
+  plaintext blocker added. Membership did not move.
+
+  The 22 silent rows are worth their own line, because "24 rows fail the encoded gate and 2
+  are reported" is not a discrepancy: 16 have `applied: false`, so the gate fields are never
+  consulted and the row is blocked once, for one cause, by "no masking has been applied"; the
+  other 6 are tagged `clean` alone, so `unmasked` is empty and the masking branch is skipped
+  entirely — the same tag arithmetic as the `c2` hole below, in its other tag. Twelve of the
+  24 carry `SKIPPED-oversize (>1MB)`, meaning their encoded layer was never gated at all;
+  all 12 have `applied: false` and none is publishable.
+
+- **95 local rows carried a masking record no current tool would produce, and 82 still do.**
+  Only `mask-samples.py` has ever written `masked_sha256`/`rules_before`, and the committed
+  script always writes `secret_gate` and `measured_with` alongside them — so a row carrying
+  the first pair without the second was written by a state of that script that no longer
+  exists. 89 are missing `secret_gate` entirely and 6 carry an `encoded_layer_gate_uncapped`
+  field that appears nowhere in the tree.
+
+  The `index-local.jsonl.pre` snapshot of 2026-09-04 16:33 dates them: it already held **112**
+  byte-style records and **0** carrying `secret_gate`, a day before `mask-samples.py` was
+  committed. So this is not a legacy population inherited from an older process — the
+  description that came with the 15 when they were called 17 — nor is it confined to the
+  round that committed the tool. It is residue from `--apply` runs of a script under
+  development across at least two days.
+
+  13 were re-measured this round (52 rows now carry a current-form record, 39 + 13), leaving
+  **82 superseded, 48 of them `publishable: true` on gate results a superseded gate
+  computed**. How wrong that population is no longer needs estimating: all 82 were re-gated
+  against their source bytes, and **79 still pass while 3 do not**. With the 2 found among
+  the 13, that is **5 of 95** residue rows carrying a `plaintext_gate: PASS` the current gate
+  rejects — a census of the population, not a sample, so it is exact for these 95 and says
+  nothing about rows outside them. One of the 3 is `publishable: true` today. Separately, 29
+  rows carry a `not_applicable_reason` that no script in the repository writes at all — also
+  present, at the same count, in the 2026-09-04 snapshot.
+
+- **The `c2`-only hole, measured for a later round's decision.** `ALWAYS_OK` is `clean` and
+  `c2`, so a row tagged `c2` and nothing else skips every masking gate. 647 local rows are in
+  that state; 637 have no masking record at all, so their bytes have never been read by any
+  masking pass — 8.8 MB, median 3.5 KB, largest 1.1 MB. 34 of the 647 are not blocked by the
+  gate, all in `quarantine/evidence`, all carrying an `origin` — which the published half's
+  own invariant rejects, so none is promotable as it stands. In the published half 30 rows
+  are `c2`-only, 2 with no masking record, both `undetected-pool-review` index rows whose
+  bytes are not shipped.
+
+  The independent leak predicate finds **0 hits across all 647 rows**, and that is a census
+  of row *text*. It says nothing about the bytes, which is exactly the hole: nothing that
+  exists today has read them. Closing it means a byte pass over those 637, not a gate edit.
+
+### Fixed
+
+- **`pre-push-check.py` refused `regen-tiers.py` over its own control fixtures.** The
+  coverage controls needed a name to build paths out of, and the one reached for was a real
+  account name that happens also to be an ordinary English word — the same name the whole
+  tier argument is about. It went into a tracked file as a literal, in the fixtures of the
+  tool written to protect the map. The check caught it before the commit, which is the
+  sixth time this exact shape has occurred here and the third time the tool caught it. The
+  fixtures now use a string that is in neither map, fires no leak predicate and appears in
+  no stock tree, and the file says why. Controls set the tiers by hand, so the string never
+  needed to be a real one; it was reached for because it made the fixture read well.
+
+- **`regen-tiers.py` widened the pseudonym map from `0600` to `0644` when it wrote it.**
+  The write used `open(tmp, "w")` and `os.replace`, which takes the umask rather than the
+  mode of the file it replaces, so a file holding 232 customer identifiers became
+  world-readable on the machine that holds them. Nothing in the tool noticed, because the
+  assertion it had compared *contents* and the contents were correct.
+
+  `write_map_atomic()` now mirrors `indexio.write_jsonl_atomic`: read the mode of the file
+  being replaced, `chmod` the temp file to it **before** the rename — between `os.replace`
+  and a later `chmod` the file is live at the wrong mode, and that window is the bug — then
+  `fsync` the file and the directory, so a crash cannot leave the directory entry pointing
+  at the old inode. The backup is taken with `shutil.copy2`, which carries the mode across,
+  and the mode is re-asserted after the write alongside the contents.
+
+  **The control asserts the mode, not the content**, because a content-only assertion is
+  exactly what let this through: a map at `0600`, `0640` and `0644` must each come back at
+  the mode it went in with. And there is a control on the control — the pre-fix write is
+  reproduced in the suite and must be *seen* to widen `0600`, or "the mode was preserved" is
+  not being measured at all. `--inject` is 16 cases, up from 7.
+
+- **The seventeen that were fifteen.** `SOURCES.md`, `CORPUS_PLAN` §7.2 and this file all
+  said 17 local rows were tagged `secret` with masking applied and no `secret_gate`. The
+  measured count was 15. It was **stale rather than miscounted**, and the two candidate
+  explanations separate cleanly.
+
+  *Not a miscount.* Seven natural variants of the predicate were run against the index —
+  counting any masking record rather than an applied one, counting both halves, widening to
+  `identity`, keying on the row's secret evidence instead of its tag, and so on. They return
+  10, 13, 15, 15, 10, 8 and 51. **None returns 17**, so there is no reading of the question
+  under which today's index answers seventeen.
+
+  *Stale.* Every other figure in that commit was taken after the write and still reproduces
+  exactly: blockers `identity` 169, `path` 3, `identity/secret` 7, `secret` 31, encoded-layer
+  gate 2, and 39 rows carrying `masking.measured_with`. The index has not moved since that
+  round ended, so a figure from it that does not reproduce was taken when the index was in a
+  different state — before that round's own `--apply`. The blocker arithmetic is consistent
+  with exactly that: 33 rows gained a current-form record, 31 of them from the not-applied
+  population (72 → 40) plus one row that lost the `secret` tag, leaving 2 from the drift set,
+  17 → 15.
+
+  That last step is a reconstruction, not a measurement, and it rests on two values the
+  commit does not state — that `identity/path/secret` stood at 2 before the round, and that
+  the row which lost its `secret` tag was one with no masking applied. Both are forced or
+  near-forced (blockers only shrank that round, and the row lost the tag for carrying no
+  credential literal), but on the other readings the pre-write count is 16 rather than 17.
+  The `index-local.jsonl.pre` snapshot cannot settle it: it predates the round by a day and a
+  whole quarantine review, over which the `secret` population went 52 → 88 and its drift set
+  43 → 15. **What is measured is that 17 was not the state at the end of that round; the
+  mechanism is inference.**
+
+  The lesson is narrower and sharper than "recount": **a figure quoted in a commit that also
+  performs a write has to say which side of the write it was taken on.**
+
+  The full measured population is now stated as a breakdown rather than a single number —
+  88 rows carry the tag, all local, none published — because the single number is what hid
+  the staleness for a round.
+
+### Added
+
 - **Byte-level masking (`corpus/content_mask.py`, `verify-content-mask.py`,
   `mask-samples.py`).** Row masking has existed since §5; this is the same triple for sample
   *bytes* — a masker that needs the map, a gate that shares none of the masker's patterns,
@@ -94,9 +386,13 @@ independent locks rather than one.
   usefully, on an attacker password literal assigned to a `$pass` variable the masker's
   keyword list did not cover. **The structural half is deliberately not done**:
   `shard-gate.py` decides publishability by reading rows, has no field for a secret gate, and
-  17 local rows are tagged `secret` with masking applied and no `secret_gate` result — so
-  imposing the rule today would put all 17 into blocker drift until re-measured. It blocks
-  the first public shard carrying a `secret`-tagged sample; no shard carries one today.
+  local rows are tagged `secret` with masking applied and no `secret_gate` result — so
+  imposing the rule today would put all of them into blocker drift until re-measured. It
+  blocks the first public shard carrying a `secret`-tagged sample; no shard carries one today.
+
+  *(This entry originally said "17 local rows", and 17 was the count on the wrong side of
+  this round's own `--apply` — see "the seventeen that were fifteen" below. The figure is
+  removed here rather than restated, because the round that arms the gate owns it.)*
 
 ### Fixed
 

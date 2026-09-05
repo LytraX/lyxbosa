@@ -132,6 +132,7 @@ Three tools support the import, and the split between them is deliberate:
 | `import-infected-tree.py` | yes | reproduces the denominator, refuses to run if it moved, sniffs content, triages media structurally, indexes archive members and never containers, classifies with the evidence recorded |
 | `infected_mask.py` | yes | path masking, and `collisions()` — which proves *which* identifiers rewrite something they should not, against a real vocabulary |
 | `verify-infected-mask.py` | yes | the independent check. Shares no regex with either masker |
+| `regen-tiers.py` | yes | recomputes a map's `mask_tier` against a vocabulary. Two assertions before it writes: the map's **contents** (`identifiers()`, `keep_tokens()`, `pairs()`, every other field, the tier key set) and what the tiers **mean** — coverage per changed name over a real path population, refusing a measured loss. Backs up first, preserves the file mode, re-asserts both after |
 
 `incident_mask.py` is the same pair of jobs for the **current incident**, whose map and
 identifiers are different. Its widths are measured rather than chosen: each identifier gets
@@ -148,15 +149,65 @@ token. One name in the current map is an ordinary five-letter English word that 
 trees use as a filename token, and `tiers()` had given it `C` — leading boundary plus a
 trailing non-letter — which fires on the whole word. `collisions()` now reports an exact hit
 and an unattributable rewrite instead of dropping either, so `incident_mask.py --collisions`
-reports **1**, truthfully, until the map's `mask_tier` is regenerated.
+reported **1**, truthfully.
 
-`tiers()` is fixed in the same commit: an identifier that is exactly a stock-CMS token gets
-`D`, positional-only, which is §5.3's rule for a colliding name. That changes nothing on its
-own, because tiers are computed once and stored in the map, and the map is out of repo. Until
-it is regenerated the index masker keeps the stored tier. **The byte masker is not exposed to
-it**: `content_mask.ContentMasker` re-derives the tier from a vocabulary it is handed and
-demotes the name itself, and `mask-samples.py` treats a missing vocabulary as a hard failure
-rather than running without one.
+`tiers()` was fixed in the same commit — an identifier that is exactly a stock-CMS token gets
+`D`, positional-only, which is §5.3's rule for a colliding name — and that changed nothing on
+its own, because tiers are computed once and stored in the map. **The regeneration was built,
+run, measured and rolled back**, and the measurement is the reason this section is longer than
+either "regenerated" or "not done" would be.
+
+`regen-tiers.py` regenerated the map against the union of both trees. Of 134 identifiers
+exactly one moved, `C → D`, and the other 133 reproduced their stored value; `trail-data/CMS`
+alone disagrees on a second name, which is how the vocabulary the stored tiers came from was
+identified. Every content assertion passed: `identifiers()` 232, `keep_tokens()` 3, `pairs()`
+231 and every other field byte-identical. With the regenerated map `--collisions` read **0**.
+
+**And the demotion was the wrong trade, measured.** A tier is a substitution width, so the
+question a tier change has to answer is how many real occurrences each width reaches. Over a
+census of 247,829 collected paths the `C` rule masks **29** occurrences of that name and the
+`D` rule reaches **23**; over a 366,080-path population that also includes directory names,
+34 against 30. The six it loses in the first population are the name as a filename prefix
+before `_`, and the name between `-` and `.` — the `<account>_<something>` form that
+incident-response directories and database dumps are named after, which is the same shape
+§5.3 records as having hidden three client names for a year. The cost in the other direction
+measures **zero**: over 48,256 `origin.path` values the name appears only as a substring of a
+longer token, which `C`'s leading-boundary rule does not touch, and no stock-CMS token was
+rewritten anywhere in either index. §5.6 holds that leaving a name costs everything and
+over-masking costs nothing, and a measured six against a measured zero only goes one way.
+
+**So the map is back at `C` and `--collisions` reads 1 again.** The regenerated map is kept
+as `account-mapping.json.20260905-postregen.bak` so the census does not have to be redone.
+The paragraph above it stands unchanged: `--collisions` reports 1 truthfully, and the 1 is a
+real rewrite of a real stock token that the `C` rule performs.
+
+**What the 0 would have meant is worth recording, because it is not what it looks like.**
+Run against the pre-regeneration map — same name, same vocabulary, only the tier different —
+`--collisions` reads 1, which is the positive control on the 0. But `vocabulary()` yields
+bare tokens with no separator in them, and every tier-`D` rule requires one (`/home/`,
+`_public_html`, `php\d\d-`), so **no `D`-tier identifier can ever be reported by
+`--collisions`**. The 0 would not have meant the collision was resolved; it would have meant
+the name had moved out of the check's reach. `--collisions` asserts that no `A`/`B`/`C`
+identifier rewrites a stock token, and it is not evidence about `D` at all. That is the
+second reason the rollback is cheap: the tier that reads clean is the tier nothing measures.
+
+**The byte masker was never exposed to the stored tier**, and this is shown rather than
+argued: `content_mask.ContentMasker` re-derives the tier from the vocabulary it is handed, and
+masking a sample with the pre-regeneration map and with the regenerated map gives
+byte-identical output while the masker's own count of tiers it had to demote drops 1 → 0. The
+rollback therefore changes nothing about sample bytes — `mask-samples.py` always passes a
+vocabulary, so the byte masker still treats that name as `D` while the row masker treats it as
+`C`. **The two maskers disagree on this one name deliberately**, and the disagreement is the
+design: over row fields a wrong tier over-masks a path segment, which is untidy, and over
+sample bytes it rewrites a working identifier inside code, which is corruption.
+
+**The guard that should have caught it now exists.** `regen-tiers.py` measures coverage per
+changed name over a real path population before writing, and refuses a loss rather than
+warning about it; `--allow-coverage-loss` is the override and it has to be typed. Re-running
+the same regeneration today reports `C -> D masks 23 occurrence(s) where it masked 29 (-6)`
+and exits non-zero. Seven content controls caught six mutations and were silent on this one,
+because a demotion changes no identifier, no pseudonym and no key — it changes only what the
+map *means*, and nothing was asserting that.
 
 ## Masking sample bytes
 
@@ -212,13 +263,52 @@ did, on an attacker password literal assigned to a `$pass` variable the masker's
 did not have.
 
 This closes, for the rows it runs on, the hole recorded above as "the next round's job".
-It does **not** close it structurally: `shard-gate.evaluate()` still reads rows and not
-bytes, so it cannot require a secret gate it has no field for. Making it require
-`secret_gate == PASS` for a `secret`-tagged row is the right next step and belongs in its own
-round — 17 local rows are tagged `secret` with masking already applied and carry no
-`secret_gate`, so the rule would put all 17 into blocker drift until they are re-measured,
-and re-measuring rows this round did not touch is exactly the kind of blind `--fix` the gate
-exists to prevent.
+**The structural half is now closed too**: `shard-gate.evaluate()` requires
+`masking.secret_gate == "PASS"` on a `secret`-tagged row whose masking is applied, and
+records two distinct blockers — one for a gate that ran and failed, one for a row whose
+masking predates the gate and carries no result at all. They are separate because the repair
+is different: a FAIL is re-masked, an absence is re-measured.
+
+The requirement sits **inside** the `applied` branch. A `secret`-tagged row with no masking
+applied already carries "carries secret but no masking has been applied", and §8 counts
+reasons rather than rows, so a second reason for the same cause is a double-counted
+denominator — the shape that left the blocker tally 14 out for two rounds.
+
+The population it lands on, measured against `index-local.jsonl` rather than assumed
+(88 rows carry the tag, every one of them local, none in the published half):
+
+| state | rows |
+|---|---|
+| masking applied, `secret_gate` records a pass | 46 |
+| masking applied, no `secret_gate` — refused by re-measurement | 2 |
+| `applied: false` with a `not_applicable_reason`, no gate | 8 |
+| no masking record at all | 32 |
+
+**The number this table replaces was 17, and it was stale rather than wrong.** It was written
+into this file, into CORPUS_PLAN §7.2 and into CHANGELOG in the round that added
+`mask-samples.py`. Two things are measured rather than argued. First, no reading of the
+question yields it: seven variants of the predicate — any masking record rather than an
+applied one, both halves, widened to `identity`, keyed on the row's secret evidence instead
+of its tag — return 10, 13, 15, 15, 10, 8 and 51, and **none returns 17**. Second, every
+other figure in that commit reproduces exactly against the index today — blockers `identity`
+169, `path` 3, `identity/secret` 7, `secret` 31, encoded-layer gate 2, and 39 rows carrying
+`masking.measured_with` — so the index still stands where that round left it, and a figure
+from it that does not reproduce was taken when it stood somewhere else: before that round's
+own `--apply`.
+
+The mechanism is inference and is labelled as such. The blocker arithmetic closes on
+17 → 15 if `identity/path/secret` stood at 2 before the round and the row that lost its
+`secret` tag had no masking applied; on the other readings the pre-write count is 16. The
+`index-local.jsonl.pre` snapshot cannot arbitrate — it predates the round by a day and a
+quarantine review across which the `secret` population went 52 → 88. **A figure quoted in a
+commit that also performs a write has to say which side of the write it was taken on**, and
+that is the correction worth keeping.
+
+Of the 15, thirteen were re-measured with `mask-samples.py` and cleared the secret gate;
+**two did not**, each carrying one `wp-credential`-shaped literal that survived masking
+byte-identical to its input. Those two keep `applied: true` from a superseded run and are
+now blocked. That is the gate doing the thing it was armed for, on its first run, which is
+the only evidence that it is a gate at all.
 
 A shard's `MANIFEST.json` and its tracked copy in `expect/` both carry every sample's
 `expect`, which is three places one answer can be written and two of them can be wrong
@@ -256,6 +346,30 @@ and a classification rule spelled `rel.startswith("<client>.gr/page/")` puts a c
 name in git exactly as surely as an unmasked index row would. The map holds the names; the
 tool reads roles. This is §5.3's "a field nobody thought of", one level out — it was not a
 field at all, it was the tool's own source.
+
+### The gate is wider than the masker at tiers `B` and `C`, on purpose, and it shows
+
+The masker's tier rules and the gate's leak predicate derive their boundaries independently —
+that is the point of the split, and it means the two do not agree everywhere. They disagree in
+one direction consistently:
+
+* the masker at `B` and `C` requires `(?<![A-Za-z0-9])` before the name, so it will not
+  substitute after a letter **or a digit**;
+* the gate treats a name of six characters or more as a leak by containment, at any position
+  at all, and a shorter one as a whole **alphabetic** run — which a preceding digit satisfies.
+
+So `<alnum><name>` for a long name and `<digit><name>` for a short one are found by the gate
+and cannot be masked at those tiers. A three-line control says it plainly: with the name
+after a separator the masker rewrites it and the gate passes; with the same name after a
+letter, or after a digit, the masker leaves it and the gate fails.
+
+This is §5.3's "a gate that is stricter than the masker can be is a gate that can never pass",
+standing rather than hypothetical, and it is the correct way round — a gate that could only
+see what the masker already handles would certify nothing. What it means in practice is that
+a `plaintext_gate` FAIL on such a row is a finding for a human, not a masker bug: either the
+tier is too narrow for that name or the occurrence is one of the documented short-name
+coincidences. It is also why a `plaintext_gate: PASS` recorded by an **earlier** gate is not
+evidence: a gate that did not implement this predicate would have passed the same bytes.
 
 ### `acct<unmapped:XXXX>` — what it means and why 16 of them stay
 
@@ -318,6 +432,20 @@ rows, not bytes, so it cannot verify a content claim — the check belongs at pu
 where the bytes are in hand. Until then: `c2` and `clean` are the two tags that buy a row a
 free pass, so they are the two that need reading rather than trusting, and a review that sets
 either should say what it read.
+
+**Sized, so the next round can decide rather than guess.** 647 local rows are tagged `c2` and
+nothing else. 637 of them carry no masking record at all — 8.8 MB of bytes no masking pass
+has ever read, median 3.5 KB, largest 1.1 MB. 34 of the 647 are not blocked by the gate, all
+in `quarantine/evidence`, and all 34 carry an `origin`, which the published half's own
+invariant rejects — so none is promotable in its present form, and the exposure is a future
+promotion that strips `origin` rather than anything standing today. The published half holds
+30 `c2`-only rows, 2 of them with no masking record, both `undetected-pool-review` index rows
+whose bytes are not shipped.
+
+The independent leak predicate reports **0 hits over all 647**, and the power of that is
+exactly what it says: a census of every string in every one of those rows, and *nothing about
+their bytes*. Row text is not the hole. Closing it means reading 637 files, not editing a
+gate, and the figure to beat is that no tool in this repository has ever opened them.
 
 The general form, which this corpus has now paid for in three places: **a gate that trusts a
 field is only as good as whatever wrote the field.** The publishability boolean drifted
