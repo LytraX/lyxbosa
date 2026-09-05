@@ -38,19 +38,19 @@
   "woocommerce-card-skimmer": 6
  },
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
- "known_miss": 602,
+ "known_miss": 603,
  "local_only": 48256,
  "local_only_blockers": {
   "carries content, which is not maskable and is never published": 4124,
   "carries content/pii, which is not maskable and is never published": 153,
-  "carries identity but no masking has been applied": 166,
-  "carries identity/path but no masking has been applied": 11,
-  "carries identity/path/secret but no masking has been applied": 4,
-  "carries identity/secret but no masking has been applied": 35,
-  "carries path but no masking has been applied": 8,
-  "carries pii, which is not maskable and is never published": 40,
-  "carries secret but no masking has been applied": 33,
-  "encoded-layer gate did not pass": 9,
+  "carries identity but no masking has been applied": 172,
+  "carries identity/path but no masking has been applied": 10,
+  "carries identity/path/secret but no masking has been applied": 2,
+  "carries identity/secret but no masking has been applied": 36,
+  "carries path but no masking has been applied": 4,
+  "carries pii, which is not maskable and is never published": 24,
+  "carries secret but no masking has been applied": 34,
+  "encoded-layer gate did not pass": 5,
   "marked local_only: archive container this pass could not open (unsupported format). Recorded as unopened rather than scanned-and-clean: 5.6 says an absence must first prove the file was read": 1,
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 1 members read; byte-masking a container corrupts it (5.5)": 2,
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 106 members read; byte-masking a container corrupts it (5.5)": 1,
@@ -63,18 +63,19 @@
   "marked local_only: benign customer-site cache metadata: no rule fires on it and it is not reproducible from a pinned source, so it is accounted for but not published": 144,
   "marked local_only: permanent": 311,
   "marked local_only: verdict proposed by an automated review pass on 2026-09-05; awaiting human confirmation before publication": 757,
-  "obfuscated and did not decode: held local-only permanently": 274,
-  "sensitivity not yet assessed": 42343,
-  "verdict is unreviewed: nothing leaves that state without a human": 47309
+  "obfuscated and did not decode: held local-only permanently": 100,
+  "sensitivity not yet assessed": 42335,
+  "verdict is unreviewed: nothing leaves that state without a human": 46784
  },
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
- "local_only_publishable_no_blocker": 5,
+ "local_only_publishable_no_blocker": 341,
  "local_only_publishable_no_blocker_note": "rows held local-only that the section 7.2 gate does not block. Held for a reason outside the gate's remit - no shard carries their bytes, or they lack the family/technique classification a published row needs - so they appear under no blocker and would otherwise be an unattributed count",
- "malicious_detected": 172,
- "malicious_detected_excl_predates_ruleset": 107,
+ "malicious_detected": 696,
+ "malicious_detected_excl_predates_ruleset": 631,
  "malicious_detected_runnable": 98,
- "malicious_known_miss": 602,
+ "malicious_known_miss": 603,
  "malicious_known_miss_by_family": {
+  "<unfamilied>": 1,
   "ddos-flood-toolkit": 7,
   "domain-spray-shell-deployer": 1,
   "fake-plugin-image-payload-loader": 12,
@@ -105,10 +106,10 @@
   "webmail-phish-harvester": 6,
   "woocommerce-card-skimmer": 6
  },
- "malicious_known_miss_excl_predates_ruleset": 71,
+ "malicious_known_miss_excl_predates_ruleset": 72,
  "malicious_no_expectation": 0,
- "malicious_reviewed": 774,
- "malicious_reviewed_excl_predates_ruleset": 178,
+ "malicious_reviewed": 1299,
+ "malicious_reviewed_excl_predates_ruleset": 703,
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
  "predates_ruleset_blobs": 1131,
  "published": 44544,
@@ -125,15 +126,15 @@
  },
  "published_shipped_as_bytes": 84,
  "sensitivity_tags": {
-  "c2": 789,
-  "clean": 45049,
+  "c2": 782,
+  "clean": 45252,
   "content": 4277,
-  "identity": 279,
-  "path": 66,
-  "pii": 193,
-  "secret": 104,
-  "undecidable": 274,
-  "unreviewed": 42343
+  "identity": 285,
+  "path": 44,
+  "pii": 177,
+  "secret": 89,
+  "undecidable": 100,
+  "unreviewed": 42335
  },
  "techniques_known": {
   "argument-injection": 1,
@@ -355,7 +356,7 @@
  "total_blobs": 92800,
  "verdicts": {
   "benign": 44717,
-  "malicious": 774,
-  "unreviewed": 47309
+  "malicious": 1299,
+  "unreviewed": 46784
  }
 }
