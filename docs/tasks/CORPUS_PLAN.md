@@ -589,6 +589,24 @@ tier from a vocabulary it is handed rather than trusting the stored one, and its
 treats a missing vocabulary as a hard failure rather than running without a collision
 reference.
 
+**The regeneration was built, run, measured and rolled back, and that is the durable
+result.** `regen-tiers.py` moved exactly one name and every contents assertion passed, but a
+tier is a *substitution width*, and the demotion cost 6 masked occurrences of that name over
+a census of 247,829 collected paths (29 → 23) while the over-masking it prevents measures
+zero across 48,256 `origin.path` values. §5.6 settles that direction: leaving a name costs
+everything, over-masking costs nothing. The map stays at `C` for row masking; the byte masker
+continues to demote it to `D` because it re-derives, so the two disagree on this one name
+deliberately — over a row field the wrong tier over-masks a path segment, over sample bytes it
+rewrites a working identifier inside code.
+
+Two things that only the attempt could have taught. `--collisions` **cannot report a `D`-tier
+name at all** — `vocabulary()` yields bare tokens and every `D` rule needs a separator — so
+the 0 the regenerated map produced meant the name had left the check's reach, not that the
+collision was resolved. And a contents assertion cannot see a width change: six mutation
+controls passed while the map got weaker, because a demotion moves no identifier, no
+pseudonym and no key. `regen-tiers.py` now measures coverage per changed name before writing
+and refuses a measured loss, with `--allow-coverage-loss` as an override that has to be typed.
+
 **Twelfth, and it is the lookaround again.** The slot rules that mask a value no map can
 name — a third party's account written into a sample's own UI — ended with a positive list
 of the delimiters expected to follow. An example path written into a page as
@@ -859,14 +877,34 @@ output is byte-identical to one in the input, over the plaintext and every decod
 whose secret it is, and it has already failed usefully — on an attacker password literal
 assigned to a `$pass` variable the masker's keyword list did not cover.
 
-What is **not** done is the structural half, and it is recorded here rather than fixed
-because fixing it blind is the failure this section exists to prevent.
-`shard-gate.evaluate()` decides publishability by reading rows; it has no field for a secret
-gate and therefore cannot require one at shard-build time. Seventeen local rows are tagged
-`secret` with masking already applied and carry no `secret_gate` result, so imposing the rule
-today puts all seventeen into blocker drift until they are re-measured. This blocks the first
-public shard that would carry a `secret`-tagged sample. No shard carries one today, so the
-gap exposes nothing — it is a gate that is not yet armed, not a gate that is passing wrongly.
+The structural half is now done. `shard-gate.evaluate()` requires
+`masking.secret_gate == "PASS"` on a `secret`-tagged row whose masking is applied, with a
+separate blocker for a recorded FAIL and for no result at all — the repair differs, so the
+reasons differ. It sits inside the `applied` branch, because a row with masking *not*
+applied already carries one blocker for that cause and §8 counts reasons.
+
+**The count previously recorded here as "seventeen" was measured on the wrong side of that
+round's own `--apply`.** Two things establish it. No variant of the predicate returns 17
+against the index — seven were tried and they return 10, 13, 15, 15, 10, 8 and 51 — so it is
+not a miscount. And every other figure from that pass reproduces exactly against the index
+today, so the index still stands where the round left it and a figure that does not
+reproduce was taken before the write. That 17 → 15 happened by two rows gaining a
+`secret_gate` from the run being described is a reconstruction from the blocker arithmetic,
+not a measurement; on two other readings of values the commit does not state, the pre-write
+count is 16. The correction worth keeping is the discipline, not the digit: **a figure quoted
+in a commit that also performs a write must say which side of the write it was taken on.**
+
+The measured population, against `index-local.jsonl` — 88 rows carry the tag, all local,
+none published: 46 applied with a passing gate, 8 `applied: false` with a recorded
+`not_applicable_reason`, 32 with no masking record at all, and **2 applied with no gate**,
+which is what remains of the fifteen after re-measurement. Thirteen of the fifteen cleared
+the secret gate; two were refused, each carrying one `wp-credential`-shaped literal that
+came through masking byte-identical to its input. Those two are now blocked, which is the
+first time this rule has been observed to say no.
+
+No shard carries a `secret`-tagged sample today, so arming it moves no published figure —
+the published half holds zero `secret`-tagged rows, and its gate run is unchanged at
+44,544 publishable, 0 stale.
 
 ## 8. Golden test suite
 
@@ -1069,6 +1107,35 @@ The same rule applies to anything derived from those counts. A recall or precisi
 computed across a set whose membership changed for an unattributed reason is not comparable
 to the previous run's, and reporting it as though it were is how a suite starts lying
 quietly.
+
+**And a count that does not change still has to carry a cause.** The encoded-layer blocker
+read 2 before a round and 2 after, which is the easiest kind of number to skip past and the
+one that already drifted here once. Establishing that it was the *same two rows* took three
+steps and none of them was the count itself: only the 15 rows in the re-measure worklist had
+their masking records touched, so every other row's verdict is unchanged by construction; of
+the 24 rows carrying a non-`PASS` encoded gate, the 22 outside that worklist produce no
+blocker at all and so contributed 0 on both sides; and inside the worklist, a verdict that
+flipped in either direction would have changed the row's blocker set, which is exactly what
+`shard-gate`'s **blocker-drift** class detects — it reported two rows, and on both the encoded
+blocker was present in the recorded set *and* the computed set. Membership held. The general
+form: **a stable count is a claim about a set, and the set is what has to be shown.**
+
+The 22 silent rows are their own lesson. "24 rows fail the encoded gate and 2 are reported"
+is not a discrepancy — 16 have `applied: false`, so the gate fields are never consulted and
+the row is blocked once for one cause, and 6 are tagged `clean` alone, so `unmasked` is empty
+and the whole masking branch is skipped. That is the same tag arithmetic as the `c2` hole in
+§4.1, in its other tag, and it means **a blocker count is a count of rows the gate reached**,
+never a count of rows in that condition.
+
+**A gate result recorded by an earlier version of the gate is not evidence, and re-measuring
+is how you find out.** Two rows moved `plaintext_gate` `PASS → FAIL` on re-measurement and
+neither was a regression: the masker's span selection is unchanged over the commit that wrote
+the old records, the slot rules that *are* new mask strictly more, and the survivor is an
+eight-character tier-`B` identifier sitting after an alphanumeric where the masker cannot
+reach it and the gate's containment rule can. The earlier `PASS` was simply wrong. Re-gating
+all 82 remaining rows with the same superseded records put a number on it — 79 hold, 3 do
+not, one of the 3 being `publishable: true` — which is a census of that population rather
+than an extrapolation from the two that were noticed first.
 
 ### `known_miss` is a separate column, never a failure
 

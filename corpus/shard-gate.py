@@ -9,6 +9,15 @@ The rule (§4.1): a sample is publishable when its verdict is not `unreviewed` A
 sensitivity tag is `clean`, `c2`, or has been masked and re-verified. `pii` and `content`
 are never publishable, because there is no substitution that makes them safe.
 
+A `secret`-tagged row carries one more requirement, added once `verify-content-mask.py`
+had a gate able to answer it: masking applied is not enough, the row must also carry
+`masking.secret_gate == "PASS"`. §5.1 requires a masked credential to keep its shape, so an
+absolute scan of the output must report credential-shaped literals and cannot be the test;
+the differential one - no credential-shaped literal in the output byte-identical to one in
+the input - is what `secret_gate()` measures. The other three masking gates ask about
+identifiers and detection, so all three can pass on a row whose attacker password came
+through untouched.
+
 THE GATE USED TO BE HALF A GATE
 -------------------------------
 It failed when a row CLAIMED publishable and was not, and it was silent when a row was
@@ -86,6 +95,31 @@ def evaluate(r):
                 why.append("encoded-layer gate did not pass")
             if not m.get("detection_survived"):
                 why.append("masking changed the detection set")
+            # §7.2's secret bullet, structurally. The other three gates ask about
+            # identifiers and detection; none of them looks at credentials, so a
+            # `secret`-tagged row could clear all three with an attacker password still
+            # byte-identical to the one in the input. `mask-samples.py` already refuses to
+            # record `applied: true` in that case, which covers rows it wrote and nothing
+            # else - and "a gate that trusts a field is only as good as whatever wrote the
+            # field" is exactly the reason this belongs here rather than only there.
+            #
+            # Deliberately inside the `applied` branch. A row tagged `secret` with masking
+            # NOT applied already carries "carries secret but no masking has been applied",
+            # and adding a second reason for the same cause is how the blocker tally drifted
+            # 14 out for two rounds: §8's accounting counts reasons, so one cause must
+            # produce one reason.
+            #
+            # Absent and FAIL are separate blockers on purpose. FAIL is a measurement that
+            # was taken and did not pass; absent is a row whose masking predates the gate,
+            # and the repair is different - re-measure with mask-samples.py rather than
+            # re-mask. Collapsing them would let a --fix run manufacture the field.
+            if "secret" in tags:
+                gate = m.get("secret_gate")
+                if gate is None:
+                    why.append("carries secret with masking applied but no secret_gate "
+                               "result was recorded")
+                elif gate != "PASS":
+                    why.append("secret gate did not pass")
     if r.get("local_only"):
         why.append("marked local_only: %s" % r["local_only"])
     return (not why), why
@@ -397,6 +431,17 @@ def inject(path):
     case("publishable but still carrying a cleared blocker",
          dict(base, publishable=True, publish_blocker="sensitivity not yet assessed",
               publish_blockers=["sensitivity not yet assessed"]), "drift")
+    # 4. the secret gate. The other three masking gates pass on both rows below, so each
+    # case isolates the secret rule and nothing else: if the rule is absent, both are
+    # reported "clean" and this suite fails, which is what it is for.
+    MASKED = {"applied": True, "plaintext_gate": "PASS", "encoded_layer_gate": "PASS",
+              "detection_survived": True}
+    case("secret row, masking applied, no secret_gate recorded",
+         dict(base, sensitivity=["c2", "secret"], publishable=True, masking=dict(MASKED)),
+         "over")
+    case("secret row, masking applied, secret_gate FAIL",
+         dict(base, sensitivity=["c2", "secret"], publishable=True,
+              masking=dict(MASKED, secret_gate="FAIL")), "over")
 
     print()
     print("=== negative controls: each must be SILENT ===")
@@ -406,6 +451,20 @@ def inject(path):
               publish_blocker="verdict is unreviewed: nothing leaves that state without a human",
               publish_blockers=["verdict is unreviewed: nothing leaves that state without a human",
                                 "sensitivity not yet assessed"]), "clean")
+    case("secret row, masking applied, secret_gate PASS",
+         dict(base, sensitivity=["c2", "secret"], publishable=True,
+              masking=dict(MASKED, secret_gate="PASS")), "clean")
+    # The double-counting control, and the reason the rule sits inside the `applied`
+    # branch. This row is blocked for exactly ONE cause and records exactly one reason. A
+    # secret rule written outside that branch would add a second reason for the same cause,
+    # the recorded list would no longer equal the computed one, and this case would report
+    # "drift" instead of "clean" - which is the 14-row tally drift, reproduced in a fixture.
+    case("secret row, no masking applied: ONE blocker for one cause",
+         dict(base, sensitivity=["c2", "secret"], publishable=False,
+              masking={"applied": False,
+                       "not_applicable_reason": "a genuine tar container (5.5)"},
+              publish_blocker="carries secret but no masking has been applied",
+              publish_blockers=["carries secret but no masking has been applied"]), "clean")
     r = json.loads(json.dumps(real))
     case("a real row from %s, untouched" % os.path.basename(path), r, "clean")
 
@@ -437,7 +496,7 @@ def inject(path):
     print("stale rows found in it        : over=%d under=%d drift=%d"
           % (len(over), len(under), len(drift)))
     print()
-    print("cases: 12 · passed: %d · failed: %d" % (12 - len(fails), len(fails)))
+    print("cases: 16 · passed: %d · failed: %d" % (16 - len(fails), len(fails)))
     for f in fails:
         print("FAIL:", f)
     return 1 if fails else 0
