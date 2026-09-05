@@ -8,6 +8,50 @@ thing allowed to compute it, so the rule lives in exactly one place.
 The rule (§4.1): a sample is publishable when its verdict is not `unreviewed` AND every
 sensitivity tag is `clean`, `c2`, or has been masked and re-verified. `pii` and `content`
 are never publishable, because there is no substitution that makes them safe.
+
+THE GATE USED TO BE HALF A GATE
+-------------------------------
+It failed when a row CLAIMED publishable and was not, and it was silent when a row was
+publishable and did not claim it. Both are the same defect - a stored copy of a derived
+value that no longer matches what derives it - and only one of them had ever been
+observed to fail. AGENTS.md: a check that has never been observed to fail is not yet a
+check. This is the same shape as the regex that matched `/home/` and not `/home2/`, and
+as the status check that read a 404 body as success: a check narrower than the thing it
+guards, silent in exactly the direction its subject drifted.
+
+The drift was not hypothetical. Two operator review passes - six samples in one, eight in
+another - set `verdict: malicious` and `sensitivity: ["c2"]` and did not re-run this
+script, so fourteen rows kept `publishable: false` and kept recording "verdict is
+unreviewed" and "sensitivity not yet assessed" as their blockers after both statements
+had stopped being true. The gate recomputed all fourteen, printed "publishable flags
+corrected: 14", and exited 0. Nothing downstream could see them: `promote-pending.py`
+defers on the recorded blocker, and `index-summary.json` counts the recorded blocker, so
+a stale blocker is a stale denominator.
+
+`staleness()` therefore reports THREE classes and fails on any of them:
+
+  * over-claimed - stored true, computed false. The original rule.
+  * under-claimed - stored false, computed true. The fourteen.
+  * blocker drift - the boolean agrees and the recorded REASONS do not. Narrower than the
+    boolean and worth its own class, because §8's accounting is built out of the reasons:
+    a row can be unpublishable for a different reason than the one it records, and the
+    boolean cannot see that at all.
+
+WHY THE FIELD IS STILL STORED
+-----------------------------
+A derived value that is stored can drift; one computed on read cannot. That argues for
+dropping it, and the argument loses to a property of the published half: `index.jsonl` is
+tracked, and a stranger who clones this repository reads it as a document. A row that
+says `publishable: true` states its own status; a row that omits it requires the reader
+to run this script to learn anything, and the whole point of the map-free invariants
+below is that this file is runnable by a stranger, not that it is mandatory reading.
+`publish_blockers` has to be materialised for the same reason and a stronger one - it is
+where §8's denominator comes from, and it carries EVERY blocker rather than the boolean's
+one bit.
+
+So the repair is not to stop storing it. It is that a stored derived value is a cache,
+and a cache with nothing asserting it equals its source is just a copy. `staleness()` is
+that assertion, and `--inject` is the proof it can fail.
 """
 import json, os, re, sys, collections
 
@@ -132,39 +176,122 @@ def integrityViolations(rows):
             out.append(r["sha256"])
     return out
 
-def main(path, apply_fix=False):
-    rows = read_jsonl(path)
-    changed = 0
-    viol = collections.Counter()
-    examples = collections.defaultdict(list)
+# ---------------------------------------------------------------------------
+# The stored-vs-computed assertion. Everything above decides what a row IS; this
+# decides whether the row's own copy of that answer still agrees.
+# ---------------------------------------------------------------------------
+
+def recompute(r):
+    """Write the computed answer onto a row. The ONLY writer of these three fields."""
+    ok, why = evaluate(r)
+    r["publishable"] = ok
+    if ok:
+        r.pop("publish_blocker", None)
+        r.pop("publish_blockers", None)
+    else:
+        # Keep every reason. Storing only the first overwrites the specific, actionable
+        # blocker ("identifier inside an encoded layer") with the generic one ("verdict
+        # is unreviewed"), and the accounting then cannot see it.
+        r["publish_blockers"] = why
+        r["publish_blocker"] = why[0]
+    return ok, why
+
+
+def staleness(rows):
+    """Stored publishability against computed, in BOTH directions, plus blocker drift.
+
+    Returns (over_claimed, under_claimed, blocker_drift). See the module docstring for
+    why the second and third exist: the gate had only the first, and the first is the
+    direction these rows did not drift in.
+
+    Symmetry is the whole point, so neither branch may be written as the negation of the
+    other's condition - each is stated positively and a row lands in exactly one.
+    """
+    over, under, drift = [], [], []
     for r in rows:
         ok, why = evaluate(r)
-        if r.get("publishable") != ok:
-            changed += 1
-            if r.get("publishable") and not ok:
-                for w in why:
-                    viol[w] += 1
-                    if len(examples[w]) < 2:
-                        examples[w].append(r["sha256"][:12])
-        if apply_fix:
-            r["publishable"] = ok
-            if ok:
-                r.pop("publish_blocker", None)
-                r.pop("publish_blockers", None)
-            elif why:
-                # Keep every reason. Storing only the first overwrites the specific,
-                # actionable blocker ("identifier inside an encoded layer") with the generic
-                # one ("verdict is unreviewed"), and the accounting then cannot see it.
-                r["publish_blockers"] = why
-                r["publish_blocker"] = why[0]
-    print("rows                        :", len(rows))
-    print("publishable flags corrected :", changed)
-    print("now publishable             :", sum(1 for r in rows if evaluate(r)[0]))
-    if viol:
+        stored = r.get("publishable") is True
+        recorded = list(r.get("publish_blockers") or [])
+        if stored and not ok:
+            over.append((r["sha256"], why))
+        elif ok and not stored:
+            under.append((r["sha256"], recorded))
+        elif not ok and recorded != why:
+            drift.append((r["sha256"], recorded, why))
+        elif ok and (recorded or r.get("publish_blocker") is not None):
+            # Publishable and still carrying the blocker it was cleared of. Same class:
+            # the boolean was updated and the reasons were not.
+            drift.append((r["sha256"], recorded or [r["publish_blocker"]], []))
+    return over, under, drift
+
+
+def _report_staleness(over, under, drift, examples=2):
+    """One printer, so no direction can be reported more quietly than another."""
+    if over:
         print()
-        print("=== rows that claimed publishable but are not ===")
-        for w, n in viol.most_common():
-            print("  %-70s %5d  e.g. %s" % (w[:70], n, ", ".join(examples[w])))
+        print("=== STALE: %d row(s) claim publishable and are not ===" % len(over))
+        byreason = collections.Counter()
+        eg = collections.defaultdict(list)
+        for sha, why in over:
+            for w in why:
+                byreason[w] += 1
+                if len(eg[w]) < examples:
+                    eg[w].append(sha[:12])
+        for w, n in byreason.most_common():
+            print("  %-70s %5d  e.g. %s" % (w[:70], n, ", ".join(eg[w])))
+    if under:
+        print()
+        print("=== STALE: %d row(s) are publishable and do not say so ===" % len(under))
+        print("  A review that changed a verdict or a sensitivity tag did not re-run this")
+        print("  gate. The rows below still record blockers that have stopped being true,")
+        print("  and everything downstream reads the record rather than the row.")
+        byreason = collections.Counter()
+        eg = collections.defaultdict(list)
+        for sha, recorded in under:
+            for w in (recorded or ["<no blocker recorded>"]):
+                byreason[w] += 1
+                if len(eg[w]) < examples:
+                    eg[w].append(sha[:12])
+        for w, n in byreason.most_common():
+            print("  stale blocker: %-55s %5d  e.g. %s" % (w[:55], n, ", ".join(eg[w])))
+    if drift:
+        print()
+        print("=== STALE: %d row(s) record the wrong blockers ===" % len(drift))
+        print("  The boolean agrees and the reasons do not. §8's accounting is built out")
+        print("  of the reasons, so this is a stale denominator even though nothing about")
+        print("  publishability changed.")
+        for sha, recorded, want in drift[:10]:
+            print("  %s  recorded=%s" % (sha[:12], recorded))
+            print("  %-12s  computed=%s" % ("", want))
+        if len(drift) > 10:
+            print("  ... and %d more" % (len(drift) - 10))
+
+
+def main(path, apply_fix=False):
+    rows = read_jsonl(path)
+    over, under, drift = staleness(rows)
+    stale = len(over) + len(under) + len(drift)
+
+    print("rows                        :", len(rows))
+    print("publishable, stored         :", sum(1 for r in rows if r.get("publishable") is True))
+    print("publishable, computed       :", sum(1 for r in rows if evaluate(r)[0]))
+    # Both counts, always, and never only the difference. A single "corrected: N" line is
+    # what let fourteen rows be recomputed on every run and reported as routine.
+    print("stale: over-claimed         :", len(over))
+    print("stale: under-claimed        :", len(under))
+    print("stale: blocker drift        :", len(drift))
+    _report_staleness(over, under, drift)
+
+    if apply_fix:
+        for r in rows:
+            recompute(r)
+        left = staleness(rows)
+        if any(left):
+            # Recompute is idempotent by construction; if it is not, say so rather than
+            # writing a file that still disagrees with the rule that produced it.
+            sys.exit("refusing to write: %d row(s) still stale after recompute"
+                     % sum(len(x) for x in left))
+
     bad = integrityViolations(rows)
     print("unreviewed rows asserting must_detect :", len(bad))
     if bad:
@@ -201,14 +328,129 @@ def main(path, apply_fix=False):
         # Atomic, and under the lock. This used to be open(path, "w"), which
         # truncates a 62 MB index before the first row lands - see indexio.
         write_jsonl_atomic(path, rows)
-    return 1 if (viol or bad or leaks or forms) else 0
+        print()
+        print("wrote %s: %d row(s) recomputed" % (path, stale))
 
-USAGE = "usage: shard-gate.py <index.jsonl> [--fix]"
+    # A --fix run that corrected something exits NON-ZERO, and that is deliberate. The
+    # correction is not the result; the result is that the index was stale, which means
+    # something upstream changed a verdict or a tag without re-running this gate. Exiting
+    # zero there is how "publishable flags corrected: 14" became a line nobody read.
+    # The green result is the plain run afterwards.
+    return 1 if (stale or bad or leaks or forms) else 0
+
+
+# ---------------------------------------------------------------------------
+
+def inject(path):
+    """Positive control: prove each direction can actually say the other thing.
+
+    The over-claimed direction had fired in anger (103 rows on this gate's first run) and
+    the other two never had, which is the whole reason they were added blind. So every
+    case below is constructed, run through the real `staleness()`, and asserted - and the
+    negative half is as load-bearing as the positive one, because a checker that flags
+    everything proves nothing about a corpus of 92,800 rows.
+
+    A real row from `path` is used as the base wherever one is needed, so the control
+    exercises the join against real data rather than a fixture of itself.
+    """
+    rows = read_jsonl(path)
+    real = next((r for r in rows if r.get("publishable") is True), None) or rows[0]
+    fails = []
+
+    def case(label, row, want):
+        over, under, drift = staleness([row])
+        got = ("over" if over else "under" if under else "drift" if drift else "clean")
+        ok = got == want
+        print("  %-56s %-6s %s" % (label, got, "ok" if ok else "WRONG (wanted %s)" % want))
+        if not ok:
+            fails.append(label)
+
+    base = {"sha256": "0" * 64, "verdict": "malicious", "sensitivity": ["c2"]}
+
+    print("=== positive controls: each must be reported, in the RIGHT class ===")
+    # 1. over-claimed: the direction the gate already had.
+    case("stored true, verdict still unreviewed",
+         dict(base, verdict="unreviewed", publishable=True), "over")
+    case("stored true, carries pii",
+         dict(base, sensitivity=["pii"], publishable=True), "over")
+    # 2. under-claimed: the fourteen. This is the direction that was invisible.
+    case("reviewed c2 row still stored false (the fourteen)",
+         dict(base, publishable=False,
+              publish_blocker="verdict is unreviewed: nothing leaves that state without a human",
+              publish_blockers=["verdict is unreviewed: nothing leaves that state without a human",
+                                "sensitivity not yet assessed"]), "under")
+    case("stored false with no blocker recorded at all",
+         dict(base, publishable=False), "under")
+    case("field absent entirely: the gate has never run on this row",
+         dict(base), "under")
+    # 3. blocker drift: boolean right, reasons wrong.
+    case("unpublishable for a reason other than the one recorded",
+         dict(base, verdict="unreviewed", publishable=False,
+              publish_blocker="carries pii, which is not maskable and is never published",
+              publish_blockers=["carries pii, which is not maskable and is never published"]),
+         "drift")
+    case("second blocker appeared and was never recorded",
+         dict(base, verdict="unreviewed", sensitivity=["unreviewed"], publishable=False,
+              publish_blocker="verdict is unreviewed: nothing leaves that state without a human",
+              publish_blockers=["verdict is unreviewed: nothing leaves that state without a human"]),
+         "drift")
+    case("publishable but still carrying a cleared blocker",
+         dict(base, publishable=True, publish_blocker="sensitivity not yet assessed",
+              publish_blockers=["sensitivity not yet assessed"]), "drift")
+
+    print()
+    print("=== negative controls: each must be SILENT ===")
+    case("a consistent publishable row", dict(base, publishable=True), "clean")
+    case("a consistent blocked row, every reason recorded",
+         dict(base, verdict="unreviewed", sensitivity=["unreviewed"], publishable=False,
+              publish_blocker="verdict is unreviewed: nothing leaves that state without a human",
+              publish_blockers=["verdict is unreviewed: nothing leaves that state without a human",
+                                "sensitivity not yet assessed"]), "clean")
+    r = json.loads(json.dumps(real))
+    case("a real row from %s, untouched" % os.path.basename(path), r, "clean")
+
+    print()
+    print("=== recompute() is what --fix writes: it must clear every class ===")
+    made = [dict(base, verdict="unreviewed", publishable=True),
+            dict(base, publishable=False,
+                 publish_blockers=["verdict is unreviewed: nothing leaves that state "
+                                   "without a human"]),
+            dict(base, verdict="unreviewed", publishable=False,
+                 publish_blocker="carries pii, which is not maskable and is never published",
+                 publish_blockers=["carries pii, which is not maskable and is never published"])]
+    before = sum(len(x) for x in staleness(made))
+    for r in made:
+        recompute(r)
+    after = sum(len(x) for x in staleness(made))
+    ok = before == 3 and after == 0
+    print("  %-56s %s" % ("3 stale rows in, 0 out",
+                          "ok" if ok else "WRONG: before=%d after=%d" % (before, after)))
+    if not ok:
+        fails.append("recompute does not clear staleness")
+
+    # And the control on the control: the whole file, unmodified, must be clean or the
+    # cases above are being read against a corpus that is already failing.
+    over, under, drift = staleness(rows)
+    print()
+    print("index examined                : %s" % path)
+    print("rows examined                 : %d" % len(rows))
+    print("stale rows found in it        : over=%d under=%d drift=%d"
+          % (len(over), len(under), len(drift)))
+    print()
+    print("cases: 12 · passed: %d · failed: %d" % (12 - len(fails), len(fails)))
+    for f in fails:
+        print("FAIL:", f)
+    return 1 if fails else 0
+
+
+USAGE = "usage: shard-gate.py <index.jsonl> [--fix] | shard-gate.py --inject <index.jsonl>"
 
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if len(args) != 1:
         sys.exit(USAGE)
+    if "--inject" in sys.argv:
+        sys.exit(inject(args[0]))
     fix = "--fix" in sys.argv
     try:
         if fix:

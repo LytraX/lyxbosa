@@ -13,6 +13,28 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Fixed
 
+- **The publishability gate was only half a gate, and the half it was missing is the half
+  that mattered.** `corpus/shard-gate.py` computes `publishable` from the §4.1 rule and is
+  the only thing allowed to write it. It failed when a row *claimed* publishable and was
+  not, and it was **silent when a row was publishable and did not claim it**. Two operator
+  review passes — six samples in one, eight in another — set `verdict: malicious` and
+  `sensitivity: ["c2"]` without re-running it, so fourteen rows kept `publishable: false`
+  and kept recording *"verdict is unreviewed"* and *"sensitivity not yet assessed"* as
+  their blockers after both statements had stopped being true. Every run recomputed all
+  fourteen, printed `publishable flags corrected: 14`, and exited 0. Nothing downstream
+  reads the row — `promote-pending.py` defers on the recorded blocker and
+  `index-summary.json` counts it — so a stale blocker was a stale denominator, and the two
+  blocker tallies sat exactly 14 above the sensitivity and verdict counts they mirror.
+  This is the same shape as the regex that matched `/home/` and not `/home2/`: a check
+  narrower than the thing it guards, silent in exactly the direction its subject drifted.
+  The gate now reports **over-claimed**, **under-claimed** and **blocker drift** — the
+  third for a row whose boolean is right and whose recorded reasons are not — and fails on
+  any of them. `shard-gate.py --inject <index>` is the positive control; it passes twelve
+  of twelve here and fails seven of twelve against the pre-fix gate, which is how the
+  green result above is worth reading. A `--fix` run that corrects anything now exits
+  non-zero on purpose: the correction is not the result, the result is that something
+  upstream changed a verdict without re-running the gate.
+
 - **The suite's headline detection figure could not fail.** `corpus/verify.py` built its
   `Detection` line entirely out of `index-summary.json`, so it printed a recorded number
   regardless of what the binary under test did. Pointed at a build containing none of the
@@ -89,6 +111,38 @@ numbers quietly.
 masking they have not had, 3 on a sensitivity assessment, and 2 on a human verdict that only
 the operator can give. Their detection is real; none of those blockers is about whether a
 rule fires, which is why the file records the blocker rather than just the hash.
+
+**Corpus detection is now 172 of 774 (22.2%), from 169 of 774 (21.8%).** Two movements, with
+separate causes, and only one of them touches that figure:
+
+- *Recomputing fourteen stale rows moved no count at all*, which is the correct result for
+  fixing a derived field and is why it is stated rather than omitted. The two blocker
+  tallies fell by 14 each — `verdict is unreviewed` 79,595 → 79,581 and `sensitivity not yet
+  assessed` 73,797 → 73,783 — and now equal the verdict and sensitivity-tag counts they are
+  meant to mirror, which is the arithmetic that had been 14 out for two rounds.
+- *Publishing eight of them and promoting three* is the rest. The eight components of one
+  2017 SEO doorway kit move from the local half to the published half and ship as
+  `malicious-doorway-kit-001` (12 KB, unmasked — the independent gate found nothing to mask
+  in the plaintext or the raw bytes, and there is no encoded layer to hide one in). Three of
+  the eight are the `BD018` deployers that had been sitting in the handoff blocked on the
+  stale state above; they are re-measured against the shipped bytes and promoted, taking
+  known misses 605 → 602 and detection 169 → 172. Publishing does not move detection on its
+  own — a published row and a held row are both in the denominator — but it moves what a
+  stranger can reproduce: the suite's **executed set goes 95 → 98**, all 98 matching their
+  expected rule exactly, and the known misses it can re-run go 37 → 42. **Technique coverage
+  goes 80 → 90 of 123**, all ten from these rows and none previously covered by any tested
+  sample. The false-positive rate is unchanged at 8 of 146,713 benign files: no rule and no
+  benign source changed.
+
+`corpus/index-summary.json` gains `local_only_publishable_no_blocker`, which reads **5**.
+Those are rows the §7.2 gate does not block that are still held — the five remaining
+incident samples from those two reviews, which carry no `family`, `technique` or `reason`
+and so cannot be published without a classification nobody has made. Before this round the
+key would have read 0 for the wrong reason, because a row that became publishable was never
+recorded as having done so. A sixth was **held deliberately**: §7.2's secret scan fires on
+its bytes, and the corpus's only other sample carrying that technique is tagged `c2+secret`
+and held for masking, so its `sensitivity: ["c2"]` looks under-tagged. Re-tagging axis B is
+a human assessment and the row waits for one.
 
 ### Added
 
