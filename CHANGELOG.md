@@ -11,6 +11,131 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ## Unreleased
 
+### Detection coverage
+
+**Corpus detection is 696 of 1,299 reviewed malicious samples (53.6%), from 172 of 774
+(22.2%) — and the denominator is where almost all of that came from.** 525 quarantine rows
+were ruled malicious, 524 of which the current binary already detects, so they entered both
+sides of the ratio at once. Read as progress it is a mirage: no rule changed, and a figure
+that jumps 31 points without a rule change is the §11 shape — a measurement whose
+denominator is chosen by the same process that fills the numerator. What it does mean is
+that 525 samples now have an expectation the suite can fail on, where before they had none.
+
+The verdict was taken by rule cluster rather than by row: 88 clusters covered all 525 and
+the verdict was uniform across every one — split-identifier `gzuncompress`, `goto` mazes,
+`require base64_decode(...)`, a file manager whose own banner reads NO LOGIN. Each row's
+`expect.must_detect` was then set from a fresh per-sample `check` against the binary rather
+than from the rules the collecting scan recorded, and that distinction earned itself
+immediately: **one of the 525 no longer fires**, and is recorded as a `known_miss` whose
+reason is that a rule narrowed. Taking the recorded rules would have written an expectation
+the suite fails on. Known misses 602 → 603, `rule-exact` 98 of 98, technique coverage
+unchanged at 90 of 123.
+
+Sensitivity was derived from each sample's bytes rather than asked for, and **28 of the 525
+hardcode their victim's identifiers** — `/home/<account>/<domain>/` constants, canonical
+URLs, database name and user literals in harvested `wp-config` copies, a support address in
+a mailer's `From` header. The malware embeds the customer it was found on. Two of the forty
+identifier hits were collisions read in context before being dismissed (a component of an
+ordinary PHP superglobal, in 94 files; an ordinary English word in UI text, in 19). 31
+credential-bearing rows are tagged `secret` from a content match, so they sit behind two
+independent locks rather than one.
+
+### Added
+
+- **Byte-level masking (`corpus/content_mask.py`, `verify-content-mask.py`,
+  `mask-samples.py`).** Row masking has existed since §5; this is the same triple for sample
+  *bytes* — a masker that needs the map, a gate that shares none of the masker's patterns,
+  and a driver that runs all of §5.6's checks rather than the convenient one. Every
+  substitution is length-preserving and the masker raises rather than returning a different
+  length. Synthetic values carry a `mask…` marker so a reader of shipped bytes can tell a
+  masked account from a real one, deliberately **not** in the map's own `acct`/`site`/`srv`
+  namespaces — an eight-character name masked to `acct1234` would alias a pseudonym already
+  issued to someone else. Three characters of entropy, not two, because at two the
+  synthetics collided on the first run and `collisions_between_replacements()` refused to
+  run. `mask-samples.py --inject` is the control: parity can report a destroyed detection, an
+  unreadable file is refused, bytes that do not hash to their row are refused, an unchanged
+  sample keeps its detection.
+
+  **46 rows worked, 39 cleared, 7 held.** The 7 are genuine tar containers (`ustar` at offset
+  257, sizes multiples of 512) which §5.5 excludes because byte-masking a container corrupts
+  it. All 39 length-preserved exactly — 3,150 bytes changed across 5,395,101 bytes staged —
+  and detection parity held 39 of 39, with 36 of those having the power to notice a loss.
+  The masking blockers move accordingly: `identity/secret` 36 → 7, `secret` 34 → 31,
+  `identity` 172 → 169, `path` 4 → 3, encoded-layer gate 5 → 2. **No published figure moved**:
+  detection, known misses, technique coverage and the false-positive rate are all unchanged,
+  which is the correct result for a round that changed bytes and no verdicts.
+
+### Changed
+
+- **§5.4 is relaxed for plain base64 and stands for every compressed layer, and the
+  difference is arithmetic rather than a measurement.** "Length-preserving masking cannot
+  reach an encoded payload" held three samples that each carried a short `/home/<acct>/…`
+  constant inside a plain base64 region, 37 to 68 bytes decoded. base64's output length is a
+  function of its input's *length* alone, so a length-preserving substitution in the decoded
+  bytes yields an encoded region of exactly the same length and nothing after it moves;
+  deflate's is a function of its *content*. `content_mask.py` repairs that case and only that
+  case, under five conditions checked per region: the region decodes, this encoder reproduces
+  it byte for byte, the substitution preserves length in the decoded domain, the spliced file
+  has the same total length, detection parity holds. All three cleared.
+
+  Recorded with it, because it nearly went the other way: **deflate can look
+  length-preserving on short inputs.** The same substitution held deflate's length at 37 bytes
+  (45 → 45) and 68 (76 → 76), and only moved at 400 (366 → 368). Two short samples would have
+  "shown" the rule could be relaxed for compressed layers too.
+
+- **§7.2's secret bullet cannot be satisfied as written, and §7.2 is the half that bends.**
+  §5.1 requires a masked secret to be replaced by a synthetic of the same *shape*, so a
+  correctly masked sample still contains something bcrypt-shaped and an absolute scan of the
+  output must report it — 54 such literals remain across the 39 samples, every one synthetic
+  by construction. Stripping the shape would destroy the detection the sample exists to
+  demonstrate. The rule becomes differential: no credential-shaped literal in the output is
+  byte-identical to one in the input, over the plaintext and every decoded layer.
+  `verify-content-mask.secret_gate()` implements it per sample and has already failed
+  usefully, on an attacker password literal assigned to a `$pass` variable the masker's
+  keyword list did not cover. **The structural half is deliberately not done**:
+  `shard-gate.py` decides publishability by reading rows, has no field for a secret gate, and
+  17 local rows are tagged `secret` with masking applied and no `secret_gate` result — so
+  imposing the rule today would put all 17 into blocker drift until re-measured. It blocks
+  the first public shard carrying a `secret`-tagged sample; no shard carries one today.
+
+### Fixed
+
+- **`incident_mask.py --collisions` could not report the strongest collision it can meet.**
+  The attribution loop required `real != token.lower()`, so a token that *is* an identifier —
+  an account name that is also an ordinary word used as a stock-CMS filename token — was
+  rewritten by `mask()` and then dropped on the way to the report. The check printed **0
+  tokens would be rewritten** while the masker rewrote one, and `SOURCES.md`'s claim that
+  both maskers rewrite nothing in the 158,675 stock CMS files rested on that zero. It now
+  reports an exact hit and an unattributable rewrite instead of dropping either, and
+  truthfully reads **1**. Underneath it, `tiers()` gave that same case the *weakest*
+  treatment: the length test came first and an exact match fell through to a tier that
+  rewrites the whole word. An identifier indistinguishable from stock vocabulary is the most
+  colliding case, not a marginal one; it is now positional-only. Tiers are stored in the
+  out-of-repo map, so this changes nothing until the map is regenerated — which is why the
+  byte masker re-derives the tier from a vocabulary it is handed and treats a missing
+  vocabulary as a hard failure rather than running without a collision reference.
+
+- **A slot rule's delimiter list was a positive list, for the third time.** The rules that
+  mask a value no map can name — a third party's account written into a sample's own UI —
+  ended with a list of the delimiters expected to follow. `/home/<acct>/<domain><br>` ends at
+  `<`, which was not on it, so the account was masked and the site name beside it was not.
+  The guard is now the negative form. Both occurrences were in one sample and both were
+  caught by reading the masker's output, not by the gate: the gate is map-driven and neither
+  name is in either map, which is the whole reason the slot rules exist.
+
+- **70 rows carried `identity` evidence that was not evidence, and dropping the tag with it
+  would have unblocked two real ones.** The `identity.ips` basis collected 637 distinct
+  dotted quads across 225 samples that were Freemius `@since 1.2.2.7` version strings, SVG
+  path coordinates (`0l-5.6 5.6c-.7.7-.7 1.8 0 2.5l5.6…`), `127.0.0.1` localhost checks and
+  a `1.1.1.1` in a Cloudflare footer template. The evidence is retracted on all 70. The tag
+  is dropped on **four** — six rows had `ips` as their only basis, and **two of those six
+  genuinely carry identity**, one with 4 and one with 48 real `/home/` paths plus a mapped
+  account name. Retracting evidence and dropping a tag are not the same operation; doing them
+  as one would have published 52 customer home paths. One row also loses `secret`: it holds
+  no credential literal and builds `$new_user = "hacker" . rand(100, 999)` with `md5(rand())`
+  — generating a secret is a technique, not a sensitivity.
+
+
 ### Changed
 
 - **The false-positive denominator moved: 8 of 146,712 becomes 44 of 197,559, a rate of

@@ -536,7 +536,7 @@ attacker-renamed directory (`wp-content__<hash>`) — the latter being an IOC wo
 
 Treat "the gate passes" as a claim about the gate until an independent check agrees.
 
-**The standing rule, because this is now nine failures and not an anecdote.** Every one was
+**The standing rule, because this is now twelve failures and not an anecdote.** Every one was
 caught by a gate; **none** was caught by reading the code — including the fifth, a field
 whose contents are account names *by construction*, which slipped through because the
 masking helper applied a four-character minimum. So:
@@ -548,8 +548,8 @@ masking helper applied a four-character minimum. So:
 - **Verification always uses a check that does not share the masker's own patterns.** Same
   regexes on both sides tests only that the code agrees with itself.
 
-A further failure should be assumed to exist in whatever field is added next. Four more have
-occurred since this was written, taking the tally to nine — and, as predicted, every one was
+A further failure should be assumed to exist in whatever field is added next. Seven more have
+occurred since this was written, taking the tally to twelve — and, as predicted, every one was
 caught by a check and none by reading code. The eighth and ninth were not masking bugs at all
 but the same class of defect in adjacent machinery, which is why the rule is stated about
 *checks* rather than about masking:
@@ -569,6 +569,35 @@ Two of the nine were also caught in fields nobody expected to carry identifiers,
 — the eighth and ninth — in code that was not the masker at all. The rule generalises: any
 check that decides what may be published is load-bearing, and none of them is reviewable by
 reading.
+
+**Tenth: `--collisions` could not report the strongest collision it can meet.** The
+attribution loop in `incident_mask.collisions()` required `real != token.lower()`, so a token
+that *is* an identifier — an account name that is also an ordinary word used as a stock-CMS
+filename token — was rewritten by `mask()` and then dropped on the way to the report. The
+check printed **0 tokens would be rewritten** while the masker rewrote one, and SOURCES.md's
+claim that both maskers rewrite nothing in the stock trees rested on that zero. Exactly the
+shape AGENTS.md names: a check silent in one direction, and the direction with the worst
+consequence, since over sample bytes that rewrite lands inside working code.
+
+**Eleventh, underneath it: `tiers()` gave the strongest collision the weakest treatment.**
+The length test came first and the exact-match case fell through to `B` or `C`, both of which
+rewrite a token equal to the identifier. An identifier that is indistinguishable from stock
+vocabulary is the *most* colliding case, not a marginal one, and 5.3's rule for a colliding
+name is positional and nothing broader. It is now `D`. Tiers are stored in the map, so the
+fix changes nothing until the map is regenerated; the byte masker therefore re-derives the
+tier from a vocabulary it is handed rather than trusting the stored one, and its driver
+treats a missing vocabulary as a hard failure rather than running without a collision
+reference.
+
+**Twelfth, and it is the lookaround again.** The slot rules that mask a value no map can
+name — a third party's account written into a sample's own UI — ended with a positive list
+of the delimiters expected to follow. An example path written into a page as
+`/home/<acct>/<domain><br>` ends at `<`, which was not on the list, so the account was masked
+and the site name beside it was not. 5.6 already records two of these and already gives the
+rule; a positive list of delimiters is a promise to have thought of all of them, and the
+guard is now the negative form. Both occurrences were in one sample and both were caught by
+reading the masker's own output, not by the gate — the gate is map-driven and neither name is
+in either map, which is the whole reason the slot rules exist.
 
 **Two more have since occurred, both exactly as predicted.** The sixth was in the content
 masker, a new component that shipped without a gate: it rewrote the string literal
@@ -659,6 +688,43 @@ So the rule is: **a sample whose encoded layer carries a customer identifier is 
 publishable.** Not "mask harder" — the sample stays local-only with the reason recorded, and
 a synthesised stand-in is generated for any test that needed it, the same treatment `pii`
 and `content` already get.
+
+**That rule is right for a compressed layer and wrong for a plain base64 one, and the
+difference is measurable rather than arguable.** Of the three objections above, only the
+first is specific to an encoded layer: the hash changes for any masking at all, which the
+corpus already accepts and records as `masked_sha256`, and a changed verdict is what the
+parity check measures. Offsets moving is the real one, and it is a property of *deflate*,
+whose output length is a function of its content — which is what the two samples this
+section was written about actually contain. Base64 is a fixed 3-to-4 block code, so a
+length-preserving substitution in the decoded bytes yields an encoded region of exactly the
+same length, differing only in the characters covering the bytes that changed. **Nothing
+after it moves, and nothing outside it changes.**
+
+**Do not re-derive this from a small sample: deflate can look length-preserving.** Measured
+with the same substitution used above, deflate held its length at 37 bytes (45 → 45) and at
+68 (76 → 76), and only moved at 400 (366 → 368). Two short inputs would have "shown" that the
+rule can be relaxed for compressed layers too. What licenses the base64 case is not that its
+length was observed to hold — it is that base64's length is a function of its input's *length*
+alone, which is arithmetic and needs no sample, while deflate's is a function of its
+*content*, where a run of equal lengths is a coincidence of the inputs tried. §5.4 stands
+unchanged for every compressed layer, and a measurement that appears to relax it is the
+§11 shape again: a check that cannot deliver the bad news at the sizes it was run at.
+
+Three samples were held under this rule and each carried a short `/home/<acct>/…` path
+constant inside a plain base64 region, 37 to 68 bytes decoded. `content_mask.py` repairs that
+case and only that case, under five conditions checked per region rather than argued once:
+the region must decode, this encoder must reproduce it byte for byte (padded or unpadded —
+anything else, including non-zero bits in the final padding group, is refused), the
+substitution must preserve length in the decoded domain, the spliced file must have the same
+total length, and detection parity must hold. Measured: all three decoded to the same length
+after masking, all three kept their exact file size, and all three kept their rule set.
+
+This is the same shape as the eighth recorded failure — `undecodable` conflating "there is a
+layer I could not open" with "there is no layer", and holding 99 samples for a reason that
+did not apply to them. **A sample whose encoded layer this masker cannot reach is still not
+publishable**, and the gate is what decides which is which: a refused region is reported, the
+encoded-layer gate then reads it anyway with a decoder deliberately wider than the masker's,
+and the sample is held if a name is in there.
 
 The masking pass therefore runs **two** gates, not one:
 
@@ -777,6 +843,30 @@ Before any shard is built, a check that fails the build rather than warns:
 - every sample still produces its `expect.must_detect` set after masking.
 
 That last one is what stops masking from silently destroying the corpus's value.
+
+**The secret bullet as written cannot be satisfied, and §5.1 is the reason.** §5.1 requires a
+masked secret to be replaced by a synthetic of the *same shape*, so a correctly masked sample
+still contains something bcrypt-shaped and a scan of the output alone must report it. The two
+rules cannot both hold in this form: 54 credential-shaped literals remain across the 39
+samples masked in the round that found this, every one synthetic by construction. **§7.2 is
+the half that bends**, because stripping the shape destroys the detection the sample exists to
+demonstrate — the fixture would be testing the mask rather than the malware, which is exactly
+what §5.1 forbids.
+
+The replacement is differential rather than absolute: no credential-shaped literal in the
+output is byte-identical to one in the input, over the plaintext and every decoded layer.
+`verify-content-mask.secret_gate()` already implements it per sample, it needs no knowledge of
+whose secret it is, and it has already failed usefully — on an attacker password literal
+assigned to a `$pass` variable the masker's keyword list did not cover.
+
+What is **not** done is the structural half, and it is recorded here rather than fixed
+because fixing it blind is the failure this section exists to prevent.
+`shard-gate.evaluate()` decides publishability by reading rows; it has no field for a secret
+gate and therefore cannot require one at shard-build time. Seventeen local rows are tagged
+`secret` with masking already applied and carry no `secret_gate` result, so imposing the rule
+today puts all seventeen into blocker drift until they are re-measured. This blocks the first
+public shard that would carry a `secret`-tagged sample. No shard carries one today, so the
+gap exposes nothing — it is a gate that is not yet armed, not a gate that is passing wrongly.
 
 ## 8. Golden test suite
 
