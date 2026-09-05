@@ -35,7 +35,7 @@
   "woocommerce-card-skimmer": 6
  },
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
- "known_miss": 638,
+ "known_miss": 646,
  "local_only": 80536,
  "local_only_blockers": {
   "carries content, which is not maskable and is never published": 4931,
@@ -68,7 +68,7 @@
  "malicious_detected": 128,
  "malicious_detected_excl_predates_ruleset": 66,
  "malicious_detected_runnable": 54,
- "malicious_known_miss": 638,
+ "malicious_known_miss": 646,
  "malicious_known_miss_by_family": {
   "ddos-flood-toolkit": 7,
   "domain-spray-shell-deployer": 1,
@@ -91,7 +91,10 @@
   "pwdyt-0kb-session-uploader": 2,
   "python-rs-command-wrapper": 1,
   "self-hiding-fake-core-plugin": 3,
+  "seo-doorway-deployer": 3,
+  "seo-doorway-generator": 3,
   "seo-doorway-madxtube-2017": 495,
+  "seo-doorway-template": 2,
   "sink-free-simple-filemanager": 1,
   "tiny-file-manager-drop": 1,
   "uploads-dir-docroot-uploader": 1,
@@ -100,7 +103,7 @@
  },
  "malicious_known_miss_excl_predates_ruleset": 112,
  "malicious_no_expectation": 0,
- "malicious_reviewed": 766,
+ "malicious_reviewed": 774,
  "malicious_reviewed_excl_predates_ruleset": 178,
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
  "predates_ruleset_blobs": 1131,
@@ -117,7 +120,7 @@
  },
  "published_shipped_as_bytes": 76,
  "sensitivity_tags": {
-  "c2": 797,
+  "c2": 805,
   "clean": 12780,
   "content": 5084,
   "identity": 293,
@@ -125,7 +128,7 @@
   "pii": 195,
   "secret": 83,
   "undecidable": 275,
-  "unreviewed": 73791
+  "unreviewed": 73783
  },
  "techniques_known": {
   "argument-injection": 1,
@@ -155,9 +158,12 @@
   "disabled-functions-probe": 1,
   "dnsbl-self-check": 29,
   "doh-resolver": 1,
+  "doorway-page-generation": 3,
+  "doorway-page-template": 2,
   "dos-tooling": 7,
   "embedded-phpmailer": 29,
   "environment-fingerprint": 2,
+  "eval-of-generated-content": 3,
   "eval-remote-stage": 1,
   "eval-stager": 1,
   "executable-bit-set": 2,
@@ -176,7 +182,11 @@
   "hex-escaped-function-names": 1,
   "hex2bin-name-table": 2,
   "host-keyed-option": 1,
+  "htaccess-replacement": 3,
   "html-ui": 1,
+  "implemented-not-active:crawler-cloaking": 3,
+  "implemented-not-active:wp-login-injection": 3,
+  "index-removal": 3,
   "jfif-prefix": 1,
   "liveness-probe": 2,
   "mail-exfil": 20,
@@ -191,6 +201,7 @@
   "parent-directory-write": 1,
   "password-gate": 29,
   "payload-in-fake-image": 52,
+  "payload-restore-from-sidecar": 3,
   "pdf-header-prefix": 1,
   "pdf-magic-prefix": 2,
   "pdf-object-prefix": 1,
@@ -208,6 +219,7 @@
   "polymorphic-sibling": 4,
   "proxy-aware-client-ip": 1,
   "public-webshell-reuse": 31,
+  "quarantine-reversal": 3,
   "random-filename": 1,
   "random-nested-directory": 30,
   "random-plugin-slug": 1,
@@ -216,6 +228,7 @@
   "remote-fetch": 1,
   "remote-payload-fetch": 3,
   "remote-self-update": 8,
+  "request-abort-survival": 3,
   "request-gate": 37,
   "reverse-shell-launcher": 1,
   "reversed-base64": 52,
@@ -327,7 +340,7 @@
  "total_blobs": 92800,
  "verdicts": {
   "benign": 12445,
-  "malicious": 766,
-  "unreviewed": 79589
+  "malicious": 774,
+  "unreviewed": 79581
  }
 }
