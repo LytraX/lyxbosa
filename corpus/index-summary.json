@@ -49,7 +49,7 @@
   "carries identity/secret but no masking has been applied": 35,
   "carries path but no masking has been applied": 8,
   "carries pii, which is not maskable and is never published": 40,
-  "carries secret but no masking has been applied": 2,
+  "carries secret but no masking has been applied": 33,
   "encoded-layer gate did not pass": 9,
   "marked local_only: archive container this pass could not open (unsupported format). Recorded as unopened rather than scanned-and-clean: 5.6 says an absence must first prove the file was read": 1,
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 1 members read; byte-masking a container corrupts it (5.5)": 2,
@@ -131,7 +131,7 @@
   "identity": 279,
   "path": 66,
   "pii": 193,
-  "secret": 73,
+  "secret": 104,
   "undecidable": 274,
   "unreviewed": 42343
  },

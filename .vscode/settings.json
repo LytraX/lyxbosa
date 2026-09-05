@@ -39,8 +39,11 @@
   // 1 GB while emitting almost nothing. Turning off symlink following stops the walk.
   "search.followSymlinks": false,
 
+  // trail-data/ is deliberately VISIBLE: it is gitignored and holds the corpus and the
+  // incident material, and it has to be browsable to work on either. Hiding it in the
+  // explorer never protected anything - corpus/pre-push-check.py is what stands between
+  // this tree and a push, and it reads what git tracks rather than what the editor shows.
   "files.exclude": {
-    "**/trail-data": true,
     "**/vcpkg_installed": true
   },
 

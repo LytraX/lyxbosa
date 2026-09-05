@@ -194,6 +194,29 @@ collisions, so this is a genuine absence rather than an ambiguity.
 Do not resolve them by guessing. A wrong name attached to a real account's rows is worse than
 no name, because it is indistinguishable from a right one afterwards.
 
+### Tag `secret` from the bytes, not from the review
+
+Thirty-one unreviewed rows carry a non-empty `DB_PASSWORD` literal — harvested `wp-config.php`
+copies from a cross-account symlink farm, 15 distinct databases, plus auth salts. They were
+held by exactly one lock: `verdict: unreviewed`.
+
+One lock is not enough here, and the failure mode is the ordinary one rather than an exotic
+one. The operator answers a review queue by setting a verdict and a sensitivity in the same
+pass. Get the sensitivity wrong — type `c2` on something that also carries a secret, which
+happened on a different row earlier the same day — and the row is publishable, because `c2`
+is in `ALWAYS_OK` and buys a free pass through every masking gate.
+
+So `secret` is now set on those 31 rows **from a content match, before any verdict exists**.
+That is not the judgement a human owes: whether a sample is malicious is axis A and stays
+theirs. Whether the bytes contain a password literal is a fact a tool can read, and it is the
+floor under the judgement rather than a substitute for it. `secret` is not in `ALWAYS_OK`, so
+it demands the plaintext gate, the encoded-layer gate and detection parity no matter what else
+lands on the row.
+
+The general rule this yields: **tag from the bytes wherever the bytes can be read, and reserve
+the review for what they cannot settle.** A tag derived mechanically cannot be mistyped in a
+hurry, and it survives a review that gets a different axis wrong.
+
 ### A `c2`-only row skips every masking gate, and the tag is the only thing stopping it
 
 `evaluate()` computes `unmasked = tags - ALWAYS_OK - …`, and `ALWAYS_OK` is
