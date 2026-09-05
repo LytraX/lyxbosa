@@ -8,6 +8,8 @@ corpus/
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
   fetch-benign.sh                   downloads, verifies hashes, unpacks. Downloads are not committed
   shard-gate.py                     §7.2 — computes `publishable` and fails the build
+  make-shard-manifest.py            regenerates a shard's MANIFEST.json from the index
+  promote-pending.py                applies pending-promotions.jsonl; re-measures every row
   build-shard.sh                    packs a staged shard; requires zstd, fails hard without it
   local/index-local.jsonl           local-only rows (gitignored)
   import-infected-tree.py           imports the legacy trail-data/Infected tree
@@ -107,6 +109,23 @@ that is also an English fragment is masked as a whole word while a distinctive o
 anywhere in a token. Both maskers rewrite **nothing** in the 158,675 files of `trail-data/CMS`
 and `trail-data/CMS-ext`, which is what `--collisions` asserts.
 
+A shard's `MANIFEST.json` and its tracked copy in `expect/` both carry every sample's
+`expect`, which is three places one answer can be written and two of them can be wrong
+silently — `verify.py` reads `expect` from the **index**, so a stale manifest changes nothing
+the suite prints. `make-shard-manifest.py` regenerates the index-owned half of a manifest
+(`verdict`, `family`, `sensitivity`, `expect`, `technique`) and writes both copies from the
+one text. The packaging half — which file holds the bytes, what it hashes to after masking,
+the entry order, the prose note — is carried over from the stage and *checked*: the bytes are
+re-hashed, and `masked: false` must mean the shipped hash equals the source hash. `size` is
+the shipped file's size and comes from disk, never from the index row, which is the source
+blob's size and differs wherever a payload was extracted onto a generated carrier.
+
+Its control is that it reproduces every already-built manifest byte for byte from the
+unmodified index. That is what caught both of the above while they were still wrong, and on
+its first real run it also found `expect/malicious-db-dropin-001.json` a full round behind —
+still declaring 46 samples undetected after the round that closed them, unnoticed because
+nothing reads that file at run time.
+
 `shard-gate.py` is the one that must **not** need the map, and does not: it asserts the
 *form* of what is allowed (`acctNN`, `siteNN`, `srvNN`), so a stranger can run it.
 
@@ -168,6 +187,21 @@ Rows in the `local` half usually cannot be promoted immediately even though the 
 real: their blockers are masking and review, which are independent of whether a rule fires.
 That is why the file records the blocker rather than just the sha256 — otherwise the next
 reader has to re-derive why 34 of 75 did not move.
+
+`promote-pending.py` is the applier, and it treats the file as a handoff rather than an
+authority: every row is re-measured with `check` against the **shipped** bytes in the shard,
+and a row whose measurement disagrees with what it recorded is refused rather than written.
+An empty measurement on a row the file says now fires is a hard refusal that names the
+binary, because that is what a build made before the round's rules looks like — it promotes
+nothing and reports zero newly detected, which reads as a result rather than an error. A row
+whose `publish_blockers` are non-empty is deferred with the blocker quoted back, never
+resolved here; resolving one is masking or review, which is somebody else's job.
+
+A promotion rewrites exactly one field. `expect.known_miss` and `known_miss_reason` become
+`expect.closed_known_miss` — date, the rule that closed it, and verbatim the reason the row
+used to give — and `must_detect` becomes the measured set. Verdict, publishability,
+sensitivity and masking are untouched: a promotion is a statement about detection and about
+nothing else.
 
 ### Any writer of either half goes through `indexio.py`
 
@@ -239,9 +273,11 @@ update-header request gate, a forged-plugin auto-login backdoor, a fake theme of
 blobs, and a timestamp-named theme stager. Expectations in
 `expect/malicious-staging-001.json`.
 
-**Sixty-four of the 67 are `known_miss`** — real malware this scanner does not detect at the
-recorded version. That is the point of shipping them: the corpus previously measured recall
-over six samples it already found. See `docs/RULE_CANDIDATES.md` §2.
+**Twenty-three of the 67 are `known_miss`** — real malware this scanner does not detect at
+the recorded version. It was 64 of 67 when the shard was built, which is the point of
+shipping them: the corpus previously measured recall over six samples it already found.
+`OBF041` closed 40 of them and `CRED007` one, all promoted in one batch on 2026-09-05 and
+recorded per row as `expect.closed_known_miss`. See `docs/RULE_CANDIDATES.md` §2.
 
 `shards/malicious-outside-webroot-001.tar.zst` — the two hex-digest wrappers from `/var/tmp`
 that `docs/KNOWN_ISSUES.md` issue 3 rests on. Polymorphic siblings in two different accounts;

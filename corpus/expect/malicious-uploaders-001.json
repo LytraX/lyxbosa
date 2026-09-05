@@ -1,0 +1,274 @@
+[
+ {
+  "name": "pwdyt-0kb-session-uploader-4b596ea7",
+  "file": "samples/pwdyt-0kb-session-uploader-4b596ea7.php",
+  "sha256": "4b596ea749e1645cb66c248637b32efe17a2777437571db3d570ecf2bc3c01aa",
+  "source_sha256": "4b596ea749e1645cb66c248637b32efe17a2777437571db3d570ecf2bc3c01aa",
+  "size": 1323,
+  "verdict": "malicious",
+  "family": "pwdyt-0kb-session-uploader",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "sha256-password-gate",
+   "session-gate",
+   "file-upload",
+   "liveness-probe",
+   "split-open-tag",
+   "campaign-marker"
+  ],
+  "masked": false
+ },
+ {
+  "name": "minified-nested-dir-filemanager-630b534f",
+  "file": "samples/minified-nested-dir-filemanager-630b534f.php",
+  "sha256": "630b534f2fb9fcd3899bc7478f5c3941b28df807c52569ddb733434782ec5628",
+  "source_sha256": "630b534f2fb9fcd3899bc7478f5c3941b28df807c52569ddb733434782ec5628",
+  "size": 33064,
+  "verdict": "malicious",
+  "family": "minified-nested-dir-filemanager",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "file-manager",
+   "command-exec",
+   "minified-single-line",
+   "disabled-functions-probe",
+   "request-gate",
+   "environment-fingerprint"
+  ],
+  "masked": false
+ },
+ {
+  "name": "uploads-dir-docroot-uploader-63e4b006",
+  "file": "samples/uploads-dir-docroot-uploader-63e4b006.php",
+  "sha256": "63e4b006fe4ad467725dd6657cdcb3ccee563b9cdca67fa306a64dc4abfbad3b",
+  "source_sha256": "63e4b006fe4ad467725dd6657cdcb3ccee563b9cdca67fa306a64dc4abfbad3b",
+  "size": 1032,
+  "verdict": "malicious",
+  "family": "uploads-dir-docroot-uploader",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "file-upload",
+   "command-exec",
+   "webroot-write",
+   "uploads-directory-placement",
+   "environment-fingerprint"
+  ],
+  "masked": false
+ },
+ {
+  "name": "parent-dir-move-uploaded-file-687f083c",
+  "file": "samples/parent-dir-move-uploaded-file-687f083c.php",
+  "sha256": "687f083c23b38c13fccd96e0dc6bbb5af62616f4eeb13f8fc7daeb7482363870",
+  "source_sha256": "687f083c23b38c13fccd96e0dc6bbb5af62616f4eeb13f8fc7daeb7482363870",
+  "size": 324,
+  "verdict": "malicious",
+  "family": "parent-dir-move-uploaded-file",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "file-upload",
+   "request-gate",
+   "parent-directory-write",
+   "random-nested-directory"
+  ],
+  "masked": false
+ },
+ {
+  "name": "sink-free-simple-filemanager-848718a5",
+  "file": "samples/sink-free-simple-filemanager-848718a5.php",
+  "sha256": "848718a56036fbcadcc111e7d8a42dcce1cf665a145c7bab9c3978cda84ee90f",
+  "source_sha256": "848718a56036fbcadcc111e7d8a42dcce1cf665a145c7bab9c3978cda84ee90f",
+  "size": 4432,
+  "verdict": "malicious",
+  "family": "sink-free-simple-filemanager",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "file-manager",
+   "file-upload",
+   "directory-traversal-ui",
+   "sink-free-evasion",
+   "random-filename"
+  ],
+  "masked": false
+ },
+ {
+  "name": "pwdyt-0kb-session-uploader-af376b9c",
+  "file": "samples/pwdyt-0kb-session-uploader-af376b9c.php",
+  "sha256": "af376b9c84a351856f6b6753217028320f6576198e00b58ed7a3ef8a95e96981",
+  "source_sha256": "af376b9c84a351856f6b6753217028320f6576198e00b58ed7a3ef8a95e96981",
+  "size": 1396,
+  "verdict": "malicious",
+  "family": "pwdyt-0kb-session-uploader",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "sha256-password-gate",
+   "session-gate",
+   "file-upload",
+   "liveness-probe",
+   "split-open-tag",
+   "campaign-marker"
+  ],
+  "masked": false
+ },
+ {
+  "name": "python-rs-command-wrapper-ba0b1c1e",
+  "file": "samples/python-rs-command-wrapper-ba0b1c1e.php",
+  "sha256": "ba0b1c1ea7e698e7ce65d96fda0126ae79dca7903b78c0f614c464ce81806f9c",
+  "source_sha256": "ba0b1c1ea7e698e7ce65d96fda0126ae79dca7903b78c0f614c464ce81806f9c",
+  "size": 148,
+  "verdict": "malicious",
+  "family": "python-rs-command-wrapper",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "command-exec",
+   "request-gate",
+   "argument-injection",
+   "reverse-shell-launcher"
+  ],
+  "masked": false
+ },
+ {
+  "name": "orphaned-upload-stub-d36fc1b4",
+  "file": "samples/orphaned-upload-stub-d36fc1b4.php",
+  "sha256": "d36fc1b465b0cb4192121a13eaf5eae24ce2c8609b050e970b0e1edadf149218",
+  "source_sha256": "d36fc1b465b0cb4192121a13eaf5eae24ce2c8609b050e970b0e1edadf149218",
+  "size": 152,
+  "verdict": "benign",
+  "family": "orphaned-upload-stub",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [],
+   "must_not_detect": [
+    "*"
+   ]
+  },
+  "technique": [
+   "request-gate",
+   "upload-form-scaffold",
+   "inert-artefact"
+  ],
+  "masked": false
+ },
+ {
+  "name": "split-string-triple-dropper-dea7ad1b",
+  "file": "samples/split-string-triple-dropper-dea7ad1b.php",
+  "sha256": "dea7ad1be8ec37ee2d7c05961dfdc765c5dd1225f6060ba88fe5dffeaa9808f8",
+  "source_sha256": "dea7ad1be8ec37ee2d7c05961dfdc765c5dd1225f6060ba88fe5dffeaa9808f8",
+  "size": 411,
+  "verdict": "malicious",
+  "family": "split-string-triple-dropper",
+  "sensitivity": [
+   "c2"
+  ],
+  "expect": {
+   "closed_known_miss": {
+    "date": "2026-09-04",
+    "rule": "OBF040",
+    "was": "no rule fired"
+   },
+   "must_detect": [
+    "OBF040"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "remote-payload-fetch",
+   "file-dropper",
+   "split-string-url",
+   "request-gate",
+   "core-block-directory-placement"
+  ],
+  "masked": false
+ },
+ {
+  "name": "mu-plugin-first-user-autologin-ec969be0",
+  "file": "samples/mu-plugin-first-user-autologin-ec969be0.php",
+  "sha256": "ec969be05a1d8fe5dfef5d4729d196b6d40620df545d5422ff2314f7154a5805",
+  "source_sha256": "ec969be05a1d8fe5dfef5d4729d196b6d40620df545d5422ff2314f7154a5805",
+  "size": 1053,
+  "verdict": "malicious",
+  "family": "mu-plugin-first-user-autologin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "auth-cookie-forge",
+   "mu-plugin-persistence",
+   "request-gate",
+   "verbose-identifier-camouflage",
+   "polymorphic-sibling"
+  ],
+  "masked": false
+ },
+ {
+  "name": "mu-plugin-first-user-autologin-f1c8178f",
+  "file": "samples/mu-plugin-first-user-autologin-f1c8178f.php",
+  "sha256": "f1c8178f98239f10b88ad8d3df9c5227ce9048334b5b93c156b20b6d8af02fad",
+  "source_sha256": "f1c8178f98239f10b88ad8d3df9c5227ce9048334b5b93c156b20b6d8af02fad",
+  "size": 1051,
+  "verdict": "malicious",
+  "family": "mu-plugin-first-user-autologin",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "known_miss": true,
+   "must_detect": []
+  },
+  "technique": [
+   "auth-cookie-forge",
+   "mu-plugin-persistence",
+   "request-gate",
+   "verbose-identifier-camouflage",
+   "polymorphic-sibling"
+  ],
+  "masked": false
+ }
+]
