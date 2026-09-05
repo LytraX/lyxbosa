@@ -127,6 +127,26 @@ name in git exactly as surely as an unmasked index row would. The map holds the 
 tool reads roles. This is §5.3's "a field nobody thought of", one level out — it was not a
 field at all, it was the tool's own source.
 
+### `acct<unmapped:XXXX>` — what it means and why 16 of them stay
+
+A row carries `acct<unmapped:XXXX>` when the collection knew an account by its hash but no
+map named it. It is already a pseudonym, so it is not a leak; it is a gap in the map.
+
+The hash is `sha256(account_name)[:4]`, verified against all 85 known name/hash pairs with
+zero disagreements — which is what makes the gap closable at all. Feeding it the 76 distinct
+`/home*/<name>/` components from the whole-host manifest resolved **7 of 23** markers, every
+one of them to an account the map *already* held. Those rows said "unmapped" while the answer
+was on disk, so that was a masker gap rather than a map gap, and it is now substituted.
+
+**The remaining 16 are not chaseable from anything this corpus holds.** Their account names do
+not appear in the host manifest, which was taken after the incident: an account deleted or
+renamed between compromise and collection leaves rows that reference it and a filesystem that
+does not. Four hex characters is 65,536 values against 76 candidates, and there were zero
+collisions, so this is a genuine absence rather than an ambiguity.
+
+Do not resolve them by guessing. A wrong name attached to a real account's rows is worse than
+no name, because it is indistinguishable from a right one afterwards.
+
 ### Any writer of either half goes through `indexio.py`
 
 `write_jsonl_atomic` for the write, `index_lock` around a read-modify-write. Not a style
