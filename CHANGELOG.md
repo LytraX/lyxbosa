@@ -13,6 +13,41 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **A human can clear one gate finding, and the decision is a record rather than a gap
+  (`corpus/clearance.py`, `corpus/clear-finding.py`).** Some findings are collisions and no
+  predicate that can see one can decide it — the encoded-layer predicate produces 127 false
+  positives over 8,000 stock CMS files. Before this the only ways to act on that judgement
+  were to hand-edit `publishable` (§4.4 forbids it and `staleness()` catches it), to edit the
+  tag so the gate stops asking (the defect this round repairs), or to loosen the predicate for
+  everybody.
+
+  A clearance carries `gate`, `finding_digest`, `by`, `at`, `reason` and `gate_provenance`.
+  **`publishable` stays computed**: the clearance is an input to `evaluate()`, never a value
+  written over the boolean, and a second uncleared blocker still blocks. It is keyed to the
+  **specific finding** by a digest over the gate, its recorded verdict and the evidence beside
+  it, so a judgement about a 3-character identifier in a 97-character segment cannot carry to
+  whatever the next re-measurement finds — nor to a different gate on the same row. It is
+  **invalidated when the gate provenance moves**, pinned by the `tools` and `map` digests by
+  value, because a clearance is a judgement about what a particular gate said and a changed
+  gate has not been judged. It **cannot apply to `pii` or `content`** — structurally, since
+  those produce no finding to key to, and checked outright as well. And it is **counted in
+  `index-summary.json`** (`cleared_by_human_rows`, `_findings`, `_by_gate`, and the published
+  subset), because the one route by which a recorded FAIL becomes a publishable row must not
+  be a number nobody watches.
+
+  Malformed and inert are deliberately different: a clearance nobody can read exits non-zero,
+  a clearance that has stopped applying is printed with a count on every run.
+  `clear-finding.py` refuses a reason that matches a map identifier and reports the **length**,
+  never the name. Only recorded gate results are clearable — a verdict, a `local_only` hold, an
+  unapplied masking pass and the provenance blocker are work to do rather than evidence to
+  judge.
+
+  **Zero clearances exist.** The mechanism ships with its controls and no entries. 20 control
+  cases in `shard-gate --inject`, each negative paired with the positive that re-signs the same
+  judgement against the new state — without the pair, "blocks" only proves something blocked,
+  and a hatch that never opens would pass every one. 19 in `clear-finding --inject`, 31 in
+  `clearance.py --selftest`.
+
 - **Gate provenance (`corpus/gate_provenance.py`), and `shard-gate.py` requires it.** A
   stored `plaintext_gate: PASS` was a claim about what *some* version of the gate said, and
   nothing in the index recorded which. Re-gating by hand found **5 of 95 local rows and 1 of
@@ -52,6 +87,28 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Changed
 
+- **Counts that moved, each with its cause.** Local publishable **377 → 373**: the four rows
+  described under Fixed, all `secret_gate: FAIL`. Local blockers: `secret gate did not pass`
+  **0 → 5** (the five rows, now read regardless of tag), `encoded-layer gate did not pass`
+  **3 → 9** (the six dict-form rows, now parsed), `encoded-layer gate was not run:
+  SKIPPED-oversize` **0 → 12** (a skip is not a pass). 23 rows recomputed by `--fix`: 4
+  over-claimed and 19 blocker drift. **The published half does not move at all** — 44,543
+  publishable before and after, no blocker changed, no row flipped. **No detection figure
+  moves**, and the mechanism is that nothing changed this round reads bytes or runs the
+  scanner: `malicious_reviewed`, `malicious_detected`, `malicious_known_miss` and every
+  `_excl_predates_ruleset` variant are byte-identical in `index-summary.json` before and after,
+  which is a census of both halves rather than a sample. The `gate_provenance` tools digest is
+  unmoved at `07079af767d4`: none of its six modules changed behaviourally, so no provenance
+  stamp is invalidated.
+
+- **`shard-gate --inject` goes from 20 cases to 56, and its case total is now counted rather
+  than quoted.** The printed number had been hardcoded at 20 while the suite grew, which is a
+  count that cannot report a case being dropped; `clearance.py --selftest` was written with the
+  same defect and fixed in the same commit. Against the pre-change `evaluate()` the new suite
+  **fails 19 of 56** — the three tag-conditioned FAIL cases, all six gate-value forms, both
+  detection-parity cases, the SKIPPED-on-a-container case, and all seven clearance cases that
+  require the hatch to open. Run before trusting the green.
+
 - **The whole masked population is re-measured and stamped.** All 134 local rows with
   `masking.applied` were resolved to their source bytes (134 of 134) and re-masked; 132
   cleared and now carry provenance, 2 were refused by the secret gate and keep their
@@ -82,6 +139,63 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Measured, not changed
 
+- **Three findings are recorded with their full profiles and their decoded context, and none
+  is decided.** `3529f0f6b2cd` (published) still stores `encoded_layer_gate: PASS` while the
+  current gate returns `FAIL` on the bytes in the shard. **The FAIL was never written, and that
+  is the provenance stamp doing its job**: `verify-and-stamp.py` writes a stamp only where the
+  current verdict equals the recorded one, so the row is blocked on missing provenance rather
+  than on the finding, and no tool flipped a `publishable` in the published half on its own
+  authority. The finding still needed recording.
+
+  Its context: a 3-character identifier at offset 63 of a 97-character segment, 72,564
+  characters into a single unbroken 97,600-character base64 run. `34bba99dae63`'s two: three
+  occurrences of one 3-character identifier inside base64 runs of 44,284 and 158,124
+  characters, and — separately — a **6-character** identifier at offset 0 of a 25-character
+  segment in a 473,603-byte decoded PHP function table, sitting in alphabetical order between
+  two neighbouring `imagick_` entries. **That last one is the imagick case itself**, the hit
+  this file records as having killed the encoded-layer confidence grade.
+
+  **Two nulls, and using the wrong one is how the grade went wrong.** Re-running
+  `--base-rate --trials 660`: the short-name rule fires in 108 of 660 trials (16.4%), mean
+  0.182 hits per 98,473 bytes of random base64; the containment rule fires **once** in 660, and
+  one observation puts the 95% upper bound near 0.0045. Scaled by actual base64 bytes,
+  `3529f0f6b2cd`'s layer (98,473, 0.99×) expects 0.18 short-name hits and shows 1;
+  `34bba99dae63`'s plaintext (581,931 across 34 runs, 5.91×) expects 1.08 and shows 3. For the
+  6-character hit the base64 null does not apply at all — its layer is **0.0%** base64 — and
+  the right null is the stock-CMS table.
+
+- **Two published figures were re-run and one and a half of them do not reproduce.**
+  `--stock-fp` over 8,000 stock CMS files reproduces the headline exactly: 127 false positives
+  across 104 files, 1.30%, and the position split 83 `exact` / 20 `begins` / 24 `contains`.
+  **The "6+ characters" figure does not**: the tool prints **52**, and 36 is what is written
+  into `FP_NOTE`, into `_profile`'s docstring, into this file and into every stored finding
+  dict. The cause is attributable exactly — 36 is `begins` (20) plus `contains` at 6+ (16) and
+  omits the 16 `exact` hits at 6+ — and it matters for the finding actually on the desk,
+  because the omitted qualifier makes the note understate the population that the
+  6-character `begins` hit belongs to.
+
+  **`FP_NOTE` is deliberately not corrected in this commit.** It is a module-level assignment
+  in `verify-content-mask.py`, which is one of the six modules in the provenance digest, so
+  editing the string moves `tools` and re-measures all 139 stamped rows. That is a round's
+  work and must not be a side effect of a documentation fix. The docstring, which the AST
+  digest strips, is corrected in place and the tools digest is asserted unmoved at
+  `07079af767d4`.
+
+  The base-rate short-name arm also does not reproduce: recorded 0.23 per trial, reads 0.18
+  today at the same fixed seed, the same map digest `9268d21c394b` and the same tools digest,
+  and at 60/100/660 trials, so it is not a trial-count effect. The containment arm reproduces
+  exactly at 1 in 660. The ratio the argument rested on survives at about 120:1 rather than
+  150:1, and the grade it supported was withdrawn anyway, so nothing downstream moves — but
+  0.23 should be read as unreproduced, cause not established.
+
+- **Two things are sized and deliberately not armed, per measure-before-arming.** 123 published
+  rows record `plaintext_gate`/`encoded_layer_gate` `PASS` with `applied: false` and carry **no
+  provenance**; the gate asks for provenance only where masking was applied, so arming it would
+  block 123 published rows in one commit. And 8 published rows have masking applied with **no
+  `secret_gate` result at all**; the field is demanded only on a `secret`-tagged row and none of
+  the 8 is tagged `secret`, so no credential differential has ever been run over the bytes in
+  the published half. Both are recorded for a decision rather than taken.
+
 - **The five known gate failures are recorded on their rows rather than in a report.** All
   five now carry the blocker and the finding. Four were already blocked for other reasons —
   an unreviewed verdict and a `pii` tag — and their findings are strong: `exact`-position
@@ -103,6 +217,75 @@ commit list that CI generates per tag. Versions are the git tags described in
   is not this round's call to make.
 
 ### Fixed
+
+- **The gate read the tag before it read the evidence, and four rows were publishable with a
+  recorded credential failure on them.** Five local rows record `masking.secret_gate: FAIL`
+  and **none carries the `secret` tag**, so the rule armed last round — which consults
+  `secret_gate` only on a `secret`-tagged row — never looked at one of them. Four were
+  `publishable: true` with **zero** blockers; three of those were tagged `clean` alone, which
+  is in `ALWAYS_OK`, so `unmasked` was empty and the entire masking branch was skipped too.
+  Two independent tag conditions stood between a recorded credential failure and a shard.
+
+  A gate finding is evidence about the bytes and a tag is a claim about them, so `evaluate()`
+  now separates the two questions. *Does this row need a masking pass?* stays tag-driven,
+  because that is what it asks. *What did the gates that ran actually say?* is asked of every
+  row that records a result, whatever the tags are. `unreadFailures()` asserts the resulting
+  property **independently of the rule that produces it** — publishable, stored or computed,
+  while holding a recorded non-pass no clearance covers, is impossible — re-derived from the
+  record without calling `evaluate()`, so an edit that reintroduces a tag condition breaks it
+  without touching it. It was observed firing on the four real rows before the fix.
+
+  `ALWAYS_OK` is unchanged and the 637 unread `c2`-only files are still unread. What changed
+  is that a tag can no longer silence a measurement that exists; it can still stop one being
+  demanded.
+
+  **Read one at a time, four of the five are shape false positives and one is real.** A
+  genuine bcrypt hash assigned to `$stored_hash` and passed to `password_verify()` inside a
+  `base64+inflate` layer, on a row whose own `decoded_form_tags` already said `secret` while
+  its `sensitivity` was taken from `encoded_form_tags` and read `clean`. The other four: a
+  regex fragment captured from a wp-config **harvester**'s own pattern; 22 configuration
+  array-key names in a shell that uses a wp-config constant as its `$GLOBALS` namespace; 95
+  bytes of C source captured because `write(c,"Password:",9)` puts a closing quote where the
+  pattern expects an opening one; and `password:"password"` in a jQuery-Terminal string table.
+  There is a third possibility the two-way framing misses and one row is in it —
+  `b827cdd9d417`'s finding is a collision **and** the row is under-tagged, carrying `pii` in
+  its decoded layers while tagged `clean` and marked publishable. `pii` is never publishable by
+  any route. No shard has ever been distributed, so none of this was exposed.
+
+- **An unrecognised or absent gate value is now a failure by construction rather than by
+  accident.** `!= "PASS"` fails closed on everything that is not the string, which is the right
+  direction — and it cannot tell a `FAIL` from a value it does not understand, or say which it
+  saw. Six rows store `encoded_layer_gate` as a **dict** carrying `result: FAIL` (2 to 64
+  occurrences of `acct` and `dom` identifiers inside encoded layers) and twelve store the
+  string `SKIPPED-oversize (>1MB)`, which is a gate that never ran.
+
+  **Neither was being read as a pass; neither was being read at all.** Measured, not assumed:
+  every value form was run through the real `evaluate()` and each produced the blocker once the
+  branch was reached. What stopped it is that all eighteen rows carry `applied: false` and the
+  branch sat behind `if unmasked: if applied:` — the same tag condition again. `gate_result()`
+  now returns one of `pass`/`fail`/`skipped`/`unreadable`, three blockers rather than one,
+  because the repair differs: a FAIL is a human decision, a SKIP is to run the gate, an
+  unreadable value is to find out what wrote it. `detection_survived` is compared strictly to
+  `True`, so a recorded `"no"` cannot read as a pass. `verify-and-stamp.py` shares the parser;
+  its own `_norm` read every truthy non-string as `FAIL` and could not tell a dict-form `PASS`
+  from a dict-form `FAIL`.
+
+  **The dict form predates every tool in this tree** — 15 rows in the 2026-09-03 collection
+  index and 15 in the 2026-09-04 backup, 0 in both generations of the published half. No
+  surviving tool from that import writes it; the two that touch the field write the string
+  form. Last round did not introduce it. **15 → 6** because nine of the fifteen were re-masked
+  in last round's re-measurement and `mask-samples.py` overwrote the field with the string form
+  (7 `PASS`, 2 `FAIL`); the six that remain were never re-masked.
+
+  **`applied: false` means two different things and the discriminator is which key is set.**
+  `reason: "no identifier to mask"` (123 rows, all published) is a gate that ran and found
+  nothing, and its fields are measurements. `not_applicable_reason` (29 rows, all local archive
+  containers) is a recorded decision that masking is impossible, and its
+  `detection_survived: false` is a placeholder for a measurement nobody took. Only the second
+  disqualifies a field and only that one field — reading it as "masking destroyed detection"
+  would attach 29 rows to a cause that never happened. Their byte gates are still read, which
+  is where the twelve `SKIPPED` rows now block; two of those are tagged `clean` alone and were
+  held by nothing but a `local_only` marker.
 
 - **The docs conflated "published" with "distributed", and it produced a wrong conclusion
   about public exposure.** `SOURCES.md` called shards "release assets" and

@@ -35,13 +35,26 @@ _spec = importlib.util.spec_from_file_location(
 VCM = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(VCM)
 
+_sgspec = importlib.util.spec_from_file_location(
+    "shard_gate_stamp", os.path.join(HERE, "shard-gate.py"))
+SG = importlib.util.module_from_spec(_sgspec)
+_sgspec.loader.exec_module(SG)
+
 MAPS = [p for p in (VCM.INCIDENT_MAP, VCM.LEGACY_MAP) if os.path.exists(p)]
 
 
 def _norm(v):
-    """A verdict as a comparable string. Older records stored a finding dict in the gate
-    field itself rather than a verdict beside it."""
-    return v if isinstance(v, str) else ("FAIL" if v else v)
+    """A recorded verdict as its CLASS, so two records can be compared.
+
+    Delegated to `shard-gate.gate_result` so there is one parser for a gate value in the
+    tree rather than two that disagree. This used to be `v if isinstance(v, str) else
+    ("FAIL" if v else v)`, which reads any truthy non-string as a failure. That is the safe
+    direction and it is safe by accident: it cannot tell a dict recording `result: FAIL`
+    from one recording `result: PASS`, and it would have read the second as a failure and
+    refused to stamp a row that agreed with the gate. Six rows in the local half store the
+    encoded verdict in exactly that older dict schema.
+    """
+    return SG.gate_result(v)[0]
 
 
 def reverify(row, data):
@@ -212,6 +225,32 @@ def inject():
     if agrees:
         fails.append("a disagreeing encoded verdict was accepted")
 
+    # The older schema, in both directions. `_norm` used to read any truthy non-string as
+    # FAIL, which refuses a dict-form PASS that agrees with the gate and accepts nothing it
+    # should not - safe, and unable to tell the two apart. Six local rows carry this form.
+    row_dict_pass = copy.deepcopy(row_ok)
+    row_dict_pass["masking"]["encoded_layer_gate"] = {"result": "PASS", "occurrences": 0}
+    agrees, _d = reverify(row_dict_pass, clean)
+    print("  %-52s %s" % ("recorded dict PASS, gate says PASS",
+                          "stamped" if agrees else "WRONG: refused an agreeing row"))
+    if not agrees:
+        fails.append("a dict-form PASS was read as a disagreement")
+    row_dict_fail = copy.deepcopy(row_ok)
+    row_dict_fail["masking"]["encoded_layer_gate"] = {"result": "FAIL",
+                                                      "distinct_identifiers": 2}
+    agrees, _d = reverify(row_dict_fail, clean)
+    print("  %-52s %s" % ("recorded dict FAIL, gate says PASS",
+                          "refused" if not agrees else "WRONG: stamped anyway"))
+    if agrees:
+        fails.append("a dict-form FAIL was stamped over a passing gate")
+    row_skip = copy.deepcopy(row_ok)
+    row_skip["masking"]["encoded_layer_gate"] = "SKIPPED-oversize (>1MB)"
+    agrees, _d = reverify(row_skip, clean)
+    print("  %-52s %s" % ("recorded SKIPPED, gate says PASS",
+                          "refused" if not agrees else "WRONG: stamped anyway"))
+    if agrees:
+        fails.append("a SKIPPED verdict was stamped as if it had been measured")
+
     print()
     print("=== the additive assertion must be able to fail ===")
     tampered = copy.deepcopy(row_ok)
@@ -229,7 +268,7 @@ def inject():
         fails.append("the additive assertion only looks inside masking")
 
     print()
-    print("cases: 7 · passed: %d · failed: %d" % (7 - len(fails), len(fails)))
+    print("cases: 10 · passed: %d · failed: %d" % (10 - len(fails), len(fails)))
     for f in fails:
         print("FAIL:", f)
     return 1 if fails else 0

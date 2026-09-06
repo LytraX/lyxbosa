@@ -877,11 +877,42 @@ output is byte-identical to one in the input, over the plaintext and every decod
 whose secret it is, and it has already failed usefully — on an attacker password literal
 assigned to a `$pass` variable the masker's keyword list did not cover.
 
-The structural half is now done. `shard-gate.evaluate()` requires
-`masking.secret_gate == "PASS"` on a `secret`-tagged row whose masking is applied, with a
-separate blocker for a recorded FAIL and for no result at all — the repair differs, so the
-reasons differ. It sits inside the `applied` branch, because a row with masking *not*
-applied already carries one blocker for that cause and §8 counts reasons.
+The structural half is now done, and the first version of it was still half a rule.
+`shard-gate.evaluate()` demanded `masking.secret_gate` on a `secret`-tagged row whose masking
+is applied — and **five rows recorded `secret_gate: FAIL` while carrying no `secret` tag**, so
+the rule never consulted one of them. Four were `publishable: true` with zero blockers. Three
+of those were tagged `clean` alone, in `ALWAYS_OK`, which skipped the whole masking branch as
+well.
+
+The correction generalises past the secret gate, because the defect is not about secrets:
+
+> **A gate's finding is evidence about the bytes; a tag is a claim about them. Whether the
+> evidence is READ must not depend on the claim it might contradict.**
+
+So `evaluate()` asks two questions instead of one. *Does this row need a masking pass?* is
+about the tags and stays tag-driven. *What did the gates that ran actually say?* is asked of
+every row that records a result, whatever its tags are. Absence is still demanded only where
+the tags say the gate was owed — a row that owes no gate owes no result — and absence and FAIL
+stay separate blockers, because the repair differs and collapsing them would let a `--fix`
+manufacture the field. `unreadFailures()` asserts the property independently of the rule:
+publishable, stored or computed, while holding a recorded non-pass that no clearance covers,
+is impossible.
+
+**An unrecognised or absent gate value is a failure, never a pass.** `!= "PASS"` had that
+property by accident and could not tell a FAIL from a value it did not understand.
+`gate_result()` returns `pass` / `fail` / `skipped` / `unreadable`, and the last two exist
+because six rows record the verdict as a dict from an older schema and twelve record
+`SKIPPED-oversize`, which is a gate that never ran.
+
+**§7.2's escape hatch, added with more controls than anything else in the gate.** A finding a
+human reads and rules a collision is recorded as a `clearance` on the row — who, when, why,
+the digest of the finding it is about, and the gate provenance it was judged against — rather
+than as a hand-edited boolean or a re-typed tag. `publishable` stays computed. A clearance
+cannot carry to a different finding or a different gate, is invalidated when the gate
+provenance moves, cannot apply to `pii` or `content` by either of two independent routes, and
+is counted in `index-summary.json` so the number is watchable. Only a recorded gate result is
+clearable: a verdict, a `local_only` hold, an unapplied masking pass and the provenance blocker
+are work to do rather than evidence to judge.
 
 **The count previously recorded here as "seventeen" was measured on the wrong side of that
 round's own `--apply`.** Two things establish it. No variant of the predicate returns 17
@@ -902,9 +933,18 @@ the secret gate; two were refused, each carrying one `wp-credential`-shaped lite
 came through masking byte-identical to its input. Those two are now blocked, which is the
 first time this rule has been observed to say no.
 
-No shard carries a `secret`-tagged sample today, so arming it moves no published figure —
-the published half holds zero `secret`-tagged rows, and its gate run is unchanged at
-44,544 publishable, 0 stale.
+No shard carries a `secret`-tagged sample today, so arming it moved no published figure —
+the published half holds zero `secret`-tagged rows.
+
+**Re-measured 2026-09-06, after the tag/evidence correction above.** The secret-tagged
+population is unchanged at 88 and splits exactly as before: 46 applied with a recorded gate,
+2 applied with none, 8 `applied: false` with a `not_applicable_reason`, 32 with no masking
+record. The cause of the non-movement is that nothing this round re-tags a row and nothing
+adds or removes a `secret_gate` key; what changed is only whether a *recorded* result is read,
+and all five rows it newly reaches are outside the 88 — which is the whole point of the
+finding. The published half reads **44,543 publishable of 44,544, 0 stale**; the one blocked
+row is `3529f0f6b2cd` on missing gate provenance, blocked by the previous round rather than
+this one. The figure recorded here as 44,544 predates that block.
 
 ## 8. Golden test suite
 

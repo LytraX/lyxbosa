@@ -254,12 +254,26 @@ def _profile(pairs):
     function-name table, a plugin manifest, a wordlist - and code is where an account name
     that is also an English fragment collides. Re-run against 8,000 stock CMS files, which
     contain no customer of ours by construction so every hit is a false positive: 127 hits
-    across 104 files, and **36 of them are containment hits from identifiers of six
-    characters or more** - 20 `begins`, 16 `contains`. Even `exact` produced 15 at length 8.
-    On realistic content the long rule is not meaningfully safer than the short one, and a
-    label saying otherwise would have been a licence rather than a measurement. The case
-    that caught it was real: a six-character account name sitting inside `imagick_...` in a
-    473 KB decoded function table, which the length rule would have called high confidence.
+    across 104 files. On realistic content the long rule is not meaningfully safer than the
+    short one, and a label saying otherwise would have been a licence rather than a
+    measurement. The case that caught it was real: a six-character account name sitting
+    inside `imagick_...` in a 473 KB decoded function table, which the length rule would
+    have called high confidence.
+
+    **`FP_NOTE` says 36 come from identifiers of 6+ characters, and `--stock-fp` prints 52.**
+    Regenerated 2026-09-06, every other figure in the note reproduces to the digit - 127
+    hits, 104 files, 1.30%, and 83 `exact` / 20 `begins` / 24 `contains`. The 36 is
+    `begins` (20) plus `contains` at 6+ (16) and omits the 16 `exact` hits at 6+; the
+    summary line sums every class at 6+ and reads 52. Both are true of different questions
+    and the note states the narrower one without its qualifier, which matters when the
+    finding being weighed IS a 6-character `begins` hit - the note understates the
+    population it belongs to.
+
+    The constant is deliberately not corrected here. `FP_NOTE` is a module-level assignment
+    and this file is one of the six in `gate_provenance.TOOLS`, so editing the string moves
+    the `tools` digest and re-measures all 139 stamped rows. A prose repair must not
+    invalidate the index as a side effect. This docstring is stripped from the AST digest,
+    so correcting it costs nothing; the constant is a round's work and is queued as such.
 
     That is §11 exactly - a denominator enumerated by a process that does not resemble the
     population bounds the result and not reality - so no grade is emitted. What is recorded
