@@ -13,6 +13,75 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **`corpus/gate_evidence.py` — the stamp now compares the whole finding, not the verdict
+  class.** A provenance stamp asserts that *these tools produced these verdicts*, and both
+  tools that write one compared the verdict class and stopped there. So a finding payload
+  could go stale beneath a stamp that appears to certify it, and the two tools then disagreed
+  in a way that left the row unrepairable by either: `verify-and-stamp.py` stamps where the
+  verdicts agree, so `FAIL` still being `FAIL` meant it stamped; `remeasure-gates.py` refuses
+  where no verdict moved, so it would not write the fresh payload. Neither was wrong about the
+  verdict.
+
+  **This is worse than the two blind spots closed before it, and specifically rather than
+  rhetorically: those blocked rows and this one authorises.** The evidence is what a person
+  reads when they judge a finding, and `clearance.finding_digest` is taken over exactly that
+  evidence, so a payload moving under a current stamp un-anchors a human decision instead of
+  raising a blocker. There is a second route to the same place and it was opened deliberately:
+  `FP_NOTE` moved out of `verify-content-mask.py` last round so that correcting a
+  false-positive figure would stop invalidating 140 stamps — which means the note can now be
+  rewritten with `provenance.tools` unmoved while `false_positive_note` inside every stored
+  finding, and every clearance digest keyed to it, moves.
+
+  Both tools now compare through this module, so they cannot go back to disagreeing about what
+  "the row records this" means. The evidence is read through `clearance.evidence_for` rather
+  than a second lookup table — a stamp has to certify exactly what a clearance keys to — and
+  `same_finding()` asserts that tie in both directions. Out of `gate_provenance.TOOLS` on the
+  same ground `shard-gate.py` is out: it decides no gate verdict, and including it would
+  invalidate all 142 stamps on every edit to a comparator.
+
+  **The rule was measured before it was armed.** Requiring the recorded block to carry every
+  key the current tools emit would put **126 of the 132** measurable rows into re-measurement
+  for `note`, a constant string of prose that neither writer disagrees about. So the armed rule
+  is the keys the row records; a key the tools emit and the row does not is reported as
+  `unrecorded_fields` and is not a difference, and the opposite direction — a key the row
+  records that the tools no longer emit — is. 27 control cases, and against the superseded
+  verdict-only comparison **6 of the 27 fail**.
+
+- **`shard-gate.py`: a recorded `decision` must carry its `resolution`.** A block reading
+  `decision: held for human confirmation; not published until resolved` with no `resolution`
+  beside it is, to every tracked consumer of this index, identical to a row with nothing wrong:
+  `publishable` is computed from gate verdicts and tags, none of which the decision touches.
+  The sentence says the row is held and nothing holds it.
+
+  **The population is zero and the controls are therefore the whole of the check, which is
+  written into its docstring.** Two rows in the corpus carry a `decision`, both published, both
+  `publishable: true`, both carrying a `resolution`; nothing tracked read either field. So this
+  rule has never fired, cannot be validated against real data, and is exactly what AGENTS.md
+  means by "not yet a check". Ten control cases in both directions, including a decision under
+  `gate_categories` (the second place findings live), a resolution recorded as empty, a
+  resolution with no decision, §8's one-cause-one-reason on a row already blocked elsewhere,
+  and the assertion that it is not clearable. The live run prints the census — 2 carriers, 0
+  unresolved — as a statement about the population, never as evidence the rule works.
+
+- **Two orphan fields given a tracked reader in `shard-gate.py`, both invariants that have
+  never fired.**
+
+  `masking.detection_after_masking` (6 published rows) looks redundant beside `rules_after` and
+  is not: **no published row carries `rules_after` at all**, so on those six rows it is the
+  published half's only record of what the scanner matched after masking — and it is the
+  measurement `expect.must_detect` was taken from. The reader is the relationship it stands in:
+  `set(expect.must_detect) <= set(detection_after_masking)`, a floor rather than an equality,
+  because the recorded scan may legitimately have seen more but may not have failed to see
+  something the row asserts. It holds on 6 of 6, with equality on all six. 7 controls.
+
+  `staging_dir` (75 rows, **67 of them published**) is a directory name, and the positive form
+  of that is what is asserted — one path component from `[A-Za-z0-9._-]` — the same discipline
+  as `HOME_RE`/`ACCT_RE` and map-free for the same reason. Measured before arming: 13 distinct
+  values, 7 to 32 characters, every one a single component, and **none matching an identifier in
+  either pseudonym map**. They are attacker-created directory names. The rule's value is not
+  today's population; it is that the field can never come to hold `/home/<x>/…` without
+  something saying so. 11 controls.
+
 - **`pre-push-check.py` now delegates `make-summary.py --check`, so a stale denominator
   refuses a push.** The rule that it must be run was already in AGENTS.md, already annotated
   with the note that it exists because a round was reported green while it was failing — and a
@@ -68,6 +137,157 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Changed
 
+- **`verify-and-stamp.py` and `remeasure-gates.py` compare the finding, and
+  `remeasure-gates.py` now writes only what moved.** The stamper refuses a row whose payload
+  the current tools would not produce even where `FAIL` is still `FAIL`, and says which cause —
+  a moved verdict needs a decision, a moved payload needs a re-measurement, and §8 counts
+  causes. The re-measurer treats a moved payload as a reason to run.
+
+  Arming that made two previously harmless rewrites harmful, so the write is now scoped to the
+  keys `moved()` reports. Normalising a recorded `{"result": "FAIL"}` into the string `"FAIL"`
+  moves `clearance.finding_digest` and takes a human clearance with it, for a verdict whose
+  class never changed; and the finding-removal branch — correct when a gate goes back to
+  `PASS` — would have **deleted a human decision record** sitting under `encoded_layer_finding`
+  on a published row whose gate already passes. A block carrying a `decision` is now refused
+  outright rather than rewritten or removed. A finding is also written to whichever block holds
+  it, `masking` or `gate_categories`, so a row cannot end up with two copies of one finding and
+  one of them superseded; `assert_scoped` checks inside `gate_categories` rather than waving the
+  block through. `remeasure-gates --inject` 26 → **44** cases, `verify-and-stamp --inject` →
+  **25** with a counted total (it was the literal 14), and 4 of the 25 fail against the
+  superseded comparison.
+
+- **The drift was measured across every stamped row, and it is two.** 142 rows carry a
+  provenance stamp — 141 current, 1 published stamp left `stale` for want of bytes.
+  `restage-masked.py` regenerated and hash-verified the masked bytes for **132** of the 142
+  from their originals, which is every row that records a `masked_sha256` the regeneration
+  reproduces; the other 10 are 7 published rows recording no `masked_sha256` at all (6 shipped
+  fixtures and the stale one) and 3 whose regeneration hashes to something this tree no longer
+  reproduces. Of the 132, **2 carry a current stamp over evidence the current tools would not
+  produce**, and in both the verdict class is unmoved.
+
+  **State the power, not just the outcome.** The drift found is entirely in `secret_literals`,
+  which is recorded on **132 of 142** masked rows — and every one of those 132 is measured, so
+  for that field this is a census and not a sample. `plaintext_finding` is 5 of 5 measured.
+  `encoded_layer_finding` is 3 of 5: the two unmeasured are the published rows in *Measured, and
+  open* below. 138 of the 140 recorded evidence blocks were re-measured; the two that were not
+  could not be, and are named.
+
+  Cause, attributed rather than assumed: re-running the gate from `d548b3e` over the same
+  before/after pairs reproduces both recorded payloads exactly, and today's gate reproduces
+  neither. The payloads were produced by the predicate superseded in `194e969` — the PEM shape
+  and the widened `quoted-credential` keyword — while the stamp beside them is the one that
+  repair created. `34bba99dae63`: 1 / 1 / 1 recorded, **2 / 2 / 2** today. `b827cdd9d417`:
+  22 / 23 / 22 recorded, **27 / 25 / 23** today, with `shapes_carried_over` gaining
+  `quoted-credential`.
+
+  Both re-measured with `remeasure-gates.py --by cl`. `b827cdd9d417` loses a blocker as a
+  result — *"masking left more credential-shaped literals than it found (22 → 23) over a
+  decoded-layer population that moved"* — because the widened pattern sees 27 literals in the
+  input where the old one saw 22, so the apparent increase was an artefact of a pattern that
+  could see fewer literals before masking than after. It stays unpublishable on `pii`.
+
+- **Three clearances on `34bba99dae63`, and the row becomes `publishable: true` — read this
+  one.** The two identifier clearances were re-signed against a fresh measurement rather than
+  carried forward: both findings were re-derived from the bytes today and both digests are
+  unchanged (`35c1c513eafa`, `410ecb66d940`), so what had lapsed was only the provenance pin.
+  The plaintext reason is re-derived — three `contains` hits of one 3-character label in base64
+  ciphertext runs, each bounded by digits, at offsets 15 / 50 / 16 of segments of 70 / 74 / 19;
+  the base64 null regenerated today at 660 trials × 98,473 bytes gives 0.182 hits per trial, the
+  masked bytes carry **585,252 bytes of base64 run over 211 runs**, so the null expects 1.08 and
+  three is p ≈ 0.10 under Poisson. (The previous signature cited 581,931 bytes over 34 runs; the
+  byte total agrees to 0.6% and the run count was taken over a different definition of a run.)
+  The encoded-layer reason is sharper than the one it replaces: the 25-character segment is not
+  a name at all — the splitter treats `_` as a separator and `|` as an ordinary character, so it
+  is the tail of one pipe-delimited function name plus the extension prefix of the next, and the
+  `begins` position is an artefact of where that prefix ends.
+
+  The third is a ruling: **both carried-over secret literals are collisions.** They are UI
+  strings in a vendored browser-terminal widget, in one `strings` message table inside a
+  119,508-byte `base64+inflate` layer. Neither was changed by masking, which is the gate working
+  — it measures whether masking altered a credential-shaped literal — on two strings that are
+  not secrets.
+
+  **The trade is recorded with the ruling, because it is a real cost and not a defect.** The
+  second literal is visible only because the pattern's left boundary was dropped last round so a
+  password on a variable whose name *ends* with the keyword would be caught. Priced by running
+  the same 32,000-file stock null through the pre-repair pattern: `quoted-credential` false
+  positives **116 → 230**, of which **113 are the dropped left boundary**, 1 the added `pwd`
+  keyword and 0 the new PEM shape; space-containing ones **42 → 87**; and that literal's own
+  class — keyword `password`, 8–15 characters, *with* a space — goes from **0 to 9**. The first
+  literal's class is the largest in the null at **59 of 230**. No shape refinement is proposed:
+  "contains a space" would be a guess of the same kind as the last one and has not survived a
+  null of its own.
+
+  **Consequence, stated plainly:** all three of this row's blockers now carry an applicable
+  clearance, so `shard-gate.py --fix` computes `publishable: true` and local publishable goes
+  **364 → 365**. That is the escape hatch doing exactly what it is for, and it is also the first
+  time it has opened. The row is in the local half and nothing promotes it; promotion remains a
+  separate act.
+
+- **`clear-finding.py` refused the one act the clearance design demands.** Its duplicate test
+  compared the gate and the finding digest and stopped there, so a clearance that had gone
+  **inert** because the tools digest moved — the state this design deliberately produces, and
+  the state both clearances on `34bba99dae63` were in — could never be re-signed. The refusal
+  even named the case (*"an inert one being papered over"*) while being unable to tell it from a
+  genuine duplicate: the finding is the same and what has changed is the pin, which the test did
+  not read.
+
+  The comparison is now (gate, finding, **pin**). Same finding under the same pin is a duplicate
+  and stays refused; same finding under a pin that has since moved is appended, never edited
+  over the old record, and carries `supersedes` naming what it re-signs — the record of who
+  judged what under which gate is a history, not a slot. 8 new controls in both directions,
+  including that the re-signed clearance actually applies and the superseded one is still inert
+  and unedited. The suite's hardcoded total said 19 while it ran 18; it is counted now, and 26.
+
+- **`corpus/field-provenance.py`: a control fixture is not a writer.** The same bound the
+  previous entry repaired, one module along. Every tool here carries an `inject()`, and a
+  control fixture is a dict literal — which the parser reads as a write position exactly like a
+  real one. Measured over both halves, **nine fields carried by rows have no write position
+  anywhere in `corpus/` outside a control suite**, including `account_hash` on 67,985 rows and
+  `origin.account_hash` on 47,133, whose only mention in this repository is a fixture in
+  `regen-tiers.py --inject`. All nine were reported as covered.
+
+  Write positions inside `inject()` and `_selftest()` stop counting; **read** positions still
+  do, because a control that reads a field is a tracked reader in the only sense this census
+  measures — and without that asymmetry the repair would throw away real coverage. Eight of the
+  nine have a genuine reader elsewhere and move to `read-only`; exactly one,
+  `deobfuscation.status` on **645 rows**, was a true orphan the census had been hiding. A second
+  instance came with it: `tracked modules parsed` was computed as the number of modules with at
+  least one *write* position — the same number by coincidence until fixtures stopped counting,
+  after which it read **30** over a directory of 34.
+
+  | | before | after | cause |
+  |---|---|---|---|
+  | fields carried by rows | 311 | 314 | three `masking.remeasured.*` keys this round writes |
+  | written by a tracked module | 241 | 237 | −9 fixture-only, +5 genuinely written |
+  | read-only | 3 | 13 | 8 fixture-only fields that do have readers, plus the two given one below |
+  | **ORPHAN** | **67** | **64** | see below |
+
+  Orphans, cause by cause, against the same rows: 69 with the pre-round modules and the old
+  rule; −2 for the `masking.remeasured` keys this round genuinely writes; −2 for
+  `encoded_layer_finding.decision` / `.resolution`, which gained a tracked reader in the
+  decision invariant; **+1** for `deobfuscation.status`, revealed by the fixture rule; −2 for
+  `detection_after_masking` and `staging_dir`, given readers above. Recorded as `CORPUS_PLAN.md`
+  §11's **tenth** appearance, and the sharper lesson of the ten: a bound repaired in one place
+  has not been repaired, because the property that produced it is still in the tool.
+
+- **Counts that moved this round, each with its cause, and the ones that did not.**
+  **No detection figure moves**: all 40 detection-bearing fields in `index-summary.json` are
+  byte-identical before and after, which is a census of both halves rather than a sample. No
+  scanner was run, nothing was rebuilt, `measured_with` is untouched at `4c3e0af08988` on every
+  row, and no sample's bytes changed. `gate_provenance.tools_digest()` is **`83735611dab4`
+  before and after** — nothing this round touches is inside `TOOLS` — so **0 rows were
+  re-stamped** and the stamp census is unchanged at 7 `ok` + 1 `stale` published, 134 `ok` local.
+
+  Exactly **10** fields in the summary moved, and every one traces to one of the two rows:
+  `cleared_by_human_rows` 0 → 1, `_findings` 0 → 3, `_by_gate` gaining one per gate (the three
+  clearances); `local_only_blockers` losing one each of *plaintext gate did not pass* (5 → 4),
+  *encoded-layer gate did not pass* (9 → 8) and *secret gate did not pass* (11 → 10) (the same
+  three); the *22 → 23 over a decoded-layer population that moved* blocker going to zero (the
+  `b827cdd9d417` re-measurement); and `local_only_publishable_no_blocker` 364 → 365. Published
+  publishable is **44,543 → 44,543**. `index-summary.json` is regenerated in this round, and
+  `make-summary.py --check` was failing until it was.
+
 - **`corpus/field-provenance.py` no longer parses itself, and its map test is no longer a
   count.** Both were making the orphan census report fewer orphans than there are, and one of
   them was hiding fields the census had itself recorded as orphans.
@@ -108,26 +328,23 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Measured, and open
 
-- **A finding payload can go stale beneath a stamp that appears to certify it.**
-  `34bba99dae63` records `secret_literals` 1 / 1 / 1 with `masking.provenance.tools:
-  83735611dab4` — the current digest. Today's gate returns **2 / 2 / 2**, and re-running the
-  pre-repair gate from `d548b3e` over the same two files returns 1 / 1 / 1, so the payload was
-  produced by the superseded predicate while the stamp beside it is current.
+- **Two published rows record a human adjudication inside a gate-finding key.**
+  `9437f7423b83` and `9bbe4a34dc6b` put `decision` / `resolution` / `classification` / `value` /
+  `why_it_matters` under `masking.encoded_layer_finding`, on rows whose encoded-layer gate reads
+  `PASS`. The gate produces no finding on a pass, so the key holds something the tools would
+  never write, and `gate_evidence.compare` reads that as a payload the current tools would not
+  produce — correctly, and for a reason no re-measurement can repair. Neither row has bytes to
+  measure (both record no `masked_sha256`), so nothing acts on it today. The repair is to give
+  the adjudication its own key rather than to borrow the gate's; not done, and recorded rather
+  than done quietly.
 
-  Neither tool is at fault and both would do it again. `verify-and-stamp.py` compares gate
-  *verdicts* and stamps where they agree — `FAIL` did not become `PASS`, so it stamped.
-  `remeasure-gates.py` compares verdict *classes* and refuses where none moved — so it will not
-  rewrite it, and correctly refused this row. **Nothing in the tree compares the evidence.**
-  Recorded as open rather than repaired.
-
-- **Both findings on `34bba99dae63` re-measured against the current gate and unchanged in every
-  field** — the encoded-layer finding is still one 6-character identifier, 1 occurrence,
-  `begins`, in a 25-character segment; the plaintext finding is still one 3-character
-  identifier, 3 occurrences, `contains`, segments 19/70/74. The masked bytes were regenerated
-  and hash-verified to the recorded `masked_sha256` first, because the file left on disk from an
-  older masking pass hashes to something else. The two human clearances remain **inert** against
-  the current digest, and the row now carries **three** blockers rather than two, so re-signing
-  them would not make it publishable — which is the design working, not a problem to solve.
+- **The two writers of `masking.secret_literals` disagree about its schema.**
+  `mask-samples.py` writes a named 12-key subset; `remeasure-gates.py` writes everything
+  `secret_gate()` returns bar the verdict, which is 13. The odd key is `note`, a constant string
+  of prose. 126 rows carry 12 keys and **8** carry 13 — the six re-measured last round and the
+  two re-measured this one. Measured and not armed: it is why `gate_evidence` compares the keys
+  the row records, and reconciling it would rewrite 126 rows for a prose key and move every
+  `finding_digest` keyed to one.
 
 ### Removed
 

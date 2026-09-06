@@ -1,8 +1,12 @@
 {
- "cleared_by_human_by_gate": {},
- "cleared_by_human_findings": 0,
+ "cleared_by_human_by_gate": {
+  "encoded_layer_gate": 1,
+  "plaintext_gate": 1,
+  "secret_gate": 1
+ },
+ "cleared_by_human_findings": 3,
  "cleared_by_human_note": "a gate finding a person read and ruled a collision, recorded on the row with who, when, why, the digest of the finding it is about and the gate provenance it was judged against. `publishable` is still computed: a cleared row is publishable because the gate says so given a recorded human input, never because the field was written over. A clearance stops applying by itself when either the finding or the gate that produced it moves, and shard-gate.py reports the ones that have. Counted here so the number can be watched: it is the only route by which a recorded FAIL becomes a publishable row",
- "cleared_by_human_rows": 0,
+ "cleared_by_human_rows": 1,
  "discovered_by_blobs": {
   "directory-context": 31060,
   "lyxbosa-scan": 419,
@@ -55,7 +59,7 @@
   "carries pii, which is not maskable and is never published": 26,
   "carries secret but no masking has been applied": 31,
   "carries secret with masking applied but no secret_gate result was recorded": 2,
-  "encoded-layer gate did not pass": 9,
+  "encoded-layer gate did not pass": 8,
   "encoded-layer gate was not run: SKIPPED-oversize (>1MB): held, not published": 12,
   "marked local_only: archive container this pass could not open (unsupported format). Recorded as unopened rather than scanned-and-clean: 5.6 says an absence must first prove the file was read": 1,
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 1 members read; byte-masking a container corrupts it (5.5)": 2,
@@ -69,15 +73,14 @@
   "marked local_only: benign customer-site cache metadata: no rule fires on it and it is not reproducible from a pinned source, so it is accounted for but not published": 144,
   "marked local_only: permanent": 311,
   "marked local_only: verdict proposed by an automated review pass on 2026-09-05; awaiting human confirmation before publication": 757,
-  "masking left more credential-shaped literals than it found (22 -> 23) over a decoded-layer population that moved (23 layers before, 16 after): the two counts are censuses of different populations": 1,
   "obfuscated and did not decode: held local-only permanently": 100,
-  "plaintext gate did not pass": 5,
-  "secret gate did not pass": 11,
+  "plaintext gate did not pass": 4,
+  "secret gate did not pass": 10,
   "sensitivity not yet assessed": 42335,
   "verdict is unreviewed: nothing leaves that state without a human": 46784
  },
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
- "local_only_publishable_no_blocker": 364,
+ "local_only_publishable_no_blocker": 365,
  "local_only_publishable_no_blocker_note": "rows held local-only that the section 7.2 gate does not block. Held for a reason outside the gate's remit - no shard carries their bytes, or they lack the family/technique classification a published row needs - so they appear under no blocker and would otherwise be an unattributed count",
  "malicious_detected": 696,
  "malicious_detected_excl_predates_ruleset": 631,
