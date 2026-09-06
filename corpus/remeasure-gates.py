@@ -112,6 +112,42 @@ WRITABLE |= {CATEGORIES}
 HUMAN_DECISION = "decision"
 
 
+def recorded_form(key, finding):
+    """The finding as it is RECORDED, which is not always the whole thing measured.
+
+    THE TWO WRITERS HAD FORKED THE SCHEMA AND NOTHING SAID SO
+    ----------------------------------------------------------
+    `mask-samples.py` records a named subset of `secret_gate`'s twelve measured fields.
+    `build()` wrote `findings[key]` whole - everything the gate returned bar the verdict -
+    which is thirteen, the extra being `note`, a constant string of prose. Measured today
+    over both halves: 124 rows at twelve keys, 8 at thirteen, and all 8 of the thirteens
+    are rows this tool rewrote. Every one of them was created here.
+
+    That matters because `gate_evidence.compare_gate` compares the keys the ROW records, a
+    choice measured as safe against "a note field holding a constant string" and not against
+    two schemas. Two rows in the same condition were being compared over different key sets,
+    and the only thing keeping the two answers identical is that the note happens to be a
+    literal inside a `gate_provenance.TOOLS` module, so its text cannot move without every
+    stamp going stale in the same instant. That is a coupling to check, not to rely on.
+
+    So the recorded form is narrowed here to the same tuple `mask-samples.py` writes, taken
+    from `gate_evidence.RECORDED_SECRET_KEYS` rather than restated, and asserted equal to
+    that module's own AST by `gate_evidence --inject`. Consequence, stated rather than
+    hidden: a row that currently records thirteen keys drops to twelve the next time this
+    tool legitimately rewrites its secret finding, which moves `clearance.finding_digest`
+    for that gate. That can only happen on a row whose evidence moved - `build()` writes
+    nothing where nothing moved - and a moved evidence field moves the digest anyway.
+
+    Other findings are recorded whole. `plaintext_finding` and `encoded_layer_finding` carry
+    `false_positive_note`, which is NOT the same kind of prose: it states a measured rate a
+    human weighed, `clearance.finding_digest` covers it deliberately, and dropping it would
+    remove the qualifier from every judgement keyed to it.
+    """
+    if key != "secret_literals" or not isinstance(finding, dict):
+        return finding
+    return {k: finding[k] for k in gate_evidence.RECORDED_SECRET_KEYS if k in finding}
+
+
 def measure(data, before=None):
     """(verdicts, findings) from the current gate over these bytes.
 
@@ -232,7 +268,7 @@ def build(row, data, by, at=None, before=None):
         key = EVIDENCE[k]
         if key in findings:
             for block in (_where_recorded(m, key) or [m]):
-                block[key] = findings[key]
+                block[key] = recorded_form(key, findings[key])
         else:
             # A finding belongs to a failing verdict. When a gate goes back to PASS its
             # finding has to GO, or the row keeps evidence for a verdict it no longer
@@ -643,6 +679,47 @@ def inject():
     a9, _r9 = build(ordinary, pw_after, "cl", before=pw_before)
     case("an ordinary superseded finding is still removed",
          "encoded_layer_finding" not in (a9 or {}).get("masking", {}), True)
+
+    print()
+    print("=== the recorded form of a finding is not always the whole measurement ===")
+    # The schema fork this tool created: it wrote everything `secret_gate` returned, where
+    # `mask-samples.py` writes a named subset, and the difference is one prose key. Both
+    # directions, because a narrowing that dropped everything and one that dropped nothing
+    # look identical on a row whose measurement happens to match.
+    FULL = {k: 1 for k in gate_evidence.RECORDED_SECRET_KEYS}
+    FULL["note"] = "counts and shapes only"
+    case("the prose key is not recorded",
+         "note" in recorded_form("secret_literals", FULL), False)
+    case("and every measured field still is",
+         sorted(recorded_form("secret_literals", FULL)),
+         sorted(gate_evidence.RECORDED_SECRET_KEYS))
+    case("the values are the measured ones, not defaults",
+         set(recorded_form("secret_literals", dict(FULL, secret_literals_after=7)).values()),
+         {1, 7})
+    case("a field the gate did not return is not invented",
+         "shapes_remaining" in recorded_form(
+             "secret_literals", {k: 1 for k in gate_evidence.RECORDED_SECRET_KEYS
+                                 if k != "shapes_remaining"}), False)
+    # The other findings are recorded WHOLE, and `false_positive_note` is the reason: it
+    # carries a measured rate a human weighed, and the digest covers it on purpose.
+    prof = {"occurrences": 3, "false_positive_note": "127 across 104 of 8,000",
+            "note": "identifier names deliberately not recorded here"}
+    case("an identifier finding keeps its false-positive figure",
+         recorded_form("encoded_layer_finding", dict(prof)), prof)
+    case("and keeps its own note too", recorded_form("plaintext_finding", dict(prof)), prof)
+    case("a finding that is not a dict is passed through untouched",
+         recorded_form("secret_literals", "FAIL"), "FAIL")
+    # The tie: this tool and the masking driver must record the same twelve.
+    case("the recorded subset is mask-samples.py's own",
+         set(gate_evidence.RECORDED_SECRET_KEYS)
+         == set(gate_evidence.mask_samples_secret_keys() or ()), True)
+    # And end to end through build(), which is where it actually matters.
+    forked = row(masking={"secret_gate": sres5[SECRET],
+                          "secret_literals": dict(stale_payload, note="a constant")})
+    a10, _r10 = build(forked, pw_after, "cl", before=pw_before)
+    case("a row rewritten through build() comes out at twelve keys",
+         sorted((a10 or {}).get("masking", {}).get("secret_literals", {})),
+         sorted(gate_evidence.RECORDED_SECRET_KEYS))
 
     print()
     print("=== the scope assertion must be able to fail ===")

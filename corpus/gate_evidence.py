@@ -54,11 +54,16 @@ directions.
 block to carry every key the current tools emit - was measured over the 132 masked rows whose
 bytes are hash-verified on this machine:
 
-  * 126 rows record 12 `secret_literals` keys and 6 record 13. The 12 are `mask-samples.py`'s
-    named subset; the 13 are everything `secret_gate` returns bar the verdict, which is what
-    `remeasure-gates.py` writes. The one key that differs is `note`, a constant string of
-    prose. Under the strict rule 126 of 132 rows - 95% of the masked population - would read
-    as drift for a prose key neither tool disagrees about.
+  * **124 rows record 12 `secret_literals` keys and 8 record 13**, re-derived today over both
+    halves. The figure recorded when this rule was armed was 126 and 6, and the difference
+    has a cause rather than an error: the two rows `remeasure-gates.py` rewrote at the end of
+    that round - `34bba99dae63`, whose payload went 1/1/1 to 2/2/2, and `b827cdd9d417`, whose
+    went 22/23/22 to 27/25/23 - moved from twelve keys to thirteen as a side effect of being
+    rewritten. Arming the rule created two more instances of the case it was measured against.
+    The 12 are `mask-samples.py`'s named subset; the 13 are everything `secret_gate` returns
+    bar the verdict, which is what `remeasure-gates.py` wrote. The one key that differs is
+    `note`, a constant string of prose. Under the strict rule 124 of 132 rows - 94% of the
+    masked population - would read as drift for a prose key neither tool disagrees about.
 
 That is the flood shape this corpus keeps refusing, so the armed rule is the recorded keys.
 Keys the current tools produce and the row does not are reported as `unrecorded_fields` and
@@ -66,6 +71,34 @@ are not a difference: an incomplete record is a different defect from a wrong on
 different repair, and §8 counts causes rather than symptoms. The opposite direction IS a
 difference - a key the row records that the tools no longer produce reads as absent and
 fails, which is what stops a field being deleted out of a comparison.
+
+THE SCHEMA FORK IS THE CASE THAT RULE WAS NOT MEASURED AGAINST
+---------------------------------------------------------------
+What was measured was "a note field holding a constant string". What exists is **two
+schemas**, and they are not the same thing: two rows in the same condition are now compared
+over different key sets, and nothing said so. `RECORDED_SECRET_KEYS` closes the writer half -
+`remeasure-gates.py` now writes the same named subset `mask-samples.py` does, and
+`--inject` reads that subset out of `mask-samples.py`'s own AST rather than restating it, so
+they cannot drift apart again. The extra key is an artefact of one writer emitting whatever
+the gate returned, not a second legitimate schema: `note` carries no measurement, it is
+byte-identical on all 8 rows, and no reader anywhere distinguishes the two shapes.
+
+**Why the eight rows are not rewritten, priced rather than asserted.** Dropping `note` from
+them moves `clearance.finding_digest` for `secret_gate`, and one of the eight -
+`34bba99dae63` - carries a live human clearance keyed to exactly that digest. Rewriting the
+record would inert an authorisation entered a round ago, over a constant string that carries
+no measurement, and re-signing it is the operator's act and not a tool's. So the schema is
+reconciled at the writer and converges by attrition: no new row can fork, and each of the
+eight collapses to twelve keys the next time it is legitimately re-measured.
+
+**And the divergence is inert today for a reason that is now checked rather than assumed.**
+The two schemas can only be compared differently if the note's TEXT moves, and that string
+is a literal inside `verify-content-mask.py`, which is one of the six modules in
+`gate_provenance.TOOLS` - so editing it moves the `tools` digest and every stamped row reads
+stale in the same instant. The fork cannot go live quietly. That coupling is exactly what
+`fp-note.txt` deliberately broke for the OTHER prose key in this block's sibling finding, so
+it is a property to check and not to trust: `digest-controls.py` asserts both halves - the
+note inside the AST moves the digest, the note outside it does not.
 
 WHAT IT DOES NOT ANSWER
 -----------------------
@@ -75,11 +108,66 @@ because it looks like one. And it says nothing about `detection_survived`, whose
 `rules_before`/`rules_after` and whose provenance is `measured_with`: no module in `TOOLS`
 produces it and no stamp here claims it.
 """
-import json
+import ast, json, os
 
 import clearance
 
-__all__ = ["STAMPED_GATES", "evidence_for", "compare_gate", "compare", "same_finding"]
+__all__ = ["STAMPED_GATES", "RECORDED_SECRET_KEYS", "evidence_for", "compare_gate",
+           "compare", "same_finding", "mask_samples_secret_keys"]
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+# The `secret_literals` block as it is RECORDED - the twelve measured fields, and no prose.
+#
+# It lives here rather than in `mask-samples.py` because that file is one of the six in
+# `gate_provenance.TOOLS`: a module-level constant added there would change its AST, move
+# the `tools` digest, and put all 142 stamped rows into re-measurement to install a name.
+# This module decides no verdict and is deliberately outside TOOLS for the same reason
+# `shard-gate.py` is.
+#
+# So it is a copy, and a copy is only safe if something asserts it. `mask_samples_secret_keys`
+# reads the tuple out of `mask-samples.py`'s own syntax tree and `--inject` asserts the two
+# are equal, which is the same tie `evidence_for is clearance.evidence_for` makes one level
+# along: a stamp must certify exactly what a clearance keys to, and a re-measurement must
+# record exactly what a masking pass records.
+RECORDED_SECRET_KEYS = ("secret_literals_before", "secret_literals_after",
+                        "secret_literals_carried_over", "secret_literals_added",
+                        "secret_literals_added_by_the_masker",
+                        "secret_literals_added_unattributed",
+                        "shapes_carried_over", "shapes_added_unattributed",
+                        "shapes_remaining",
+                        "decoded_layers_before", "decoded_layers_after",
+                        "literal_population_comparable")
+
+
+def mask_samples_secret_keys(path=None):
+    """The key tuple `mask-samples.py` records for `secret_literals`, read from its AST.
+
+    Parsed rather than imported: importing that module executes a masking driver. Parsed
+    rather than grepped, because the question is which names are in THAT tuple and a text
+    search cannot tell one tuple from another. Returns None where the shape it looks for is
+    not there any more, which the control reports as a failure rather than as agreement -
+    an extractor that silently finds nothing would make the tie pass by being blind.
+    """
+    p = path or os.path.join(HERE, "mask-samples.py")
+    with open(p, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for k, v in zip(node.keys, node.values):
+            if not (isinstance(k, ast.Constant) and k.value == "secret_literals"):
+                continue
+            if not isinstance(v, ast.DictComp) or not v.generators:
+                continue
+            it = v.generators[0].iter
+            if not isinstance(it, (ast.Tuple, ast.List)):
+                continue
+            names = [e.value for e in it.elts
+                     if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            if len(names) == len(it.elts):
+                return tuple(names)
+    return None
 
 # The gates a provenance stamp claims: every one produced by a module inside
 # `gate_provenance.TOOLS`. `detection_survived` is clearable and is deliberately absent -
@@ -350,6 +438,60 @@ def _selftest():
     case("a row recording no evidence block keeps its digest",
          same_finding({"secret_gate": "FAIL"}, "secret_gate", "FAIL", dict(secret), gr),
          True)
+
+    print()
+    print("=== the schema fork, stated rather than depended on ===")
+    # THE RULE WAS MEASURED AGAINST "a note field holding a constant string" AND WHAT EXISTS
+    # IS TWO SCHEMAS. 124 rows record 12 keys and 8 record 13. These cases assert what that
+    # actually costs today, in both directions, rather than leaving it to the fact that
+    # nothing has gone wrong yet.
+    NOTE = ("counts and shapes only; a credential-shaped literal remaining after masking is "
+            "a synthetic one by construction")
+    twelve = {"secret_gate": "FAIL", "secret_literals": dict(secret),
+              "provenance": dict(m["provenance"])}
+    thirteen = {"secret_gate": "FAIL", "secret_literals": dict(secret, note=NOTE),
+                "provenance": dict(m["provenance"])}
+    today = dict(secret, note=NOTE)
+    # The property that matters: same condition, same answer, whichever schema the row holds.
+    case("a 12-key row and a 13-key row in the same condition AGREE alike",
+         (compare_gate(twelve, "secret_gate", "FAIL", dict(today), gr)[0],
+          compare_gate(thirteen, "secret_gate", "FAIL", dict(today), gr)[0]),
+         ("agrees", "agrees"))
+    case("and both see the SAME measured field move",
+         (compare_gate(twelve, "secret_gate", "FAIL",
+                       dict(today, secret_literals_after=2), gr)[0],
+          compare_gate(thirteen, "secret_gate", "FAIL",
+                       dict(today, secret_literals_after=2), gr)[0]),
+         ("evidence-moved", "evidence-moved"))
+    # And the direction the rule was never measured against, asserted so that it is a known
+    # cost rather than a surprise: if the note's TEXT moves, the two schemas answer
+    # differently. That is the whole fork, in one case.
+    case("if the note text moved, the 12-key row would still agree",
+         compare_gate(twelve, "secret_gate", "FAIL",
+                      dict(today, note="reworded"), gr)[0], "agrees")
+    case("...and the 13-key row would NOT - which is the fork, priced",
+         compare_gate(thirteen, "secret_gate", "FAIL",
+                      dict(today, note="reworded"), gr)[0], "evidence-moved")
+    # Why that cannot happen quietly: the note is a literal inside a TOOLS module, so the
+    # text and the `tools` digest move together. `digest-controls.py` asserts that half.
+    case("the divergence is inert only while the note is inside the tools AST",
+         NOTE.split(";")[0] in open(os.path.join(HERE, "verify-content-mask.py"),
+                                    encoding="utf-8").read(), True)
+    # The writer half of the reconciliation.
+    case("the recorded subset carries no prose key",
+         [k for k in RECORDED_SECRET_KEYS if k.endswith("note")], [])
+    case("and it is exactly twelve fields", len(RECORDED_SECRET_KEYS), 12)
+    ms = mask_samples_secret_keys()
+    case("mask-samples.py's own tuple was found in its AST", ms is not None, True)
+    case("and the copy here equals it", set(ms or ()), set(RECORDED_SECRET_KEYS))
+    # The extractor must be able to say "not found", or the tie above passes by being blind.
+    import tempfile
+    _fd, _p = tempfile.mkstemp(suffix=".py")
+    with os.fdopen(_fd, "w") as fh:
+        fh.write('BLOCK = {"secret_literals": {"a": 1}}\n')
+    case("the extractor reports absence rather than agreement",
+         mask_samples_secret_keys(_p), None)
+    os.unlink(_p)
 
     print()
     print("=== the evidence lookup is clearance's, not a second copy ===")

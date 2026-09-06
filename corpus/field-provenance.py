@@ -98,6 +98,32 @@ REMOVED = {
 }
 
 
+# Fields that MOVED. A move is a removal at one name and an appearance at another, and
+# neither half is visible to a census enumerated from the rows: the old name simply stops
+# existing and the new one reads as though it had always been there. Recorded for the same
+# reason `REMOVED` is - so the next reader can tell "renamed on purpose" from "new" - and
+# separately from `REMOVED`, because the data is still in the index and calling that a
+# removal would be false.
+MOVED = {
+    "masking.encoded_layer_finding.{classification,decision,resolution,value,why_it_matters}":
+        ("-> masking.human_adjudication.* on 2026-09-06 (cl), 2 published rows, with "
+         "`about` added to name the gate. The block was a human adjudication occupying the "
+         "key `clearance.evidence_for` returns for `encoded_layer_gate`, so the finding "
+         "digest for that gate was being computed over prose and an address: rewording the "
+         "argument moved it. Measured before the move rather than argued: run against both "
+         "maps over the exact fixture bytes the shard ships, the current tools return PASS "
+         "for both rows and emit no `encoded_layer_finding` at all, so the block was never "
+         "a gate finding. Both rows read `evidence-moved` to `gate_evidence.compare_gate` "
+         "before the move and `agrees` after, which is what had made them unrepairable by "
+         "`verify-and-stamp.py` and `remeasure-gates.py` alike. Digest moved 663ee3e0cf71 "
+         "-> ebddfbf1d6ed on both; no clearance was keyed to either, checked over every "
+         "clearance object on this machine; `publishable` stayed true with zero blockers. "
+         "The new leaf is `human_adjudication` and not `adjudication` because `classify` "
+         "matches on the leaf, and a reader of `adjudication` would silently reclassify "
+         "`sensitivity_review.adjudication` - 68 rows, a real orphan - as read-only."),
+}
+
+
 # A control suite is not a writer. Every tool in this tree carries one, and a control
 # fixture is a dict literal - `{"decision": …, "resolution": …}` - which `key_positions`
 # reads as a write position exactly like a real one. Nothing that runs against the index
@@ -307,6 +333,42 @@ def field_census(paths, max_depth=2, map_threshold=None):
     return counts, maps
 
 
+def leaf_collisions(counts):
+    """(shared_leaves, fields_on_a_shared_leaf) - the size of the bound `classify` carries.
+
+    THE THIRD WAY THIS CENSUS IS BOUNDED BY ITS OWN PROCESS, AND IT WAS NEVER SIZED
+    -------------------------------------------------------------------------------
+    `classify` matches a field by its LEAF name. `masking.secret_literals.note` and
+    `ioc.note` are one question to it, and so are `origin.path` and
+    `masking.measured_with.path`. So "read by shard-gate.py" does not mean this field has a
+    reader - it means some tracked module mentions this STRING somewhere.
+
+    The docstring states `written` is an over-count because a name in a write position might
+    belong to another dictionary. That is this property, stated for the shallowest case and
+    never sized. Measured over both halves: **37 leaf names are shared by more than one
+    dotted field, 118 of 316 fields sit on one, and 113 of the 262 non-orphan
+    classifications - 43% - rest on a leaf they share with at least one other field.** The
+    worst is `note`, one leaf across thirteen fields.
+
+    It bit this round in the other direction and was caught by measuring rather than by
+    luck: the adjudication lifted out of `encoded_layer_finding` was going to be called
+    `masking.adjudication`, and a reader of `adjudication` would have reclassified
+    `sensitivity_review.adjudication` - 68 rows, a real orphan - as read-only. It is called
+    `masking.human_adjudication` for that reason and no other.
+
+    Not repaired here. Matching on the dotted path instead is not a one-line change: the
+    tools genuinely index by leaf (`m["provenance"]`, `f.get("payload_size")`), so a path
+    match would report almost everything as an orphan and the census would be useless in the
+    other direction. What is owed is the number, printed every run, so that a round claiming
+    N orphans resolved says how many of them could be somebody else's reader.
+    """
+    leaves = collections.defaultdict(list)
+    for field in counts:
+        leaves[field.rsplit(".", 1)[-1]].append(field)
+    shared = {k: v for k, v in leaves.items() if len(v) > 1}
+    return shared, sum(len(v) for v in shared.values())
+
+
 def classify(counts, writes, reads):
     """[(field, rows, state, detail)] - state is 'written', 'read-only' or 'ORPHAN'."""
     out = []
@@ -325,14 +387,16 @@ def classify(counts, writes, reads):
 
 
 def report_removed():
-    if not REMOVED:
-        return
-    print()
-    print("=== fields REMOVED from the index, not merely absent ===")
-    for f, why in sorted(REMOVED.items()):
-        print("  %s" % f)
-        for line in _wrap(why, 88):
-            print("      %s" % line)
+    for title, table in (("fields REMOVED from the index, not merely absent", REMOVED),
+                         ("fields that MOVED, so neither name is new", MOVED)):
+        if not table:
+            continue
+        print()
+        print("=== %s ===" % title)
+        for f, why in sorted(table.items()):
+            print("  %s" % f)
+            for line in _wrap(why, 88):
+                print("      %s" % line)
 
 
 def _wrap(text, width):
@@ -377,10 +441,24 @@ def main():
     print("  written by a tracked module : %d" % tally["written"])
     print("  only READ by tracked modules: %d" % tally["read-only"])
     print("  mentioned nowhere (ORPHAN)  : %d" % tally["ORPHAN"])
+    shared, on_shared = leaf_collisions(counts)
+    inherited = sum(1 for f, _n, s, _d in rows
+                    if s != "ORPHAN" and len(shared.get(f.rsplit(".", 1)[-1], ())) > 1)
+    not_orphan = tally["written"] + tally["read-only"]
+    print("  classified on a leaf shared with another field: %d of %d (%.0f%%)"
+          % (inherited, not_orphan, 100.0 * inherited / max(not_orphan, 1)))
     print()
     print("`written` is an over-count and `ORPHAN` is therefore an under-count: every field")
     print("below is really unaccounted for, and there may be more this cannot see. The field")
     print("list is enumerated FROM THE ROWS, so a field every row has lost is invisible.")
+    print()
+    print("And a field is matched by its LEAF name, so %d leaves are shared by more than one"
+          % len(shared))
+    print("field (%d fields sit on one; the worst is `%s`, across %d). A `read by` on any of"
+          % (on_shared, max(shared, key=lambda k: len(shared[k])) if shared else "-",
+             max((len(v) for v in shared.values()), default=0)))
+    print("those means a module mentions the STRING, not necessarily this field. §11's")
+    print("eleventh instance; the line above is the size of it.")
     print()
     for f, n, s, d in rows:
         if s == "written":
@@ -566,6 +644,49 @@ def inject():
         # The other direction: excluding this file must not hide a REAL writer.
         case("a field a real module writes is still written",
              classify(collections.Counter({"sensitivity": 1}), rw, rr)[0][2], "written")
+
+        print()
+        print("=== a field is matched by its LEAF, and the size of that is now printed ===")
+        # §11's eleventh. Both directions: a sizing that reported every field as colliding
+        # and one that reported none would look identical from a green run.
+        toy = collections.Counter({"a.note": 1, "b.note": 1, "c.unique": 1})
+        sh, on = leaf_collisions(toy)
+        case("two fields sharing a leaf are counted as sharing it", sorted(sh), ["note"])
+        case("and both are counted, not one", on, 2)
+        case("a leaf nothing else uses is not counted",
+             "unique" in sh, False)
+        case("a census with no collisions at all reports none",
+             leaf_collisions(collections.Counter({"x.a": 1, "y.b": 1})), ({}, 0))
+        # The live sizing, and the specific thing it guarded this round: the lifted
+        # adjudication is `human_adjudication` because a reader of `adjudication` would have
+        # claimed `sensitivity_review.adjudication`, which is a real orphan on 68 rows.
+        live, _m = field_census(
+            [os.path.join(HERE, "index.jsonl"),
+             os.path.join(HERE, "local", "index-local.jsonl")])
+        lsh, lon = leaf_collisions(live)
+        print("  leaves shared by more than one field : %d  (%d fields sit on one)"
+              % (len(lsh), lon))
+        case("the leaf chosen this round is carried by exactly one field",
+             sorted(f for f in live if f.rsplit(".", 1)[-1] == "human_adjudication"),
+             ["masking.human_adjudication"])
+        # The name NOT chosen. `adjudication` is carried today by one field, a real orphan;
+        # a second field with that leaf makes it shared, and a reader of either would then
+        # cover both. This is the case measured before the name was picked.
+        would = collections.Counter(live)
+        would["masking.adjudication"] = 2
+        case("the name NOT chosen would have shared a leaf with a real orphan",
+             sorted(leaf_collisions(would)[0].get("adjudication", ())),
+             ["masking.adjudication", "sensitivity_review.adjudication"])
+        case("and `sensitivity_review.adjudication` is still an orphan today",
+             [st for fld, _n, st, _d in classify(collections.Counter(
+                 {"sensitivity_review.adjudication": 68}), rw, rr)], ["ORPHAN"])
+        # Every field this round moved out of ORPHAN must be on a leaf of its own, or the
+        # resolution is somebody else's reader being counted as this field's.
+        resolved = ("fixture_sha256", "fixture_size", "payload_sha256", "payload_size",
+                    "ioc", "c2_fallback_ip", "campaign_hosts",
+                    "classification", "value", "why_it_matters")
+        case("every orphan resolved this round sits on a leaf of its own",
+             sorted(k for k in resolved if k in lsh), [])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

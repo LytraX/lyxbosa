@@ -579,6 +579,322 @@ def placementViolations(rows):
 
 
 # ---------------------------------------------------------------------------
+# Three blocks that carry published content and had no tracked reader at all.
+#
+# `field-provenance.py` reports 64 orphan fields; the three groups below are 10 of them,
+# and they are the 10 that sit on PUBLISHED rows and describe either an identifier that is
+# deliberately KEPT or the identity of a shipped fixture. A field with no reader cannot go
+# wrong in a way anything notices, and these are the fields where "goes wrong" means either
+# a customer address recorded as attacker infrastructure or a shard whose manifest does not
+# describe what it ships.
+#
+# All three are map-free. §7.2's floor is that a stranger with the index and nothing else
+# can run this file, so a rule that needed the pseudonym maps would be a rule that only the
+# incident host can check - which is the half that matters least.
+# ---------------------------------------------------------------------------
+
+# The shape of a human adjudication, and the complete list of what one must say. Mirrors
+# `lift-adjudication.ADJUDICATION_KEYS` plus the gate it is about; duplicated rather than
+# imported because that module reads and writes an index and this one must stay importable
+# by anything, and asserted equal to it in `inject()`.
+ADJUDICATION = "human_adjudication"
+ADJUDICATION_REQUIRED = ("about", "classification", "decision", "resolution", "value",
+                         "why_it_matters")
+
+
+def adjudicationViolations(rows):
+    """A recorded human adjudication must be one somebody else could audit.
+
+    WHY THIS FIELD EXISTS AND WHY IT NEEDS A READER
+    ------------------------------------------------
+    Two published rows recorded an adjudication of one embedded address under
+    `masking.encoded_layer_finding` - the key `clearance.finding_digest` hashes as the
+    encoded-layer gate's evidence. `lift-adjudication.py` moved it to a field of its own;
+    this is the reader that stops the field becoming the next place a claim hides.
+
+    Four rules, and the third is the one that earns the check:
+
+      * every key in `ADJUDICATION_REQUIRED` present and non-empty. An adjudication that
+        does not say what was classified, what the value was, why it mattered and how it
+        was resolved is not a record, it is an assertion.
+      * `about` names a gate the row actually RECORDS. An adjudication about a measurement
+        the row does not carry is about nothing.
+      * **an address recorded in the resolution must be one the row declares as a kept
+        indicator.** This is the c2-versus-customer distinction made structural rather than
+        assumed. The whole reason this block is allowed to name an identifier at all is
+        that the identifier is attacker infrastructure kept on purpose (§4.1: c2 is never
+        masked); an adjudication that resolved to an address the row does NOT list in
+        `ioc.campaign_hosts` would be a decision to publish an address on no declared
+        ground, which is exactly the direction that cannot be undone.
+      * the block must not be a gate finding. `decision` is what makes it a human's, and
+        `shard-gate`'s question five already requires a `resolution` beside it; what is
+        added here is that nothing under this key may carry a profile key the gate emits,
+        so the two can never merge back into one block.
+
+    Each required key is read BY NAME below rather than through a loop over
+    `ADJUDICATION_REQUIRED`. That is not style: `field-provenance.key_positions` counts a
+    field as read when its name appears as a `.get("k")` argument or a subscript, and a
+    tuple of string constants iterated with `a.get(k)` is invisible to it. A reader the
+    census cannot see leaves the field reported as an orphan, which is the state this whole
+    section exists to end - and writing the names into a dict literal instead would classify
+    them as WRITTEN by this file, which is worse: false in the direction that hides them.
+    """
+    out = []
+    for r in rows:
+        a = (r.get("masking") or {}).get(ADJUDICATION)
+        if a is None:
+            continue
+        if not isinstance(a, dict):
+            out.append((r["sha256"], "%s is %s, not an object" % (ADJUDICATION,
+                                                                  type(a).__name__)))
+            continue
+
+        def said(key, value):
+            return bool(value) if not isinstance(value, str) else bool(value.strip())
+
+        missing = [k for k, v in (("about", a.get("about")),
+                                  ("classification", a.get("classification")),
+                                  ("decision", a.get("decision")),
+                                  ("resolution", a.get("resolution")),
+                                  ("value", a.get("value")),
+                                  ("why_it_matters", a.get("why_it_matters")))
+                   if not said(k, v)]
+        if missing:
+            out.append((r["sha256"], "records no %s" % "/".join(missing)))
+            continue
+        extra = sorted(set(a) - set(ADJUDICATION_REQUIRED))
+        if extra:
+            out.append((r["sha256"], "carries %s, which is not adjudication shape"
+                        % "/".join(extra)))
+            continue
+        if a.get("about") not in (r.get("masking") or {}):
+            out.append((r["sha256"], "is about %s, which this row does not record"
+                        % a.get("about")))
+            continue
+        res = a.get("resolution")
+        addr = res.get("address") if isinstance(res, dict) else None
+        if addr is not None and addr not in iocValues(r):
+            # By shape. The address on these rows is attacker infrastructure and is
+            # published on purpose, but this refusal has to be printable on a row where
+            # it is NOT, and there it would be a customer identifier in a terminal.
+            out.append((r["sha256"], "resolves to a %d-character address the row does "
+                                     "not declare in ioc.campaign_hosts" % len(str(addr))))
+    return out
+
+
+# What a gate finding may contain, and nothing else. Taken from `verify-content-mask._profile`
+# - counts, lengths, positions, the segment size and the layer that carried it - plus the two
+# prose keys the gate attaches. Measured over both halves before arming: 12 finding blocks,
+# two key sets differing only by `methods`, and every value the type below.
+#
+# `kinds` and `positions` are closed because their producers are closed: `_kind` returns
+# `domain` or `acct`, and `verify-infected-mask` labels a containment hit `exact`, `begins`
+# or `contains`, with `truncation` added for the other direction. A twelfth position label
+# means a predicate changed its vocabulary, which is how `sensitivity` and the decoded-form
+# tags were both found - by somebody noticing rather than by anything asking.
+FINDING_SHAPE = {
+    "distinct_identifiers": "int",
+    "occurrences": "int",
+    "identifier_lengths": "ints",
+    "segment_lengths": "ints",
+    "kinds": {"domain", "acct"},
+    "positions": {"exact", "begins", "contains", "truncation"},
+    "methods": "strs",
+    "note": "str",
+    "false_positive_note": "str",
+}
+
+
+def findingShapeViolations(rows):
+    """A gate finding records shapes and counts. It must not be able to record anything else.
+
+    THE NOTE INSIDE EVERY FINDING MAKES A CLAIM AND NOTHING CHECKED IT
+    -------------------------------------------------------------------
+    `verify-content-mask.gate` attaches to each finding: *"identifier names deliberately not
+    recorded here; they are the thing being masked"*. That sentence is generated onto seven
+    blocks and published in the tracked index, and it is a claim about the FIELD rather than
+    about the row it sits on - which is why two other published rows could use
+    `encoded_layer_finding` to record an address while the index simultaneously asserted
+    that identifiers are never recorded there. The claim was true of every block that
+    carried it and false of the field, and nothing in the tree could tell the difference.
+
+    Moving the adjudication out made the claim true again. This makes it CHECKED, which is
+    the part that lasts: a finding may carry only the keys `_profile` emits, with the types
+    it emits them at, so there is no key left in which a name could sit. It would have fired
+    on both published rows before the move.
+
+    The note itself is not corrected here, and that is a scoping decision with a price
+    attached rather than an omission. Its second clause - *"they are the thing being
+    masked"* - presumes the outcome these two rows exist to record: an identifier this gate
+    finds may equally be attacker infrastructure that is deliberately KEPT, which is what
+    the adjudication concluded. Correcting it means editing a string literal inside
+    `verify-content-mask.py`, one of the six modules in `gate_provenance.TOOLS`, which moves
+    the `tools` digest; measured, that would take `publishable` from 44,543 to 44,536 in the
+    published half and 365 to 294 in the local one - 78 rows - until every stamped row is
+    re-measured, and the last time that digest moved 69 of 140 rows had bytes that could not
+    be regenerated. The repair is the one `FP_NOTE` had: relocate the prose out of the AST,
+    pay the re-measurement once. It is a round, not a line.
+    """
+    def wrong(key, value):
+        want = FINDING_SHAPE[key]
+        if want == "int":
+            return not (isinstance(value, int) and not isinstance(value, bool))
+        if want == "str":
+            return not isinstance(value, str)
+        if want == "ints":
+            return not (isinstance(value, list)
+                        and all(isinstance(v, int) and not isinstance(v, bool)
+                                for v in value))
+        if want == "strs":
+            return not (isinstance(value, list)
+                        and all(isinstance(v, str) for v in value))
+        return not (isinstance(value, list) and all(v in want for v in value))
+
+    out = []
+    for r in rows:
+        m = r.get("masking") or {}
+        for container, prefix in ((m, ""), (m.get("gate_categories"), "gate_categories.")):
+            if not isinstance(container, dict):
+                continue
+            for key in ("plaintext_finding", "encoded_layer_finding"):
+                b = container.get(key)
+                if b is None:
+                    continue
+                if not isinstance(b, dict):
+                    out.append((r["sha256"], "masking.%s%s is %s, not an object"
+                                % (prefix, key, type(b).__name__)))
+                    continue
+                extra = sorted(set(b) - set(FINDING_SHAPE))
+                if extra:
+                    # Named, not printed with its value: the whole reason a key outside the
+                    # profile is a finding is that it might hold an identifier.
+                    out.append((r["sha256"], "masking.%s%s carries %s, which no gate emits"
+                                % (prefix, key, "/".join(extra))))
+                    continue
+                bad = sorted(k for k in b if wrong(k, b[k]))
+                if bad:
+                    out.append((r["sha256"], "masking.%s%s records %s at the wrong shape"
+                                % (prefix, key, "/".join(bad))))
+    return out
+
+
+def iocValues(row):
+    """The hosts a row declares it is keeping, as a list. Never None."""
+    i = row.get("ioc")
+    if not isinstance(i, dict):
+        return []
+    v = i.get("campaign_hosts")
+    return v if isinstance(v, list) else []
+
+
+# A host, and nothing else. No scheme, no path, no query, no whitespace, no uppercase: a
+# domain or a bare IPv4. The point of the closed shape is not tidiness - it is that this is
+# the one published field whose entire purpose is to carry identifiers verbatim, so the way
+# it goes wrong is that something other than a host gets written into it.
+IOC_HOST_RE = re.compile(r"^(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}"
+                         r"|(?:\d{1,3}\.){3}\d{1,3})$")
+
+
+def iocViolations(rows):
+    """The kept-indicator block must say what it is keeping, and keep saying only that.
+
+    `ioc`, `ioc.c2_fallback_ip` and `ioc.campaign_hosts` were orphans on two PUBLISHED
+    rows. The block records the one class of identifier this corpus publishes on purpose,
+    so the questions are: is it consistent with itself, is it consistent with the masker's
+    own record, and is it still a list of hosts.
+
+      * `c2_fallback_ip` must appear in `campaign_hosts`. A fallback the host list does not
+        contain is a record disagreeing with itself.
+      * every entry is host-shaped. A path, a URL or a sentence in this field would be an
+        unmasked string published under a name that says it was meant to be.
+      * a row with an `ioc` block must record `masking.c2_kept: true` and carry the `c2`
+        tag. The block is the human-readable half of a decision the masker records as a
+        boolean and the tagger as a tag; three records of one decision that can disagree
+        is the shape §8 counts causes to avoid.
+    """
+    out = []
+    for r in rows:
+        i = r.get("ioc")
+        if i is None:
+            continue
+        if not isinstance(i, dict):
+            out.append((r["sha256"], "ioc is %s, not an object" % type(i).__name__))
+            continue
+        hosts = i.get("campaign_hosts")
+        if not isinstance(hosts, list) or not hosts:
+            out.append((r["sha256"], "ioc records no campaign_hosts list"))
+            continue
+        bad = [h for h in hosts
+               if not isinstance(h, str) or not IOC_HOST_RE.match(h)]
+        if bad:
+            out.append((r["sha256"], "campaign_hosts holds a %d-character entry that is "
+                                     "not host-shaped" % len(str(bad[0]))))
+            continue
+        fb = i.get("c2_fallback_ip")
+        if fb is not None and fb not in hosts:
+            out.append((r["sha256"], "c2_fallback_ip is not one of the campaign_hosts"))
+            continue
+        if (r.get("masking") or {}).get("c2_kept") is not True:
+            out.append((r["sha256"], "declares kept indicators while masking.c2_kept is "
+                                     "%r" % ((r.get("masking") or {}).get("c2_kept"),)))
+            continue
+        if "c2" not in set(r.get("sensitivity") or []):
+            out.append((r["sha256"], "declares kept indicators and carries no c2 tag"))
+    return out
+
+
+HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def fixtureViolations(rows):
+    """A generated fixture must describe the bytes it actually ships.
+
+    Seven published rows carry a `fixture` block and eight of its keys were orphans. The
+    block is the only record of what a shard ships where the shipped bytes are NOT the
+    original sample, so an error in it is a published claim about bytes nobody can check.
+
+      * `payload_size` < `fixture_size`. The payload is carried INSIDE the fixture.
+      * `fixture_sha256` and `payload_sha256` are 64 hex and are different from each other.
+        Equal would mean the carrier contributed nothing, which contradicts the block.
+      * `sha256 == fixture_sha256` **iff** `size == fixture_size`. Three of the seven rows
+        are their own fixture and four are not, and both are legitimate - but a row that is
+        its own fixture by hash and not by size, or the reverse, is a half-updated record.
+        Measured before arming: 7 of 7 agree in both directions.
+      * `fixture.name == family`, on all 7.
+    """
+    out = []
+    for r in rows:
+        f = r.get("fixture")
+        if f is None:
+            continue
+        if not isinstance(f, dict):
+            out.append((r["sha256"], "fixture is %s, not an object" % type(f).__name__))
+            continue
+        fs, ps = f.get("fixture_size"), f.get("payload_size")
+        if not all(isinstance(x, int) and not isinstance(x, bool) for x in (fs, ps)):
+            out.append((r["sha256"], "fixture_size/payload_size are not both integers"))
+            continue
+        if ps >= fs:
+            out.append((r["sha256"], "payload_size %d is not smaller than fixture_size %d"
+                        % (ps, fs)))
+            continue
+        fh, ph = f.get("fixture_sha256"), f.get("payload_sha256")
+        if not all(isinstance(x, str) and HEX64.match(x) for x in (fh, ph)):
+            out.append((r["sha256"], "fixture_sha256/payload_sha256 are not both 64 hex"))
+            continue
+        if fh == ph:
+            out.append((r["sha256"], "fixture and payload record the same hash"))
+            continue
+        if (fh == r.get("sha256")) != (fs == r.get("size")):
+            out.append((r["sha256"], "the row is its own fixture by %s and not by %s"
+                        % (("hash", "size") if fh == r.get("sha256") else ("size", "hash"))))
+            continue
+        if f.get("name") != r.get("family"):
+            out.append((r["sha256"], "fixture.name does not match family"))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # The property this round exists to produce, asserted separately from the rule that
 # produces it.
 #
@@ -795,6 +1111,22 @@ def main(path, apply_fix=False):
             print("  %s  %-20s %s" % (sha[:12], gate, why))
         if len(inert) > 10:
             print("  ... and %d more" % (len(inert) - 10))
+    # Always printed, like the two above it. `reasoned_by` is not required to READ a
+    # clearance - see clearance.REASONED_BY - so the only thing that can report its absence
+    # is a count, and a count that appears only when it is non-zero is a count nobody
+    # watches.
+    unreasoned = [(r["sha256"], g, at) for r in rows for g, at in clearance.unreasoned(r)]
+    print("clearances recording no reasoned_by  :", len(unreasoned))
+    if unreasoned:
+        print()
+        print("=== CLEARANCE: no record of what produced the argument ===")
+        print("  `by` is the authorising human and stays that. This is the second question -")
+        print("  what drafted the reasoning they authorised - and the two superseded records")
+        print("  here predate the field. A clearance written by hand would look the same.")
+        for sha, gate, at in unreasoned[:10]:
+            print("  %s  %-20s %s" % (sha[:12], gate, at))
+        if len(unreasoned) > 10:
+            print("  ... and %d more" % (len(unreasoned) - 10))
     print("clearances that cannot be read       :", len(badc))
     if badc:
         print()
@@ -868,6 +1200,61 @@ def main(path, apply_fix=False):
         if len(stages) > 10:
             print("  ... and %d more" % (len(stages) - 10))
 
+    adjs = adjudicationViolations(rows)
+    print("adjudications that are not auditable :", len(adjs))
+    if adjs:
+        print()
+        print("=== INVARIANT: a human adjudication must be one somebody else could audit ===")
+        print("  The block was living inside `encoded_layer_finding`, the key a clearance")
+        print("  digest is taken over, so rewording the argument moved the digest. Moved to")
+        print("  a field of its own; this is the reader that stops it drifting there again.")
+        print("  An address it resolves to must be one the row DECLARES as a kept indicator -")
+        print("  which is the c2-versus-customer distinction made structural, not assumed.")
+        for sha, why in adjs[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(adjs) > 10:
+            print("  ... and %d more" % (len(adjs) - 10))
+
+    shapes = findingShapeViolations(rows)
+    print("gate findings recording something no gate emits : %d" % len(shapes))
+    if shapes:
+        print()
+        print("=== INVARIANT: a gate finding records shapes and counts, and nothing else ===")
+        print("  Every finding carries a note saying identifier names are deliberately not")
+        print("  recorded there. That was a claim about the field with nothing checking it,")
+        print("  and two published rows were using the same field to record an address.")
+        for sha, why in shapes[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(shapes) > 10:
+            print("  ... and %d more" % (len(shapes) - 10))
+
+    iocs = iocViolations(rows)
+    print("rows whose kept indicators disagree with the row : %d" % len(iocs))
+    if iocs:
+        print()
+        print("=== INVARIANT: the kept-indicator block is the one field that publishes an ===")
+        print("=== identifier on purpose, so it must keep saying only that                ===")
+        print("  `ioc`, `c2_fallback_ip` and `campaign_hosts` were orphans on two published")
+        print("  rows. Three records of one decision - the block, `masking.c2_kept` and the")
+        print("  `c2` tag - could disagree and nothing asked.")
+        for sha, why in iocs[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(iocs) > 10:
+            print("  ... and %d more" % (len(iocs) - 10))
+
+    fixes = fixtureViolations(rows)
+    print("fixtures that do not describe what they ship :", len(fixes))
+    if fixes:
+        print()
+        print("=== INVARIANT: a generated fixture must describe the bytes it ships ===")
+        print("  Eight of this block's keys were orphans on seven published rows, and where")
+        print("  the shipped bytes are not the original sample this block is the only record")
+        print("  of what a shard actually contains.")
+        for sha, why in fixes[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(fixes) > 10:
+            print("  ... and %d more" % (len(fixes) - 10))
+
     forms = formViolations(rows)
     print("rows whose masked component is malformed :", len(forms))
     if forms:
@@ -902,7 +1289,7 @@ def main(path, apply_fix=False):
     # zero there is how "publishable flags corrected: 14" became a line nobody read.
     # The green result is the plain run afterwards.
     return 1 if (stale or bad or leaks or forms or unread or badc or places
-                 or musts or stages) else 0
+                 or musts or stages or adjs or iocs or fixes or shapes) else 0
 
 
 # ---------------------------------------------------------------------------
@@ -1495,6 +1882,222 @@ def inject(path):
     print("  of those, unresolved              : %d   (the population this rule has ever "
           "had to act on)" % len(unresolved))
 
+    print()
+    # 9. the adjudication, now that it has a field of its own. Population TWO, both valid,
+    # so this rule has never fired either - every case below is constructed.
+    print("=== a human adjudication must be one somebody else could audit ===")
+
+    ADJ = {"about": "encoded_layer_gate",
+           "classification": "ambiguous between c2 and identity",
+           "decision": HELD,
+           "resolution": {"resolution": "attacker-owned; kept as an IOC",
+                          "address": "203.0.113.7"},
+           "value": "an address inside an encoded layer",
+           "why_it_matters": "masking cannot reach inside an encoded layer"}
+    # The address in the fixture is a documentation-range literal, never a real one: this
+    # suite is a tracked file, and the rule about not spelling identifiers into git does not
+    # stop being true because the identifier in the live row happens to be attacker-owned.
+    IOC = {"c2_fallback_ip": "203.0.113.7",
+           "campaign_hosts": ["203.0.113.7", "c.example-campaign.xyz"]}
+
+    def acase(label, row, want_hit):
+        got = adjudicationViolations([row])
+        ok = bool(got) == want_hit
+        ran.append(label)
+        print("  %-60s %-6s %s" % (label, "hit" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("hit" if want_hit else "clean")))
+        if not ok:
+            fails.append(label)
+
+    def arow(adj=None, **kw):
+        m = dict(MASKED)
+        if adj is not None:
+            m[ADJUDICATION] = adj
+        r = dict(base, masking=m, ioc=dict(IOC))
+        r.update(kw)
+        return r
+
+    acase("a complete adjudication whose address the row declares", arow(dict(ADJ)), False)
+    acase("no adjudication at all: not this check's business", arow(), False)
+    acase("a resolution that records no address", arow(
+        dict(ADJ, resolution={"resolution": "attacker-owned"})), False)
+    for k in ADJUDICATION_REQUIRED:
+        acase("missing %s" % k, arow({kk: vv for kk, vv in ADJ.items() if kk != k}), True)
+    acase("a key that is not adjudication shape",
+          arow(dict(ADJ, occurrences=3)), True)
+    acase("about names a gate the row does not record",
+          arow(dict(ADJ, about="secret_gate")), True)
+    # THE ONE THAT MATTERS: an address adjudicated as attacker infrastructure that the row
+    # never declared it was keeping. Both directions, because a rule that fired on every
+    # address would make the field unusable and one that fired on none is not a rule.
+    acase("resolves to an address the row does NOT declare as kept",
+          arow(dict(ADJ, resolution={"resolution": "attacker-owned",
+                                     "address": "198.51.100.9"})), True)
+    acase("the same row with that address declared",
+          dict(arow(dict(ADJ, resolution={"resolution": "attacker-owned",
+                                          "address": "198.51.100.9"})),
+               ioc={"c2_fallback_ip": "198.51.100.9",
+                    "campaign_hosts": ["198.51.100.9"]}), False)
+    acase("an adjudication on a row with no ioc block at all",
+          dict(arow(dict(ADJ)), ioc=None), True)
+    acase("recorded as a string rather than a block",
+          arow("attacker-owned, kept"), True)
+    # The tie to the mover, asserted rather than restated in two places.
+    ran.append("the adjudication shape matches lift-adjudication's")
+    import importlib.util
+    _lspec = importlib.util.spec_from_file_location(
+        "lift_adj_probe", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                       "lift-adjudication.py"))
+    _lift = importlib.util.module_from_spec(_lspec)
+    _lspec.loader.exec_module(_lift)
+    tied = (set(ADJUDICATION_REQUIRED) == _lift.ADJUDICATION_KEYS | {_lift.ABOUT}
+            and _lift.TARGET == ADJUDICATION)
+    print("  %-60s %-6s %s" % ("the mover writes exactly the shape this gate demands",
+                               "yes" if tied else "no", "ok" if tied else "WRONG"))
+    if not tied:
+        fails.append("the adjudication shape matches lift-adjudication's")
+    # And the live census: a population statement, never a pass.
+    carr = [r for r in rows if isinstance((r.get("masking") or {}).get(ADJUDICATION), dict)]
+    print("  rows carrying a lifted adjudication : %d" % len(carr))
+
+    print()
+    print("=== a gate finding records shapes and counts, and nothing else ===")
+
+    def scase(label, block, want_hit, key="encoded_layer_finding", under=None):
+        m = dict(MASKED)
+        if under:
+            m[under] = {key: block}
+        else:
+            m[key] = block
+        got = findingShapeViolations([dict(base, masking=m)])
+        ok = bool(got) == want_hit
+        ran.append("shape: " + label)
+        print("  %-60s %-6s %s" % (label, "hit" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("hit" if want_hit else "clean")))
+        if not ok:
+            fails.append("shape: " + label)
+
+    PROFILE = {"distinct_identifiers": 1, "occurrences": 3, "identifier_lengths": [6, 11],
+               "segment_lengths": [25, 473603], "kinds": ["acct", "domain"],
+               "positions": ["begins", "contains", "exact", "truncation"],
+               "methods": ["base64", "base64+inflate"],
+               "note": "identifier names deliberately not recorded here",
+               "false_positive_note": "127 across 104 of 8,000 stock files"}
+    scase("the profile the gate actually emits", dict(PROFILE), False)
+    scase("a plaintext finding, which carries no methods",
+          {k: v for k, v in PROFILE.items() if k != "methods"}, False,
+          key="plaintext_finding")
+    scase("the same profile under gate_categories", dict(PROFILE), False,
+          under="gate_categories")
+    scase("no finding at all: not this check's business", None, False)
+    # THE CASE THIS EXISTS FOR: the adjudication that was living in this key. It would have
+    # fired on both published rows before the move, and it says so by name.
+    scase("the adjudication that used to live here",
+          {"classification": "ambiguous", "decision": "held", "resolution": {},
+           "value": "an address", "why_it_matters": "encoded layers"}, True)
+    scase("one adjudication key smuggled into a real profile",
+          dict(PROFILE, value="an address inside the layer"), True)
+    scase("a free-text key nobody declared", dict(PROFILE, seen_at="a path"), True)
+    scase("a count recorded as a string", dict(PROFILE, occurrences="3"), True)
+    scase("a count recorded as a bool", dict(PROFILE, distinct_identifiers=True), True)
+    scase("lengths recorded as strings", dict(PROFILE, identifier_lengths=["6"]), True)
+    scase("a position label outside the closed vocabulary",
+          dict(PROFILE, positions=["begins", "somewhere-else"]), True)
+    scase("a kind outside the closed vocabulary", dict(PROFILE, kinds=["ipv4"]), True)
+    scase("the note recorded as a list", dict(PROFILE, note=["a", "b"]), True)
+    scase("the finding recorded as a string", "FAIL", True)
+    # The live census: a population statement, never a pass.
+    fb = sum(1 for r in rows
+             for c_ in (r.get("masking") or {},
+                        (r.get("masking") or {}).get("gate_categories") or {})
+             if isinstance(c_, dict)
+             for k_ in ("plaintext_finding", "encoded_layer_finding")
+             if isinstance(c_.get(k_), dict))
+    print("  gate finding blocks in this half : %d" % fb)
+
+    print()
+    print("=== the kept-indicator block must keep saying only what it is for ===")
+
+    def icase(label, row, want_hit):
+        got = iocViolations([row])
+        ok = bool(got) == want_hit
+        ran.append(label)
+        print("  %-60s %-6s %s" % (label, "hit" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("hit" if want_hit else "clean")))
+        if not ok:
+            fails.append(label)
+
+    def irow(ioc, **kw):
+        r = dict(base, sensitivity=["c2"], masking=dict(MASKED, c2_kept=True), ioc=ioc)
+        r.update(kw)
+        return r
+
+    icase("a fallback address listed among the hosts", irow(dict(IOC)), False)
+    icase("hosts with no fallback recorded",
+          irow({"campaign_hosts": ["c.example-campaign.xyz"]}), False)
+    icase("no ioc block at all: not this check's business",
+          dict(base, sensitivity=["c2"]), False)
+    icase("a fallback that is not among the hosts",
+          irow(dict(IOC, c2_fallback_ip="198.51.100.9")), True)
+    icase("a host that is a URL rather than a host",
+          irow({"campaign_hosts": ["http://c.example-campaign.xyz/x.php"]}), True)
+    icase("a host that is a path",
+          irow({"campaign_hosts": ["/home2/acct01/public_html"]}), True)
+    icase("a host that is a sentence",
+          irow({"campaign_hosts": ["kept deliberately, see the note"]}), True)
+    icase("an empty host list", irow({"campaign_hosts": []}), True)
+    icase("campaign_hosts recorded as a string",
+          irow({"campaign_hosts": "c.example-campaign.xyz"}), True)
+    icase("kept indicators while the masker says c2 was not kept",
+          dict(irow(dict(IOC)), masking=dict(MASKED, c2_kept=False)), True)
+    icase("kept indicators on a row carrying no c2 tag",
+          dict(irow(dict(IOC)), sensitivity=["identity"]), True)
+
+    print()
+    print("=== a generated fixture must describe the bytes it ships ===")
+
+    def fcase(label, row, want_hit):
+        got = fixtureViolations([row])
+        ok = bool(got) == want_hit
+        ran.append(label)
+        print("  %-60s %-6s %s" % (label, "hit" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("hit" if want_hit else "clean")))
+        if not ok:
+            fails.append(label)
+
+    A, B = "a" * 64, "b" * 64
+    SELFFX = {"name": "fam-x", "fixture_sha256": A, "fixture_size": 5355,
+              "payload_sha256": B, "payload_size": 5343}
+
+    def frow(fx, sha=A, size=5355, family="fam-x"):
+        return dict(base, sha256=sha, size=size, family=family, fixture=fx)
+
+    fcase("a row that IS its own fixture, by hash and by size", frow(dict(SELFFX)), False)
+    fcase("a row that is NOT its own fixture, by neither",
+          frow(dict(SELFFX), sha="c" * 64, size=99999), False)
+    fcase("no fixture block at all: not this check's business",
+          dict(base, sha256=A), False)
+    fcase("its own fixture by hash but not by size",
+          frow(dict(SELFFX), sha=A, size=99999), True)
+    fcase("its own fixture by size but not by hash",
+          frow(dict(SELFFX), sha="c" * 64, size=5355), True)
+    fcase("a payload no smaller than the fixture that carries it",
+          frow(dict(SELFFX, payload_size=5355)), True)
+    fcase("a payload larger than the fixture", frow(dict(SELFFX, payload_size=6000)), True)
+    fcase("fixture and payload recording the same hash",
+          frow(dict(SELFFX, payload_sha256=A)), True)
+    fcase("a hash that is not 64 hex", frow(dict(SELFFX, payload_sha256="deadbeef")), True)
+    fcase("a size recorded as a string", frow(dict(SELFFX, payload_size="5343")), True)
+    fcase("a size recorded as a bool", frow(dict(SELFFX, payload_size=True)), True)
+    fcase("a fixture name that is not the row's family",
+          frow(dict(SELFFX), family="fam-y"), True)
+    fcase("a fixture recorded as a string", frow("generated"), True)
+
+    print()
     # Counted, never quoted, and printed LAST. It was hardcoded at 20 while the suite grew;
     # then it was correct but emitted before the nine `pcase` checks ran, so the headline read
     # "61 · 61 · 0" over a suite of 70 and would have read "failed: 0" while returning 1. A
