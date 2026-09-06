@@ -1231,6 +1231,71 @@ Three conditions hide under one phrase, and they need different repairs:
 * **the author never existed** → the field is a convention, and the repair is to stop
   treating it as a measurement.
 
+### The gate's two credential narrownesses, repaired, and what it cost
+
+`verify-content-mask.SECRET_SHAPES` had no PEM shape at all, and `quoted-credential` opened
+with `(?<![A-Za-z0-9_])` while the tagger's `literal-password` has no left boundary — so a
+password on a variable whose name *ends* with the keyword was tagged and never gated, and
+`pwd` was not a keyword here at all. §5.6 already rules that a lookaround should err towards
+over-matching and records two leaks from one that did not; this was the third. For a
+**differential** gate, over-matching is the strict direction: every extra literal is one more
+thing masking must have changed, so widening cannot make this gate laxer.
+
+Both are in `gate_provenance.TOOLS`, so the repair moved `tools_digest` from `6fecbeebbccc`
+to `83735611dab4` and put all 140 stamped rows into re-measurement. **That bill was paid in
+full and it is worth recording what it actually was**, because it is the price of every
+future repair to a TOOLS module:
+
+| | |
+|---|---|
+| stamped rows invalidated | 140 |
+| masked bytes on disk | 73 |
+| masked bytes **regenerated and hash-verified** from the originals | 132 of 142 (3 mismatched, 7 record no `masked_sha256`) |
+| rows re-stamped | 139 (7 published, 132 local) |
+| rows left `stale` | 1 published (`3529f0f6b2cd`), no reachable bytes |
+| rows that lost `publishable` for the length of a commit | 34 |
+| human clearances made inert | 2, both on `34bba99dae63` |
+
+`corpus/restage-masked.py` is what made the middle row possible. `content_mask.mask_sample`
+is deterministic in (bytes, map, vocabulary, flags), so the masked form can be regenerated
+and then **checked against the `masked_sha256` the row already records** — a regenerated file
+that hashes to it is not a plausible reconstruction, it is the same file. One attempt is
+made with the driver's own default flags; a mismatch is reported as a finding about the row
+rather than retried under other flags, because a tool that searched until something matched
+would manufacture the provenance claim it was asked to check.
+
+**Two tools were re-measuring two of the three gates their stamp claims.** `verify-and-stamp`
+re-ran `plaintext_gate` and `encoded_layer_gate` and said nothing about `secret_gate`, which
+is produced by a `TOOLS` module and was therefore always inside the stamp's claim; the same
+hole was in `remeasure-gates`. It mattered the moment the credential shapes moved: the digest
+moved for a change to exactly the verdict neither tool could see, and a re-stamp would have
+written a fresh stamp over rows whose recorded `secret_gate` the current tools do **not**
+produce. Both now take the pre-masking bytes and re-measure the differential, and both return
+**three** answers — `agrees`, `disagrees`, `cannot-check` — because a row nobody could measure
+and a row that disagrees need different work.
+
+**Six rows go `PASS` → `FAIL`, four of them publishable.** Of the four "real divergences"
+recorded last round, two moved, two do not exist, and four more were found outside the
+population that was searched:
+
+| row | was | tags | what the repair changed |
+|---|---|---|---|
+| `162ccc9adf4e` | `publishable: true` | `c2`,`secret` | **verdict.** 0→1 literal, carried over. The one the brief named. |
+| `fa4356393880` | `publishable: true` | `clean` | **verdict.** Tagged `clean`, so no rule ever asked it for a secret gate. |
+| `b839772db7c7` | `publishable: true` | `c2` | **verdict.** `c2` is in `ALWAYS_OK`; nothing was demanded of this row at all. |
+| `91d2ee9cdd6d` | `publishable: true` | `c2`,`identity` | **verdict.** 0→2 literals, both carried over. |
+| `e29dba8fde17` | blocked (unreviewed) | `secret` | **verdict**, on a row that was already blocked. |
+| `47e9334ce266` | blocked (unreviewed) | `c2`,`secret` | **verdict.** Passed over *two* literals while a third was invisible — outside the "zero literals" predicate entirely. |
+| `80d78e0b4ece`, `a0830cd1a181` | blocked | | **evidence only.** Already `FAIL`; carried literals 1 → 6 each. |
+| `24d902d48a0d`, `bba931abc09d` | blocked | | **nothing.** These are the two "PEM blocks": 34 `BEGIN … PRIVATE KEY` markers each, **0 `END` markers**, 32 of them inside docblock prose in a vendor crypto library a scan report quotes. No key body, so no value for any gate to compare. The PEM shape requires a complete block precisely so it does not fail them on documentation. |
+
+**The power of that re-measurement.** 132 rows record a `secret_gate`; before/after bytes
+exist for **132 of 142 masked rows** after regeneration, so the sweep is near-complete rather
+than the 64-of-132 it would have been from the surviving stage directories alone. The 10 rows
+outside it (3 regeneration mismatches, 7 with no recorded `masked_sha256`) are unmeasured, and
+at the observed rate of 6 movements in 132 rows one further movement among them would not be
+surprising.
+
 ### `pending-promotions.jsonl` — measured by one side, applied by the other
 
 A rules round measures which `known_miss` rows its new rules now detect. It does not flip
@@ -1493,6 +1558,21 @@ reference point each time gives a smooth-looking series that compares nothing.
 The same applies to the benign side, though less often: adding sources to
 `benign/sources.jsonl` changes the false-positive denominator, so the FP *rate* before and
 after a lockfile change are also not directly comparable.
+
+### `make-summary.py --help` used to overwrite the summary
+
+The dispatch was `if "--check" in sys.argv: … else: write`, so `--help`, a typo, or any flag
+added later fell through to the **write** path. The one irreversible thing this tool does was
+the thing it did when it did not understand you, and the file it writes is the denominator
+every suite run quotes. `dispatch()` now returns an error for anything it does not recognise;
+`--inject` asserts all nine cases, including `[]` still meaning *write* — a dispatch that
+errored on everything would pass a suite made only of negatives.
+
+It is also now on the pre-report list in AGENTS.md. `--check` was the one gate not run before
+round 13 was reported green, and it was failing: the round moved 9 rows out of
+`local_only_publishable_no_blocker` and 2 clearances out of `cleared_by_human`, and the
+summary still asserted the old counts. The two `shard-gate` runs cannot see that, because they
+read the index and not the summary.
 
 ## What is deliberately not here
 

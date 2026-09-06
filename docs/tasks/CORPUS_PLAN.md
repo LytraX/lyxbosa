@@ -1318,9 +1318,9 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, seven appearances: a measurement that cannot deliver bad news
+## 11. One property, eight appearances: a measurement that cannot deliver bad news
 
-Seven separate cautions in this plan share one diagnostic tell. Five of them are the same
+Eight separate cautions in this plan share one diagnostic tell. Five of them are the same
 statement in different clothes; two reach the same place by a different mechanism and
 need a different repair, which is exactly why they are worth listing together:
 
@@ -1514,6 +1514,37 @@ The general form: when a measurement is repaired, ask separately whether the dat
 computed from was repaired. The two are different jobs and only one of them is visible in the
 output.
 
-A sixth instance should be assumed to exist in whatever is measured next — the same standing
+### The eighth, found 2026-09-06: the nine vacuous passes were nine because of the tag
+
+`sensitivity.reconcile()` decomposed **nine** rows that carry the `secret` tag and record
+`secret_gate: PASS` over zero credential-shaped literals on both sides, and concluded that
+four of them were a real divergence. The nine were selected by a predicate that begins *carries
+the `secret` tag* — a tag written by the rule whose blindness is the entire subject of the
+round that found them. The report even noticed the wider population and dismissed it: 78 rows
+record `before == after == 0`, and it said of the other 69 that they "owe no secret gate and
+their zero is not a claim about anything".
+
+Measured after the gate's two credential shapes were repaired, over the 132 rows whose masked
+bytes could be regenerated and hash-verified: **six** rows go `PASS` → `FAIL`, not four. Their
+tags are `c2,secret`, `c2,secret`, `secret`, `clean`, `c2` and `c2,identity`. **Four of the six
+were `publishable: true`, and only one of those four carries the `secret` tag.** The zero on
+the other 69 was a claim about the bytes, and on at least three of them it was false — one row
+tagged `clean` alone, one tagged `c2` alone, each shipping with a credential-shaped literal
+that came through masking byte-identical.
+
+This is the sharpest form the property has taken, because the enumerating process and the
+defective process are literally the same function. The repair is the one `shard-gate.py`
+already adopted for gate results in general — *read the evidence of every row that records it,
+whatever its tags say* — applied one level up, to the population a reconciliation is computed
+over. **A reconciliation between two rules must be run over the rows that record the
+measurement, never over the rows one of the rules has labelled.**
+
+And the two that were called a divergence and are not: the `private-key` pair was read as "two
+PEM blocks the gate has no shape for". Both rows carry **34 `BEGIN … PRIVATE KEY` markers and
+zero `END` markers**, 32 of them inside docblock prose in a vendor crypto library that a scan
+report quotes. There is no key body, so there is no value for any gate to compare. The nine
+decompose 5 name-only / 2 real / 2 documentation, not 5 / 4.
+
+A ninth instance should be assumed to exist in whatever is measured next — the same standing
 assumption §5.3 makes about masking, and for the same reason: this class of error is invisible
 to reading the code, because the code computes exactly what it says it computes.

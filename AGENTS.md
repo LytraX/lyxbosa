@@ -76,6 +76,24 @@ in a masking tool's own explanation of prefix-collapsing, and in the docstring o
 script written to catch it. That last one was refused by the script itself. It is a
 remarkably easy mistake to make; assume you will make it, and let the tool tell you.
 
+## Before you report a round green
+
+Three commands, all three, every time. Two of them were already habit; the third is here
+because a round was reported green while it was failing.
+
+```
+python3 corpus/shard-gate.py corpus/index.jsonl              # published half
+python3 corpus/shard-gate.py corpus/local/index-local.jsonl  # local half
+python3 corpus/make-summary.py --check                       # the summary vs the index
+```
+
+`make-summary.py --check` is the authority on whether `index-summary.json` still describes
+the index, and the summary is the denominator every suite run quotes. A round that moves
+rows and does not regenerate it leaves a published file asserting counts that no longer
+exist — and the gate runs cannot see that, because they read the index and not the summary.
+Regenerate it in the commit where the counts settle, and say in that commit that `--check`
+was failing until you did.
+
 ## Measurement conventions
 
 - **Every count difference carries an attributed cause.** A number that changed is not a

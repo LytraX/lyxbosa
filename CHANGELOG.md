@@ -262,6 +262,62 @@ commit list that CI generates per tag. Versions are the git tags described in
   a decision file it already agrees with, changing no ruling and required to add something.
   Controls: 32 → 56 cases.
 
+- **`make-summary.py --help` used to overwrite `index-summary.json`.** The dispatch was
+  `if "--check" in sys.argv: … else: write`, so `--help`, a typo or any flag added later
+  reached the **write** path: the one irreversible thing this tool does was what it did when it
+  did not understand you, and it writes the denominator every suite run quotes. `dispatch()`
+  now errors on anything unrecognised, and `--inject` asserts all nine cases including `[]`
+  still meaning *write*.
+
+  **`--check` is now on a pre-report list in AGENTS.md**, alongside the two `shard-gate` runs.
+  It was the one gate not run before this round was reported green, and it was failing: the
+  round moved 9 rows out of `local_only_publishable_no_blocker` and 2 clearances out of
+  `cleared_by_human`, and the summary still asserted the old counts. Neither gate run can see
+  that — they read the index, not the summary. `index-summary.json` is regenerated in this
+  round.
+
+- **The secret gate can now see two credential forms it was blind to
+  (`corpus/verify-content-mask.py`).** `SECRET_SHAPES` had **no PEM shape at all**, and
+  `quoted-credential`'s `(?<![A-Za-z0-9_])` lookbehind blocked a password on a variable whose
+  name *ends* with the keyword — `$user_password`, `$adminpassword` — with no `pwd` keyword
+  either. The lookbehind is gone, `pwd` is in the list, and `pem-private-key` requires a
+  **complete** block: 32 of the 34 `BEGIN … PRIVATE KEY` markers on the rows this was written
+  for sit inside docblock prose, and a header-only shape would fail them on documentation.
+
+  Both files are in `gate_provenance.TOOLS`, so `tools_digest` moved `6fecbeebbccc` →
+  `83735611dab4` and all **140** stamped rows went into re-measurement. Paid deliberately and
+  measured: 73 rows had masked bytes on disk, `corpus/restage-masked.py` **regenerated and
+  hash-verified** 132 of 142 more from their originals (`content_mask.mask_sample` is
+  deterministic, and a regenerated file that hashes to the row's recorded `masked_sha256` *is*
+  that file), 139 rows were re-stamped, 1 published row is left `stale` for want of bytes, 34
+  rows lost `publishable` for the length of a commit, and 2 human clearances on
+  `34bba99dae63` went inert exactly as designed.
+
+  **Six rows go `PASS` → `FAIL`, four of them `publishable: true`** — `162ccc9adf4e`,
+  `fa4356393880` (tagged `clean`), `b839772db7c7` (tagged `c2`, which demands nothing) and
+  `91d2ee9cdd6d`. Only one of the four carries `secret`, which is why the nine "vacuous
+  passes" could see one of them: that population was selected by the tag written by the rule
+  whose blindness was the subject. Of the four divergences recorded last round, two moved
+  their verdict, two (`24d902d48a0d`, `bba931abc09d`) are not divergences at all — 34 PEM
+  headers and **zero** `END` markers between them — and four more were outside the search.
+  Local `publishable` 368 → 364; the published half is unchanged at 44,543.
+
+- **`verify-and-stamp.py` and `remeasure-gates.py` were asking a three-gate question about
+  two gates.** Both re-measured `plaintext_gate` and `encoded_layer_gate` and said nothing
+  about `secret_gate`, which a `TOOLS` module produces and the stamp therefore always claimed.
+  Both now take the pre-masking bytes and re-measure the differential, and both answer
+  **`agrees` / `disagrees` / `cannot-check`** — a row nobody could measure and a row that
+  disagrees need different work. Without this, the re-stamp after the gate repair would have
+  written fresh stamps over six rows whose recorded verdict the current tools do not produce.
+
+- **CORPUS_PLAN §11 gains an eighth appearance** and the heading moves from seven to eight.
+  The nine vacuous passes were nine because the predicate began *carries the `secret` tag*,
+  and the report that found them explicitly dismissed the other 69 rows recording
+  `before == after == 0` as owing nothing. Four publishable rows carrying an invisible
+  credential were in that dismissed set. **A reconciliation between two rules must be run
+  over the rows that record the measurement, never over the rows one of the rules labelled.**
+
+
 - **`FP_NOTE` is corrected and has moved out of the behavioural digest.** It said 36 hits
   come from identifiers of 6+ characters where `--stock-fp` prints **52**; 36 was `begins`
   (20) plus `contains` at 6+ (16) and omitted the 16 `exact` hits at 6+. It now says 52 and

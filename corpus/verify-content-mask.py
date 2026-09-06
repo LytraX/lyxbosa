@@ -186,9 +186,35 @@ SECRET_SHAPES = [
     ("wp-credential", re.compile(rb"(?:DB_NAME|DB_USER|DB_PASSWORD|AUTH_KEY|SECURE_AUTH_KEY|"
                                  rb"LOGGED_IN_KEY|NONCE_KEY|AUTH_SALT|SECURE_AUTH_SALT|"
                                  rb"LOGGED_IN_SALT|NONCE_SALT)\W{1,12}['\"]([^'\"]{2,})['\"]")),
+    # No LEFT boundary, and `pwd` is in the list. Both are repairs, both measured.
+    #
+    # The lookbehind was `(?<![A-Za-z0-9_])`, and the tagger's `literal-password` has no left
+    # boundary at all, so a password assigned to a variable whose NAME ENDS with the keyword
+    # was tagged and not gated: `$user_password`, `$adminpassword`, `$pwd`. §5.6 already
+    # rules that a lookaround in an identifier regex should err towards over-matching and
+    # records two leaks from one that did not; this was the third, on credentials. For a
+    # DIFFERENTIAL gate over-matching is the strict direction - every extra literal is one
+    # more thing masking has to have changed - so widening cannot make this gate laxer.
+    #
+    # Measured over the 55 before/after pairs reachable on this machine: three rows go
+    # PASS -> FAIL, two keep FAIL with five more carried literals each, and 50 do not move.
     ("quoted-credential",
-     re.compile(rb"(?i)(?<![A-Za-z0-9_])(?:password|passwd|pass|api_key|apikey|secret)"
+     re.compile(rb"(?i)(?:password|passwd|pwd|pass|api_key|apikey|secret)"
                 rb"(?![A-Za-z0-9_])\s*[=:]>?\s*['\"]([^'\"]{4,})['\"]")),
+    # The gate had NO PEM shape at all. `-----BEGIN … PRIVATE KEY-----` was tagged by
+    # `sensitivity.SECRET_PATTERNS` and invisible here, and a PEM block has a value - its
+    # base64 body - so it is gateable and the gate simply did not look.
+    #
+    # A COMPLETE block is required: opening marker, at least one base64 body line, closing
+    # marker. That is not fastidiousness, it is what the two rows this was written for
+    # actually contain. Both carry 34 `BEGIN … PRIVATE KEY` markers and ZERO `END` markers;
+    # 32 of the 34 sit inside docblock prose (`the headers, e.g. …`) in a vendor crypto
+    # library quoted by a scan report. A header-only shape would fail both rows on
+    # documentation, which is the flood §5.3 records rather than a gate.
+    ("pem-private-key",
+     re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n]+"
+                rb"((?:[A-Za-z0-9+/=]{16,}[ \t]*[\r\n]+)+)"
+                rb"-----END [A-Z ]*PRIVATE KEY-----")),
 ]
 
 
@@ -667,6 +693,38 @@ def inject(ids, keep, sample=None):
             ("eleven credentials replaced one for one",
              b"".join(b"define('DB_PASSWORD', 'pw%02d1234');" % i for i in range(11)),
              b"".join(b"define('DB_PASSWORD', 'zq%02d8877');" % i for i in range(11)),
+             False),
+   
+            # ------------------------------------------------------------------------
+            # The two narrownesses repaired in this commit. Each is a pair: the credential
+            # the gate could not see must now fail it, and the thing that must NOT fail it
+            # is beside it - a widened pattern that fires on documentation is a flood, not
+            # a gate.
+            # ------------------------------------------------------------------------
+            ("a password on a name ENDING with the keyword, left unchanged",
+             b"$user_password = 'abcd1234';", b"$user_password = 'abcd1234';", True),
+            ("the same password actually replaced",
+             b"$user_password = 'abcd1234';", b"$user_password = 'zzzz9999';", False),
+            ("a password on a GLUED name, left unchanged",
+             b"$adminpassword='abcd1234';", b"$adminpassword='abcd1234';", True),
+            ("`pwd`, which this gate had no keyword for, left unchanged",
+             b"$pwd = 'abcd1234';", b"$pwd = 'abcd1234';", True),
+            ("a complete PEM private key left unchanged",
+             b"-----BEGIN RSA PRIVATE KEY-----\nQUFBQUFBQUFBQUFBQUFB\n"
+             b"-----END RSA PRIVATE KEY-----",
+             b"-----BEGIN RSA PRIVATE KEY-----\nQUFBQUFBQUFBQUFBQUFB\n"
+             b"-----END RSA PRIVATE KEY-----", True),
+            ("a complete PEM private key actually replaced",
+             b"-----BEGIN RSA PRIVATE KEY-----\nQUFBQUFBQUFBQUFBQUFB\n"
+             b"-----END RSA PRIVATE KEY-----",
+             b"-----BEGIN RSA PRIVATE KEY-----\nWlpaWlpaWlpaWlpaWlpa\n"
+             b"-----END RSA PRIVATE KEY-----", False),
+            # The negative half that decides the PEM shape. Both rows this was written for
+            # carry 34 BEGIN markers and no END marker at all, 32 of them inside docblock
+            # prose. A header-only shape fails them on documentation.
+            ("a PEM HEADER quoted in documentation, with no key body",
+             b"# the headers, e.g. `-----BEGIN RSA PRIVATE KEY-----MIIBOgIBAAJBAK`\n",
+             b"# the headers, e.g. `-----BEGIN RSA PRIVATE KEY-----MIIBOgIBAAJBAK`\n",
              False),
     ):
         ok, res = secret_gate(before, after)
