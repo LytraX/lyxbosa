@@ -13,6 +13,64 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **`corpus/lift-adjudication.py` — a human adjudication is no longer squatting in a gate's
+  evidence key.** Two published rows, the polyglot siblings of §5.4, recorded
+  `classification / decision / resolution / value / why_it_matters` under
+  `masking.encoded_layer_finding`. Not one of those is a key the encoded-layer gate produces,
+  and `clearance.finding_digest` is taken over exactly that key — so on those two rows the
+  finding digest for the encoded-layer gate was computed **over prose and an address**, and
+  rewording the argument would have moved it.
+
+  Measured before the move rather than argued. Run against both pseudonym maps (288
+  identifiers, 64 keep tokens) over the exact fixture bytes the shard ships and whose sha256
+  the rows record, the current tools return `PASS` for both and emit **no
+  `encoded_layer_finding` at all**. The block was never a gate finding. And the damage was
+  already live: `verify-and-stamp.reverify` reported **`disagrees` / `evidence-moved` on both
+  rows before the move and `agrees` on both after**, so each was unrepairable by
+  `verify-and-stamp.py` and refused outright by `remeasure-gates.py`'s human-decision rule.
+
+  Moved to `masking.human_adjudication`, additive except for the vacated key, with `about`
+  added to name the gate the old key said structurally. Digest `663ee3e0cf71 →
+  ebddfbf1d6ed` on both; **no clearance was keyed to either**, checked over every clearance
+  object on this machine rather than assumed; `publishable` stayed `true` with zero blockers
+  on both, before and after. The leaf is `human_adjudication` and not `adjudication` because
+  `field-provenance.classify` matches on the leaf — see §11's eleventh instance below.
+
+- **`shard-gate.py` — four blocks of published content that nothing read now have readers.**
+  Ten of the 64 orphan fields, all on published rows, all describing either an identifier
+  kept on purpose or the identity of a shipped fixture. All map-free.
+
+  * **a gate finding records shapes and counts, and nothing else.** Every finding carries a
+    generated note saying *"identifier names deliberately not recorded here"* — a claim about
+    the field, published in the tracked index, with nothing checking it, while two other
+    published rows used that same field to record an address. A finding may now carry only
+    the keys `_profile` emits, at the types it emits them. Run against the two rows **as they
+    were**, it fires on both; against the index as it stands, it is clean.
+  * **an adjudication must be one somebody else could audit** — every required key present,
+    `about` naming a gate the row records, and **an address in its resolution must be one the
+    row declares in `ioc.campaign_hosts`**. That is the c2-versus-customer distinction made
+    structural instead of assumed: this block may name an identifier only because the
+    identifier is attacker infrastructure kept under §4.1, and an adjudication resolving to
+    an address the row never declared would be a decision to publish one on no stated ground.
+  * **the kept-indicator block keeps saying only what it is for** — `c2_fallback_ip` among
+    `campaign_hosts`, every entry host-shaped, and the block, `masking.c2_kept` and the `c2`
+    tag agreeing. Three records of one decision that could disagree, and nothing asked.
+  * **a fixture describes the bytes it ships** — payload smaller than fixture, two distinct
+    64-hex hashes, `name == family`, and `sha256 == fixture_sha256` **iff**
+    `size == fixture_size` (7 of 7 agree in both directions; three rows are their own fixture
+    and four are not, and a row that is one by hash and not by size is half-updated).
+
+- **`clearances` record `reasoned_by`.** `by` is the authorising human and stays that —
+  accountability for a publication decision belongs with a person. But all three live
+  clearances read `by: cl` while the argument in each was drafted by an assistant, presented
+  and authorised, so the record read as though the signer had done the reading. The second
+  question now has its own field: `clear-finding.py` refuses to write a clearance without it,
+  and the three applying clearances were backfilled. `by` was not rewritten on any of them —
+  the authorisation was real, and rewriting it is the laundering this mechanism exists to
+  prevent. The field is deliberately **not** in `clearance.REQUIRED`: `malformed()` is the
+  hard-failure path and the two superseded records predate the field, so `shard-gate` prints
+  the count of clearances carrying none instead of destroying them.
+
 - **`corpus/gate_evidence.py` — the stamp now compares the whole finding, not the verdict
   class.** A provenance stamp asserts that *these tools produced these verdicts*, and both
   tools that write one compared the verdict class and stopped there. So a finding payload
@@ -136,6 +194,35 @@ commit list that CI generates per tag. Versions are the git tags described in
   are unchanged. 19 controls.
 
 ### Changed
+
+- **The `secret_literals` schema fork is closed at the writer, and the reason the remaining
+  eight rows are not rewritten is priced rather than asserted.** Re-derived over both halves:
+  **124 rows record twelve keys and 8 record thirteen** — not the 126 and 6 recorded when the
+  comparison rule was armed, and the difference has a cause. All 8 of the thirteens are rows
+  `remeasure-gates.py` rewrote, and the two rewritten at the end of last round moved from
+  twelve keys to thirteen as a side effect: arming the rule created two more instances of
+  the case it had been measured against. The extra key is `note`, a constant string of prose
+  that carries no measurement, and it is an artefact of one writer emitting whatever the gate
+  returned where `mask-samples.py` records a named subset.
+
+  `remeasure-gates.py` now records the same twelve, taken from
+  `gate_evidence.RECORDED_SECRET_KEYS` and asserted equal to `mask-samples.py`'s own tuple by
+  reading it out of that module's syntax tree — the constant cannot live in `mask-samples.py`
+  itself, which is in `gate_provenance.TOOLS`, without moving the digest to install a name.
+
+  **The eight existing rows are left, and why:** dropping `note` moves
+  `clearance.finding_digest` for `secret_gate`, and `34bba99dae63` carries a live human
+  clearance keyed to that digest. Rewriting the record would inert an authorisation entered a
+  round ago over a constant string, and re-signing is the operator's act, not a tool's. The
+  schema converges by attrition instead — no new row can fork, and each of the eight collapses
+  to twelve the next time it is legitimately re-measured.
+
+  **And the divergence being harmless today is now checked instead of relied on.** The two
+  schemas can only answer differently if the note's *text* moves, and that string is a literal
+  inside `verify-content-mask.py`, so moving it moves the `tools` digest and every stamped row
+  goes stale in the same instant. `digest-controls.py` asserts that coupling — and asserts its
+  opposite for `fp-note.txt`, which was deliberately moved out of the AST for exactly the
+  reason that would make this fork live.
 
 - **`verify-and-stamp.py` and `remeasure-gates.py` compare the finding, and
   `remeasure-gates.py` now writes only what moved.** The stamper refuses a row whose payload

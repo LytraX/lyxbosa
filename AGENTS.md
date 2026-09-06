@@ -118,8 +118,10 @@ was failing until you did.
   detect a 1%-of-files discrepancy 7.7% of the time; reporting "verified" from that is
   reporting nothing. §11.
 - **A denominator enumerated by the same process that produced the numerator bounds the
-  result, not reality.** Five instances are recorded in §11. Assume a sixth exists in
-  whatever you measure next.
+  result, not reality.** Eleven instances are recorded in §11. Assume a twelfth exists in
+  whatever you measure next — and note that a *tool* can carry the property as readily as a
+  measurement: four of the eleven are the orphan census bounding its own answer, in four
+  different ways, each one found only after the previous repair was called done.
 - **Never report a detection figure taken across a changing binary or a changing index.**
   `corpus/verify.py` reads `$LYXBOSA_BIN`, defaulting to `build-release/lyxbosa`; point it at
   your own build rather than rebuilding the one another session is measuring with.

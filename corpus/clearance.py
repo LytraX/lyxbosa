@@ -73,8 +73,9 @@ asserted never to manufacture one: a --fix that can invent a human decision is n
 """
 import hashlib, json
 
-__all__ = ["CLEARABLE_GATES", "NEVER_CLEARABLE_TAGS", "finding_digest", "evidence_for",
-           "malformed", "applies", "applicable", "row_clearances"]
+__all__ = ["CLEARABLE_GATES", "NEVER_CLEARABLE_TAGS", "REASONED_BY", "finding_digest",
+           "evidence_for", "malformed", "applies", "applicable", "row_clearances",
+           "unreasoned"]
 
 # Only a recorded gate result is a finding, and only a finding is clearable.
 CLEARABLE_GATES = ("plaintext_gate", "encoded_layer_gate", "secret_gate", "detection_survived")
@@ -93,6 +94,32 @@ EVIDENCE_KEYS = {
 }
 
 REQUIRED = ("gate", "finding_digest", "by", "at", "reason", "gate_provenance")
+
+# WHO AUTHORISED IT AND WHAT PRODUCED THE ARGUMENT ARE TWO QUESTIONS
+# ------------------------------------------------------------------
+# `by` is the authorising human, and it stays that. Accountability for a publication
+# decision belongs with a person: a corpus that lets a tool sign its own escape hatch has an
+# escape hatch and no accountability.
+#
+# But `by` was carrying a second claim it was never entitled to. All three live clearances
+# read `by: cl` while the argument in each - the segment analysis, the null model, the
+# collision ruling - was drafted by an assistant, presented, and authorised. That is a
+# perfectly ordinary way for a decision to be made and a bad thing to leave unrecorded,
+# because the record then reads as though a person did the reading, and the whole value of
+# a clearance is that someone can go back and ask what was read.
+#
+# So `reasoned_by` records what produced the argument, beside rather than instead of `by`.
+# Rewriting `by` would have been the laundering this mechanism exists to prevent, in the
+# other direction.
+#
+# It is deliberately NOT in `REQUIRED`. `malformed()` is the hard-failure path - a clearance
+# it rejects is "a human decision the record has lost" and exits the gate non-zero - and two
+# superseded clearances on `34bba99dae63` were written before this field existed. Making
+# them unreadable would destroy the history the `supersedes` chain exists to keep, to record
+# a fact about how they were drafted. `clear-finding.py` refuses to WRITE one without it,
+# which is where the rule belongs, and `shard-gate` prints the count of clearances that
+# carry none so the gap is visible rather than silent.
+REASONED_BY = "reasoned_by"
 
 
 def evidence_for(masking, gate):
@@ -190,6 +217,24 @@ def row_clearances(row):
     """The clearance list on a row, as a list, whatever the row actually holds."""
     c = row.get("clearances")
     return c if isinstance(c, list) else []
+
+
+def unreasoned(row):
+    """Clearances on this row recording no `reasoned_by`, as (gate, at) pairs.
+
+    Not a failure and not a malformation - see `REASONED_BY`. It is counted so that the
+    absence of the field is something a report says rather than something a reader has to
+    notice, which is the difference between the two superseded records here and the next
+    clearance somebody writes by hand.
+    """
+    def recorded(c):
+        v = c.get(REASONED_BY)
+        # Whitespace is not a record. `by` is checked the same way in `malformed`, and the
+        # two must agree about what counts as saying something.
+        return isinstance(v, str) and bool(v.strip())
+
+    return [(c.get("gate"), c.get("at")) for c in row_clearances(row)
+            if isinstance(c, dict) and not recorded(c)]
 
 
 def applicable(row, gate):
@@ -319,6 +364,27 @@ def _selftest():
          applicable(row, "plaintext_gate"), None)
     case("a row with no clearances key reads as none",
          row_clearances({"sha256": "0" * 64}), [])
+
+    print()
+    print("=== reasoned_by: recorded and counted, never a hard failure ===")
+    # Both directions. A rule that made a missing `reasoned_by` malformed would delete the
+    # two superseded records this repository keeps on purpose; a rule that never noticed it
+    # would leave the field optional in practice, which is the same as absent.
+    reasoned = dict(good, **{REASONED_BY: "an assistant, presented and authorised"})
+    case("a clearance without it is still READABLE",
+         malformed(good) is None, True)
+    case("and still APPLIES", applies(good, row, "encoded_layer_gate")[0], True)
+    case("a clearance with it is readable too", malformed(reasoned) is None, True)
+    case("adding it does not change what the clearance clears",
+         applies(reasoned, dict(row, clearances=[reasoned]), "encoded_layer_gate")[0], True)
+    case("unreasoned() counts the one that has none",
+         unreasoned(row), [("encoded_layer_gate", "2026-09-06T12:00:00")])
+    case("and counts nothing where every clearance carries one",
+         unreasoned(dict(row, clearances=[reasoned])), [])
+    case("an empty string is not a record",
+         unreasoned(dict(row, clearances=[dict(good, **{REASONED_BY: "  "})])) != [], True)
+    case("REASONED_BY is deliberately outside REQUIRED",
+         REASONED_BY in REQUIRED, False)
 
     print()
     # Counted, not quoted: a hardcoded total cannot report a case being dropped.

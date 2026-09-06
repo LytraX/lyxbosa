@@ -1318,9 +1318,9 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, ten appearances: a measurement that cannot deliver bad news
+## 11. One property, eleven appearances: a measurement that cannot deliver bad news
 
-Ten separate cautions in this plan share one diagnostic tell. Five of them are the same
+Eleven separate cautions in this plan share one diagnostic tell. Five of them are the same
 statement in different clothes; two reach the same place by a different mechanism and
 need a different repair, which is exactly why they are worth listing together:
 
@@ -1423,7 +1423,35 @@ stopped being it the moment fixtures stopped counting — it read **30** over a 
 Corrected population, both halves, 2026-09-06: **314 fields carried, 4 maps, 237 written, 13
 read-only, 64 ORPHAN**.
 
-**Assume an eleventh exists in whatever you measure next** — and note that the first nine were
+**An eleventh, found 2026-09-06 — the same census, a fifth way, and this one bounds the
+result of the round that found it.** `field-provenance.classify` matches a field by its
+**leaf** name. `masking.secret_literals.note` and `ioc.note` are one question to it; so are
+`origin.path` and `masking.measured_with.path`. A `read by shard-gate.py` therefore means
+*some tracked module mentions this string*, not *this field has a reader*. The docstring
+states the neighbouring half of this — "a name in a write position might still belong to some
+other dictionary" — and never sized it.
+
+Sized: **37 leaf names are shared by more than one dotted field, 118 of 316 fields sit on one,
+and 113 of the 262 non-orphan classifications — 43% — rest on a leaf shared with at least one
+other field.** The worst is `note`, one leaf across thirteen fields. `field-provenance.py`
+now prints that number on every run.
+
+It nearly bit in the useful direction and was caught by measuring rather than by luck. The
+adjudication lifted out of `masking.encoded_layer_finding` this round was going to be called
+`masking.adjudication`; a reader of `adjudication` would have reclassified
+`sensitivity_review.adjudication` — 68 rows, a genuine orphan, a value-keyed map — as
+read-only, resolving one orphan by silently claiming another. It is called
+`masking.human_adjudication` for that reason and no other, and all ten fields this round moved
+out of ORPHAN were checked to sit on leaves of their own.
+
+Not repaired, and the reason is that the obvious repair is wrong in the other direction: the
+tools genuinely index by leaf (`m["provenance"]`, `f.get("payload_size")`), so matching the
+dotted path would report almost every field as an orphan. What is owed is the number.
+
+Corrected population, both halves, 2026-09-06: **316 fields carried, 4 maps, 239 written, 23
+read-only, 54 ORPHAN**, of which 113 non-orphan classifications are leaf-shared.
+
+**Assume a twelfth exists in whatever you measure next** — and note that the first nine were
 found by somebody reading, while three of the ninth's parts and all of the tenth were found by
 asking a tool to state the size of a limit it had already written down. Writing the bound down
 is cheap and it is not the check. Sizing it is the check. The tenth is the sharper lesson:

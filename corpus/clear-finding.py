@@ -28,6 +28,14 @@ is written as a list of refusals with a default of no.
     identifier set the masking gate uses, and refused if it matches. This needs the maps, so
     this tool requires them; `shard-gate.py` deliberately does not.
   * **an empty reason, or no author.** The whole point is that the decision has an owner.
+  * **no `reasoned_by`.** `by` is the authorising human and stays that - accountability for
+    a publication decision belongs with a person. But all three live clearances read
+    `by: cl` while the argument in each was drafted by an assistant, presented, and
+    authorised, and the record said nothing about that. A reader going back to ask what was
+    read would have concluded a person read it. So the second question gets its own field
+    and this tool will not write a clearance without an answer to it. It is refused HERE
+    and not in `clearance.malformed` on purpose: malformed is the hard-failure path, and
+    two superseded records predate the field.
   * **a duplicate.** Re-signing the same finding twice is either a mistake or an attempt to
     paper over an inert one, and both want a human to look.
 
@@ -41,7 +49,8 @@ prints that as the next step rather than doing it.
 
     corpus/clear-finding.py --index corpus/local/index-local.jsonl \\
         --sha 34bba99dae63 --gate encoded_layer_gate --by cl \\
-        --reason "..." --apply
+        --reasoned-by "..." --reason "..." --apply
+    corpus/clear-finding.py --index ... --backfill-reasoned-by "..." --by cl --apply
     corpus/clear-finding.py --inject          # the controls
 """
 import argparse, copy, datetime, importlib.util, json, os, re, sys
@@ -90,7 +99,7 @@ def reason_names_a_customer(reason, ids):
     return sorted(set(hits))
 
 
-def build(row, gate, by, reason, ids, prov_maps=MAPS):
+def build(row, gate, by, reason, ids, prov_maps=MAPS, reasoned_by=None):
     """(clearance, refusal). Exactly one is None."""
     if gate not in clearance.CLEARABLE_GATES:
         return None, ("%r is not a recorded gate result. Only a finding can be cleared, and "
@@ -99,6 +108,12 @@ def build(row, gate, by, reason, ids, prov_maps=MAPS):
                       % (gate, "/".join(clearance.CLEARABLE_GATES)))
     if not by or not by.strip():
         return None, "an author is required: a clearance without one has no owner"
+    if not isinstance(reasoned_by, str) or not reasoned_by.strip():
+        return None, ("--reasoned-by is required: `by` records who AUTHORISED the "
+                      "publication decision, and this records what produced the argument "
+                      "they authorised. Every clearance in this index was drafted by an "
+                      "assistant and signed by the operator, and until this field existed "
+                      "the record read as though the signer had done the reading.")
     if not reason or not reason.strip():
         return None, "a reason is required: the record has to say what was read"
     tags = set(row.get("sensitivity") or [])
@@ -152,6 +167,7 @@ def build(row, gate, by, reason, ids, prov_maps=MAPS):
     out = {"gate": gate,
            "finding_digest": digest,
            "by": by.strip(),
+           clearance.REASONED_BY: reasoned_by.strip(),
            "at": datetime.datetime.now().replace(microsecond=0).isoformat(),
            "reason": reason.strip(),
            "gate_provenance": pin}
@@ -161,6 +177,89 @@ def build(row, gate, by, reason, ids, prov_maps=MAPS):
         out["supersedes"] = {"at": superseded.get("at"), "by": superseded.get("by"),
                              "gate_provenance": superseded.get("gate_provenance")}
     return out, None
+
+
+# ---------------------------------------------------------------------------------------
+# The backfill, which is a DIFFERENT act from writing a clearance and is kept in this file
+# anyway.
+#
+# `clear-finding.py` is the only writer of `clearances`, and that is worth more than the
+# tidiness of one tool per act: a second tool that could edit a clearance would make the
+# sentence false, and the sentence is what lets a reader know where to look. So the backfill
+# lives here under its own flag, its own assertion and its own controls.
+#
+# What it may do is exactly one thing: ADD `reasoned_by` to a clearance that has none. It
+# may not touch `by` - rewriting the authorising human is the laundering this mechanism
+# exists to prevent, and the authorisation on all three live records was real. It may not
+# change a reason, a digest, a pin or a date, because none of those is a fact about how the
+# argument was drafted.
+#
+# WHICH RECORDS IT TOUCHES, AND WHY NOT THE OTHER TWO
+# ----------------------------------------------------
+# Only clearances that APPLY. `34bba99dae63` carries five clearance objects and three of
+# them apply; the other two were superseded when the tools digest moved and authorise
+# nothing. `reasoned_by` exists for accountability over a publication decision, and an inert
+# record makes none - so backfilling it there would be writing a claim about how a document
+# was drafted into a record whose only remaining job is to be the thing a later record
+# supersedes. They stay as they are, and `shard-gate` counts them.
+# ---------------------------------------------------------------------------------------
+
+def backfill(row, reasoned_by):
+    """(after, touched, skipped). `after` is a new row; the input is never mutated."""
+    after = copy.deepcopy(row)
+    touched, skipped = [], []
+    for c in clearance.row_clearances(after):
+        if not isinstance(c, dict):
+            continue
+        label = (c.get("gate"), c.get("at"))
+        if c.get(clearance.REASONED_BY):
+            skipped.append((label, "already records one"))
+            continue
+        applies, why = clearance.applies(c, after, c.get("gate"))
+        if not applies:
+            skipped.append((label, "inert: %s" % why))
+            continue
+        c[clearance.REASONED_BY] = reasoned_by.strip()
+        touched.append(label)
+    return after, touched, skipped
+
+
+def assert_backfilled(before, after, reasoned_by):
+    """None, or what changed that should not have.
+
+    The assertion is per clearance and per key, not per row: "the row still has five
+    clearances" would pass a backfill that rewrote a reason, and "nothing outside
+    `clearances` changed" would pass one that rewrote `by`.
+    """
+    b, a = copy.deepcopy(before), copy.deepcopy(after)
+    # Both, unconditionally. Written as one `or`-ed expression this popped only `before`,
+    # because `or` short-circuits - and every clean backfill then read as "changed
+    # clearances", which is the assertion firing on itself rather than on a defect.
+    b.pop("clearances", None)
+    a.pop("clearances", None)
+    if b != a:
+        return "changed %s outside `clearances`" % "/".join(
+            sorted({k for k in set(b) | set(a) if b.get(k) != a.get(k)}))
+    cb, ca = clearance.row_clearances(before), clearance.row_clearances(after)
+    if len(cb) != len(ca):
+        return "clearances went %d -> %d; a backfill adds none" % (len(cb), len(ca))
+    for i, (x, y) in enumerate(zip(cb, ca)):
+        if not isinstance(x, dict) or not isinstance(y, dict):
+            if x != y:
+                return "clearance %d was rewritten" % i
+            continue
+        moved = sorted({k for k in set(x) | set(y) if x.get(k) != y.get(k)})
+        if not moved:
+            continue
+        if moved != [clearance.REASONED_BY]:
+            return "clearance %d changed %s, and only %s may be added" % (
+                i, "/".join(moved), clearance.REASONED_BY)
+        if x.get(clearance.REASONED_BY):
+            return "clearance %d already recorded a %s and it was overwritten" % (
+                i, clearance.REASONED_BY)
+        if y[clearance.REASONED_BY] != reasoned_by.strip():
+            return "clearance %d recorded something other than what was asked for" % i
+    return None
 
 
 def assert_additive(before, after):
@@ -180,20 +279,78 @@ def assert_additive(before, after):
     return None
 
 
+def do_backfill(a):
+    """`--backfill-reasoned-by`. Adds one key to applying clearances and nothing else."""
+    if not a.by or not a.by.strip():
+        return print("--by is required: a record of who ran the backfill") or 2
+    if not a.backfill.strip():
+        return print("--backfill-reasoned-by needs a value") or 2
+    rows = read_jsonl(a.index)
+    print("index                   : %s" % a.index)
+    print("reasoned_by to record   : %s" % a.backfill.strip())
+    total_t, total_s = 0, 0
+    for r in rows:
+        if not clearance.row_clearances(r):
+            continue
+        _after, touched, skipped = backfill(r, a.backfill)
+        for gate, at in touched:
+            print("  ADD    %s  %-20s %s" % (r["sha256"][:12], gate, at))
+        for (gate, at), why in skipped:
+            print("  SKIP   %s  %-20s %s   %s" % (r["sha256"][:12], gate, at, why))
+        total_t += len(touched)
+        total_s += len(skipped)
+    print("clearances to backfill  : %d   (skipped %d)" % (total_t, total_s))
+    if not total_t:
+        print()
+        print("nothing to do.")
+        return 0
+    if not a.apply:
+        print()
+        print("dry run: nothing written. Re-run with --apply.")
+        return 0
+    with index_lock(a.index):
+        rows = read_jsonl(a.index)
+        n = 0
+        for i, r in enumerate(rows):
+            if not clearance.row_clearances(r):
+                continue
+            after, touched, _skipped = backfill(r, a.backfill)
+            if not touched:
+                continue
+            bad = assert_backfilled(r, after, a.backfill)
+            if bad:
+                sys.exit("refusing to write %s: %s" % (r["sha256"][:12], bad))
+            rows[i] = after
+            n += len(touched)
+        write_jsonl_atomic(a.index, rows)
+    print()
+    print("written: %d clearance(s) gained %s. Nothing else moved, and `publishable` is"
+          % (n, clearance.REASONED_BY))
+    print("untouched - this field is not read by `applies`, so no row's status can change.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--index", default=os.path.join(HERE, "local", "index-local.jsonl"))
     ap.add_argument("--sha", help="full sha256 or a unique prefix")
     ap.add_argument("--gate", help="/".join(clearance.CLEARABLE_GATES))
-    ap.add_argument("--by", help="who is deciding")
+    ap.add_argument("--by", help="who is AUTHORISING the decision; a person")
+    ap.add_argument("--reasoned-by", dest="reasoned_by",
+                    help="what produced the argument they authorised")
     ap.add_argument("--reason", help="what they read, by shape and never by name")
+    ap.add_argument("--backfill-reasoned-by", dest="backfill",
+                    help="add reasoned_by to every APPLYING clearance that records none; "
+                         "adds no clearance and changes nothing else")
     ap.add_argument("--apply", action="store_true", help="write it; default is a dry run")
     ap.add_argument("--inject", action="store_true")
     a = ap.parse_args()
 
     if a.inject:
         return inject()
-    for req in ("sha", "gate", "by", "reason"):
+    if a.backfill is not None:
+        return do_backfill(a)
+    for req in ("sha", "gate", "by", "reason", "reasoned_by"):
         if not getattr(a, req):
             return ap.error("--%s is required" % req)
     if not MAPS:
@@ -211,7 +368,7 @@ def main():
 
     rows = read_jsonl(a.index)
     row = one(rows)
-    c, refusal = build(row, a.gate, a.by, a.reason, ids)
+    c, refusal = build(row, a.gate, a.by, a.reason, ids, reasoned_by=a.reasoned_by)
     print("row                     : %s" % row["sha256"][:12])
     print("gate                    : %s" % a.gate)
     if refusal:
@@ -220,6 +377,7 @@ def main():
     print("finding digest          : %s" % c["finding_digest"])
     print("pinned to provenance    : %s" % json.dumps(c["gate_provenance"], sort_keys=True))
     print("by / at                 : %s / %s" % (c["by"], c["at"]))
+    print("reasoned by             : %s" % c[clearance.REASONED_BY])
 
     if not a.apply:
         print()
@@ -231,7 +389,7 @@ def main():
         # digest computed against a stale copy would pin a finding that no longer exists.
         rows = read_jsonl(a.index)
         row = one(rows)
-        c, refusal = build(row, a.gate, a.by, a.reason, ids)
+        c, refusal = build(row, a.gate, a.by, a.reason, ids, reasoned_by=a.reasoned_by)
         if refusal:
             sys.exit("REFUSED on re-read under the lock: %s" % refusal)
         before = copy.deepcopy(row)
@@ -267,6 +425,7 @@ def inject():
 
     NOW = gate_provenance.stamp(MAPS)
     PROV = {"tools": NOW["tools"], "map": NOW["map"]}
+    RB = "an assistant, drafted and presented for authorisation"
 
     def row(**kw):
         m = {"applied": True, "plaintext_gate": "PASS", "detection_survived": True,
@@ -283,27 +442,27 @@ def inject():
     ids = set()
     print("=== the writer must REFUSE these ===")
     case("a gate that is not a recorded gate result",
-         "refused" if build(row(), "pii", "cl", "x", ids)[1] else "written", "refused")
+         "refused" if build(row(), "pii", "cl", "x", ids, reasoned_by=RB)[1] else "written", "refused")
     case("a gate the row records as a pass",
          "refused" if build(row(masking={"encoded_layer_gate": "PASS"}),
-                            "encoded_layer_gate", "cl", "x", ids)[1] else "written", "refused")
+                            "encoded_layer_gate", "cl", "x", ids, reasoned_by=RB)[1] else "written", "refused")
     case("a gate the row does not record at all",
-         "refused" if build(row(), "secret_gate", "cl", "x", ids)[1] else "written", "refused")
+         "refused" if build(row(), "secret_gate", "cl", "x", ids, reasoned_by=RB)[1] else "written", "refused")
     case("a row carrying pii",
          "refused" if build(row(sensitivity=["pii", "identity"]),
-                            "encoded_layer_gate", "cl", "x", ids)[1] else "written", "refused")
+                            "encoded_layer_gate", "cl", "x", ids, reasoned_by=RB)[1] else "written", "refused")
     case("a row carrying content",
          "refused" if build(row(sensitivity=["content"]),
-                            "encoded_layer_gate", "cl", "x", ids)[1] else "written", "refused")
+                            "encoded_layer_gate", "cl", "x", ids, reasoned_by=RB)[1] else "written", "refused")
     case("provenance absent",
          "refused" if build(row(masking={"provenance": None}),
-                            "encoded_layer_gate", "cl", "x", ids)[1] else "written", "refused")
+                            "encoded_layer_gate", "cl", "x", ids, reasoned_by=RB)[1] else "written", "refused")
     case("provenance stale",
          "refused" if build(row(masking={"provenance": {"tools": "0" * 12, "map": None}}),
-                            "encoded_layer_gate", "cl", "x", ids)[1] else "written", "refused")
-    case("no author", "refused" if build(row(), "encoded_layer_gate", "  ", "x", ids)[1]
+                            "encoded_layer_gate", "cl", "x", ids, reasoned_by=RB)[1] else "written", "refused")
+    case("no author", "refused" if build(row(), "encoded_layer_gate", "  ", "x", ids, reasoned_by=RB)[1]
          else "written", "refused")
-    case("no reason", "refused" if build(row(), "encoded_layer_gate", "cl", "   ", ids)[1]
+    case("no reason", "refused" if build(row(), "encoded_layer_gate", "cl", "   ", ids, reasoned_by=RB)[1]
          else "written", "refused")
     # The reason scan, against a synthetic identifier rather than a real one - the whole
     # point of the check is that a real one must never be typed into a tracked file, and
@@ -311,17 +470,19 @@ def inject():
     case("a reason that names an identifier",
          "refused" if build(row(), "encoded_layer_gate", "cl",
                             "collides with zzqqvv in a function table",
-                            {"zzqqvv"})[1] else "written", "refused")
-    c_first, _ = build(row(), "encoded_layer_gate", "cl", "read it, a collision", ids)
+                            {"zzqqvv"}, reasoned_by=RB)[1] else "written", "refused")
+    c_first, _ = build(row(), "encoded_layer_gate", "cl", "read it, a collision", ids,
+                       reasoned_by=RB)
     dup = row(clearances=[c_first])
     case("the same finding signed twice",
-         "refused" if build(dup, "encoded_layer_gate", "cl", "again", ids)[1]
+         "refused" if build(dup, "encoded_layer_gate", "cl", "again", ids, reasoned_by=RB)[1]
          else "written", "refused")
 
     print()
     print("=== and WRITE this one ===")
     c, refusal = build(row(), "encoded_layer_gate", "cl",
-                       "a 6-character label at the start of a token in a function table", ids)
+                       "a 6-character label at the start of a token in a function table",
+                       ids, reasoned_by=RB)
     case("a real finding, current provenance, a named author",
          "written" if c else "refused: %s" % refusal, "written")
     if c:
@@ -345,7 +506,8 @@ def inject():
     stale_c = dict(c_first, gate_provenance=old_pin, at="2026-01-01T00:00:00", by="cl")
     inert_row = row(clearances=[stale_c])
     resigned, why = build(inert_row, "encoded_layer_gate", "cl",
-                          "re-read against the current gate, same collision", ids)
+                          "re-read against the current gate, same collision", ids,
+                          reasoned_by=RB)
     case("the same finding under a pin that has since moved",
          "written" if resigned else "refused: %s" % why, "written")
     if resigned:
@@ -366,14 +528,91 @@ def inject():
     # clearance for the same finding under the SAME pin is a duplicate and stays refused.
     live_row = row(clearances=[c_first])
     case("the same finding under the pin the row already records",
-         "refused" if build(live_row, "encoded_layer_gate", "cl", "again", ids)[1]
+         "refused" if build(live_row, "encoded_layer_gate", "cl", "again", ids,
+                            reasoned_by=RB)[1]
          else "written", "refused")
     case("and the refusal says it is a duplicate rather than a re-judgement",
          "yes" if "duplicate" in (build(live_row, "encoded_layer_gate", "cl", "again",
-                                        ids)[1] or "") else "no", "yes")
+                                        ids, reasoned_by=RB)[1] or "") else "no", "yes")
     # A first clearance carries no `supersedes` at all: the key must mean something.
     case("a first clearance names nothing it supersedes",
          "supersedes" in (c or {}), False)
+
+    print()
+    print("=== reasoned_by: refused at the writer, in both directions ===")
+    # The control AGENTS.md asks for: a new entry without it is refused. Paired with the
+    # negative half, because a required field that is also refused when supplied would be
+    # indistinguishable from a green run over a tool nobody can use.
+    case("a clearance with no reasoned_by at all",
+         "refused" if build(row(), "encoded_layer_gate", "cl", "read it, a collision",
+                            ids)[1] else "written", "refused")
+    case("reasoned_by of whitespace",
+         "refused" if build(row(), "encoded_layer_gate", "cl", "read it, a collision", ids,
+                            reasoned_by="   ")[1] else "written", "refused")
+    case("reasoned_by that is not a string",
+         "refused" if build(row(), "encoded_layer_gate", "cl", "read it, a collision", ids,
+                            reasoned_by=True)[1] else "written", "refused")
+    case("and the same call WITH one is written",
+         "written" if build(row(), "encoded_layer_gate", "cl", "read it, a collision", ids,
+                            reasoned_by=RB)[0] else "refused", "written")
+    if c:
+        case("the written record carries it verbatim", c.get(clearance.REASONED_BY), RB)
+        case("and `by` is untouched by its presence", c["by"], "cl")
+        case("clearance.unreasoned does not count it",
+             clearance.unreasoned(row(clearances=[c])), [])
+    # The refusal must name the missing field, or a caller cannot tell it from the others.
+    case("the refusal says which flag is missing",
+         "reasoned-by" in (build(row(), "encoded_layer_gate", "cl", "x", ids)[1] or ""),
+         True)
+
+    print()
+    print("=== the backfill adds one key to APPLYING clearances and nothing else ===")
+    live = dict(c_first)
+    live.pop(clearance.REASONED_BY, None)
+    inert = dict(live, gate_provenance={"tools": "0" * 12, "map": NOW["map"]},
+                 at="2026-01-01T00:00:00")
+    already = dict(live, **{clearance.REASONED_BY: "somebody else"})
+    br = row(clearances=[inert, live, already])
+    after, touched, skipped = backfill(br, RB)
+    case("the applying clearance is backfilled", len(touched), 1)
+    case("the inert one is skipped",
+         any("inert" in why for _l, why in skipped), True)
+    case("and the one that already records it is skipped",
+         any("already" in why for _l, why in skipped), True)
+    case("the value written is the one asked for",
+         after["clearances"][1].get(clearance.REASONED_BY), RB)
+    case("the record that already had one is not overwritten",
+         after["clearances"][2].get(clearance.REASONED_BY), "somebody else")
+    case("`by` is not touched on any of them",
+         [x["by"] for x in after["clearances"]], [x["by"] for x in br["clearances"]])
+    case("the input row is not mutated",
+         clearance.REASONED_BY in br["clearances"][1], False)
+    case("the clean backfill passes its own assertion",
+         assert_backfilled(br, after, RB) or "clean", "clean")
+    case("running it twice changes nothing the second time",
+         backfill(after, RB)[1], [])
+    # The negative half, one per thing the assertion is supposed to stop. A backfill that
+    # could do any of these would be an edit of a human decision wearing a field's name.
+    for label, mutate in (
+            ("a rewritten `by` is caught",
+             lambda x: x["clearances"][1].__setitem__("by", "someone else")),
+            ("a rewritten reason is caught",
+             lambda x: x["clearances"][1].__setitem__("reason", "different")),
+            ("a re-pinned provenance is caught",
+             lambda x: x["clearances"][1].__setitem__("gate_provenance",
+                                                      {"tools": "z" * 12, "map": None})),
+            ("an added clearance is caught",
+             lambda x: x["clearances"].append(dict(live))),
+            ("a dropped clearance is caught", lambda x: x["clearances"].pop(0)),
+            ("publishable written alongside is caught",
+             lambda x: x.__setitem__("publishable", True)),
+            ("a value other than the one asked for is caught",
+             lambda x: x["clearances"][1].__setitem__(clearance.REASONED_BY, "a human")),
+            ("overwriting one that already recorded one is caught",
+             lambda x: x["clearances"][2].__setitem__(clearance.REASONED_BY, RB))):
+        bad = copy.deepcopy(after)
+        mutate(bad)
+        case(label, "caught" if assert_backfilled(br, bad, RB) else "MISSED", "caught")
 
     print()
     print("=== the write must be additive, and must not compute publishability ===")

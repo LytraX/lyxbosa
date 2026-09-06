@@ -113,6 +113,24 @@ CASES = [
       '(rb"eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.", "jwt"),\n'
       '    (rb"PROBE_ONLY_NEVER_COMMITTED", "probe"),'),
      "sensitivity", True),
+    # THE OTHER NOTE, AND THE PAIR IS THE POINT.
+    #
+    # `secret_literals.note` is prose exactly like `fp-note.txt`, and it is still a string
+    # LITERAL inside this TOOLS module. That is not an oversight to fix in passing - it is
+    # the only thing making a live schema fork harmless. 124 rows record twelve
+    # `secret_literals` keys and 8 record thirteen, the extra being this note, and
+    # `gate_evidence.compare_gate` compares the keys the row records - so if this text
+    # moved, the 8 would read `evidence-moved` and the 124 would read `agrees` for the same
+    # measurement. It cannot move quietly only because moving it moves the `tools` digest
+    # and every stamped row goes stale in the same instant.
+    #
+    # So the coupling is asserted. If someone relocates this note the way `FP_NOTE` was
+    # relocated - a reasonable-looking change, and the same repair that was right for the
+    # other one - this case fails and says why before the fork goes live.
+    ("the secret note, still inside the AST", GATE,
+     ("counts and shapes only; a credential-shaped literal remaining after ",
+      "counts and shapes only - a credential-shaped literal remaining after "),
+     "tools", True),
     ("a constant in a TOOLS module", GATE,
      ("MIN_CARRY = 8", "MIN_CARRY = 9"), "tools", True),
     ("a regex literal in a TOOLS module", GATE,
