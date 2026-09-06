@@ -204,8 +204,12 @@ def inject():
                 shutil.copy2(os.path.join(HERE, n), os.path.join(tmp, n))
             # Not a TOOLS file, and that is the point: it is the prose the findings cite,
             # and it has to be present in the fixture for the case that rewrites it.
-            shutil.copy2(os.path.join(HERE, "fp-note.txt"),
-                         os.path.join(tmp, "fp-note.txt"))
+            for prose in ("fp-note.txt", "finding-note.txt"):
+                shutil.copy2(os.path.join(HERE, prose), os.path.join(tmp, prose))
+            # `verify-content-mask.py` imports it, so the fixture root has to hold it or the
+            # digest cannot be taken over that root at all.
+            shutil.copy2(os.path.join(HERE, "finding_notes.py"),
+                         os.path.join(tmp, "finding_notes.py"))
             # The cache is keyed by root, and this fixture mutates a root in place, so it
             # has to be cleared between the two reads. Without this every positive case
             # reports "held" and the suite passes while measuring nothing - which is what
@@ -303,7 +307,8 @@ def inject():
         # getattr rather than an attribute access: run against a tree where the note is
         # still a literal there is no loader, and a control that raises there reports
         # nothing at all. It has to be able to SAY the other thing.
-        loader = getattr(_vcm, "_load_fp_note", None)
+        _fn = getattr(_vcm, "finding_notes", None)
+        loader = getattr(_fn, "load", None)
         follows = bool(loader) and (loader(alt) == "a wholly different note"
                                     and _vcm.FP_NOTE != "a wholly different note")
     finally:
@@ -324,10 +329,25 @@ def inject():
     if _leaked:
         fails.append("the note's prose is still inside the AST the digest reads")
 
+    # The identifier note went the same way and for the same reason, so the same three
+    # questions are asked of it. Its prose was wrong in its second clause for two rounds
+    # because correcting it cost a re-measurement of every stamped row.
+    _ident = [w for w in ("deliberately not recorded here", "the thing being masked",
+                          "is an adjudication") if w in _src]
+    print("  %-56s %-9s %s" % ("the identifier note's prose is absent too",
+                               "absent" if not _ident else "PRESENT",
+                               "ok" if not _ident else "WRONG"))
+    if _ident:
+        fails.append("the identifier note's prose is still inside the AST")
+
     # And the negative half: the LOADER is behaviour and must move the digest. Without this
-    # the three cases above are satisfied by deleting the note altogether.
-    case("the note's filename changes",
-         lambda t: edit(t, "verify-content-mask.py", '"fp-note.txt"', '"fp-note-2.txt"'),
+    # the cases above are satisfied by deleting the note altogether. The loader is now a
+    # reference to the module that holds the prose, so the edit is which note is loaded -
+    # the same question the filename used to ask, one indirection along.
+    case("which note the gate loads changes",
+         lambda t: edit(t, "verify-content-mask.py",
+                        "FP_NOTE = finding_notes.FP_NOTE",
+                        "FP_NOTE = finding_notes.IDENTIFIER_NOTE"),
          True)
 
     print()

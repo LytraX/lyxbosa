@@ -1,0 +1,3 @@
+identifier names deliberately not recorded here; what a matched name IS - a customer
+identifier that must be masked, or attacker infrastructure that is kept on purpose - is an
+adjudication, recorded as one where it has been made, and not something this field decides

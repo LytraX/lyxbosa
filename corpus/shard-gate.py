@@ -69,6 +69,7 @@ from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy
 
 import gate_provenance
 import clearance
+import finding_notes
 
 ALWAYS_OK = {"clean", "c2"}
 NEVER = {"pii", "content"}
@@ -723,17 +724,22 @@ def findingShapeViolations(rows):
     it emits them at, so there is no key left in which a name could sit. It would have fired
     on both published rows before the move.
 
-    The note itself is not corrected here, and that is a scoping decision with a price
-    attached rather than an omission. Its second clause - *"they are the thing being
-    masked"* - presumes the outcome these two rows exist to record: an identifier this gate
-    finds may equally be attacker infrastructure that is deliberately KEPT, which is what
-    the adjudication concluded. Correcting it means editing a string literal inside
-    `verify-content-mask.py`, one of the six modules in `gate_provenance.TOOLS`, which moves
-    the `tools` digest; measured, that would take `publishable` from 44,543 to 44,536 in the
-    published half and 365 to 294 in the local one - 78 rows - until every stamped row is
-    re-measured, and the last time that digest moved 69 of 140 rows had bytes that could not
-    be regenerated. The repair is the one `FP_NOTE` had: relocate the prose out of the AST,
-    pay the re-measurement once. It is a round, not a line.
+    The note itself was not corrected here for two rounds, and the price is recorded above
+    rather than the omission being quiet: its second clause - *"they are the thing being
+    masked"* - presumed the outcome these two rows exist to record, because an identifier
+    this gate finds may equally be attacker infrastructure that is deliberately KEPT, which
+    is what the adjudication concluded.
+
+    **Paid on 2026-09-07.** The prose is in `corpus/finding-note.txt`, loaded by
+    `corpus/finding_notes.py`, which is outside `TOOLS`; the five modules that hard-coded
+    the note in their own fixtures now read it from there, and `finding_notes.py --inject`
+    reports any that goes back to a literal. The estimate quoted here was 44,543 to 44,536
+    published and 365 to 294 local. What happened: the published half did not move at all -
+    all seven rows that estimate wrote off were reachable after all, six of them because a
+    row recording `changes: 0` says its masked form IS its input - and the local half
+    settled at 364, one row short, because `34bba99dae63`'s five clearances are keyed to
+    finding digests and gate provenance that both moved. Re-signing those is a person's act
+    and no tool's, so the row is `publishable: false` with its blockers recorded.
     """
     def wrong(key, value):
         want = FINDING_SHAPE[key]
@@ -1983,7 +1989,7 @@ def inject(path):
                "segment_lengths": [25, 473603], "kinds": ["acct", "domain"],
                "positions": ["begins", "contains", "exact", "truncation"],
                "methods": ["base64", "base64+inflate"],
-               "note": "identifier names deliberately not recorded here",
+               "note": finding_notes.IDENTIFIER_NOTE,
                "false_positive_note": "127 across 104 of 8,000 stock files"}
     scase("the profile the gate actually emits", dict(PROFILE), False)
     scase("a plaintext finding, which carries no methods",

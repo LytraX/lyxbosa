@@ -15,6 +15,19 @@ moved the digest for 140 stamped rows; 73 had reachable bytes and 69 did not, an
 those 69 were publishable. That is a real regression caused by a real repair, and the fix is
 not to soften the provenance rule - it is that the bytes are recoverable.
 
+THE THREE FIGURES, AND WHICH ONE IS CURRENT
+--------------------------------------------
+That 73/69 split is the state BEFORE this tool existed, and it is quoted elsewhere as "69 of
+140" - `shard-gate.findingShapeViolations` is where that phrasing lives. It is also
+internally inconsistent: 73 + 69 is 142, the number of MASKED rows, while 140 was the number
+STAMPED at that moment. It is a motivating figure, not a measurement of today.
+
+Regeneration answered 132 of 142, which is what `remeasure-gates.py` and the changelog
+quote, and re-running this tool on 2026-09-07 reproduced it exactly - 132 regenerated, 3
+mismatch, 7 unrecorded. Neither figure is the reachable set, though, because regeneration is
+only one of three ways a row's masked bytes can be PROVED, and this tool used to implement
+one. The other two are below, and with them the answer is 142 of 142.
+
 `content_mask.mask_sample` is deterministic in (bytes, map, vocabulary, flags). So the
 masked form can be REGENERATED and then CHECKED against the hash the row already records.
 That check is the whole point: a regenerated file that hashes to `masked_sha256` is not a
@@ -65,28 +78,111 @@ def build_vocabulary(roots):
     return vocab
 
 
-def regenerate(row, raw, m, vocab, mask_ipv4=False, mask_hex=False):
-    """(state, bytes|None, detail). Three states, never two.
+def target_hash(row):
+    """(hash, where) - the hash of the masked bytes this row records, and under which key.
 
-    'regenerated' - the rebuilt bytes hash to the `masked_sha256` the row already records,
-                    so they are that file rather than a reconstruction of it
-    'mismatch'    - they do not. Reported, never staged
-    'unrecorded'  - the row records no hash to check against, so there is nothing this can
-                    prove and it declines rather than staging an unidentified file
+    `masked_sha256` is the field for it. Where a row has none, a `remeasured` record written
+    by `remeasure-gates.py` carries `bytes_sha256`: the hash of the bytes that measurement
+    actually read. That is the same kind of evidence under a different name - a hash the row
+    itself records for its own masked form - and naming the source keeps the two apart in
+    the report rather than letting a fallback read as the field.
     """
-    want = (row.get("masking") or {}).get("masked_sha256")
-    if not want:
-        return "unrecorded", None, "row records no masked_sha256"
+    m = row.get("masking") or {}
+    if m.get("masked_sha256"):
+        return m["masked_sha256"], "masked_sha256"
+    rec = m.get("remeasured")
+    if isinstance(rec, dict) and rec.get("bytes_sha256"):
+        return rec["bytes_sha256"], "remeasured.bytes_sha256"
+    return None, None
+
+
+def regenerate(row, raw, m, vocab, mask_ipv4=False, mask_hex=False):
+    """(state, bytes|None, detail). Four states, never two.
+
+    'regenerated'           - the rebuilt bytes hash to the hash the row already records, so
+                              they are that file rather than a reconstruction of it
+    'regenerated-unchanged' - the row records no hash and `changes: 0`, which is the row
+                              saying its masked form IS its input; the rebuild reproduced
+                              the input byte for byte, and the input's hash is `sha256`,
+                              which the row does record. Same proof, different field.
+    'mismatch'              - the rebuild does not hash to what the row records. Reported,
+                              never staged
+    'unrecorded'            - the row records no hash and does not say it changed nothing,
+                              so there is nothing this can prove and it declines rather than
+                              staging an unidentified file
+
+    THE THIRD STATE IS A PROOF AND NOT A RELAXATION
+    ------------------------------------------------
+    Six published rows record `changes: 0` and no `masked_sha256`, and read as `unrecorded`
+    for a schema reason rather than an evidential one: a pass that changed nothing had no
+    second hash to write, because there was no second file. The row still says exactly what
+    its masked bytes are - the ones it came in with, whose hash is `sha256` and is recorded.
+
+    It can still fail, which is the part that makes it a check. If today's masker touches
+    one byte of those bytes, the rebuild is not the input, the identity the row asserts does
+    not hold, and this returns `mismatch` like any other. Measured on 2026-09-07: all six
+    rebuilt to byte-identical output, and the two rows recording `changes: 4` that also lack
+    a hash produce 8 changes today and are refused here exactly as they should be.
+    """
+    want, _where = target_hash(row)
+    mk = row.get("masking") or {}
+    unchanged_claim = want is None and mk.get("changes") == 0
+    if want is None and not unchanged_claim:
+        return "unrecorded", None, "row records no masked_sha256 and no changes:0 claim"
     if hashlib.sha256(raw).hexdigest() != row["sha256"]:
         return "mismatch", None, "the source bytes do not hash to the row"
     masked, _detail = content_mask.mask_sample(raw, m, mask_ipv4=mask_ipv4,
                                                vocabulary=vocab, mask_hex_digests=mask_hex)
+    if len(masked) != len(raw):                                      # pragma: no cover
+        return "mismatch", None, "regeneration changed the length"
+    if unchanged_claim:
+        if masked != raw:
+            return "mismatch", None, ("the row records changes:0 and the masker changes "
+                                      "these bytes today")
+        return ("regenerated-unchanged", masked,
+                "the row records changes:0 and the rebuild is the input, whose sha256 the "
+                "row records")
     got = hashlib.sha256(masked).hexdigest()
     if got != want:
         return "mismatch", None, "regenerated %s, row records %s" % (got[:12], want[:12])
-    if len(masked) != len(raw):                                      # pragma: no cover
-        return "mismatch", None, "regeneration changed the length"
     return "regenerated", masked, "hashes to the recorded masked_sha256"
+
+
+def find_on_disk(wanted, roots):
+    """{hash: path} for every wanted hash whose bytes are already on disk under `roots`.
+
+    THIS IS A LOOKUP, NOT A SEARCH FOR A MATCH
+    -------------------------------------------
+    The hazard the whole module is written against is a tool that tries possibilities until
+    one "proves" what it wanted. This cannot do that: the hash is fixed by the row before
+    anything is read, and a file is accepted only when its bytes hash to exactly that. No
+    candidate is preferred, none is retried under other parameters, and a root holding
+    nothing simply returns nothing.
+
+    Size-filtered first because masking is length-preserving - `length_preserved` is on every
+    one of these rows - so a masked file has the size the row records, and a file of another
+    size cannot be it. The filter is exact equality, so it cannot exclude a file that would
+    have matched, and hashing every file under a tree this size is 500,000 reads to answer a
+    question about ten.
+    """
+    sizes = {size for _h, size in wanted}
+    want = {h for h, _size in wanted}
+    out = {}
+    for root in roots:
+        for base, _dirs, names in os.walk(root):
+            for n in names:
+                path = os.path.join(base, n)
+                try:
+                    if os.path.getsize(path) not in sizes:
+                        continue
+                    with open(path, "rb") as fh:
+                        blob = fh.read()
+                except OSError:
+                    continue
+                h = hashlib.sha256(blob).hexdigest()
+                if h in want:
+                    out.setdefault(h, path)
+    return out
 
 
 def main():
@@ -97,6 +193,10 @@ def main():
     ap.add_argument("--map", default=incident_mask.MAP_PATH)
     ap.add_argument("--stage", help="directory to write the regenerated bytes into")
     ap.add_argument("--out", help="write the two-sided bytes map here")
+    ap.add_argument("--found", action="append", default=[],
+                    help="root to look in for masked bytes that are ALREADY on disk. A file "
+                         "is taken only where it hashes to the hash the row records, which "
+                         "is the same proof regeneration has to pass")
     ap.add_argument("--mask-ipv4", action="store_true")
     ap.add_argument("--mask-hex-digests", action="store_true")
     ap.add_argument("--inject", action="store_true")
@@ -118,7 +218,7 @@ def main():
 
     os.makedirs(os.path.join(a.stage, "after"), exist_ok=True)
     tally = collections.Counter()
-    out, mismatches = {}, []
+    out, mismatches, unbuilt = {}, [], []
     for r in rows:
         if not (r.get("masking") or {}).get("applied"):
             continue
@@ -131,18 +231,47 @@ def main():
         state, masked, detail = regenerate(r, raw, m, vocab, a.mask_ipv4,
                                            a.mask_hex_digests)
         tally[state] += 1
-        if state != "regenerated":
+        if state not in ("regenerated", "regenerated-unchanged"):
             if state == "mismatch":
                 mismatches.append((r["sha256"], detail))
+            # The bytes could not be REBUILT. They may still be on disk, and a file that
+            # hashes to what the row records is that file whoever wrote it - so the row is
+            # held for the lookup below rather than written off here.
+            h, where = target_hash(r)
+            if h and a.found:
+                unbuilt.append((r, src, h, where))
             continue
         dest = os.path.join(a.stage, "after", r["sha256"][:12] + ".bin")
         with open(dest, "wb") as fh:
             fh.write(masked)
         out[r["sha256"]] = {"after": dest, "before": src}
 
+    # A SECOND TALLY, BECAUSE THESE ROWS ARE ALREADY COUNTED ONCE.
+    #
+    # Every row here has a rebuild state above - `mismatch` or `unrecorded` - and adding the
+    # recovery into the same counter made the states sum to 146 over 142 rows. A total that
+    # does not add up is the first thing a reader stops trusting, so recovery is counted
+    # apart and the rebuild tally still describes every row exactly once.
+    recovered = collections.Counter()
+    if unbuilt:
+        located = find_on_disk({(h, r["size"]) for r, _s, h, _w in unbuilt}, a.found)
+        for r, src, h, where in unbuilt:
+            if h not in located:
+                recovered["not rebuilt and not on disk"] += 1
+                continue
+            recovered["found on disk (%s)" % where] += 1
+            out[r["sha256"]] = {"after": located[h], "before": src}
+
     print("masked rows                : %d" % sum(tally.values()))
     for k in sorted(tally):
-        print("  %-24s %d" % (k, tally[k]))
+        print("  %-40s %d" % (k, tally[k]))
+    if unbuilt:
+        print("of those, offered to the disk lookup : %d  (roots: %s)"
+              % (len(unbuilt), ", ".join(a.found)))
+        for k in sorted(recovered):
+            print("  %-40s %d" % (k, recovered[k]))
+    print("rows with bytes this tool can prove  : %d of %d"
+          % (len(out), sum(tally.values())))
     if mismatches:
         print()
         print("=== regenerated bytes that do NOT hash to the recorded masked_sha256 ===")
@@ -228,6 +357,67 @@ def inject():
     a2 = regenerate(row(), raw, m, vocab)[1]
     case("two runs produce identical bytes", a1 == a2, True)
     case("and the length is preserved", len(a1) == len(raw), True)
+
+    print()
+    print("=== a row recording changes:0 is proved by the rebuild, and can still fail ===")
+    # The six published rows this state exists for record no `masked_sha256` because the
+    # pass changed nothing, so there was no second file to hash. The row still says what its
+    # masked bytes are, and `sha256` is the hash of them.
+    plain = b"<?php echo 1; // nothing here to mask\n"
+    unchanged = {"sha256": hashlib.sha256(plain).hexdigest(),
+                 "masking": {"applied": True, "changes": 0}}
+    st, data, why = regenerate(unchanged, plain, m, vocab)
+    case("a changes:0 row whose rebuild is its input", st, "regenerated-unchanged")
+    case("and the bytes it yields are those bytes", data == plain, True)
+    case("the reason names the field it was proved against",
+         "sha256" in (why or ""), True)
+    # The positive half, and the reason this is a proof rather than a relaxation: a row that
+    # CLAIMS changes:0 over bytes the masker does touch must be refused, not accepted.
+    leaky = ("<?php $p = '/home/%s/public_html/index.php';\n" % ident).encode()
+    lying = {"sha256": hashlib.sha256(leaky).hexdigest(),
+             "masking": {"applied": True, "changes": 0}}
+    case("a changes:0 row whose rebuild is NOT its input",
+         regenerate(lying, leaky, m, vocab)[0], "mismatch")
+    # And a row with neither a hash nor the claim is still declined rather than guessed at.
+    case("a row with no hash and no changes:0 claim",
+         regenerate({"sha256": hashlib.sha256(plain).hexdigest(),
+                     "masking": {"applied": True, "changes": 4}}, plain, m, vocab)[0],
+         "unrecorded")
+
+    print()
+    print("=== the hash a row records for its masked bytes, and where it is read from ===")
+    case("masked_sha256 is the field",
+         target_hash({"masking": {"masked_sha256": "a" * 64}}), ("a" * 64, "masked_sha256"))
+    case("a remeasured record is the named fallback",
+         target_hash({"masking": {"remeasured": {"bytes_sha256": "b" * 64}}}),
+         ("b" * 64, "remeasured.bytes_sha256"))
+    case("the field wins where a row has both",
+         target_hash({"masking": {"masked_sha256": "a" * 64,
+                                  "remeasured": {"bytes_sha256": "b" * 64}}})[1],
+         "masked_sha256")
+    case("and a row with neither says so",
+         target_hash({"masking": {"applied": True}}), (None, None))
+
+    print()
+    print("=== the disk lookup takes a file only where it hashes to what was asked for ===")
+    tmpd = tempfile.mkdtemp(prefix="restage-found.")
+    try:
+        blob = b"masked bytes that are already on disk"
+        want = hashlib.sha256(blob).hexdigest()
+        with open(os.path.join(tmpd, "a.bin"), "wb") as fh:
+            fh.write(blob)
+        # A decoy of the SAME SIZE, so the size filter cannot be what makes this pass.
+        with open(os.path.join(tmpd, "decoy.bin"), "wb") as fh:
+            fh.write(b"masked bytes that are already ON DISK")
+        got = find_on_disk({(want, len(blob))}, [tmpd])
+        case("the file whose bytes hash to the wanted hash is found",
+             os.path.basename(got.get(want, "")), "a.bin")
+        case("and a same-size file that does not hash to it is not returned",
+             len(got), 1)
+        case("a hash nothing on disk holds returns nothing",
+             find_on_disk({("c" * 64, len(blob))}, [tmpd]), {})
+    finally:
+        shutil.rmtree(tmpd, ignore_errors=True)
 
     print()
     print("=== the vocabulary is load-bearing, and its absence is a hard failure ===")

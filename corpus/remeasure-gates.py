@@ -68,6 +68,7 @@ sys.path.insert(0, HERE)
 from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy   # noqa: E402
 import gate_provenance                                                     # noqa: E402
 import gate_evidence                                                       # noqa: E402
+import finding_notes                                                       # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "vcm_remeasure", os.path.join(HERE, "verify-content-mask.py"))
@@ -703,7 +704,7 @@ def inject():
     # The other findings are recorded WHOLE, and `false_positive_note` is the reason: it
     # carries a measured rate a human weighed, and the digest covers it on purpose.
     prof = {"occurrences": 3, "false_positive_note": "127 across 104 of 8,000",
-            "note": "identifier names deliberately not recorded here"}
+            "note": finding_notes.IDENTIFIER_NOTE}
     case("an identifier finding keeps its false-positive figure",
          recorded_form("encoded_layer_finding", dict(prof)), prof)
     case("and keeps its own note too", recorded_form("plaintext_finding", dict(prof)), prof)

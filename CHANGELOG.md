@@ -13,6 +13,101 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **The prose a gate finding carries is out of the AST, and the price was paid once
+  (`corpus/finding-note.txt`, `corpus/finding_notes.py`).** Two sentences generated onto
+  findings were string literals inside `verify-content-mask.py`, one of the six modules in
+  `gate_provenance.TOOLS`, so correcting either cost a re-measurement of every stamped row —
+  which is why the identifier note's second clause, *"they are the thing being masked"*, was
+  known-wrong for two rounds and stayed. It presumes the outcome the two adjudicated
+  polyglots exist to overturn: an identifier this gate finds may equally be attacker
+  infrastructure that is deliberately kept. The corrected note now says that what a matched
+  name is, is an adjudication and not something the field decides.
+
+  **All six copies read from one source.** Five modules — `clearance.py`, `gate_evidence.py`,
+  `lift-adjudication.py`, `remeasure-gates.py`, `shard-gate.py` — hard-coded the note in
+  their own finding fixtures, and every one of them carried `identifier names deliberately
+  not recorded here` while the generator wrote `… here; they are the thing being masked`.
+  **Five controls had been asserting text the generator has never produced**, invisibly,
+  because each agreed with itself. They now take it from `finding_notes.IDENTIFIER_NOTE`,
+  and `finding_notes.py --inject` reads the five modules' own syntax trees and reports any
+  finding-shaped dict that has gone back to a literal — with the planted-note positive
+  control, and with `shard-gate.FINDING_SHAPE` excluded for being a table of type tags
+  rather than by name, so a shape table that ever gained real prose would be reported.
+
+  **`secret_gate`'s note is deleted rather than relocated, and that closes a live schema
+  fork.** No writer recorded it — `mask-samples.py` writes twelve named fields and
+  `remeasure-gates.recorded_form` narrows to the same twelve — so it survived only on 8 rows
+  from an earlier build that recorded thirteen keys where 124 recorded twelve.
+  `gate_evidence.compare_gate` compares the keys the *row* holds, so those two schemas could
+  answer differently the moment the text moved, and the only thing making that harmless was
+  that the text was pinned inside a `TOOLS` module. Removing the key made all 8 read
+  `evidence-moved` once and reconcile to twelve. **Forked rows: 8 → 0**, now asserted by
+  `gate_evidence.forked_secret_rows` over both halves rather than guarded by a coupling —
+  and `digest-controls.py`'s case on that note is kept under its old subject with its answer
+  reversed, because a control that disappears when its answer changes is how a repository
+  forgets what it decided.
+
+  **Reachability, measured before anything moved.** Two figures were in circulation and both
+  are superseded. The "69 of 140" is real and lives in `shard-gate.findingShapeViolations`
+  (`restage-masked.py` states it as "73 had reachable bytes and 69 did not"); it predates
+  regeneration, and it does not add up — 73 + 69 is 142 masked rows, not the 140 stamped at
+  that moment. Regeneration answers **132 of 142**, reproduced exactly on 2026-09-07. The
+  reachable set is **142 of 142**, because regeneration is one of three ways to *prove* a
+  row's masked bytes and `restage-masked.py` implemented one. It now implements all three:
+  `regenerated-unchanged` (6 rows recording `changes: 0` — the row saying its masked form
+  *is* its input, whose sha256 it records; a rebuild that touches a byte still returns
+  `mismatch`), and `--found` (4 rows whose masked bytes were already on disk and hash to
+  what the row records, via `masked_sha256` or a `remeasured.bytes_sha256` fallback that is
+  named in the report rather than passed off as the field). Nothing was stranded.
+
+  **Counts, each with its cause.** `tools_digest` 83735611dab4 → c5c21c570397; all **142**
+  stamped rows re-measured — 129 by `verify-and-stamp.py --restamp`, 13 by
+  `remeasure-gates.py` where the note change made the recorded evidence move.
+  **Published `publishable` did not move: 44,543 → 44,543.** The estimate recorded in
+  `shard-gate.py` was 44,536, written off seven rows that turned out to be reachable, six of
+  them by the `changes: 0` proof. `3529f0f6b2cd` shed its stale-provenance blocker — it was
+  the row left stale for want of bytes last round — and stays unpublishable for its real
+  encoded-layer `FAIL`. **Local `publishable` 365 → 364, and the missing row is the round's
+  result**: `34bba99dae63`'s five clearances are keyed to finding digests
+  (`35c1c513eafa → 97b08efeb965`, `410ecb66d940 → e10eaf8d5831`, `b79b479b3940 →
+  411e0ef0c067`) *and* to gate provenance, and both moved. It is over-determined — the
+  provenance half alone inerts them, so the row would have lost `publishable` this round
+  even had the note not changed a character. Re-signing is the operator's act and no tool's,
+  so the row is `publishable: false` with its three real gate failures recorded as blockers.
+  `index-summary.json` was regenerated: `--check` was failing until it was, and every
+  difference it reported was that one row. **No detection figure moved**: nothing here ran
+  the scanner, both writers assert detection parity is outside their scope, and a field-level
+  diff of all 44,544 published rows against `HEAD` shows `detection_survived`, `rules_*`,
+  `measured_with` and `detection_after_masking` unchanged on every one.
+
+- **The orphan census can say which verdicts rest on a shared leaf, and one orphan is
+  resolved by reading the table it is named in (`corpus/field-provenance.py`).** 43% of
+  non-orphan classifications sat on a leaf shared with another field and the figure appeared
+  once, in the header, so no individual verdict said whether it was one of them. It is now on
+  the verdict — and only where it can change the reading, because the bound is
+  one-directional: matching by leaf can only *add* matches, so a `written` or `read-only`
+  verdict on a shared leaf is weaker, while an `ORPHAN` is unaffected. A leaf no module names
+  at all is named for none of the fields on it.
+
+  `named_field_tables` reads a declared constant out of a module's syntax tree, so
+  `campaign_marker` — listed in `make-shard-manifest.INDEX_OWNED`, a bare string in a table
+  that `key_positions`' subscript-and-`.get()` sweep cannot see — is classified `read-only`
+  from the source rather than by a hand-written override. **Orphans 54 → 53**, `read-only`
+  23 → 24. The list of tables is named rather than pattern-matched: crediting every uppercase
+  tuple of strings would inflate `read-only` the way `written` is already inflated.
+
+  Ten more orphans are triaged into `KNOWN` with their causes, searched with `command grep`
+  over the 276 python files under `corpus/`, `trail-data/`, `docs/` and `tests/` found by
+  `find` — the shell's `grep` respects `.gitignore` and cannot see `trail-data`, which is
+  where every untracked writer named actually lives. Two are near-misses worth recording
+  because the next sweep would otherwise resolve them by accident: `fp_fixture` against
+  `verify.py`'s own `fp_fixtures`, `observed_by` against its `observed_by_rerun`, and the
+  `basis` leaf against `tag-sensitivity.py`'s `human_basis` and `make-summary.py`'s
+  `<no basis recorded>` placeholder — three substring collisions in a triage of eleven
+  fields, which is the rate to expect rather than a run of bad luck.
+  `prior_corpus` (2,494 rows) has no writer and no reader anywhere on this machine — its only
+  mentions are two docstrings citing `prior_corpus.family`, a field neither half carries.
+
 - **`corpus/lift-adjudication.py` — a human adjudication is no longer squatting in a gate's
   evidence key.** Two published rows, the polyglot siblings of §5.4, recorded
   `classification / decision / resolution / value / why_it_matters` under
