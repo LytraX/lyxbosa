@@ -195,6 +195,17 @@ while being the entire finding. A corpus that flattens placement cannot support 
 placement-based rule, which is the same failure `docs/tasks/CORPUS_PLAN.md` §2.3b describes
 for sibling files, arriving through deduplication rather than through collection.
 
+**One of the two is no longer publishable, re-measured 2026-09-06.** `3529f0f6b2cd` recorded
+`encoded_layer_gate: PASS`; the current gate, run over the exact bytes the shard holds
+(`782a8924be8a`), returns `FAIL` - one 3-character `acct` identifier in `contains` position
+inside a 97-character `base64` segment, 72,564 characters into a single unbroken 97,600-
+character run. The sample did not change; the predicate did. The `FAIL` is now written on the
+row by `corpus/remeasure-gates.py` and the row is blocked, so a rebuilt shard would carry one
+sample rather than two until the finding is judged. Nothing was ever distributed, so this
+costs a rebuild rather than a disclosure - see `corpus/SOURCES.md` on why `published` is a
+classification and not a distribution state.
+
+
 ---
 
 ## 4. `OBF021` counts sibling dynamic calls, not nested ones

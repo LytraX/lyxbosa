@@ -11,6 +11,9 @@ corpus/
   shard-gate.py                     §7.2 — computes `publishable` and fails the build
   clearance.py                      the rule for a human-cleared gate finding; a library, no writes
   clear-finding.py                  the only writer of `clearances`; refuses more than it accepts
+  adopt-decoded-tags.py             the only writer of `sensitivity` from `decoded_form_tags`
+  remeasure-gates.py                writes the verdict a re-measurement produces, one row at a time
+  fp-note.txt                       the false-positive note the findings carry; prose, not behaviour
   make-shard-manifest.py            regenerates a shard's MANIFEST.json from the index
   promote-pending.py                applies pending-promotions.jsonl; re-measures every row
   build-shard.sh                    packs a staged shard; requires zstd, fails hard without it
@@ -160,6 +163,8 @@ Three tools support the import, and the split between them is deliberate:
 | `clear-finding.py` | yes | writes one clearance, additively, under the lock. Needs the maps only to refuse a free-text reason that names a customer |
 | `verify-and-stamp.py` | yes | re-verifies a row's recorded verdicts against the bytes it stands behind and stamps provenance only where they still agree; additive, and asserts it |
 | `stamp-legacy.py` | no | gives a field written by a tool no longer in the tree an author, a date and a re-checked claim |
+| `adopt-decoded-tags.py` | no | makes `sensitivity` describe the decoded form as well as the wrapper. Refuses a row with no `decoded_form_tags` rather than computing one, and prints the denominator it can see on every run |
+| `remeasure-gates.py` | yes | writes the verdict the current gate returns where the recorded one disagrees, one row and one author at a time. The act `verify-and-stamp.py` deliberately refuses |
 | `regen-tiers.py` | yes | recomputes a map's `mask_tier` against a vocabulary. Two assertions before it writes: the map's **contents** (`identifiers()`, `keep_tokens()`, `pairs()`, every other field, the tier key set) and what the tiers **mean** — coverage per changed name over a real path population, refusing a measured loss. Backs up first, preserves the file mode, re-asserts both after |
 
 `incident_mask.py` is the same pair of jobs for the **current incident**, whose map and
@@ -290,6 +295,68 @@ loudly when a credential form the masker does not cover comes through untouched 
 did, on an attacker password literal assigned to a `$pass` variable the masker's keyword list
 did not have.
 
+### The secret gate now fails in both directions, and the rule is the count
+
+`secret_gate()` asserted that no credential-shaped literal in the output is byte-identical to
+one in the input and said nothing about the count going **up**. One row recorded 23
+credential-shaped literals after masking where it had 22 before and nothing in the tree asked
+about it for a round. A gate that can only fail one way is the shape AGENTS.md opens with.
+
+**The rule that was armed is the count, and the measurement chose it.** Two candidate rules,
+both over the 132 masked local rows:
+
+| candidate rule | rows it refuses |
+|---|---|
+| no literal in the output that was not in the input, excluding the masker's own marked synthetics | **46**, of which **36** are `secret`-tagged and so are hard refusals in `mask-samples.py` |
+| more literals after than before | **1** |
+
+The set rule is unusable and the cause is exact rather than statistical. §5.1 makes a
+correctly masked credential a *new* credential-shaped literal, so the set grows every time
+masking works — eleven wp-config literals go in on one row and eleven different ones come
+out. The obvious repair is to exclude the synthetics the masker made, and the marker that
+identifies them, `mask`, is only written by `_synthetic()`, which handles **identifiers**.
+The masker's credential substitutions — `_value`, `_bcrypt`, `_phpass`, `_hex` — carry no
+marker at all by construction, so a masked bcrypt is unattributable however long it is. That
+is asserted rather than argued: `verify-content-mask.py --inject` proves `SYNTHETIC_MARKER`
+equals the masker's constant and that a masked bcrypt moves and comes back unmarked.
+
+The count rule is immune to all of it, because a replacement is one for one. Over the 132
+rows the count rises on exactly one, falls on none, and holds on 131.
+
+**What produced the one increase is not what the hypothesis expected.** Not a synthetic. The
+masker changed **four bytes** on that row, inside one base64 region; the region re-encoded,
+and the `base64+inflate` layers nested below it decoded differently. `secret_literals()`
+counts over the plaintext *and every decoded layer*, and **that layer population is not stable
+under masking**: 23 layers became 16, nine disappeared, two appeared, and one of the two
+carries a ten-character `$GLOBALS['DB_NAME']['…']` array key that the `wp-credential` pattern
+reads as a credential — the same shape false positive as the row's other 22, arriving through
+a different door. So `before` and `after` were censuses of two different populations, which is
+§11 one level down from where it usually lives.
+
+Over the 132 rows the decoded-layer set moves under masking on **11**, and on ten of those the
+literal count is unchanged, so the instability is common and the increase is not.
+
+The two causes therefore get two owners and one reason each:
+
+  * **the gate** fails on a carry-over (unchanged) and on an increase over a decoded-layer
+    population that did **not** move — there, both counts speak for the same population;
+  * **`shard-gate.py`** raises its own reason for an increase over a population that moved,
+    read from the recorded evidence and independent of the tags. It blocks, because a
+    "cannot tell" must not read as "fine"; and the gate stays silent on that case, because
+    two reasons for one cause is the double-counted denominator that left the blocker tally
+    14 out for two rounds.
+
+`secret_literals_added`, `_by_the_masker`, `_unattributed`, `decoded_layers_before/after` and
+`literal_population_comparable` are now recorded on every re-measured row: **measured and not
+armed**, so the next round can decide the set rule against real numbers rather than against
+the argument above. The one row the new reason blocks was already blocked, so no blocker tally
+is flooded and no publishability moves.
+
+`mask-samples.py`'s refusal message was fixed in the same change. It quoted
+`secret_literals_carried_over` unconditionally, so on the second failure mode it printed
+*"0 credential-shaped literal(s) survived masking unchanged"* — a refusal naming a cause that
+had not happened, and zero of it.
+
 This closes, for the rows it runs on, the hole recorded above as "the next round's job".
 **The structural half is now closed too**: `shard-gate.evaluate()` requires
 `masking.secret_gate == "PASS"` on a `secret`-tagged row whose masking is applied, and
@@ -389,7 +456,12 @@ binary, which is the right provenance for `detection_survived` and says nothing 
 masker or the identifier gate. **Provenance for the wrong question reads as provenance**,
 which is why 52 rows looked accounted for and 90 looked like the whole problem.
 
-`gate_provenance.py` stamps two digests:
+`gate_provenance.py` stamps two digests. The `tools` digest stands at **`6fecbeebbccc`** and
+the `map` digest at **`9268d21c394b`** over both maps; every one of the 139 stamped rows
+carries that pair. It moved once this round, from `07079af767d4`, and the move is entirely the
+note relocation plus the secret gate's second direction — the two changes were made together
+precisely so the re-measurement is paid once.
+
 
 | digest | over what | who can check it |
 |---|---|---|
@@ -421,6 +493,17 @@ and refusing the row where it does not. Its write is additive and asserted to be
 `provenance` and, where the row records no hash of its own masked bytes, `masked_sha256`.
 Its own control caught the first version of that assertion looking only one way — it could
 see an overwritten key and not an added one.
+
+**And that assertion refused every row the tool had ever stamped.** `provenance` is a key the
+row already has, so the additive check rejected it — which meant the tool written to keep
+provenance current could not update it the instant the tools digest moved, and the only route
+left was a hand-edit. `provenance` is now the one key that may be **replaced**, under
+`--restamp`, and the report prints how many stamps are replacements rather than additions on
+every run. The safety property was never the assertion: a stamp is written only where
+`reverify()` says the current gate returns what the row records, so a replacement can restate
+a verdict and never launder one. The control asserts all four halves — refused without the
+flag, replaced with it, no second key allowed to ride along, and a row whose verdict *moved*
+still refused.
 
 ### The gate is wider than the masker at tiers `B` and `C`, on purpose, and it shows
 
@@ -613,9 +696,100 @@ and encoded-layer gates and is now blocked on this one too.
 **The mechanism behind the two under-tagged rows is systemic, not a typo.** Both have a
 `deobfuscation` block whose `sensitivity` equals `encoded_form_tags` while `decoded_form_tags`
 is strictly larger, and `hidden_by_encoding` names the difference. Tagging a sample by its
-outer form is tagging it by the thing the encoder was for. Re-tagging is not done here: it
-changes a human's sensitivity assessment on rows the operator reviewed, and the gate no longer
-depends on it.
+outer form is tagging it by the thing the encoder was for.
+
+### Sensitivity now describes the decoded form, and the ruling costs no publishability
+
+`adopt-decoded-tags.py` applies the operator's ruling: **sensitivity describes what the sample
+carries, including in its decoded form.** §5.4's premise is that an identifier inside an
+encoded layer makes a sample unpublishable, so a sensitivity read off the wrapper is measuring
+the wrong object.
+
+Eleven local rows had `decoded_form_tags` the sensitivity did not cover. All eleven were
+tagged `clean`, which is also what their `encoded_form_tags` say — so on every one of them the
+sensitivity is the wrapper's. They are now `identity` (4), `c2` alone (3), `c2`+`secret`,
+`c2`+`path`+`secret`, `identity`+`secret`, and `c2`+`identity`+`path`+`pii`+`secret`. `clean`
+is dropped wherever anything else survives, which is `sensitivity.py`'s own contract.
+
+**Nothing's publishability moves, and that is the result rather than a disappointment.** Six of
+the eleven already had masking applied with every gate passing, so the tags they gain demand
+gates that have already been measured and cleared. Three carry `c2` alone, which is in
+`ALWAYS_OK`, so nothing was ever demanded of them and nothing is now — they are not movement
+and are not counted as any. The two that are blocked stay blocked. The one substantive change
+is on `b827cdd9d417`, which gains **`pii`**: it was blocked only on `secret_gate: FAIL`, which
+is a *clearable* finding, and `pii` is in `NEVER` and clearable by no route at all. The row
+goes from conditionally blocked to permanently held.
+
+What the bytes say, read one at a time — every one confirmed against the source blob, and the
+weak ones said to be weak:
+
+| row | adopted | what the bytes show |
+|---|---|---|
+| `6c78797b8d1b`, `e194e5dbcadc` | `identity` | a **customer domain the map holds** inside a `base64` layer; the byte masker rewrites it. Supported |
+| `fc1508dfb372` | `identity` | the same, a different customer domain. Supported |
+| `084018700631` | `identity` | one address at a public webmail provider in a `hex-escape` layer. **The map holds no identifier matching it** — the leak predicate finds nothing — so this is `identity` in the sense of "an address is present", not "a customer is named". The weakest of the four, and it is still the right tag: `content_mask` rewrites every non-reserved address structurally, so there is something to mask |
+| `137b7a4c1dea` | `c2`, `path`, `secret` | a whole `wp-config.php` inside nested `base64`: 11 `wp-credential` literals with real values, three `/home*/<acct>/` components, four external hosts. All three supported, strongly |
+| `162ccc9adf4e` | `c2`, `secret` | `c2` supported (a raw-paste host). **`secret` is supported by one detector and not the other**: `sensitivity.py`'s `literal-password` matches `$hashed_password = '<32 hex>'`, the shell's own gate credential, while `verify-content-mask`'s `quoted-credential` requires no leading word character and so does not. Its `secret_gate: PASS` therefore means *nothing of my shape was here*, not *the secret was masked* |
+| `4ab3e5387a75`, `aff0a5d71411`, `b92405d8ff16` | `c2` | one to three external hosts each in `base64` layers. Supported, and in `ALWAYS_OK` |
+| `0effe952c8ef` | `identity`, `secret` | the real bcrypt in `base64+inflate` passed to `password_verify()`. `secret` supported beyond doubt; `identity` is one address at a privacy-mail provider, the attacker's own contact, so it is the `084018700631` case again |
+| `b827cdd9d417` | `c2`, `identity`, `path`, `pii`, `secret` | `secret` is 22 array keys (shape FP, already recorded); `pii` is `first_name`/`last_name` **column names** in the SQL insert the shell uses to create its own admin user; `identity` is stock joke addresses at `fbi.gov`/`google.com`; `path` is `/home/alfa/` and `/home/user/`. Every one reads as a collision, and `pii` is unclearable anyway |
+
+**The adopted value is a claim by an earlier pass, and `adopt-decoded-tags.py` cannot check
+it** — that is what the table above is for, and it is why the tool refuses to compute
+`decoded_form_tags` where a row has none. A `--fix` that writes the field it then trusts is
+the tool agreeing with itself.
+
+#### Is the population eleven, or is eleven what the comparison can see?
+
+Measured, and it is the second. §11's rule — a denominator enumerated by the process that
+produced the numerator bounds the result and not reality — applies twice over here, because
+**both** the numerator and the denominator come from one pass's decoder.
+
+| population | how enumerated | under-covered |
+|---|---|---|
+| 142 local rows carrying `decoded_form_tags` | the recording pass wrote the field | **11** |
+| the same 142, re-derived from the bytes with the **gate's** decoder | this round | **20** |
+| every stored-publishable local row (373; 366 resolved, 182 decode) | census | **31** |
+| the 282 rows that pass recorded `undecodable` (281 resolved, 56 decode) | census | 2, both `c2`-only and both already blocked |
+| the 84 published shipped-as-bytes rows (76 resolved, 14 decode) | census | 2 |
+
+The middle row is the whole answer. Over the *same* 142 rows the gate's decoder yields
+**6,120 layers against the recording pass's 318** — 19× — and the re-derived tag set is
+**strictly wider on 13 rows and narrower on none**. Two of the thirteen carry more than `c2`:
+one gains `c2`+`identity`+`secret` and one gains `identity`, both `publishable: true` today.
+So `decoded_form_tags` is not a property of the bytes; it is a property of the decoder that
+wrote it, and the eleven is bounded by that decoder rather than by the corpus.
+
+**What would have to be true for the real number to be larger** is exactly what the third row
+tests, and it is true: that rows outside the 142 also carry more in their decoded form than
+their sensitivity says. A census of every stored-publishable local row finds **31**, and five
+of them are worse than anything in the eleven — `1438674b06d8`, `c24465d301e2`,
+`e50d85a3a815`, `eba16e1e9159` and `cd98180175a5` are `publishable: true` with **no masking
+applied at all**, and the current gate fails their encoded layer with `exact`-position hits on
+identifiers of 7, 8, 10, 19 and 23 characters. An `exact` hit on a 19- or 23-character
+identifier is not a base64 coincidence. One of them decodes to a WordPress `usermeta` SQL dump
+and a contact block carrying a customer domain the map holds and a telephone number.
+
+Those five are **not** re-tagged here. Adopting a tag set this round's own re-derivation
+produced would be trusting a field because it is there, one level up, which is the defect the
+ruling repairs. What they need is the masking pass none of them has ever had, and that is a
+round's work with a scanner in it. The eleven are the operator's ruling applied to what the
+record holds; the thirty-one is the size of the question.
+
+**Power.** Every figure above is a census of a stated population, not a sample, so none of them
+carries a sampling error — and none of them bounds reality either, because each population is
+still one the corpus chose. 7 of the 373 publishable local rows and 8 of the 84 published rows
+are excluded: the first seven exceed the 4 MB read cap this census used (6.8 MB to 279 MB),
+and the eight have no blob resolvable through `blobmap-all.jsonl`. Those fifteen rows are
+unmeasured, not measured clean.
+
+**The two under-covered published rows are collisions, and reading them is what says so.**
+Both are `media-polyglot` fixtures tagged `c2`+`path` whose decoded layer yields `identity`,
+and in both the whole basis for it is a hardcoded attacker callback address in a URL inside a
+`base64+inflate` layer — `sensitivity.py` tags `identity` on any dotted quad, which is the
+retracted-IP defect recorded above in its original form. The tag that fits is `c2` and both
+rows already carry it. **No published row is under-tagged in a way that matters**, and that is
+a census of all 84, not a sample of them.
 
 ### Reading a recorded gate verdict: `!= "PASS"` was right by accident
 
@@ -714,15 +888,31 @@ tracked in the published half, and AGENTS.md records five separate occasions in 
 a client name reached git through prose. It reports lengths because a refusal that quotes the
 collision has put the name in a terminal and, if anyone pastes it, in a commit message.
 
-There are **zero** clearances today. The mechanism ships with its controls and no entries.
+**The first two clearances are recorded, and they are the mechanism's first real run.** Both
+are on `34bba99dae63`, both adjudicated by the operator, both entered with a reason written by
+shape: the encoded-layer finding is the imagick case — a 6-character label as the middle
+syllable of a standard ImageMagick PHP function name inside an alphabetically ordered table of
+that extension's functions — and the plaintext finding is three occurrences of one 3-character
+label inside base64 ciphertext where the measured null expects 1.08, p about 0.10 under
+Poisson. `index-summary.json` reads `cleared_by_human_findings: 2`, `cleared_by_human_rows: 1`,
+`cleared_by_human_by_gate: {encoded_layer_gate: 1, plaintext_gate: 1}`, and
+`published_cleared_by_human_rows: 0`.
+
+**The row is still not publishable, and that is the point.** It also carries `secret_gate:
+FAIL`, which nobody cleared, so a second uncleared blocker survives the clearance exactly as
+the design requires. Two of its three blockers went; the third stayed.
 
 ### Three findings recorded for a decision, and not decided here
 
-Three gate findings are on the operator's desk. Each is recorded on its row with the full
+Three gate findings were on the operator's desk. Each is recorded on its row with the full
 profile the gate produces; what follows is the decoded context a person needs to read them,
-identifiers replaced by `<id:Nc>` and never spelled out. **None is decided in this file.** If
-the clearance mechanism is used on them, that is three entries and the count in
-`index-summary.json` goes from 0 to 3.
+identifiers replaced by `<id:Nc>` and never spelled out. **None is decided in this file.**
+
+**Two are now cleared and one is now judgeable.** The operator ruled both findings on
+`34bba99dae63` collisions and both clearances are entered, taking the count from 0 to 2 on 1
+row; the row remains blocked on its uncleared `secret_gate`. `3529f0f6b2cd` was re-measured
+first, in that order and for the reason below, and its `FAIL` is now on the row — so it can be
+judged, and has not been.
 
 #### `3529f0f6b2cd` — published, and the record and the measurement disagree
 
@@ -753,13 +943,22 @@ The segment reads as base64 ciphertext throughout, and the label sits in the mid
 The row's own note says the original gate read this same ~98 KB stage, so what moved is the
 predicate and not the reach.
 
-**This row cannot be cleared today, and that is the mechanism being consistent rather than
-obstructive.** `clear-finding.py` refuses it — `encoded_layer_gate recorded a pass; there is
-nothing to clear` — because the row's stored value is `PASS` and a clearance is keyed to a
+**This row could not be cleared, and that was the mechanism being consistent rather than
+obstructive.** `clear-finding.py` refused it — `encoded_layer_gate recorded a pass; there is
+nothing to clear` — because the row's stored value was `PASS` and a clearance is keyed to a
 recorded finding. A clearance signed against a pass would pre-approve whatever the gate said
-next. So the order for this row is fixed: **re-measure first**, which writes both the `FAIL`
+next. So the order for this row was fixed: **re-measure first**, which writes both the `FAIL`
 and the provenance, and only then judge what it says. Judging a finding the record does not
 hold is the same defect as trusting a `PASS` nothing measured, one level up.
+
+**The re-measurement is done and the record now holds the FAIL.** `remeasure-gates.py` exists
+for exactly this act and is deliberately not part of `verify-and-stamp.py`: stamping says
+*these tools produced this verdict* and is additive and safe in batches, while re-measuring
+says *the verdict has changed* and rewrites a recorded measurement in a tracked index. It
+takes one `--sha`, an author, and the sha256 the bytes must hash to, and it refuses a row
+where nothing moved. Run over `782a8924be8a` — the masked output the manifest names — it
+reproduces the profile above to the digit: one 3-character `acct` identifier, `contains`, in
+a 97-character `base64` segment, with `plaintext_gate` still `PASS`.
 
 #### `34bba99dae63` — local, blocked, two findings of very different shape
 
@@ -815,9 +1014,18 @@ So neither is far outside what random base64 of that size produces. That is a st
 surprise and not about truth: the null cannot tell you this particular occurrence is a
 coincidence, only that occurrences like it are common at this scale.
 
+**Re-run 2026-09-06 under the moved tools digest, and it reproduces to the digit**: 660 trials,
+108 with a hit (16.4%), mean **0.1818** short-name hits, containment **1**, and the length
+split 109/6/1 at 3/4/6 characters. This matters because the plaintext clearance entered on
+`34bba99dae63` cites those numbers as its reason, and a clearance resting on a figure that had
+quietly moved would be a judgement about something else. 0.182 × 5.91 = 1.08, which is the
+expectation the reason quotes.
+
 **One figure does not reproduce and its cause is not established.** CHANGELOG records the
 short-name arm at 0.23 hits per trial; the same command, same fixed seed, same map digest
-(`9268d21c394b`, unmoved this round) and same tools digest (`07079af767d4`) reads **0.18**
+(`9268d21c394b`, unmoved since) and the tools digest that round ended at
+(`07079af767d4`; it has since moved once, to `6fecbeebbccc`, for the note relocation above)
+reads **0.18**
 today, and reads 0.18 at 60, 0.13 at 100 and 0.18 at 660 trials, so it is not a trial-count
 difference. The containment arm reproduces exactly at 1 in 660. The ratio the argument rested
 on survives — about 120:1 rather than 150:1 — and the grade it supported was withdrawn anyway,
@@ -844,13 +1052,32 @@ the finding being weighed *is* a 6-character `begins` hit, and all 20 `begins` f
 in the table come from identifiers of 6+ characters. The note understates the population this
 hit belongs to by 16.
 
-**The constant is not corrected in this round, on purpose.** `FP_NOTE` is a module-level
-assignment in `verify-content-mask.py`, one of the six modules in `gate_provenance.TOOLS`, so
-editing the string moves the `tools` digest and puts all 139 stamped rows into re-measurement.
-A prose repair must not invalidate the index as a side effect. `_profile`'s docstring — which
-the AST digest strips, so it is free to change — now carries both figures and the distinction,
-and the tools digest is asserted unmoved at `07079af767d4`. Correcting the constant is queued
-as its own round's work, with the re-measurement it implies.
+**The constant is corrected, and it has moved out of the behavioural digest.** `FP_NOTE` was
+a module-level assignment in `verify-content-mask.py`, one of the six modules in
+`gate_provenance.TOOLS`, so every word of it sat inside the AST the `tools` digest is taken
+over: correcting four characters of prose moved the digest and put all 139 stamped rows into
+re-measurement. That is why a figure known to be wrong stayed wrong for a round. **A
+descriptive note is not behaviour and must not be able to do that.**
+
+It now lives in `corpus/fp-note.txt`, which the digest does not read, and the note states the
+split it was missing: 52 from identifiers of 6+ characters, of which **16 `exact`, 20 `begins`
+and 16 `contains`** — regenerated today with `--stock-fp`, along with every other figure in
+the note (127 hits, 104 of 8,000 files, 1.30%, 83/20/24). All 20 `begins` false positives come
+from identifiers of 6+ characters, which is the population the finding on the desk belongs to.
+
+Relocating it moves the digest **once** and then never again, which is the whole argument for
+paying the re-measurement now. Three assertions in `gate_provenance.py --inject`, and the
+obvious one is the weakest of the three:
+
+  * rewriting `fp-note.txt` must not move the digest — true, and it would also be true of a
+    module that ignored the file entirely, including the one this replaced;
+  * the loader must actually follow the file, proved by pointing `_load_fp_note` at a
+    different one;
+  * the note's prose must be **absent from the AST the digest reads**, which is the direct
+    statement and the one that fails against the pre-change tree.
+
+Run against the pre-change modules the second and third read `IGNORED` and `PRESENT` and the
+suite fails; the first reads `held` and passes. That is why there are three.
 
 ### `pending-promotions.jsonl` — measured by one side, applied by the other
 

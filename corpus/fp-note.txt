@@ -1,0 +1,4 @@
+a hit is not by itself a leak: over 8,000 stock CMS files, which carry no customer
+identifier by construction, this predicate produces 127 false positives across 104 files
+(1.3%) - 83 'exact', 20 'begins', 24 'contains', and 52 of them from identifiers of 6+
+characters, of which 16 are 'exact', 20 'begins' and 16 'contains'. Re-run with --stock-fp.

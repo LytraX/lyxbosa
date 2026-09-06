@@ -22,6 +22,20 @@ row before and after to prove it rather than trusting itself. Two published rows
 hash of what they ship: for those the only identification lives in the shard `MANIFEST.json`,
 which is a build artefact that can be regenerated, so the identification sits in the more
 perishable of the two places.
+
+REPLACING A STAMP IS A DIFFERENT ACT FROM ADDING ONE, AND NEEDS `--restamp`
+--------------------------------------------------------------------------
+The additive assertion above refused every row that already carried a `provenance` - which
+is every row this tool had ever stamped. So the tool written to keep provenance current
+could not update it: after the tools digest moved, the seven published rows read `stale` and
+the only route back was to hand-edit them. That is the gap this closes.
+
+`provenance` is now the one key that may be REPLACED, and only under `--restamp`, so
+overwriting a human-readable record of what measured a row is something someone typed rather
+than something that happened. Every other key stays add-only and the assertion still proves
+it. The safety property is unchanged and is not the assertion: a stamp is written only where
+`reverify()` says the current gate returns what the row records, so a replacement can never
+launder a verdict that moved - it can only restate one that did not.
 """
 import argparse, copy, hashlib, importlib.util, json, os, sys
 
@@ -80,9 +94,12 @@ def additions(row, data):
 
 
 ALLOWED_ADDITIONS = {"provenance", "masked_sha256"}
+# The one key a re-stamp may overwrite, and only when `restamp` is passed. Kept as its own
+# name rather than folded into the loop so that widening it is a visible edit.
+REPLACEABLE = {"provenance"}
 
 
-def assert_additive(before, after):
+def assert_additive(before, after, restamp=False):
     """Every key the row already had must be untouched, and no key may appear that is not
     on the allow-list.
 
@@ -90,9 +107,16 @@ def assert_additive(before, after):
     overwrite and could not see an ADDITION - a new top-level key sailed past it. Its own
     control caught that, which is the whole reason the control asserts both directions:
     a check that looks one way is the shape AGENTS.md opens with.
+
+    `restamp` permits exactly one overwrite, `masking.provenance`, and nothing else moves
+    with it. Without it this function refused every row that had ever been stamped, which
+    made the tool unable to do the job it exists for the moment the tools digest moved.
     """
     b, a = before.get("masking") or {}, after.get("masking") or {}
+    replaceable = REPLACEABLE if restamp else set()
     for k, v in b.items():
+        if k in replaceable:
+            continue
         if a.get(k) != v:
             return "masking.%s changed" % k
     extra = set(a) - set(b) - ALLOWED_ADDITIONS
@@ -112,6 +136,10 @@ def main():
     ap.add_argument("--bytes-map", required=False,
                     help="json of sha256 -> path holding the bytes the row stands behind")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--restamp", action="store_true",
+                    help="replace an existing masking.provenance where the current gate "
+                         "still returns what the row records. Off by default: overwriting "
+                         "the record of what measured a row is a deliberate act")
     ap.add_argument("--inject", action="store_true")
     a = ap.parse_args()
     if a.inject:
@@ -121,7 +149,7 @@ def main():
 
     paths = json.load(open(a.bytes_map))
     rows = read_jsonl(a.index)
-    todo, refused = {}, []
+    todo, refused, restamped = {}, [], []
     for r in rows:
         if r["sha256"] not in paths:
             continue
@@ -137,14 +165,20 @@ def main():
         add = additions(r, data)
         after = copy.deepcopy(r)
         after["masking"].update(add)
-        bad = assert_additive(r, after)
+        bad = assert_additive(r, after, restamp=a.restamp)
         if bad:
             refused.append((r["sha256"], {"refused": "not additive: %s" % bad}))
             continue
+        if "provenance" in m:
+            restamped.append(r["sha256"])
         todo[r["sha256"]] = add
 
     print("rows offered            : %d" % len(paths))
     print("rows re-verified and stampable : %d" % len(todo))
+    # Always printed, never only when non-zero: replacing a stamp and adding one are
+    # different acts and a report that showed only the total could not tell them apart.
+    print("of which a stamp is REPLACED   : %d%s"
+          % (len(restamped), "" if a.restamp else "   (--restamp not given)"))
     for sha, add in sorted(todo.items()):
         print("    %s  adds %s" % (sha[:12], ", ".join(sorted(add))))
     print("rows refused            : %d" % len(refused))
@@ -168,7 +202,7 @@ def main():
                 continue
             snapshot = copy.deepcopy(r)
             r["masking"].update(add)
-            bad = assert_additive(snapshot, r)
+            bad = assert_additive(snapshot, r, restamp=a.restamp)
             if bad:
                 sys.exit("refusing to write: %s on %s" % (bad, r["sha256"][:12]))
             n += 1
@@ -252,6 +286,43 @@ def inject():
         fails.append("a SKIPPED verdict was stamped as if it had been measured")
 
     print()
+    print("=== a stamp may be REPLACED only under --restamp, and nothing else with it ===")
+    # The gap this closes: every row this tool had ever stamped carried a `provenance`, and
+    # the additive assertion refused every one of them. So the tool that exists to keep
+    # provenance current could not update it the moment the tools digest moved.
+    stamped = copy.deepcopy(row_ok)
+    stamped["masking"]["provenance"] = {"tools": "0" * 12, "map": None, "at": "2026-01-01"}
+    restamped = copy.deepcopy(stamped)
+    restamped["masking"].update(additions(stamped, clean))
+    bad_off = assert_additive(stamped, restamped, restamp=False)
+    bad_on = assert_additive(stamped, restamped, restamp=True)
+    print("  %-52s %s" % ("a stale stamp, without --restamp",
+                          "refused" if bad_off else "WRONG: overwrote it silently"))
+    if not bad_off:
+        fails.append("a stamp was replaced without --restamp")
+    print("  %-52s %s" % ("a stale stamp, with --restamp",
+                          "replaced" if bad_on is None else "WRONG: " + str(bad_on)))
+    if bad_on is not None:
+        fails.append("--restamp could not replace a stale stamp")
+    smuggled = copy.deepcopy(restamped)
+    smuggled["masking"]["plaintext_gate"] = "PASS-ish"
+    bad = assert_additive(stamped, smuggled, restamp=True)
+    print("  %-52s %s" % ("--restamp does not license any other overwrite",
+                          "caught" if bad else "WRONG: missed"))
+    if not bad:
+        fails.append("--restamp allowed a second key to move")
+    # And the property that makes the overwrite safe is not the assertion at all: a stamp is
+    # written only where the current gate returns what the row records, so a replacement can
+    # restate a verdict and never launder one.
+    moved = copy.deepcopy(stamped)
+    moved["masking"]["plaintext_gate"] = "FAIL"
+    agrees, _d = reverify(moved, clean)
+    print("  %-52s %s" % ("a stale stamp on a verdict that MOVED",
+                          "refused" if not agrees else "WRONG: would be restamped"))
+    if agrees:
+        fails.append("a re-stamp was offered on a row whose verdict moved")
+
+    print()
     print("=== the additive assertion must be able to fail ===")
     tampered = copy.deepcopy(row_ok)
     tampered["masking"]["note"] = "changed"
@@ -268,7 +339,7 @@ def inject():
         fails.append("the additive assertion only looks inside masking")
 
     print()
-    print("cases: 10 · passed: %d · failed: %d" % (10 - len(fails), len(fails)))
+    print("cases: 14 · passed: %d · failed: %d" % (14 - len(fails), len(fails)))
     for f in fails:
         print("FAIL:", f)
     return 1 if fails else 0
