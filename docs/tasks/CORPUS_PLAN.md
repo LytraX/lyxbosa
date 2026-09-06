@@ -1318,9 +1318,9 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, eight appearances: a measurement that cannot deliver bad news
+## 11. One property, nine appearances: a measurement that cannot deliver bad news
 
-Eight separate cautions in this plan share one diagnostic tell. Five of them are the same
+Nine separate cautions in this plan share one diagnostic tell. Five of them are the same
 statement in different clothes; two reach the same place by a different mechanism and
 need a different repair, which is exactly why they are worth listing together:
 
@@ -1367,6 +1367,44 @@ enumerated by walking stock CMS trees, and stock CMS trees do not contain accoun
 the check's denominator is bounded by what the enumeration could ever have exercised. The
 aggregate 1.30% figure is sound for the containment classes it measures and says nothing about
 truncation. **State the power of the truncation column, or do not cite it.**
+
+**A ninth, found 2026-09-06 — and it is the first that a check declared about itself before
+anyone asked.** `corpus/field-provenance.py` censuses which index fields no tracked module
+writes. Its docstring states its own bound in as many words: *the fields are enumerated FROM
+THE ROWS, so a field every row has since lost is invisible*, and *`written` is an over-count,
+so `ORPHAN` is an under-count*. Both are true, both were written down before anyone
+challenged the number, and a worked example was supplied — `masking.encoded_layer_gate_uncapped`,
+3 rows when `stamp-legacy.py` was written and 0 now.
+
+That is the property behaving well: an instance recorded in advance, by the tool, in the
+direction that makes the answer conservative. It is listed here because writing the bound down
+is not the same as knowing its size, and when the size was finally measured it was much larger
+than the sentence suggested — in **three** distinct ways, two of them not the way the docstring
+had predicted:
+
+| bound | direction | measured effect |
+|---|---|---|
+| fields enumerated from the rows | ORPHAN under-counts | still unquantified; a field every row has lost cannot be counted by definition |
+| modules enumerated from `corpus/*.py` | ORPHAN under-counts | the census parsed **itself**. `KNOWN` and `REMOVED` are dict literals keyed by field name, which the parser reads as write positions, so the census was the sole claimed writer of 6 real fields — and `main()` prints only the states that are *not* `written`. Three fields `KNOWN` recorded *as orphans* — `evidence_decoded`, `evidence_encoded`, `hidden_by_encoding`, 142 rows each — were classified covered and never printed. **The note saying nobody writes them is what stopped them being reported.** |
+| value-keyed maps not descended into | ORPHAN under-counts, *and* over-counts | the map test was "more than eight distinct children". Measured over both halves it classified **ten** parents as value-keyed maps and **one of them was**. The nine schema blocks it swallowed include `masking` (26 children) — every gate verdict, every finding, `provenance`, `secret_literals`, the block a human clearance is keyed to. An orphan anywhere under it was invisible to the tool whose entire job is finding orphans. It also ran the other way: three value *keys* under `sensitivity_review.adjudication` were reported as orphan fields because that parent had only four children. |
+
+The third bound was **also declared in advance** — the same docstring said "a schema block with
+nine keys would be misread as a map and that possibility should be visible rather than silent"
+— and then nine blocks were misread. A declared bound that nobody sizes is a bound that is
+being carried rather than checked.
+
+Repaired 2026-09-06: the census excludes itself, and the map test is now *what actually
+distinguishes the two kinds of parent* — schema keys are written by a programmer and are
+identifiers, value keys are data labels and are not. Over both halves exactly four parents have
+any non-identifier child and all four are real maps; every other parent's children are
+identifiers without exception. Corrected population: **311 fields carried, 4 maps, 241 written,
+3 read-only, 67 ORPHAN** — against 135 / 10 / 90 / 1 / 44 before. The orphan count did not grow
+because the corpus changed; it grew because the census could finally see.
+
+**Assume a tenth exists in whatever you measure next** — and note that the first nine were
+found by somebody reading, while three of this one's parts were found by asking a tool to state
+the size of a limit it had already written down. Writing the bound down is cheap and it is not
+the check. Sizing it is the check.
 
 The four original instances:
 

@@ -65,6 +65,22 @@ What caught each one was a **positive control**: asserting that the check can al
 other thing. Every checker in `corpus/` has an `--inject` mode for this reason. When you add
 a check, add its control in the same commit, and run it before you trust a green result.
 
+## `grep` here cannot see the files that matter
+
+`grep` is a shell function wrapping a tool that respects `.gitignore`. Every gitignored tree
+is invisible to it — including the **237 Python files under `trail-data/`**, which is where
+the passes that wrote most of this index actually live: the sensitivity tagger, the second
+decoder, and the writers of every field `field-provenance.py` reports as an orphan.
+
+So a sweep that concludes *nothing reads this field* or *no tool writes this string* is
+**unproven** when it was run through the wrapper. Use `command grep` (or `find`) for any
+question about what exists on this machine, and say which you used when you report the
+answer.
+
+This was found the hard way: a reader sweep over the whole tree returned nothing, and the
+writer it was looking for was sitting in a directory the sweep never opened. Both counts
+differ — 5 hits against 8 — on a question as ordinary as which files define a function.
+
 ## Describe collisions; do not quote them
 
 When documenting a false positive, name the identifier by shape — "a six-letter label matched
