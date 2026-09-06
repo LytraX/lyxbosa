@@ -14,6 +14,12 @@ removes the opportunity.
 import collections, json, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import clearance                                                        # noqa: E402
+
+# Every gate a human can clear a finding on. Imported rather than restated, so a gate added
+# to the clearance rule cannot become an override this file does not count.
+CLEARABLE = clearance.CLEARABLE_GATES
 
 # Reason codes whose samples ship as BYTES in a shard. Everything else is an index row plus
 # a lockfile entry, reproducible with fetch-benign.sh rather than shipped (SOURCES.md 6).
@@ -29,6 +35,30 @@ def build():
     loc = [json.loads(l) for l in open(locp)] if os.path.exists(locp) else []
     allr = pub + loc
     shipped = sum(1 for r in pub if r.get("reason") in SHIPPED)
+
+    # The one mechanism that can turn a recorded gate FAIL into a publishable row. It is
+    # counted here so it is never invisible: a human override that only shows up when
+    # someone runs the gate is an override nobody is watching, and this file is what the
+    # suite quotes. Counted three ways because they answer different questions - how many
+    # rows are standing on a human decision, how many decisions that is, and which gates
+    # are being overridden, which is the one that would show a predicate being routed
+    # around row by row instead of fixed.
+    def cleared(rows):
+        by_gate, n_rows, n_findings = collections.Counter(), 0, 0
+        for r in rows:
+            hit = 0
+            for g in CLEARABLE:
+                if clearance.applicable(r, g) is not None:
+                    by_gate[g] += 1
+                    hit += 1
+            if hit:
+                n_rows += 1
+                n_findings += hit
+        return n_rows, n_findings, dict(sorted(by_gate.items()))
+
+    cl_rows, cl_findings, cl_by_gate = cleared(allr)
+    pub_cl_rows, _pf, _pg = cleared(pub)
+
     s = {
         "total_blobs": len(allr),
         "published": len(pub),
@@ -51,6 +81,10 @@ def build():
         # having done so.
         "local_only_publishable_no_blocker": sum(
             1 for r in loc if r.get("publishable") is True),
+        "cleared_by_human_rows": cl_rows,
+        "cleared_by_human_findings": cl_findings,
+        "cleared_by_human_by_gate": cl_by_gate,
+        "published_cleared_by_human_rows": pub_cl_rows,
         "known_miss": sum(1 for r in allr if (r.get("expect") or {}).get("known_miss")),
         # The detection denominator, over BOTH halves. It has to be every reviewed malicious
         # sample, not just the ones carrying must_detect: must_detect is populated FROM the
@@ -109,6 +143,15 @@ def build():
             "reason outside the gate's remit - no shard carries their bytes, or they lack "
             "the family/technique classification a published row needs - so they appear "
             "under no blocker and would otherwise be an unattributed count"),
+        "cleared_by_human_note": (
+            "a gate finding a person read and ruled a collision, recorded on the row with "
+            "who, when, why, the digest of the finding it is about and the gate provenance "
+            "it was judged against. `publishable` is still computed: a cleared row is "
+            "publishable because the gate says so given a recorded human input, never "
+            "because the field was written over. A clearance stops applying by itself when "
+            "either the finding or the gate that produced it moves, and shard-gate.py "
+            "reports the ones that have. Counted here so the number can be watched: it is "
+            "the only route by which a recorded FAIL becomes a publishable row"),
         "local_only_blockers_note": ("a row may carry several blockers and is counted under "
                                      "each, so these sum to more than local_only. Reported this "
                                      "way deliberately: collapsing to one reason per row hides "
