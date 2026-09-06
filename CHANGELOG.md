@@ -53,6 +53,30 @@ commit list that CI generates per tag. Versions are the git tags described in
   which is not maskable and is never published` ×1. No published row moved and no detection
   figure was measured.
 
+- **`corpus/mark-not-maskable.py` — `masking.not_applicable_reason` is written from the
+  repository for the first time.** Four of the five are archive containers, which §5.5
+  excludes from content masking entirely, so what they need is the decision the 29 existing
+  rows carry — a field nothing in this tree writes and `mask-samples.py` only reads.
+
+  **The writer could not be brought in, and that is the finding.** No `.py` anywhere on this
+  machine writes the string, and `git log --diff-filter=A` puts `mask-samples.py`'s first
+  commit a day *after* the rows appeared: the author was never saved, so unlike
+  `sensitivity.py` there is nothing to hash and no behavioural probe to run. The tool
+  re-derives the *claim* instead — container magic re-read from the bytes, `gzip` on all four,
+  recorded with the sha256 it read — and refuses a row whose bytes are not a container, which
+  is what it did to the fifth (a PHP file) on the live run. It deliberately writes none of the
+  seven other masking keys the legacy rows carry: those are measurements it did not take.
+  Publishability moved by **0 rows**, and that is correct — `applied: false` still blocks.
+
+- **`corpus/field-provenance.py` — 45 fields in the index have no writer in this repository,
+  not three.** Three had been found one at a time, a round apart each, by somebody noticing.
+  This parses every tracked module and asks, per field the rows carry, whether anything can be
+  shown to **write** it rather than merely mention it — the distinction that matters, since
+  `mask-samples.py` contains the literal `not_applicable_reason` and any grep would have
+  called that field covered. 135 fields, 89 written, 1 read-only, **45 mentioned nowhere**.
+  `written` is an over-count so `ORPHAN` is an under-count, and both denominators are
+  enumerated by their own process and say so on every run.
+
 - **`corpus/sensitivity.py` — the rule that assigns every sensitivity tag is now in the
   repository.** It was `trail-data/incoming/2026-09-03/sensitivity.py`: gitignored, untracked,
   not covered by `gate_provenance.TOOLS`. Anyone cloning this repository could read the rows

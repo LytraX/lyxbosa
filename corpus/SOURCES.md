@@ -1165,6 +1165,72 @@ the row is the substantive fact — `derived.raw_tags: ["clean"]`, the machine r
 bytes — plus the `cause`, the tar-header evidence and the superseded record. The fix stops it
 recurring; it does not undo it.
 
+### Four of the five are archives, and `not_applicable_reason` is now written from the repo
+
+§5.5 excludes archives from content masking entirely, so four of the five can never have the
+masking pass their tags demand. That decision is `masking.not_applicable_reason`, which 29
+rows already carried and **nothing in this tree wrote** — `mask-samples.py` reads it and
+refuses a row that has one.
+
+The obvious repair was the one `sensitivity.py` got: find the untracked original and
+reproduce it. **It is not available here, and the difference is the finding.** No `.py`
+anywhere on this machine writes the string, and `git log --diff-filter=A` puts the first
+commit of `mask-samples.py` a day *after* the rows appeared. The writer was never saved.
+There is nothing to hash and no behavioural probe that could be run against it, so
+`corpus/mark-not-maskable.py` re-derives the *claim* instead: it re-reads the container magic
+from the bytes (`gzip` on all four), records what it read and the sha256 it read it from, and
+refuses a row whose bytes are not a container — which is what happened to the fifth, a PHP
+file, on the live run.
+
+It deliberately does **not** write the seven other masking keys the 29 legacy rows carry
+(`plaintext_gate`, `encoded_layer_gate`, `detection_survived`, `changes`, `change_kinds`,
+`length_preserved`, `c2_kept`). Those are measurements and this tool takes none of them;
+copying them to make the new rows look like the old ones would be manufacturing a measurement.
+`--census` prints both populations so the difference is visible rather than discovered. The
+reason string is the 29's verbatim except for its final `Held local-only.`, which these rows
+have not earned.
+
+**It clears no blocker, and that is correct.** `shard-gate`'s "carries *tag* but no masking
+has been applied" is driven by `applied`, so an archive carrying an unmaskable identifier
+stays unpublishable permanently. Publishability moved by 0 rows.
+
+### The field census: three orphans were three because nobody had counted
+
+Three fields have been found one at a time, a round apart each, by somebody noticing. The
+question *how many more are there* had never been asked of the whole index, and it is
+mechanical. `corpus/field-provenance.py` parses every tracked module in `corpus/` and asks,
+for every field the rows actually carry, whether any of them can be shown to **write** it —
+`r["k"] = v`, a dict literal, `setdefault`, `pop`, or a module-level `KEY = "k"` written
+through — as opposed to merely mentioning it in `d.get("k")`.
+
+That distinction is the whole subject: `mask-samples.py` contains the literal
+`not_applicable_reason`, so any grep-based census would have called that field covered while
+the defect stayed open, and `--inject` asserts exactly that.
+
+```
+fields carried by rows        135   (9 value-keyed maps not descended into)
+  written by a tracked module  89
+  only READ by tracked modules  1
+  mentioned nowhere            45
+```
+
+**45, not three.** `written` is an over-count — a name in a write position might belong to
+some other dictionary — so `ORPHAN` is an under-count: every field it reports is really
+unaccounted for and there may be more. Two denominators are bounded by their own process and
+both are stated on every run: the fields are enumerated **from the rows**, so a field every
+row has since lost is invisible (`masking.encoded_layer_gate_uncapped` was an orphan on 3
+rows when `stamp-legacy.py` was written and is on 0 today), and the modules are enumerated
+from `corpus/*.py`, so a field written by a tool since deleted reads as an orphan.
+
+Three conditions hide under one phrase, and they need different repairs:
+
+* **the author exists and is untracked** → reproduce it and prove the reproduction
+  (`sensitivity.py`, `deobfuscate.py`);
+* **the author is gone** → re-derive the claim from the bytes and record who did
+  (`stamp-legacy.py`, `mark-not-maskable.py`);
+* **the author never existed** → the field is a convention, and the repair is to stop
+  treating it as a measurement.
+
 ### `pending-promotions.jsonl` — measured by one side, applied by the other
 
 A rules round measures which `known_miss` rows its new rules now detect. It does not flip
