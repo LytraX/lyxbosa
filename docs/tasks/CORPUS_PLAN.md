@@ -1297,11 +1297,11 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, six appearances: a measurement that cannot deliver bad news
+## 11. One property, seven appearances: a measurement that cannot deliver bad news
 
-Six separate cautions in this plan share one diagnostic tell. Five of them are the same
-statement in different clothes; one reaches the same place by a different mechanism and
-needs a different repair, which is exactly why they are worth listing together:
+Seven separate cautions in this plan share one diagnostic tell. Five of them are the same
+statement in different clothes; two reach the same place by a different mechanism and
+need a different repair, which is exactly why they are worth listing together:
 
 > **Any measurement whose denominator is enumerated by the same process that produces the
 > numerator is bounded by that process, not by reality.**
@@ -1314,13 +1314,38 @@ field exists only where one pass wrote it. Re-derived from the bytes with the ga
 decoder, the *same 142 rows* yield **6,120 layers against that pass's 318**, the tag set is
 strictly wider on 13 rows and narrower on none, and the under-covered count is **20**. Widen
 the population to every stored-publishable local row and it is **31**, five of which are
-`publishable: true` with no masking applied at all and fail the current encoded-layer gate on
-`exact` hits at 7, 8, 10, 19 and 23 characters.
+`publishable: true` with no masking applied at all and fail the current encoded-layer gate.
+
+> **Corrected 2026-09-06.** This paragraph used to say those five fail "on `exact` hits at 7,
+> 8, 10, 19 and 23 characters". That set is the **longest identifier length per row**, not the
+> exact-position hits. Measured per row the exact-position lengths are 3/5/8, 5/7, 8, 5/7 and
+> 8/19; the 10 and the 23 are `truncation` hits, where `_profile`'s `len=N` is the length of
+> the identifier being *truncated* rather than of the value found — and on both rows that
+> value is the **same account name already counted as the `exact` hit**, so they are one token
+> counted twice rather than independent evidence. The correction runs in both directions: it
+> removes two long hits that were not exact, and restores two short ones (3 and 5) that were
+> dropped, which are the classes most likely to be coincidences. See
+> `docs/results/corpus-round-12-2026-09-06.md`.
 
 So `decoded_form_tags` is not a property of the bytes. It is a property of the decoder that
 wrote it, and every figure computed against it is bounded by that decoder. The repair is the
 same as for the first three: a second, independently sourced denominator — here, decoding the
 bytes again with a different decoder and comparing, which is what turned 11 into 20 into 31.
+
+**A seventh, found 2026-09-06, and it is a null that had almost no opportunity to fire.** The
+stock-CMS false-positive table in `fp-note.txt` is the reference every identifier finding is
+weighed against, and it contains **no `truncation` class at all** — 0 false positives in 8,000
+files — which reads as the strongest evidence in the table. It is not evidence. Over the same
+8,000-file sample and the same seed, only **6 files (0.075%) contain any eligible account-slot
+value**, 63 slot values in total and **4** in the `/home*/<x>/` shape that truncation hits
+actually use. A per-opportunity false-positive rate as high as 50% still shows zero hits with
+probability 0.5⁴ = 6.3%, so the null cannot exclude even a very high rate.
+
+This is the fifth's *power* problem and the denominator problem at once: the population was
+enumerated by walking stock CMS trees, and stock CMS trees do not contain account slots, so
+the check's denominator is bounded by what the enumeration could ever have exercised. The
+aggregate 1.30% figure is sound for the containment classes it measures and says nothing about
+truncation. **State the power of the truncation column, or do not cite it.**
 
 The four original instances:
 
