@@ -755,6 +755,21 @@ their only identifiers are `c2` hosts, which are kept deliberately — but two a
 because an embedded IP inside the encoded layer is ambiguous between an attacker callback
 (`c2`, keep) and a customer host (`identity`, mask), and that call is not mechanical.
 
+**And the sensitivity tag has to describe the decoded form too, or this section's premise is
+being applied to the wrong object.** If an identifier inside an encoded layer makes a sample
+unpublishable, then a `sensitivity` taken from the sample's *outer* form is a tag read off the
+thing the encoder was for. Eleven local rows were in exactly that state — `sensitivity` equal
+to `encoded_form_tags` while `decoded_form_tags` was strictly larger — and two of them carried
+credentials in a `base64+inflate` layer while tagged `clean`. The ruling, applied 2026-09-06
+by `corpus/adopt-decoded-tags.py`: **sensitivity describes what the sample carries, including
+in its decoded form**, and `clean` is dropped wherever anything else survives.
+
+It cost no publishability, and the reason is worth recording rather than reading as a
+non-result: six of the eleven had already been masked and had passed every gate, so the tags
+they gain demand measurements that exist; three carry `c2` alone, which is in `ALWAYS_OK`, so
+nothing was demanded of them before or after. The one substantive change is a row that gains
+`pii` — moving from a *clearable* `secret_gate` failure to a tag no route may clear.
+
 ## 6. Benign corpus — keep the stock trees, add what actually breaks rules
 
 `trail-data/CMS` exists to prove no rule fires on clean software, and it does that job:
@@ -935,6 +950,23 @@ first time this rule has been observed to say no.
 
 No shard carries a `secret`-tagged sample today, so arming it moved no published figure —
 the published half holds zero `secret`-tagged rows.
+
+**The differential was differential in one direction only, and the other direction is now
+armed as a count.** It asserted that nothing in the output is byte-identical to something in
+the input and said nothing about masking *adding* a credential-shaped literal; one row sat at
+23-after against 22-before for a round. The rule armed is `after > before`, which over the 132
+masked local rows fires on **one** row — already blocked. The set-shaped alternative ("nothing
+in the output that was not in the input, less the masker's marked synthetics") refuses **46**
+of the same 132, 36 of them hard refusals, because §5.1 makes every correctly masked
+credential a new credential-shaped literal and the masker's credential substitutions carry no
+synthetic marker at all. That is measured, not argued, and it is why the count is the rule.
+
+The one increase is not a manufactured credential. `secret_literals()` counts over the
+plaintext and every decoded layer, and that layer population **is not stable under masking**:
+four masked bytes inside a base64 region re-encoded and the layers nested below it decoded
+differently, 23 becoming 16. The two counts were censuses of different populations. Where that
+happens the gate stays silent and `shard-gate.py` raises its own reason, so one cause keeps
+one reason.
 
 **Re-measured 2026-09-06, after the tag/evidence correction above.** The secret-tagged
 population is unchanged at 88 and splits exactly as before: 46 applied with a recorded gate,
@@ -1265,16 +1297,32 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, five appearances: a measurement that cannot deliver bad news
+## 11. One property, six appearances: a measurement that cannot deliver bad news
 
-Five separate cautions in this plan share one diagnostic tell. Four of them are the same
-statement in different clothes; the fifth reaches the same place by a different mechanism and
+Six separate cautions in this plan share one diagnostic tell. Five of them are the same
+statement in different clothes; one reaches the same place by a different mechanism and
 needs a different repair, which is exactly why they are worth listing together:
 
 > **Any measurement whose denominator is enumerated by the same process that produces the
 > numerator is bounded by that process, not by reality.**
 
-The four instances:
+**A sixth, found 2026-09-06, and it is the first where the numerator and the denominator come
+from the same *decoder*.** A `deobfuscation` block records `decoded_form_tags` — what the
+sample carries once its layers are opened — and eleven local rows had tags there their
+`sensitivity` did not cover. Eleven is a census of the 142 rows that carry the field, and the
+field exists only where one pass wrote it. Re-derived from the bytes with the gate's own
+decoder, the *same 142 rows* yield **6,120 layers against that pass's 318**, the tag set is
+strictly wider on 13 rows and narrower on none, and the under-covered count is **20**. Widen
+the population to every stored-publishable local row and it is **31**, five of which are
+`publishable: true` with no masking applied at all and fail the current encoded-layer gate on
+`exact` hits at 7, 8, 10, 19 and 23 characters.
+
+So `decoded_form_tags` is not a property of the bytes. It is a property of the decoder that
+wrote it, and every figure computed against it is bounded by that decoder. The repair is the
+same as for the first three: a second, independently sourced denominator — here, decoding the
+bytes again with a different decoder and comparing, which is what turned 11 into 20 into 31.
+
+The four original instances:
 
 | where | the numerator | the denominator, and who chose it |
 |---|---|---|

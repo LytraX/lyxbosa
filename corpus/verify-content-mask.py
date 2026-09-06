@@ -192,16 +192,21 @@ SECRET_SHAPES = [
 ]
 
 
-def secret_literals(data, with_layers=True):
+def secret_literals(data, with_layers=True, layers=None):
     """Every credential-shaped literal in the bytes and in each decoded layer.
 
     Returns a set of (shape, value).  Callers compare two of these and record the SIZE of
     the intersection; nothing here is ever written down.
+
+    `layers` lets a caller that has already decoded these bytes pass the result in.
+    `secret_gate` needs both the literals and the layer SET, and decoding twice for the two
+    questions doubled the cost of the most expensive thing in the gate - on a 1.2 MB sample
+    that yields ~1,250 layers it is the difference between seconds and minutes.
     """
     out = set()
     blobs = [data]
     if with_layers:
-        blobs += [b for _, b in decode_layers(data)]
+        blobs += [b for _, b in (decode_layers(data) if layers is None else layers)]
     for blob in blobs:
         for shape, rx in SECRET_SHAPES:
             for m in rx.finditer(blob):
@@ -209,22 +214,108 @@ def secret_literals(data, with_layers=True):
     return out
 
 
+# The marker every synthetic value carries when its length allows one. Restated here rather
+# than imported: this module shares nothing with the masker by design (§5.3), and importing
+# `content_mask.MARKER` to decide whether the masker made something would be the self-check
+# built from the masker's own constants that §5.3 forbids. It is asserted equal to the
+# masker's in `inject()`, which is the right relationship - agreement proved rather than
+# assumed.
+SYNTHETIC_MARKER = b"mask"
+
+
+def _layer_set(layers):
+    """The decoded layers as a set of blobs, so two decodes can be compared for identity."""
+    return {b for _m, b in layers}
+
+
 def secret_gate(before, after):
-    """(ok, result) - did every credential-shaped literal actually change?"""
-    b, a = secret_literals(before), secret_literals(after)
+    """(ok, result) - did every credential-shaped literal actually change, and did masking
+    avoid adding one of its own?
+
+    THE GATE USED TO BE DIFFERENTIAL IN ONE DIRECTION ONLY
+    ------------------------------------------------------
+    It asserted that no credential-shaped literal in the output is byte-identical to one in
+    the input, and said nothing about the count going UP. A gate that can only fail one way
+    is the defect this corpus keeps finding - the same shape as the regex that matched
+    `/home/` and not `/home2/`, and as the publishability gate that could see over-claimed
+    and not under-claimed. One row was observed at 23 credential-shaped literals after
+    masking where it had 22 before, and nothing in the tree asked about it for a round.
+
+    WHY THE RULE IS ABOUT THE COUNT AND NOT ABOUT THE SET, MEASURED
+    ---------------------------------------------------------------
+    §5.1 requires a masked secret to keep its shape, so a correctly masked credential IS a
+    new credential-shaped literal: on one row eleven wp-config literals go in and eleven
+    different ones come out. A rule phrased over the SET - "no literal in the output that was
+    not in the input" - therefore fires on masking working, and the obvious repair is to
+    exclude the synthetics the masker can be shown to have made, which is what
+    `SYNTHETIC_MARKER` identifies. **Measured, that repair is not enough and the set rule is
+    not usable:** over the 132 masked local rows it refuses **36**, because a synthetic
+    shorter than seven characters has no room for the marker and cannot be attributed at all.
+    A quarter of the masked population blocked on a rule whose failures are mostly the masker
+    doing its job is not a gate, it is a flood.
+
+    The COUNT rule has none of that trouble, because a one-for-one replacement leaves the
+    count where it was. Over the same 132 rows exactly **one** has more literals after than
+    before. So the rule armed here is the count, and the set arithmetic is recorded beside it
+    -`secret_literals_added`, `_by_the_masker`, `_unattributed` - measured and not armed,
+    which is this corpus's standing order for a rule whose blast radius it has just measured.
+
+    WHAT THE ONE OBSERVED INCREASE ACTUALLY WAS, MEASURED RATHER THAN ASSUMED
+    -------------------------------------------------------------------------
+    Not a marked synthetic. `secret_literals()` counts over the plaintext AND every decoded
+    layer, and **the decoded-layer population is not stable under masking**: on that row the
+    masker changed four bytes inside one base64 region, the region re-encoded, and the
+    `base64+inflate` layers nested below it decoded differently - 23 layers became 16, nine
+    disappeared and two appeared, and one of the two carries a ten-character array key that
+    the `wp-credential` pattern reads as a credential. `before` and `after` were censuses of
+    two different populations, which is §11 exactly.
+
+    So the two causes are recorded apart, and only one of them is this gate's verdict:
+
+      * a literal byte-identical in both is a carry-over, whatever the layer population did.
+        FAIL, unchanged.
+      * MORE literals after than before, with the decoded-layer population UNCHANGED, is
+        masking adding one to a population the two counts can both speak for. FAIL.
+      * the same increase on a row whose decoded-layer set MOVED is not comparable. It is
+        recorded with `literal_population_comparable: false`, and the decision belongs to
+        `shard-gate.py` under its own reason, where §8 can count the cause separately.
+        Failing it here as well would put two reasons on one cause, which is the
+        double-counted denominator SOURCES.md records the blocker tally standing 14 out for.
+    """
+    layers_before, layers_after = decode_layers(before), decode_layers(after)
+    b = secret_literals(before, layers=layers_before)
+    a = secret_literals(after, layers=layers_after)
     carried = b & a
+    added = a - b
+    marked = {(s_, v) for s_, v in added
+              if SYNTHETIC_MARKER in (v if isinstance(v, bytes) else str(v).encode()).lower()}
+    unattributed = added - marked
+    lb, la = _layer_set(layers_before), _layer_set(layers_after)
+    comparable = lb == la
+    increased = len(a) > len(b) and comparable
     res = {
-        "secret_gate": "FAIL" if carried else "PASS",
+        "secret_gate": "FAIL" if (carried or increased) else "PASS",
         "secret_literals_before": len(b),
         "secret_literals_after": len(a),
         "secret_literals_carried_over": len(carried),
-        "shapes_carried_over": sorted({s for s, _ in carried}),
-        "shapes_remaining": sorted({s for s, _ in a}),
+        "secret_literals_added": len(added),
+        "secret_literals_added_by_the_masker": len(marked),
+        "secret_literals_added_unattributed": len(unattributed),
+        "shapes_carried_over": sorted({s_ for s_, _ in carried}),
+        "shapes_added_unattributed": sorted({s_ for s_, _ in unattributed}),
+        "shapes_remaining": sorted({s_ for s_, _ in a}),
+        "decoded_layers_before": len(lb),
+        "decoded_layers_after": len(la),
+        # False means the two counts above are censuses of DIFFERENT populations, so an
+        # increase is not by itself evidence that masking made anything.
+        "literal_population_comparable": comparable,
         "note": ("counts and shapes only; a credential-shaped literal remaining after "
                  "masking is a synthetic one by construction, and §7.2's shard scan will "
-                 "still see its shape"),
+                 "still see its shape. Additions are measured over the plaintext and every "
+                 "decoded layer, and that layer population is not stable under masking - "
+                 "see `literal_population_comparable`"),
     }
-    return (not carried), res
+    return (not carried and not increased), res
 
 
 # ---------------------------------------------------------------------------------------
@@ -260,20 +351,22 @@ def _profile(pairs):
     inside `imagick_...` in a 473 KB decoded function table, which the length rule would
     have called high confidence.
 
-    **`FP_NOTE` says 36 come from identifiers of 6+ characters, and `--stock-fp` prints 52.**
-    Regenerated 2026-09-06, every other figure in the note reproduces to the digit - 127
-    hits, 104 files, 1.30%, and 83 `exact` / 20 `begins` / 24 `contains`. The 36 is
-    `begins` (20) plus `contains` at 6+ (16) and omits the 16 `exact` hits at 6+; the
-    summary line sums every class at 6+ and reads 52. Both are true of different questions
-    and the note states the narrower one without its qualifier, which matters when the
-    finding being weighed IS a 6-character `begins` hit - the note understates the
-    population it belongs to.
+    **`FP_NOTE` said 36 came from identifiers of 6+ characters and `--stock-fp` printed 52;
+    the note now says 52 and the note is no longer in this file.** Regenerated 2026-09-06,
+    every other figure reproduced to the digit - 127 hits, 104 files, 1.30%, and 83 `exact`
+    / 20 `begins` / 24 `contains` - and the 52 reproduces again today. 36 was `begins` (20)
+    plus `contains` at 6+ (16) and omitted the 16 `exact` hits at 6+. Both figures are true
+    of different questions and the note stated the narrower one without its qualifier, which
+    matters when the finding being weighed IS a 6-character `begins` hit: it understated the
+    population that hit belongs to by 16, and all 20 `begins` false positives in the table
+    come from identifiers of 6+ characters.
 
-    The constant is deliberately not corrected here. `FP_NOTE` is a module-level assignment
-    and this file is one of the six in `gate_provenance.TOOLS`, so editing the string moves
-    the `tools` digest and re-measures all 139 stamped rows. A prose repair must not
-    invalidate the index as a side effect. This docstring is stripped from the AST digest,
-    so correcting it costs nothing; the constant is a round's work and is queued as such.
+    The note now carries the split it was missing - 16 `exact`, 20 `begins`, 16 `contains`
+    at 6+ - and lives in `fp-note.txt`, which the AST digest does not read. It could not be
+    corrected before because it was a module-level assignment in a file inside
+    `gate_provenance.TOOLS`: fixing four characters of prose moved the `tools` digest and
+    put all 139 stamped rows into re-measurement. Relocating it costs that re-measurement
+    once and then never again.
 
     That is §11 exactly - a denominator enumerated by a process that does not resemble the
     population bounds the result and not reality - so no grade is emitted. What is recorded
@@ -296,10 +389,34 @@ def _profile(pairs):
             "false_positive_note": FP_NOTE}
 
 
-FP_NOTE = ("a hit is not by itself a leak: over 8,000 stock CMS files, which carry no "
-           "customer identifier by construction, this predicate produces 127 false "
-           "positives across 104 files (1.3%) - 83 'exact', 20 'begins', 24 'contains', and "
-           "36 of them from identifiers of 6+ characters. Re-run with --stock-fp.")
+# The note the findings carry, loaded from `fp-note.txt` rather than written here.
+#
+# It used to be a module-level string literal in this file, and this file is one of the six
+# in `gate_provenance.TOOLS`, so every word of it was inside the AST the `tools` digest is
+# taken over. A prose repair therefore invalidated all 139 provenance stamps - which is why
+# the figure it states was wrong for a round and could not be fixed: the fix cost a
+# re-measurement of the index. A descriptive note is not behaviour and must not be able to
+# do that.
+#
+# The AST holds the FILENAME and the loader, which are behaviour; the prose is data. Editing
+# `fp-note.txt` now moves nothing, and `--assert-note-is-not-behaviour` is the control that
+# says so. Whitespace is collapsed so re-wrapping the file cannot change the stored string
+# either. A missing file is a hard failure rather than an empty note: a finding that cites a
+# false-positive rate it cannot state is a finding with the qualifier silently removed, and
+# `clearance.finding_digest` covers this string, so a silent empty would move every digest.
+FP_NOTE_PATH = os.path.join(HERE, "fp-note.txt")
+
+
+def _load_fp_note(path=None):
+    p = path or FP_NOTE_PATH
+    with open(p, encoding="utf-8") as fh:
+        text = " ".join(fh.read().split())
+    if not text:
+        raise RuntimeError("%s is empty; a finding must not cite a rate it cannot state" % p)
+    return text
+
+
+FP_NOTE = _load_fp_note()
 
 
 def stock_fp(ids, keep, roots, sample=8000, seed=4242):
@@ -532,6 +649,20 @@ def inject(ids, keep, sample=None):
              b"$password = 'abcd1234';", b"$password = 'zzzz9999';", False),
             ("no credential on either side",
              b"<?php echo 1;", b"<?php echo 1;", False),
+            # The second direction. The gate said nothing about the count going UP for
+            # nine rounds, and one row sat at 23-against-22 with nothing asking.
+            ("masking left MORE literals than it found",
+             b"<?php echo 1;", b"$password = 'abcd1234';", True),
+            ("masking left FEWER: this gate is about adding, not about losing",
+             b"$password = 'abcd1234';", b"<?php echo 1;", False),
+            # And the case that decides the rule's shape. §5.1 makes a masked credential a
+            # NEW credential-shaped literal, so a rule over the SET fires on masking
+            # working. Eleven in, eleven out, none carried: the count holds and the gate
+            # must stay silent. Over the 132 masked local rows a set rule refuses 36.
+            ("eleven credentials replaced one for one",
+             b"".join(b"define('DB_PASSWORD', 'pw%02d1234');" % i for i in range(11)),
+             b"".join(b"define('DB_PASSWORD', 'zq%02d8877');" % i for i in range(11)),
+             False),
     ):
         ok, res = secret_gate(before, after)
         fired = res["secret_gate"] == "FAIL"
@@ -541,6 +672,39 @@ def inject(ids, keep, sample=None):
                                    else ("silent" if not fired else "FIRED")))
         if not good:
             failures.append("secret gate: " + name)
+
+    # WHY the set rule cannot be rescued by excluding the masker's own synthetics, asserted
+    # rather than argued. `SYNTHETIC_MARKER` is restated in this module because §5.3 forbids
+    # a check built from the masker's constants; the control is where the two are proved
+    # equal instead. And the marker only goes into IDENTIFIER substitutions - the masker's
+    # credential replacements (`_value`, `_bcrypt`, `_phpass`, `_hex`) carry none by
+    # construction, so a masked credential is unattributable to the masker no matter how long
+    # it is. That is the measured cause of the 36 refusals, and the reason the armed rule is
+    # the count.
+    try:
+        import content_mask as _cm
+        agree = _cm.MARKER.encode() == SYNTHETIC_MARKER
+        print()
+        print("   %s  %-40s %s" % ("=", "the marker matches the masker's",
+                                   "agrees" if agree else "DISAGREES"))
+        if not agree:
+            failures.append("SYNTHETIC_MARKER has drifted from content_mask.MARKER")
+        bcrypt_in = b"$h = '$2y$10$" + b"a" * 53 + b"';"
+        masked, _d = _cm.mask_sample(bcrypt_in, _cm.incident_mask.load_map(INCIDENT_MAP)
+                                     if hasattr(_cm, "incident_mask") else None)
+        moved = masked != bcrypt_in
+        unmarked = SYNTHETIC_MARKER not in masked.lower()
+        print("   %s  %-40s %s" % ("=", "a masked bcrypt carries no marker",
+                                   "moved and unmarked" if (moved and unmarked)
+                                   else ("unmoved" if not moved else "MARKED")))
+        if not (moved and unmarked):
+            failures.append("the premise of the count rule: a masked credential is "
+                            "unattributable")
+    except Exception as exc:                                    # noqa: BLE001
+        print()
+        print("   %s  %-40s %s" % ("=", "the marker matches the masker's",
+                                   "NOT CHECKED: %s" % exc))
+        failures.append("marker agreement could not be checked: %s" % exc)
 
     print()
     if failures:

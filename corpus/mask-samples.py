@@ -168,11 +168,20 @@ def process(row, src, m, vocab, stage, mask_ipv4=False, mask_hex=False,
     # SOURCES.md's "a gate that trusts a field is only as good as whatever wrote the field",
     # one level down. The row keeps its blocker and the finding is returned.
     if "secret" in (row.get("sensitivity") or []) and not secret_ok:
-        return None, {"result": "refused",
-                      "why": "secret gate: %d credential-shaped literal(s) survived masking "
-                             "unchanged (shapes: %s)"
-                             % (secret_res["secret_literals_carried_over"],
-                                ",".join(secret_res["shapes_carried_over"]))}
+        # The gate now fails two ways, so the refusal has to say which. It used to quote
+        # `secret_literals_carried_over` unconditionally, which on the second failure mode
+        # printed "0 credential-shaped literal(s) survived masking unchanged" - a refusal
+        # describing a cause that did not happen, and zero of it at that.
+        if secret_res["secret_literals_carried_over"]:
+            why = ("secret gate: %d credential-shaped literal(s) survived masking unchanged "
+                   "(shapes: %s)" % (secret_res["secret_literals_carried_over"],
+                                     ",".join(secret_res["shapes_carried_over"])))
+        else:
+            why = ("secret gate: masking left more credential-shaped literals than it found "
+                   "(%d -> %d) over an unchanged decoded-layer population"
+                   % (secret_res["secret_literals_before"],
+                      secret_res["secret_literals_after"]))
+        return None, {"result": "refused", "why": why}
 
     survived = rules_after == rules_before
     block = {
@@ -190,9 +199,21 @@ def process(row, src, m, vocab, stage, mask_ipv4=False, mask_hex=False,
         "gate_categories": {k: gated[k] for k in
                             ("plaintext_finding", "encoded_layer_finding") if k in gated},
         "secret_gate": secret_res["secret_gate"],
+        # Every field the gate measures, not the four it used to record. The four omitted
+        # the whole second direction: `secret_literals_after` was stored beside
+        # `secret_literals_before` with nothing in the tree comparing them, which is how one
+        # row sat at 23-against-22 for a round. `literal_population_comparable` is here
+        # because an increase means nothing without it - the decoded-layer set the counts
+        # are taken over is not stable under masking.
         "secret_literals": {k: secret_res[k] for k in
                             ("secret_literals_before", "secret_literals_after",
-                             "secret_literals_carried_over", "shapes_remaining")},
+                             "secret_literals_carried_over", "secret_literals_added",
+                             "secret_literals_added_by_the_masker",
+                             "secret_literals_added_unattributed",
+                             "shapes_carried_over", "shapes_added_unattributed",
+                             "shapes_remaining",
+                             "decoded_layers_before", "decoded_layers_after",
+                             "literal_population_comparable")},
         "measured_with": binary_id(),
         # WHAT measured the identifier and secret gates, as against `measured_with`, which
         # is the scanner and answers only for `detection_survived`. Without this a verdict

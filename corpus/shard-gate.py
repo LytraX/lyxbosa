@@ -237,6 +237,45 @@ def evaluate(r):
             continue
         why.append(_gate_blocker(label, verdict, detail))
 
+    # QUESTION FOUR, and it is about the BYTES as well: did masking ADD a credential-shaped
+    # literal that nothing can attribute?
+    #
+    # `secret_gate()` was differential in one direction only - no literal in the output
+    # byte-identical to one in the input - and said nothing about the count going up. One row
+    # recorded 23 credential-shaped literals after masking where it had 22 before, and
+    # nothing in the tree asked. A gate that can only fail one way is the defect this corpus
+    # keeps finding.
+    #
+    # The gate itself now owns the comparable half: an unattributed addition over an
+    # UNCHANGED decoded-layer population is masking making a credential, and it returns FAIL,
+    # which the loop above already reads. This is the other half, and it is here rather than
+    # there because it is a different cause with a different repair. `secret_literals()`
+    # counts over the plaintext and every decoded layer, and that layer population is not
+    # stable under masking: on the observed row four masked bytes inside one base64 region
+    # re-encoded, the `base64+inflate` layers below it decoded differently, and 23 layers
+    # became 16. `before` and `after` were then censuses of two different populations, which
+    # §11 says bounds the result and not reality.
+    #
+    # It still blocks, because a "cannot tell" must not read as "fine" - that is exactly the
+    # three-answer rule `gate_provenance.verify()` exists for. It is ONE reason, never two:
+    # where the population is comparable the gate has already failed and this stays silent,
+    # because §8 counts reasons and two reasons for one cause is the double-counted
+    # denominator that left the blocker tally 14 out for two rounds.
+    #
+    # Read of every row that records the evidence, whatever its tags - the Question Three
+    # discipline. Not clearable: `CLEARABLE_GATES` is the four recorded gate results, and
+    # this is a statement that a measurement cannot be made rather than a finding to judge.
+    sl = m.get("secret_literals")
+    if isinstance(sl, dict):
+        b4, aft = (sl.get("secret_literals_before"), sl.get("secret_literals_after"))
+        comparable = sl.get("literal_population_comparable")
+        if isinstance(b4, int) and isinstance(aft, int) and aft > b4 and comparable is False:
+            why.append("masking left more credential-shaped literals than it found (%d -> "
+                       "%d) over a decoded-layer population that moved (%s layers before, "
+                       "%s after): the two counts are censuses of different populations"
+                       % (b4, aft, sl.get("decoded_layers_before"),
+                          sl.get("decoded_layers_after")))
+
     # Detection parity is the one field whose meaning depends on whether a masking pass
     # happened at all. `applied: false` has two forms and they are told apart by which key
     # is set: `reason` ("no identifier to mask") is a pass that ran, and its
@@ -772,6 +811,52 @@ def inject(path):
     case("every gate passes, provenance is from superseded tools",
          dict(base, sensitivity=["c2", "identity"], publishable=True,
               masking=dict(PASSING, provenance={"tools": "0" * 12, "map": None})), "over")
+
+    # 5b. The credential-literal count going UP. The gate was differential in one direction
+    # only and one row sat at 23-against-22 for a round with nothing asking. Both halves of
+    # the split are exercised, and so is the double-count: where the population is
+    # comparable the gate has already returned FAIL and this reason must stay silent, or one
+    # cause acquires two reasons and §8's denominator goes out again.
+    def sl(**kw):
+        d = {"secret_literals_before": 22, "secret_literals_after": 23,
+             "secret_literals_carried_over": 0, "secret_literals_added": 1,
+             "secret_literals_added_by_the_masker": 0,
+             "secret_literals_added_unattributed": 1,
+             "decoded_layers_before": 23, "decoded_layers_after": 16,
+             "literal_population_comparable": False}
+        d.update(kw)
+        return d
+
+    row = dict(base, sensitivity=["clean"], publishable=True,
+               masking=dict(MASKED, secret_gate="PASS", secret_literals=sl()))
+    _ok, why = evaluate(row)
+    hit = [w for w in why if "more credential-shaped literals" in w]
+    ran.append("more literals out than in, over a population that moved")
+    print("  %-56s %-6s %s" % ("more literals out than in, over a moved population", "",
+                               "ok" if len(hit) == 1 else "WRONG: %s" % why))
+    if len(hit) != 1:
+        fails.append("more literals out than in, over a population that moved")
+
+    for label, block, want in (
+            ("the count went DOWN over a moved population",
+             sl(secret_literals_after=21), 0),
+            ("the count held over a moved population - 11 masked in, 11 out",
+             sl(secret_literals_before=11, secret_literals_after=11,
+                secret_literals_added=11, secret_literals_added_by_the_masker=11,
+                secret_literals_added_unattributed=0), 0),
+            ("an increase over a COMPARABLE population: the gate owns it, one reason only",
+             sl(literal_population_comparable=True), 0),
+            ("a row that records no secret_literals block at all", None, 0)):
+        m2 = dict(MASKED, secret_gate="PASS")
+        if block is not None:
+            m2["secret_literals"] = block
+        _ok, why = evaluate(dict(base, sensitivity=["clean"], publishable=True, masking=m2))
+        n = len([w for w in why if "more credential-shaped literals" in w])
+        ran.append("silent: " + label)
+        print("  %-56s %-6s %s" % ("silent: " + label[:54], "",
+                                   "ok" if n == want else "WRONG: fired %d time(s)" % n))
+        if n != want:
+            fails.append("silent: " + label)
 
     print()
     print("=== negative controls: each must be SILENT ===")

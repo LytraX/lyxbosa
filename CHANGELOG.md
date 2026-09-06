@@ -13,6 +13,40 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **`corpus/adopt-decoded-tags.py` — `sensitivity` now describes the sample's decoded form,
+  not its wrapper.** A `deobfuscation` block records `encoded_form_tags` for the bytes as
+  collected and `decoded_form_tags` for everything a static decoder gets out of them. On
+  **11 local rows** the sensitivity equalled the *encoded* tags while the decoded tags were
+  strictly larger — tagging a sample by the thing the encoder was for, on rows whose whole
+  point is that the outer form carries nothing. §5.4's premise is that an identifier inside
+  an encoded layer makes a sample unpublishable, so a sensitivity taken from the wrapper is
+  measuring the wrong object.
+
+  All 11 are adopted, `clean` dropped wherever anything else survives. **No publishability
+  moves**, and the reason is the result rather than a disappointment: six of the eleven had
+  already been masked with every gate passing, so the tags they gain demand measurements
+  that exist; three carry `c2` alone, which is in `ALWAYS_OK`, so nothing was demanded of
+  them before or after and they are not counted as movement. The one substantive change is
+  `b827cdd9d417` gaining **`pii`** — it was blocked only on `secret_gate: FAIL`, which is
+  *clearable*, and `pii` is in `NEVER` and clearable by no route.
+
+  The tool refuses a row with no `decoded_form_tags` rather than computing one: a `--fix`
+  that writes the field it then trusts is the tool agreeing with itself, and this field is
+  an input to the publish gate. What the bytes actually say on each of the eleven is written
+  up per row in `corpus/SOURCES.md`, including the two weak ones — `identity` resting on an
+  address at a public mail provider that no map identifier matches — and the one where
+  `sensitivity.py` and `verify-content-mask.py` disagree about what a secret is.
+
+- **`corpus/remeasure-gates.py`** — writes the verdict a re-measurement produces onto a row
+  whose record disagrees with it. Deliberately not part of `verify-and-stamp.py`, whose whole
+  contract is that it stamps *only* where the current gate returns what the row records:
+  stamping says "these tools produced this verdict" and is additive and safe in batches, while
+  re-measuring rewrites a recorded measurement in a tracked index and can flip a `publishable`
+  in the published half. One `--sha`, one author, and the sha256 the bytes must hash to; it
+  refuses a row where nothing moved, and a verdict that goes back to `PASS` takes its finding
+  with it.
+
+
 - **A human can clear one gate finding, and the decision is a record rather than a gap
   (`corpus/clearance.py`, `corpus/clear-finding.py`).** Some findings are collisions and no
   predicate that can see one can decide it — the encoded-layer predicate produces 127 false
@@ -87,7 +121,121 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Changed
 
-- **Counts that moved, each with its cause.** Local publishable **377 → 373**: the four rows
+- **`FP_NOTE` is corrected and has moved out of the behavioural digest.** It said 36 hits
+  come from identifiers of 6+ characters where `--stock-fp` prints **52**; 36 was `begins`
+  (20) plus `contains` at 6+ (16) and omitted the 16 `exact` hits at 6+. It now says 52 and
+  carries the split it was missing — **16 `exact`, 20 `begins`, 16 `contains`** — regenerated
+  today along with every other figure in it: 127 false positives across 104 of 8,000 stock
+  CMS files (1.30%), 83/20/24 by position. All 20 `begins` false positives come from
+  identifiers of 6+ characters, which is the population the finding on the desk belongs to.
+
+  It could not be corrected before because it was a module-level assignment in
+  `verify-content-mask.py`, one of the six modules in `gate_provenance.TOOLS`: four
+  characters of prose moved the `tools` digest and put all 139 stamped rows into
+  re-measurement. **A descriptive note is not behaviour and must not be able to do that.** It
+  now lives in `corpus/fp-note.txt`, which the digest does not read, so the relocation costs
+  that re-measurement **once** and then never again.
+
+  Three assertions in `gate_provenance.py --inject`, and the obvious one is the weakest:
+  rewriting the note must not move the digest (true of a module that ignores the file
+  entirely, including the one this replaced); the loader must actually follow the file; and
+  **the note's prose must be absent from the AST the digest reads**. Against the pre-change
+  modules the second and third read `IGNORED` and `PRESENT` and the suite fails, while the
+  first passes — which is why there are three.
+
+- **The differential secret gate now fails in both directions, and the measurement chose the
+  rule.** It asserted that no credential-shaped literal in the output is byte-identical to
+  one in the input and said nothing about the count going **up**; one row recorded 23 after
+  masking where it had 22 before, for a round, with nothing asking.
+
+  Two candidate rules, measured over the 132 masked local rows before either was armed. "No
+  literal in the output that was not in the input, less the masker's marked synthetics"
+  refuses **46 rows, 36 of them hard refusals** — because §5.1 makes every correctly masked
+  credential a *new* credential-shaped literal, and the synthetic marker is written only by
+  the identifier substitution: the masker's credential replacements (`_value`, `_bcrypt`,
+  `_phpass`, `_hex`) carry none at all by construction, so a masked bcrypt is unattributable
+  however long it is. "More literals after than before" fires on **one** row. The count is
+  what was armed, and `verify-content-mask.py --inject` now asserts both that
+  `SYNTHETIC_MARKER` equals the masker's constant and that a masked bcrypt moves and comes
+  back unmarked — the premise the choice rests on.
+
+  **What produced the one increase is not the hypothesis it was written against.** Not a
+  synthetic. `secret_literals()` counts over the plaintext *and every decoded layer*, and
+  that layer population **is not stable under masking**: four masked bytes inside one base64
+  region re-encoded, the `base64+inflate` layers nested below decoded differently, and 23
+  layers became 16 — nine gone, two new, one of the two carrying a ten-character
+  `$GLOBALS['DB_NAME']['…']` array key the `wp-credential` pattern reads as a credential.
+  `before` and `after` were censuses of two different populations. Over the 132 rows the
+  layer set moves on **11** and the count moves on **1**, so the instability is common and
+  the increase is not.
+
+  Two causes, two owners, one reason each: the gate fails on a carry-over and on an increase
+  over an *unchanged* layer population; `shard-gate.py` raises its own blocker for an
+  increase over a population that moved, read from the recorded evidence regardless of tags.
+  `secret_literals_added`, `_by_the_masker`, `_unattributed`, `decoded_layers_before/after`
+  and `literal_population_comparable` are now recorded — measured and not armed, so the next
+  round can decide the set rule against numbers. `mask-samples.py`'s refusal message was
+  fixed in the same change: it quoted `secret_literals_carried_over` unconditionally and so
+  printed *"0 credential-shaped literal(s) survived masking unchanged"* on the second failure
+  mode — a refusal naming a cause that had not happened, and zero of it.
+
+- **`verify-and-stamp.py` could not re-stamp anything it had ever stamped.** Its additive
+  assertion refused every row already carrying a `provenance`, which is every row it had
+  written — so the tool that exists to keep provenance current could not update it the moment
+  the tools digest moved. `provenance` is now the one key that may be replaced, and only
+  under `--restamp`, with the report always printing how many stamps are replacements rather
+  than additions. The safety property is unchanged and is not the assertion: a stamp is
+  written only where the current gate returns what the row records, so a replacement can
+  restate a verdict and never launder one. Four new control cases, including a stale stamp on
+  a verdict that moved, which must still be refused.
+
+- **Counts that moved this round, each with its cause, and the ones that did not.**
+  **No detection figure moves**: all nine `malicious_detected` / `malicious_known_miss` /
+  `malicious_reviewed` figures and their `_excl_predates_ruleset` variants are byte-identical
+  in `index-summary.json` before and after, which is a census of both halves rather than a
+  sample. The mechanism is stronger than the coincidence: over the 132 re-measured local rows
+  **not one** of `masked_sha256`, `plaintext_gate`, `encoded_layer_gate`, `secret_gate`,
+  `detection_survived`, `rules_before`, `rules_after`, `changes`, `change_kinds` or
+  `measured_with` moved on any row — the masker is unchanged, the scanner binary is unchanged
+  at `4c3e0af08988` (read, never rebuilt), and the only fields that moved are
+  `provenance.at`/`provenance.tools` on all 132, the eight new `secret_literals` keys on all
+  132, and `false_positive_note` on the 8 stored findings that carry one.
+
+  Publishable is **373 → 373** local and **44,543 → 44,543** published. Blockers:
+
+  | blocker | before → after | cause |
+  |---|---|---|
+  | `plaintext gate did not pass` (local) | 5 → 4 | the human clearance on `34bba99dae63` |
+  | `encoded-layer gate did not pass` (local) | 9 → 8 | the same row's second clearance |
+  | `carries pii …` (local) | 24 → 25 | `b827cdd9d417` adopting its decoded `pii` |
+  | `masking left more credential-shaped literals …` | 0 → 1 | the new rule, on the same row |
+  | sensitivity tags | `clean` −11, `c2` +6, `identity` +6, `secret` +4, `path` +2, `pii` +1 | the 11 adopted rows, and the arithmetic closes exactly |
+  | `cleared_by_human_findings` / `_rows` / `_by_gate` | 0 → 2 / 0 → 1 / `{}` → `{encoded_layer_gate: 1, plaintext_gate: 1}` | the first two clearances ever recorded |
+
+  **The two clearances do not make `34bba99dae63` publishable**, and that is the mechanism
+  working: it still carries `secret_gate: FAIL`, which nobody cleared, so a second uncleared
+  blocker survives the clearance exactly as the design says it must.
+
+  In the published half the one blocked row's blocker changes rather than its boolean:
+  `3529f0f6b2cd` goes from `gate results have no usable provenance` to `encoded-layer gate did
+  not pass`. Gate provenance reads `ok: 8` of 8 published and `ok: 132, absent: 2` local — the
+  two absent are last round's secret-gate refusals, unchanged.
+
+  **The `tools` digest moved once, `07079af767d4 → 6fecbeebbccc`**, and every one of the 139
+  stamped rows was re-measured under it: 132 local re-masked and re-stamped, 7 published
+  re-verified against the bytes inside the shard tarballs and re-stamped. The map digest is
+  unmoved at `9268d21c394b`. **Asserted afterwards, directly:** appending a sentence to
+  `fp-note.txt` changes `FP_NOTE` and leaves the digest at `6fecbeebbccc`, while changing the
+  loader's filename constant moves it to `805aeb091b0c`. A prose edit can no longer invalidate
+  the index.
+
+  Control suites: `clearance` 31, `clear-finding` 19, `gate_provenance` **16 → 20**,
+  `verify-and-stamp` **10 → 14**, `shard-gate` **56 → 61**, `adopt-decoded-tags` 19 (new),
+  `remeasure-gates` 18 (new), plus three new secret-gate cases and two marker assertions in
+  `verify-content-mask --inject`. All green, and the three new `gate_provenance` assertions
+  were run against the pre-change modules first: two of them fail there.
+
+- **Counts that moved in the clearance round.** Local publishable **377 → 373**: the four rows
   described under Fixed, all `secret_gate: FAIL`. Local blockers: `secret gate did not pass`
   **0 → 5** (the five rows, now read regardless of tag), `encoded-layer gate did not pass`
   **3 → 9** (the six dict-form rows, now parsed), `encoded-layer gate was not run:
@@ -138,6 +286,50 @@ commit list that CI generates per tag. Versions are the git tags described in
   marker on an unverified claim launders it.
 
 ### Measured, not changed
+
+- **The base-rate null reproduces under the moved digest.** 660 trials, 108 with a hit
+  (16.4%), mean **0.1818** short-name hits per 98,473 bytes of random base64, containment
+  **1** — identical to last round's regeneration. Checked because the plaintext clearance
+  entered this round quotes those figures as its reason, and a clearance resting on a number
+  that had quietly moved would be a judgement about something else.
+
+- **Is the under-covered population eleven, or is eleven what the comparison can see?**
+  Measured, and it is the second — and it is a **sixth** appearance of §11's rule, the first
+  where the numerator and the denominator come from the same *decoder*.
+
+  | population | how enumerated | under-covered |
+  |---|---|---|
+  | 142 local rows carrying `decoded_form_tags` | the pass that wrote the field | **11** |
+  | the same 142, re-derived from the bytes with the **gate's** decoder | this round | **20** |
+  | every stored-publishable local row (373; 366 resolved, 182 decode) | census | **31** |
+  | the 282 rows that pass recorded `undecodable` (281 resolved, 56 decode) | census | 2, both `c2`-only, both already blocked |
+  | the 84 published shipped-as-bytes rows (76 resolved, 14 decode) | census | 2 |
+
+  Over the *same* 142 rows the gate's decoder yields **6,120 layers against that pass's 318**
+  — 19× — and the re-derived tag set is **strictly wider on 13 rows and narrower on none**.
+  So `decoded_form_tags` is not a property of the bytes; it is a property of the decoder that
+  wrote it. Widening the population finds **31**, and five of those are `publishable: true`
+  with **no masking applied at all** while the current gate fails their encoded layer on
+  `exact`-position hits at 7, 8, 10, 19 and 23 characters — one decodes to a WordPress
+  `usermeta` SQL dump and a contact block carrying a customer domain the map holds.
+
+  **Those five are not re-tagged.** Adopting a tag set this round's own re-derivation
+  produced would be trusting a field because it is there, one level up, which is the defect
+  the ruling repairs. They need the masking pass none of them has ever had, which is a round's
+  work with a scanner in it. The eleven is the operator's ruling applied to what the record
+  holds; the thirty-one is the size of the question.
+
+  Every figure is a census of a stated population rather than a sample, so none carries a
+  sampling error and none bounds reality either. 7 of the 373 local rows exceed the 4 MB read
+  cap (6.8 MB to 279 MB) and 8 of the 84 published rows have no resolvable blob; those fifteen
+  are unmeasured, not measured clean.
+
+  **The two under-covered published rows are collisions**, and reading them is what says so:
+  both are `media-polyglot` fixtures tagged `c2`+`path` whose decoded `identity` rests
+  entirely on a hardcoded attacker callback address in a URL — `sensitivity.py` tags
+  `identity` on any dotted quad, the retracted-IP defect in its original form. The tag that
+  fits is `c2` and both rows carry it. **No published row is under-tagged in a way that
+  matters**, over a census of all 84.
 
 - **Three findings are recorded with their full profiles and their decoded context, and none
   is decided.** `3529f0f6b2cd` (published) still stores `encoded_layer_gate: PASS` while the
@@ -217,6 +409,16 @@ commit list that CI generates per tag. Versions are the git tags described in
   is not this round's call to make.
 
 ### Fixed
+
+- **`3529f0f6b2cd`'s record now holds the finding, in the order the mechanism requires.** The
+  row stored `encoded_layer_gate: PASS` while the current gate returns `FAIL` over the exact
+  bytes the shard holds (`782a8924be8a`), and `clear-finding.py` refused to clear it — *"a
+  clearance signed against a pass would pre-approve whatever the gate says next"*. So the
+  order was fixed: re-measure first, judge second. `remeasure-gates.py` reproduces the profile
+  to the digit — one 3-character `acct` identifier, `contains`, in a 97-character `base64`
+  segment, `plaintext_gate` still `PASS` — and writes it with its provenance. The row is now
+  blocked on the finding rather than on missing provenance, which is a different and honest
+  reason.
 
 - **The gate read the tag before it read the evidence, and four rows were publishable with a
   recorded credential failure on them.** Five local rows record `masking.secret_gate: FAIL`

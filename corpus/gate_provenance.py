@@ -202,6 +202,10 @@ def inject():
         try:
             for n in TOOLS:
                 shutil.copy2(os.path.join(HERE, n), os.path.join(tmp, n))
+            # Not a TOOLS file, and that is the point: it is the prose the findings cite,
+            # and it has to be present in the fixture for the case that rewrites it.
+            shutil.copy2(os.path.join(HERE, "fp-note.txt"),
+                         os.path.join(tmp, "fp-note.txt"))
             # The cache is keyed by root, and this fixture mutates a root in place, so it
             # has to be cleared between the two reads. Without this every positive case
             # reports "held" and the suite passes while measuring nothing - which is what
@@ -254,8 +258,9 @@ def inject():
                         "    survived = rules_after == rules_before\n"
                         "    if not survived:\n        pass"), True)
     case("a gate result key is renamed",
-         lambda t: edit(t, "verify-content-mask.py", '"secret_gate": "FAIL" if carried',
-                        '"secret_gate_v2": "FAIL" if carried'), True)
+         lambda t: edit(t, "verify-content-mask.py",
+                        '"secret_gate": "FAIL" if (carried or increased)',
+                        '"secret_gate_v2": "FAIL" if (carried or increased)'), True)
 
     print()
     print("=== a change that cannot alter a verdict must NOT move it ===")
@@ -269,6 +274,61 @@ def inject():
         s = open(p, encoding="utf-8").read()
         open(p, "w", encoding="utf-8").write(s.replace("\n\n\n", "\n\n\n\n"))
     case("blank lines are added throughout", reindent, False)
+
+    # The findings' false-positive note. It was a module-level string literal in
+    # `verify-content-mask.py`, so every word of it sat inside the AST this digest is taken
+    # over: a four-character prose repair moved `tools` and put all 139 stamped rows into
+    # re-measurement, which is why a figure known to be wrong stayed wrong for a round. It
+    # now lives in `fp-note.txt`.
+    #
+    # THREE assertions, because the obvious one passes on a module that ignores the file
+    # entirely - including the module this replaced. Rewriting the note must not move the
+    # digest; the loader must actually follow the file; and the prose must be absent from
+    # the AST. The second and third are what make the first mean anything.
+    def prose_edit(tmp):
+        with open(os.path.join(tmp, "fp-note.txt"), "w", encoding="utf-8") as fh:
+            fh.write("REWRITTEN FOR THE CONTROL: 0 false positives over 0 files.\n")
+    case("the findings' false-positive note is rewritten", prose_edit, False)
+
+    import importlib.util as _il
+    _sp = _il.spec_from_file_location("vcm_prov",
+                                      os.path.join(HERE, "verify-content-mask.py"))
+    _vcm = _il.module_from_spec(_sp)
+    _sp.loader.exec_module(_vcm)
+    _tmp = tempfile.mkdtemp(prefix="fp-note-control.")
+    try:
+        alt = os.path.join(_tmp, "fp-note.txt")
+        with open(alt, "w", encoding="utf-8") as fh:
+            fh.write("a wholly different note\n")
+        # getattr rather than an attribute access: run against a tree where the note is
+        # still a literal there is no loader, and a control that raises there reports
+        # nothing at all. It has to be able to SAY the other thing.
+        loader = getattr(_vcm, "_load_fp_note", None)
+        follows = bool(loader) and (loader(alt) == "a wholly different note"
+                                    and _vcm.FP_NOTE != "a wholly different note")
+    finally:
+        shutil.rmtree(_tmp, ignore_errors=True)
+    print("  %-56s %-9s %s" % ("the note is read from that file, not from this one",
+                               "follows" if follows else "IGNORED",
+                               "ok" if follows else "WRONG"))
+    if not follows:
+        fails.append("the note is not actually loaded from fp-note.txt")
+
+    _src = ast.dump(_strip_docstrings(ast.parse(
+        open(os.path.join(HERE, "verify-content-mask.py"), encoding="utf-8").read())))
+    _leaked = [w for w in ("false positives across", "Re-run with --stock-fp",
+                           "identifiers of 6+ characters") if w in _src]
+    print("  %-56s %-9s %s" % ("the note's prose is absent from the digest's input",
+                               "absent" if not _leaked else "PRESENT",
+                               "ok" if not _leaked else "WRONG"))
+    if _leaked:
+        fails.append("the note's prose is still inside the AST the digest reads")
+
+    # And the negative half: the LOADER is behaviour and must move the digest. Without this
+    # the three cases above are satisfied by deleting the note altogether.
+    case("the note's filename changes",
+         lambda t: edit(t, "verify-content-mask.py", '"fp-note.txt"', '"fp-note-2.txt"'),
+         True)
 
     print()
     print("=== verify() must separate 'absent' from 'stale' from 'ok' ===")
@@ -312,7 +372,7 @@ def inject():
     else:
         print("  maps not present; the map half of the control did not run")
 
-    n = 16 if have else 13
+    n = 20 if have else 17
     print()
     print("cases: %d · passed: %d · failed: %d" % (n, n - len(fails), len(fails)))
     for f in fails:
