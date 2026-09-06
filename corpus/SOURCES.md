@@ -22,8 +22,29 @@ corpus/
   mask-samples.py                   runs §5.6's three checks over a batch and records the result
   promote-gate.py                   §5.3 — the map-AWARE check, run when a row is promoted
   index-summary.json                the denominator: counts and blockers, tracked
-  shards/                           built shards (gitignored; release assets)
+  shards/                           built shards (gitignored; LOCAL ONLY - none has ever been distributed)
 ```
+
+## `published` is a classification, not a distribution state
+
+**No shard has ever been distributed.** All 24 assets across the 6 releases are scanner
+binaries; `corpus/shards/` is gitignored, has zero tracked files, exists only on the machine
+that built it, and nothing in this tree references a shard download URL. Every shard is a
+local build artefact awaiting a decision to publish.
+
+So `publishable: true` and the `published` half of the index mean **"cleared to be
+distributed"**, and `published_shipped_as_bytes: 84` means **"would ship as bytes in a shard
+if one were released"**. Neither says anything has left this machine. A blocker on a
+`published` row is a *pre-publication* blocker: it costs a rebuild, not a disclosure.
+
+This is written down because the distinction was blurred and it cost real work. This file
+called shards "release assets" and `docs/KNOWN_ISSUES.md` said two samples "ship in" one of
+them - present tense for an intended state - and a careful reading of both produced a
+conclusion that a customer identifier was already public. It was not. Three minutes of
+checking `git ls-files` and the release assets settled it, and the wrong conclusion had
+already been reasoned three steps forward. **Say which state you mean**: cleared to publish,
+built locally, or actually distributed. They are three different things and only the first
+two have ever been true here.
 
 ## The index
 
@@ -132,6 +153,9 @@ Three tools support the import, and the split between them is deliberate:
 | `import-infected-tree.py` | yes | reproduces the denominator, refuses to run if it moved, sniffs content, triages media structurally, indexes archive members and never containers, classifies with the evidence recorded |
 | `infected_mask.py` | yes | path masking, and `collisions()` — which proves *which* identifiers rewrite something they should not, against a real vocabulary |
 | `verify-infected-mask.py` | yes | the independent check. Shares no regex with either masker |
+| `gate_provenance.py` | half | stamps and checks what produced a gate verdict: an AST digest of the six deciding modules, and a digest of the maps' behavioural surface |
+| `verify-and-stamp.py` | yes | re-verifies a row's recorded verdicts against the bytes it stands behind and stamps provenance only where they still agree; additive, and asserts it |
+| `stamp-legacy.py` | no | gives a field written by a tool no longer in the tree an author, a date and a re-checked claim |
 | `regen-tiers.py` | yes | recomputes a map's `mask_tier` against a vocabulary. Two assertions before it writes: the map's **contents** (`identifiers()`, `keep_tokens()`, `pairs()`, every other field, the tier key set) and what the tiers **mean** — coverage per changed name over a real path population, refusing a measured loss. Backs up first, preserves the file mode, re-asserts both after |
 
 `incident_mask.py` is the same pair of jobs for the **current incident**, whose map and
@@ -347,6 +371,53 @@ name in git exactly as surely as an unmasked index row would. The map holds the 
 tool reads roles. This is §5.3's "a field nobody thought of", one level out — it was not a
 field at all, it was the tool's own source.
 
+### A stored gate verdict now says what produced it
+
+`shard-gate.py` read `masking.plaintext_gate == "PASS"` and trusted it, with nothing in the
+row recording *when* it was measured or *by what*. A verdict from a version of the gate that
+has since been tightened read exactly like one taken a minute ago. Re-gating by hand found
+**5 of 95 local rows and 1 of 8 rows in the published half** sitting at `PASS` under a
+predicate the current gate rejects — the samples had not changed, the predicate had, and no
+field in the index could have shown it.
+
+`measured_with` already existed and answers a different question. It records the scanner
+binary, which is the right provenance for `detection_survived` and says nothing about the
+masker or the identifier gate. **Provenance for the wrong question reads as provenance**,
+which is why 52 rows looked accounted for and 90 looked like the whole problem.
+
+`gate_provenance.py` stamps two digests:
+
+| digest | over what | who can check it |
+|---|---|---|
+| `tools` | an **AST** of the six modules that decide spans and verdicts, docstrings stripped | anyone: they are tracked |
+| `map` | the identifier list, the keep list and the tier table | only a machine holding the maps |
+
+An AST rather than a file hash, because comments and formatting are absent from an AST by
+construction: rewriting a docstring does not move it, and changing a regex literal, renaming
+a local or adding a branch all do. A git commit was considered and rejected — every record
+this round had to repair was written by an *uncommitted* working tree, so a commit id would
+have been absent or, worse, confidently wrong.
+
+`verify()` returns **three** answers, never two: `ok`, `absent`, `stale`. The `tools` half is
+always required; the `map` half is checked only where the maps exist, and the result says
+`map not checked` rather than passing quietly — §7.2's map-free invariants are a floor under
+what a stranger can verify, never a licence to report a partial check as a whole one.
+
+In `shard-gate.evaluate()` the question is asked **first** inside the `applied` branch,
+because it decides whether the three verdicts below are worth reading. `absent` and `stale`
+raise one blocker rather than two: §8 counts reasons and the repair is identical for both —
+re-measure. The diagnosis is not identical, so it goes in the gate's own report line
+(`masked rows by gate provenance`), which is printed on every run whether or not it is zero.
+
+Two routes write it. `mask-samples.py` stamps it as a side effect of masking, which is right
+for a row whose bytes can be re-masked. `verify-and-stamp.py` is for a row whose bytes are
+already built — the published half — and it re-runs the gate over the bytes the row actually
+stands behind, writing provenance **only where the current verdict equals the recorded one**
+and refusing the row where it does not. Its write is additive and asserted to be: only
+`provenance` and, where the row records no hash of its own masked bytes, `masked_sha256`.
+Its own control caught the first version of that assertion looking only one way — it could
+see an overwritten key and not an added one.
+
 ### The gate is wider than the masker at tiers `B` and `C`, on purpose, and it shows
 
 The masker's tier rules and the gate's leak predicate derive their boundaries independently —
@@ -419,11 +490,11 @@ hurry, and it survives a review that gets a different axis wrong.
 `evaluate()` computes `unmasked = tags - ALWAYS_OK - …`, and `ALWAYS_OK` is
 `{"clean", "c2"}`. So for a row tagged `c2` alone, `unmasked` is empty and the whole masking
 branch is skipped: no plaintext gate, no encoded-layer gate, no detection-parity check. A
-human typing `["c2"]` is the entire distance between those bytes and a public shard.
+human typing `["c2"]` is the entire distance between those bytes and a shard cleared for publication.
 
 That is not hypothetical. One row from the 2026-09-05 operator review was tagged `c2` alone
 while carrying an attacker password-gate hash — the class §7.2's secret scan must return zero
-hits on over a public shard. The scan cannot tell whose secret it is, so the tag has to
+hits on over a shard cleared for publication. The scan cannot tell whose secret it is, so the tag has to
 reflect what the scan will find, and the corpus's only other sample with that technique
 already carried `c2+secret`. It has been re-tagged and is now blocked for the honest reason.
 
@@ -527,7 +598,7 @@ the new path is clean cannot tell you the old path was the cause.
 
 Of the 44,544 published rows, **44,460 are reproducible from a pinned source or from the
 stock CMS tree** and are therefore *not* shipped as blobs — they are an index row plus a
-lockfile entry. **84** samples ship as bytes: 7 polyglot fixtures, 67 staging samples, 8
+lockfile entry. **84** samples *would* ship as bytes if a shard were released: 7 polyglot fixtures, 67 staging samples, 8
 doorway-kit samples and 2 outside-webroot wrappers.
 
 That is the point of §6: the benign half is a lockfile and a script, so anyone can

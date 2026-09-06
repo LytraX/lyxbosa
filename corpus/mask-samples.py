@@ -55,6 +55,7 @@ sys.path.insert(0, HERE)
 import incident_mask                                                     # noqa: E402
 import content_mask                                                      # noqa: E402
 from indexio import read_jsonl, write_jsonl_atomic, index_lock           # noqa: E402
+import gate_provenance                                                   # noqa: E402
 
 import importlib.util                                                    # noqa: E402
 _spec = importlib.util.spec_from_file_location(
@@ -135,7 +136,8 @@ def stage_pair(stage, sha, src, masked_bytes):
     return b, a
 
 
-def process(row, src, m, vocab, stage, mask_ipv4=False, mask_hex=False):
+def process(row, src, m, vocab, stage, mask_ipv4=False, mask_hex=False,
+            map_paths=()):
     """One sample, all four steps.  Returns the `masking` block to store, and a work note."""
     raw = open(src, "rb").read()
     digest = hashlib.sha256(raw).hexdigest()
@@ -155,7 +157,8 @@ def process(row, src, m, vocab, stage, mask_ipv4=False, mask_hex=False):
     except NotRead as exc:
         return None, {"result": "refused", "why": str(exc)}
 
-    ids, keep = VCM.load_ids([incident_mask.MAP_PATH, VCM.LEGACY_MAP])
+    map_paths = list(map_paths) or [incident_mask.MAP_PATH, VCM.LEGACY_MAP]
+    ids, keep = VCM.load_ids(map_paths)
     _, gated = VCM.gate(masked, ids, keep)
     secret_ok, secret_res = VCM.secret_gate(raw, masked)
 
@@ -191,6 +194,12 @@ def process(row, src, m, vocab, stage, mask_ipv4=False, mask_hex=False):
                             ("secret_literals_before", "secret_literals_after",
                              "secret_literals_carried_over", "shapes_remaining")},
         "measured_with": binary_id(),
+        # WHAT measured the identifier and secret gates, as against `measured_with`, which
+        # is the scanner and answers only for `detection_survived`. Without this a verdict
+        # from a superseded gate is indistinguishable from one taken a minute ago, which is
+        # how 5 of 95 local rows and 1 of 8 published rows sat at PASS under a predicate
+        # that had since been tightened. See gate_provenance.py.
+        "provenance": gate_provenance.stamp(map_paths),
     }
     if gated["encoded_layer_gate"] != "PASS":
         block["encoded_layer_finding"] = gated["encoded_layer_finding"]
@@ -364,7 +373,8 @@ def main():
             refused.append((w["sha256"], "masking recorded as not applicable"))
             continue
         block, note = process(row, w["path"], m, vocab, a.stage, a.mask_ipv4,
-                              a.mask_hex_digests)
+                              a.mask_hex_digests,
+                              map_paths=[a.map, VCM.LEGACY_MAP])
         if block is None:
             refused.append((w["sha256"], note["why"]))
             continue

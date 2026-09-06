@@ -176,8 +176,9 @@ is recorded here rather than fixed in passing.
 **Until then:** do not describe a webroot scan's result as a host being clean, and when a
 host is known-compromised, sweep the staging directories by hand.
 
-**The two samples are now in the corpus, and they are measured misses.** Both ship in
-`corpus/shards/malicious-outside-webroot-001`, masked and gated, carrying
+**The two samples are now in the corpus, and they are measured misses.** Both are staged in
+`corpus/shards/malicious-outside-webroot-001` - a local build artefact; no shard has been
+distributed - masked and gated, carrying
 `expect.known_miss` — checked per sample with `check`, which reads the file it is given, so
 this is a rule gap and not a walker skip. Reading them settles what the sweep could only
 suggest: each is a wrapper that rewrites a plugin *inside* the webroot (`$TR`) while keeping
