@@ -73,6 +73,8 @@ asserted never to manufacture one: a --fix that can invent a human decision is n
 """
 import hashlib, json
 
+import finding_notes
+
 __all__ = ["CLEARABLE_GATES", "NEVER_CLEARABLE_TAGS", "REASONED_BY", "finding_digest",
            "evidence_for", "malformed", "applies", "applicable", "row_clearances",
            "unreasoned"]
@@ -269,7 +271,7 @@ def _selftest():
 
     find = {"distinct_identifiers": 1, "occurrences": 1, "identifier_lengths": [6],
             "positions": ["begins"], "segment_lengths": [25],
-            "note": "identifier names deliberately not recorded here"}
+            "note": finding_notes.IDENTIFIER_NOTE}
     m = {"applied": True, "plaintext_gate": "PASS", "encoded_layer_gate": "FAIL",
          "encoded_layer_finding": dict(find), "detection_survived": True,
          "secret_gate": "FAIL", "secret_literals": {"secret_literals_carried_over": 1},

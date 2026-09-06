@@ -75,6 +75,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy    # noqa: E402
 import clearance                                                            # noqa: E402
+import finding_notes                                                        # noqa: E402
 
 # Where the adjudication lands.
 TARGET = "human_adjudication"
@@ -287,7 +288,7 @@ def inject():
     # A real gate finding, in the shape `verify-content-mask._profile` emits.
     FIND = {"distinct_identifiers": 1, "occurrences": 1, "identifier_lengths": [6],
             "positions": ["begins"], "segment_lengths": [25],
-            "note": "identifier names deliberately not recorded here"}
+            "note": finding_notes.IDENTIFIER_NOTE}
 
     def row(masking=None, **kw):
         m = {"applied": True, "plaintext_gate": "PASS", "encoded_layer_gate": "PASS",

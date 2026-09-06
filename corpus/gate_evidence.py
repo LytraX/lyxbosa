@@ -108,14 +108,17 @@ because it looks like one. And it says nothing about `detection_survived`, whose
 `rules_before`/`rules_after` and whose provenance is `measured_with`: no module in `TOOLS`
 produces it and no stamp here claims it.
 """
-import ast, json, os
+import ast, importlib.util, json, os, sys
 
 import clearance
+import finding_notes
 
 __all__ = ["STAMPED_GATES", "RECORDED_SECRET_KEYS", "evidence_for", "compare_gate",
-           "compare", "same_finding", "mask_samples_secret_keys"]
+           "compare", "same_finding", "mask_samples_secret_keys",
+           "forked_secret_rows"]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 
 # The `secret_literals` block as it is RECORDED - the twelve measured fields, and no prose.
 #
@@ -138,6 +141,41 @@ RECORDED_SECRET_KEYS = ("secret_literals_before", "secret_literals_after",
                         "shapes_remaining",
                         "decoded_layers_before", "decoded_layers_after",
                         "literal_population_comparable")
+
+
+def _forked_in(rows):
+    """The rows whose `secret_literals` key set is not `RECORDED_SECRET_KEYS`, by sha prefix.
+
+    A row that records a different key set is compared over a different key set, which is
+    what makes two rows in the same condition answer differently. Reported by shape - a
+    twelve-character sha256 prefix names a sample and never a customer.
+    """
+    want = set(RECORDED_SECRET_KEYS)
+    out = []
+    for r in rows:
+        sl = ((r.get("masking") or {}).get("secret_literals"))
+        if isinstance(sl, dict) and set(sl) != want:
+            out.append(r.get("sha256", "?" * 12)[:12])
+    return sorted(out)
+
+
+def forked_secret_rows(paths=None):
+    """(forked, rows_looked_at) over both halves of the index, or ([], None) where absent.
+
+    None rather than an empty list where no index is on this machine: "could not look" must
+    not read as "nothing there", which is the three-answer rule `gate_provenance.verify`
+    exists for, one level along.
+    """
+    paths = paths or [os.path.join(HERE, "index.jsonl"),
+                      os.path.join(HERE, "local", "index-local.jsonl")]
+    present = [p for p in paths if os.path.exists(p)]
+    if not present:
+        return [], None
+    import indexio
+    rows = []
+    for p in present:
+        rows += indexio.read_jsonl(p)
+    return _forked_in(rows), len(rows)
 
 
 def mask_samples_secret_keys(path=None):
@@ -329,7 +367,7 @@ def _selftest():
     find = {"distinct_identifiers": 1, "occurrences": 1, "identifier_lengths": [6],
             "positions": ["begins"], "segment_lengths": [25],
             "false_positive_note": "127 false positives across 104 of 8,000 stock files",
-            "note": "identifier names deliberately not recorded here"}
+            "note": finding_notes.IDENTIFIER_NOTE}
     secret = {"secret_literals_before": 1, "secret_literals_after": 1,
               "secret_literals_carried_over": 1, "shapes_carried_over": ["quoted-credential"],
               "literal_population_comparable": False}
@@ -472,11 +510,47 @@ def _selftest():
     case("...and the 13-key row would NOT - which is the fork, priced",
          compare_gate(thirteen, "secret_gate", "FAIL",
                       dict(today, note="reworded"), gr)[0], "evidence-moved")
-    # Why that cannot happen quietly: the note is a literal inside a TOOLS module, so the
-    # text and the `tools` digest move together. `digest-controls.py` asserts that half.
-    case("the divergence is inert only while the note is inside the tools AST",
-         NOTE.split(";")[0] in open(os.path.join(HERE, "verify-content-mask.py"),
-                                    encoding="utf-8").read(), True)
+    # THE FORK IS CLOSED RATHER THAN GUARDED, AND THIS IS WHERE THAT IS CHECKED.
+    #
+    # This case used to assert the coupling: the note was a literal inside a TOOLS module, so
+    # its text could not move without every stamp going stale, and the two schemas could not
+    # answer differently in silence. That was a guard on a live defect, not a repair - and a
+    # guard whose whole strength was that somebody would notice.
+    #
+    # `secret_gate` no longer returns the key at all, so there is no prose for the two
+    # schemas to disagree over, and the 8 rows reconcile to twelve through `recorded_form`
+    # the next time they are re-measured. Both halves are asserted here: the gate emits no
+    # prose key, and no row in either half of the index still records one.
+    _vspec = importlib.util.spec_from_file_location(
+        "vcm_fork", os.path.join(HERE, "verify-content-mask.py"))
+    _vcm = importlib.util.module_from_spec(_vspec)
+    _vspec.loader.exec_module(_vcm)
+    _emitted = _vcm.secret_gate(b"<?php echo 1;", b"<?php echo 1;")[1]
+    case("the gate emits no prose key to fork over",
+         [k for k in _emitted if not isinstance(_emitted[k], (int, bool, list, str))
+          or k.endswith("note")], [])
+    # The positive half: the same test on a dict that DOES carry one must say so, or the
+    # case above passes against any dict at all - including an empty one.
+    case("and the test can say the other thing",
+         [k for k in dict(_emitted, note="prose") if k.endswith("note")], ["note"])
+
+    case("the gate returns the twelve measured fields plus its verdict",
+         sorted(k for k in _emitted if k != "secret_gate"),
+         sorted(RECORDED_SECRET_KEYS))
+
+    forked, looked = forked_secret_rows()
+    if looked is None:
+        print("  ~ neither index is on this machine; the row half of the fork check "
+              "did not run.")
+        print("    Reported rather than passed - see gate_provenance.verify().")
+    else:
+        case("rows recording a secret schema that is not the recorded form (of %d)" % looked,
+             forked, [])
+    # And that sweep must be able to find one. Without this it passes on an empty read.
+    case("a 13-key row IS reported as forked",
+         _forked_in([{"sha256": "f" * 64,
+                      "masking": {"secret_literals": dict(secret, note=NOTE)}}]),
+         ["f" * 12])
     # The writer half of the reconciliation.
     case("the recorded subset carries no prose key",
          [k for k in RECORDED_SECRET_KEYS if k.endswith("note")], [])

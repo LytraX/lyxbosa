@@ -43,6 +43,10 @@ a leak is reported every time - and that the unmodified masked bytes stay silent
 import argparse, base64, binascii, codecs, importlib.util, json, os, re, sys, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+import finding_notes                                                     # noqa: E402
+
 PRIVATE = os.path.join("trail-data", "incoming", "2026-09-03", "private")
 INCIDENT_MAP = os.path.join(PRIVATE, "account-mapping.json")
 LEGACY_MAP = os.path.join(PRIVATE, "infected-tree-mapping.json")
@@ -307,6 +311,24 @@ def secret_gate(before, after):
         `shard-gate.py` under its own reason, where §8 can count the cause separately.
         Failing it here as well would put two reasons on one cause, which is the
         double-counted denominator SOURCES.md records the blocker tally standing 14 out for.
+
+    WHAT THE RECORDED BLOCK MEANS, WHICH USED TO BE A `note` KEY IN THE RESULT
+    --------------------------------------------------------------------------
+    Counts and shapes only. A credential-shaped literal remaining after masking is a
+    synthetic one by construction, and §7.2's shard scan will still see its shape. Additions
+    are measured over the plaintext and every decoded layer, and that layer population is
+    not stable under masking - see `literal_population_comparable`.
+
+    That paragraph was a `note` key in the dict this returns, and it is a docstring now
+    because it was recorded on nobody. `mask-samples.py` writes a named twelve fields and
+    `remeasure-gates.recorded_form` narrows to the same twelve, so no current writer stored
+    it; it survived only on 8 rows from an earlier build, which recorded thirteen keys where
+    124 recorded twelve. `gate_evidence.compare_gate` compares the keys the ROW holds, so
+    those two schemas could be compared differently the moment this text moved, and the only
+    thing making that harmless was that the text sat inside a `gate_provenance.TOOLS` module
+    and could not move without every stamp going stale in the same instant. Deleting the key
+    is what closes that: the 8 rows read `evidence-moved` once, reconcile to twelve through
+    `recorded_form`, and there is no second schema left to fork.
     """
     layers_before, layers_after = decode_layers(before), decode_layers(after)
     b = secret_literals(before, layers=layers_before)
@@ -335,11 +357,6 @@ def secret_gate(before, after):
         # False means the two counts above are censuses of DIFFERENT populations, so an
         # increase is not by itself evidence that masking made anything.
         "literal_population_comparable": comparable,
-        "note": ("counts and shapes only; a credential-shaped literal remaining after "
-                 "masking is a synthetic one by construction, and §7.2's shard scan will "
-                 "still see its shape. Additions are measured over the plaintext and every "
-                 "decoded layer, and that layer population is not stable under masking - "
-                 "see `literal_population_comparable`"),
     }
     return (not carried and not increased), res
 
@@ -415,39 +432,27 @@ def _profile(pairs):
             "false_positive_note": FP_NOTE}
 
 
-# The note the findings carry, loaded from `fp-note.txt` rather than written here.
+# The two notes the findings carry, loaded from their own files rather than written here.
 #
-# It used to be a module-level string literal in this file, and this file is one of the six
-# in `gate_provenance.TOOLS`, so every word of it was inside the AST the `tools` digest is
-# taken over. A prose repair therefore invalidated all 139 provenance stamps - which is why
-# the figure it states was wrong for a round and could not be fixed: the fix cost a
-# re-measurement of the index. A descriptive note is not behaviour and must not be able to
-# do that.
+# Both used to be string literals in this file, and this file is one of the six in
+# `gate_provenance.TOOLS`, so every word of them was inside the AST the `tools` digest is
+# taken over. A prose repair therefore invalidated every provenance stamp - which is why the
+# false-positive figure was wrong for a round and could not be fixed, and why the identifier
+# note's second clause stayed wrong for two while `shard-gate.py` documented the price. A
+# descriptive note is not behaviour and must not be able to do that.
 #
-# The AST holds the FILENAME and the loader, which are behaviour; the prose is data. Editing
-# `fp-note.txt` now moves nothing, and `corpus/digest-controls.py --inject` is the control
-# that says so - it also answers to `--assert-note-is-not-behaviour`, the name this comment
-# used to give it while nothing implemented it. It lives THERE and not here because an
-# argparse branch added to this file would move the `tools` digest and re-measure all 140
-# stamped rows, to install a check whose subject is that prose edits do not do that. A
-# comment is absent from the AST, so repointing this line costs nothing.
-# Whitespace is collapsed so re-wrapping the file cannot change the stored string
-# either. A missing file is a hard failure rather than an empty note: a finding that cites a
-# false-positive rate it cannot state is a finding with the qualifier silently removed, and
-# `clearance.finding_digest` covers this string, so a silent empty would move every digest.
-FP_NOTE_PATH = os.path.join(HERE, "fp-note.txt")
-
-
-def _load_fp_note(path=None):
-    p = path or FP_NOTE_PATH
-    with open(p, encoding="utf-8") as fh:
-        text = " ".join(fh.read().split())
-    if not text:
-        raise RuntimeError("%s is empty; a finding must not cite a rate it cannot state" % p)
-    return text
-
-
-FP_NOTE = _load_fp_note()
+# The AST holds the FILENAME and the loader, which are behaviour; the prose is data. The
+# loader is `finding_notes.py`, which is deliberately outside `TOOLS` - it decides no
+# verdict - and which the five modules building finding-shaped fixtures now read from too,
+# so a fixture cannot go on asserting text the generator has stopped writing.
+#
+# Editing either file moves nothing, and `corpus/digest-controls.py --inject` is the control
+# that says so; `corpus/finding_notes.py --inject` is the one that says the generator and
+# the fixtures still agree. Neither lives here, because an argparse branch added to this
+# file would move the `tools` digest to install a check whose subject is that prose edits do
+# not do that.
+FP_NOTE_PATH = finding_notes.FP_NOTE_PATH
+FP_NOTE = finding_notes.FP_NOTE
 
 
 def stock_fp(ids, keep, roots, sample=8000, seed=4242):
@@ -541,8 +546,7 @@ def gate(data, ids, keep):
     }
     if plain_c or plain_t:
         res["plaintext_finding"] = _profile((plain_c, plain_t))
-        res["plaintext_finding"]["note"] = ("identifier names deliberately not recorded "
-                                            "here; they are the thing being masked")
+        res["plaintext_finding"]["note"] = finding_notes.IDENTIFIER_NOTE
     if enc:
         allc, allt = [], []
         for _m, c, t in enc:
@@ -551,8 +555,7 @@ def gate(data, ids, keep):
         res["encoded_layer_gate"] = "FAIL"
         res["encoded_layer_finding"] = _profile((allc, allt))
         res["encoded_layer_finding"]["methods"] = sorted({m for m, _, _ in enc})
-        res["encoded_layer_finding"]["note"] = ("identifier names deliberately not recorded "
-                                                "here; they are the thing being masked")
+        res["encoded_layer_finding"]["note"] = finding_notes.IDENTIFIER_NOTE
     ok = res["plaintext_gate"] == "PASS" and res["encoded_layer_gate"] == "PASS"
     return ok, res
 

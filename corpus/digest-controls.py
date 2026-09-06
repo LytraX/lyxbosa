@@ -17,7 +17,7 @@ false property with no check.
 
 It cannot be added where it was promised. `verify-content-mask.py` is one of the six modules
 in `gate_provenance.TOOLS`, so adding an argparse branch to it changes its AST and moves the
-`tools` digest - putting all 140 stamped rows into re-measurement to install a check that
+`tools` digest - putting all 142 stamped rows into re-measurement to install a check that
 asserts prose edits do not do exactly that. The comment that names the flag is invisible to
 the AST, so repointing it costs nothing; the implementation has to live somewhere the digest
 does not read. That is here.
@@ -46,6 +46,7 @@ sys.path.insert(0, HERE)
 import gate_provenance                                                   # noqa: E402
 
 NOTE = os.path.join(HERE, "fp-note.txt")
+FINDING_NOTE = os.path.join(HERE, "finding-note.txt")
 GATE = os.path.join(HERE, "verify-content-mask.py")
 SENSITIVITY = os.path.join(HERE, "sensitivity.py")
 
@@ -113,23 +114,39 @@ CASES = [
       '(rb"eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.", "jwt"),\n'
       '    (rb"PROBE_ONLY_NEVER_COMMITTED", "probe"),'),
      "sensitivity", True),
-    # THE OTHER NOTE, AND THE PAIR IS THE POINT.
+    # THE IDENTIFIER NOTE, WHICH IS THE ONE THIS FILE WAS WRITTEN ABOUT.
     #
-    # `secret_literals.note` is prose exactly like `fp-note.txt`, and it is still a string
-    # LITERAL inside this TOOLS module. That is not an oversight to fix in passing - it is
-    # the only thing making a live schema fork harmless. 124 rows record twelve
-    # `secret_literals` keys and 8 record thirteen, the extra being this note, and
-    # `gate_evidence.compare_gate` compares the keys the row records - so if this text
-    # moved, the 8 would read `evidence-moved` and the 124 would read `agrees` for the same
-    # measurement. It cannot move quietly only because moving it moves the `tools` digest
-    # and every stamped row goes stale in the same instant.
+    # It was a string literal inside the gate for two rounds while its second clause was
+    # known to be wrong, because correcting it cost a re-measurement of every stamped row.
+    # It is in `finding-note.txt` now, and the whole point of the move is this line.
+    ("prose in finding-note.txt", FINDING_NOTE,
+     ("identifier names deliberately not recorded here",
+      "IDENTIFIER NAMES DELIBERATELY NOT RECORDED HERE"),
+     "tools", False),
+    # THE OTHER NOTE, AND THE PAIR IS STILL THE POINT - WITH THE ANSWER REVERSED.
     #
-    # So the coupling is asserted. If someone relocates this note the way `FP_NOTE` was
-    # relocated - a reasonable-looking change, and the same repair that was right for the
-    # other one - this case fails and says why before the fork goes live.
-    ("the secret note, still inside the AST", GATE,
-     ("counts and shapes only; a credential-shaped literal remaining after ",
-      "counts and shapes only - a credential-shaped literal remaining after "),
+    # `secret_literals.note` used to be a literal in this TOOLS module, and this case used
+    # to assert that it MOVED the digest. That was not a preference: 124 rows recorded
+    # twelve `secret_literals` keys and 8 recorded thirteen, the extra being that note, and
+    # `gate_evidence.compare_gate` compares the keys the ROW holds - so if the text moved,
+    # the 8 would read `evidence-moved` and the 124 `agrees` for one measurement. Being
+    # pinned inside the AST was the only thing keeping that fork from going live quietly.
+    #
+    # The key is gone rather than relocated, and the prose is a docstring. That closes the
+    # fork instead of guarding it: no writer records the key, the 8 rows reconcile to twelve
+    # through `remeasure-gates.recorded_form`, and there is no second schema left. So the
+    # assertion flips - editing that paragraph must NOT move the digest - and the case stays
+    # here, under its old subject, because a control that quietly disappears when its answer
+    # changes is how a repository forgets what it decided.
+    ("the secret note, now a docstring", GATE,
+     ("Counts and shapes only. A credential-shaped literal remaining after ",
+      "Counts and shapes only - a credential-shaped literal remaining after "),
+     "tools", False),
+    # ... and the loader IS behaviour, which is the half that must still move. Without this
+    # every case above passes against a gate that attaches no note at all.
+    ("which note the gate attaches", GATE,
+     ('res["plaintext_finding"]["note"] = finding_notes.IDENTIFIER_NOTE',
+      'res["plaintext_finding"]["note"] = finding_notes.FP_NOTE'),
      "tools", True),
     ("a constant in a TOOLS module", GATE,
      ("MIN_CARRY = 8", "MIN_CARRY = 9"), "tools", True),
