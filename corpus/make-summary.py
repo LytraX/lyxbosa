@@ -10,6 +10,16 @@ removes the opportunity.
 
   corpus/make-summary.py            write index-summary.json
   corpus/make-summary.py --check    fail non-zero if the file on disk disagrees
+  corpus/make-summary.py --inject   controls for the argument dispatch
+
+AN UNRECOGNISED ARGUMENT IS AN ERROR, NEVER THE DEFAULT
+--------------------------------------------------------
+The dispatch was `if "--check" in sys.argv: ... else: write`, so `--help`, a typo, or any
+flag added later fell through to the WRITE path: asking this file a question overwrote it.
+It is small and it is the wrong shape - the one irreversible thing this tool does was the
+thing it did when it did not understand you, and this file is the denominator every suite
+run quotes. `dispatch()` now returns an error for anything it does not recognise and
+`--inject` asserts that it can.
 """
 import collections, json, os, sys
 
@@ -160,10 +170,74 @@ def build():
     }
     return s
 
+KNOWN_FLAGS = ("--check", "--inject")
+USAGE = ("usage: make-summary.py            write index-summary.json\n"
+         "       make-summary.py --check    exit non-zero if the file on disk disagrees\n"
+         "       make-summary.py --inject   controls for the argument dispatch")
+
+
+def dispatch(argv):
+    """('write'|'check'|'inject', None) or (None, error). Exactly one is None.
+
+    The default action WRITES, so it must be reachable only by asking for nothing at all.
+    Every other input is either a flag this tool knows or an error.
+    """
+    unknown = [a for a in argv if a not in KNOWN_FLAGS]
+    if unknown:
+        return None, "unrecognised argument(s): %s" % " ".join(unknown)
+    if "--check" in argv and "--inject" in argv:
+        return None, "--check and --inject are different questions; pass one"
+    if "--inject" in argv:
+        return "inject", None
+    if "--check" in argv:
+        return "check", None
+    return "write", None
+
+
+def inject():
+    """The dispatch must refuse what it does not understand, and must still do its job.
+
+    Both halves. A dispatch that errored on everything would satisfy the negative cases and
+    make the tool useless, so `[]` mapping to `write` is asserted beside them.
+    """
+    fails = []
+    cases = [([], "write", None),
+             (["--check"], "check", None),
+             (["--inject"], "inject", None),
+             # The bug: each of these used to reach the write path.
+             (["--help"], None, "error"),
+             (["-h"], None, "error"),
+             (["--chekc"], None, "error"),
+             (["--check", "--force"], None, "error"),
+             (["index.jsonl"], None, "error"),
+             (["--check", "--inject"], None, "error")]
+    print("%-28s %-10s %s" % ("argv", "action", "verdict"))
+    print("-" * 56)
+    for argv, want_action, want_err in cases:
+        action, err = dispatch(argv)
+        ok = (action == want_action) and (bool(err) == (want_err is not None))
+        print("%-28s %-10s %s" % (" ".join(argv) or "(none)", action or "error",
+                                  "ok" if ok else "WRONG (wanted %s)"
+                                  % (want_action or "error")))
+        if not ok:
+            fails.append(" ".join(argv) or "(none)")
+    print()
+    print("cases: %d · passed: %d · failed: %d"
+          % (len(cases), len(cases) - len(fails), len(fails)))
+    for f in fails:
+        print("FAIL:", f)
+    return 1 if fails else 0
+
+
 if __name__ == "__main__":
+    action, error = dispatch(sys.argv[1:])
+    if error:
+        sys.exit("%s\n\n%s" % (USAGE, error))
+    if action == "inject":
+        sys.exit(inject())
     s = build()
     p = os.path.join(HERE, "index-summary.json")
-    if "--check" in sys.argv:
+    if action == "check":
         cur = json.load(open(p))
         drift = {k: (cur.get(k), s[k]) for k in s if k != "generated_from" and cur.get(k) != s[k]}
         if drift:

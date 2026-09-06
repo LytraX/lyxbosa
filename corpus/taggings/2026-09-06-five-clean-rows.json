@@ -1,0 +1,63 @@
+{
+ "signed_off_by": "the operator (brief of 2026-09-06)",
+ "date": "2026-09-06",
+ "cause": "these five rows read `clean` because `sensitivity.classify()` has no decoder and `clean` is its default branch - `if not tags: tags.add(\"clean\")`. Four are gzip streams and the fifth hides its payload in a base64 literal, so every regex in the rule saw compressed noise and fell through to the one tag that means publish-as-is. The tag was not a judgement about these samples; it was the absence of one, and 5.4 already rules that the absence of a plaintext hit is evidence the encoder worked rather than evidence the sample is clean.",
+ "identifier_policy": "every identifier below is described by SHAPE - a length, a form, a count. AGENTS.md: describe collisions, do not quote them; writing a client name into a tracked decision file puts it in git exactly as surely as an unmasked data row does.",
+ "rows": [
+  {
+   "sha256": "cd98180175a5a9a645d72b89cd43bd693065ae73e5b3784381ca94129754ea44",
+   "add": ["path"],
+   "evidence": {
+    "path": "3,143-byte PHP file: a stock `template-loader.php` with an `@include base64_decode(...)` prepended as its first statement. The 96-character base64 literal is the file's only encoded layer and decodes to 72 bytes holding one absolute filesystem path of the form /home/<8-char account>/public_html/<...>/<16 hex>.ttf - eight path segments, a font extension, and a customer account name in the second one. The account name is an exact map identifier of 8 characters with 0 occurrences in the 8,000-file stock-CMS null; the `len=23 domain truncation` recorded for this row in an earlier report is the same 8-character token counted a second time against a longer map domain it prefixes, not independent evidence.",
+    "why_nothing_else": "the file contains 0 URLs, 0 e-mail-shaped strings and 0 dotted quads in the raw bytes and in the decoded layer, so identity and c2 have nothing to fire on and neither is proposed."
+   },
+   "note": "the only one of the five that is not an archive container: it is PHP source, so section 5.5 does not exclude it and a masking pass is owed. That work is not done here and the row keeps `carries path but no masking has been applied` as its blocker."
+  },
+  {
+   "sha256": "eba16e1e91591a5feea1580220cc226caa8b5861c2a1d7a633300f44b0fb0828",
+   "add": ["c2", "identity"],
+   "evidence": {
+    "identity": "gzip container, 31,442 bytes, inflating to a 118,904-byte SQL dump of one posts table. Exact map-identifier hits at lengths 8, 19 and 23, each 0 occurrences in the 8,000-file stock-CMS null. The dump names its database after an 11-character token whose first 8 characters are an exact map account identifier. One customer host is referenced, a 2-label .com domain matching the map's domain list; 0 e-mail-shaped strings and 0 dotted quads, so `identity` here rests on the customer host alone and not on the rule's e-mail branch.",
+    "c2": "8 external hosts beside the one customer host. None is recognisable public infrastructure - no package registry, CDN, documentation site or upstream project host among them - and the table is a spam-injection posts table, which is the population `c2` exists to mark. This is a materially different reading from the tarball below, where 17 of 73 external hosts are public infrastructure and the tag is held."
+   }
+  },
+  {
+   "sha256": "e50d85a3a81539d15372ac56ed6929d29f6bf1d1038db735f4c9f086cd285559",
+   "add": ["c2", "identity", "path", "secret", "pii"],
+   "evidence": {
+    "identity": "gzip container, 327,450 bytes, inflating to a 2.78 MB full-site SQL dump; 58 decoded layers (`raw-inflate`, and `base64` / `base64+inflate` nested under it). 415 e-mail-shaped occurrences, 23 distinct, over 13 domains, of which 2 are customer domains from the map. 2 customer hosts. Exact map-identifier hits at lengths 5, 7 (three distinct), 9, 10 (two distinct) and 11.",
+    "path": "2 `/home*/<x>/` slots in the decoded bytes; one <x> is an exact map account identifier of 8 characters, the other is 7 characters.",
+    "secret": "one `phpass-hash` shape - a WordPress password hash - in the users table. The dump also carries `session_tokens` rows in the usermeta table.",
+    "pii": "37 CREATE TABLE statements including users, usermeta, comments and commentmeta. The users and usermeta tables are personal data outright: display names, login times, session tokens. `form-field` fires 7 times. The two telephone-shaped digit groups in an HTML contact block are the weakest part of this and are not what decides it.",
+    "c2": "28 external hosts beside the 2 customer ones. Partly polluted the way the tarball's is - some are ordinary public infrastructure referenced from post content - but `c2` is in shard-gate.ALWAYS_OK and blocks nothing either way, so it is adopted rather than held: holding a tag that cannot block would spend a round's attention for no change in publishability."
+   },
+   "consequence": "`pii` is in shard-gate.NEVER. This row becomes permanently unpublishable: index row and hash only, per 4.1. No masking pass and no human clearance can move it - `clear-finding.py` refuses `pii` structurally - and that is the intended end state rather than a blocker to work off."
+  },
+  {
+   "sha256": "c24465d301e234af334e304662944495bb6695e063eb7c44807f9a38638bc8a0",
+   "add": ["c2", "identity"],
+   "reject": {
+    "pii": "the `pii` tag on this row rests entirely on the `form-field` keyword pattern, which fires 34 times over spam post content in an injected posts table. Form-field shape over spam post bodies is attacker-generated filler, not visitor data: a spam post routinely carries a fabricated contact block, and nothing here distinguishes one from a real customer's. Rejected on that reading. If actual submitted values turn up later - a wp_postmeta order record, a comment author's address, a real form submission - that is a new reading of new evidence and not a re-opening of this one."
+   },
+   "evidence": {
+    "identity": "gzip container, 139,547 bytes, inflating to a 675,278-byte SQL dump of one posts table. One customer host is referenced, a 2-label .gr domain from the map's domain list, which is what makes `identity` fire. The dump names its database after a 10-character token whose first 7 characters are an exact map account identifier. Exact map-identifier hits at lengths 5, 7 and 8.",
+    "c2": "53 hosts, of which 1 is the customer's and 52 are external. None is recognisable public infrastructure. A spam-injection posts table referencing 52 external hosts is the campaign's own link set, which is what `c2` is for."
+   },
+   "corrects": "an earlier report recorded `one customer-domain e-mail` on this row. Re-measured: the row carries exactly 1 distinct e-mail-shaped string, 2 occurrences, and its domain is NOT a customer domain. `identity` stands on the customer host, which is unaffected."
+  },
+  {
+   "sha256": "1438674b06d8644c33bf3aabdb91a51ec53ab4eb3db798a30992312ff7bad865",
+   "add": ["identity"],
+   "reject": {
+    "pii": "one keyword occurrence, `phone`, in a `readme.txt` changelog line inside an upstream plugin. Measured across all 222 regular members: exactly 1 `pii` hit in the whole archive and it is a documentation word. Not personal data."
+   },
+   "hold": {
+    "c2": "UNRESOLVED, and the tag is deliberately left off. Measured this round: not one of the five C2_HINTS markers fires anywhere in the archive - 0 telegram, 0 gsocket, 0 raw-paste-host, 0 tor, 0 tunnel. The tag would rest entirely on the rule's `external-host` branch, which reads any external host in a malicious sample as attacker infrastructure. There are 73 external hosts and 0 customer hosts; 17 match a public-infrastructure keyword list (package registries, CDNs, documentation and mapping APIs) and all 73 occur in member bodies belonging to one upstream file-manager plugin - its cloud-storage volume drivers and its documentation. There is no separable campaign code in the archive to attribute the remaining 56 to, so the read that would decide this tag cannot be completed from the bytes: it needs a ruling on whether an upstream plugin's own host references count as c2 when the archive as a whole is malicious. `c2` is in shard-gate.ALWAYS_OK, so leaving it off changes no publishability; adding it wrongly would put a false tag on the row for nothing."
+   },
+   "evidence": {
+    "identity": "gzip container, 1,361,890 bytes, inflating to a 5,027,840-byte tar of 256 members (222 regular files) under one top-level directory. THE FINDING: the `uname` and `gname` fields of ALL 256 member headers carry one single value - an exact map account identifier of 8 characters - and there is exactly 1 distinct (uid, gid) pair. That identifier appears in 0 of 256 member PATHS and in 0 of 256 member BODIES. A member-level content scan sees nothing at all; only reading the container's own metadata finds it. This is a leak form nothing else in the tree looks for, and it is invisible to content masking by construction: 5.5 forbids touching the container, and the identifier is IN the container rather than in any member.",
+    "identity_machine_basis_differs": "the rule emits `identity` on this row for a different reason than the one above, and its reason is wrong. `classify()` fires `identity` on `cust_hosts or emails or ips`; here that is 81 e-mail-shaped strings across 44 domains, which are upstream contributor addresses in a translation-credits file, and 0 of them are on a customer domain. The tag is right and the rule's evidence for it is a false positive - which is why the evidence is written onto the row rather than left implicit in the tag."
+   }
+  }
+ ]
+}

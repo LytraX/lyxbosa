@@ -45,7 +45,11 @@ Two things are therefore NOT changed here, both measured and both reported inste
     never blocks.
 
 Changing either moves tag counts on rows nobody has re-read. They are findings for a human
-to rule on, not repairs to slip into a reproduction.
+to rule on, not repairs to slip into a reproduction. **CORPUS_PLAN §4.1 now carries the rule
+those humans rule by:** `c2` requires evidence of attacker control and never the presence of
+an external host, because the tag is in `ALWAYS_OK` and buys a masking exemption rather than
+merely labelling a sample. So this function's `external-host` branch produces a PROPOSAL, and
+`tag-sensitivity.py` requires every proposal to be added, rejected or held by a person.
 
 WHAT THE RULE CANNOT SEE, WHICH IS THE FINDING
 -----------------------------------------------
@@ -93,19 +97,25 @@ below records which is which, so the distinction is a fact about each pattern ra
 judgement made per row.
 
 The tagger is authoritative for TAGGING and the gate is authoritative for GATING, and
-neither may be quietly narrower than the other where both can see a value. Two ways they
-currently are, both measured:
+neither may be quietly narrower than the other where both can see a value. Two ways it was,
+both measured, **both repaired in `verify-content-mask.py` and recorded here because the
+measurement is what justified the repair**:
 
-  1. **The gate has no PEM shape at all.** `-----BEGIN … PRIVATE KEY-----` is tagged and is
-     invisible to `SECRET_SHAPES`. A PEM block has a value - its base64 body - so this one
-     is gateable and the gate simply does not look.
-  2. **The gate's left lookbehind is stricter than the tagger's.** `quoted-credential` opens
-     `(?<![A-Za-z0-9_])`; the tagger's `literal-password` has no left boundary. A password
-     assigned to a variable whose name ENDS with the keyword is tagged and not gated:
-     `$user_password = '…'`, `$adminpassword = '…'`, and `$pwd = '…'` (the gate has no `pwd`
-     at all). §5.6 already says lookarounds in an identifier regex should err towards
-     over-matching, and records two leaks caused by a lookaround that was too strict; this
-     is the third, on credentials rather than identifiers.
+  1. **The gate had no PEM shape at all.** `-----BEGIN … PRIVATE KEY-----` was tagged and
+     invisible to `SECRET_SHAPES`. A PEM block has a value - its base64 body - so it is
+     gateable and the gate simply did not look. `pem-private-key` now exists and requires a
+     COMPLETE block, opening marker through closing marker: on the two rows this was written
+     for there are 34 `BEGIN` markers and **zero** `END` markers, 32 of them inside docblock
+     prose in a vendor crypto library that a scan report quotes. A header-only shape would
+     have failed both rows on documentation.
+  2. **The gate's left lookbehind was stricter than the tagger's.** `quoted-credential`
+     opened `(?<![A-Za-z0-9_])`; the tagger's `literal-password` has no left boundary. A
+     password assigned to a variable whose name ENDS with the keyword was tagged and not
+     gated: `$user_password = '…'`, `$adminpassword = '…'`, and `$pwd = '…'` (the gate had
+     no `pwd` at all). §5.6 already says lookarounds in an identifier regex should err
+     towards over-matching, and records two leaks caused by a lookaround that was too
+     strict; this was the third, on credentials rather than identifiers. The lookbehind is
+     gone and `pwd` is in the keyword list.
 
 THE VACUOUS PASS IS A CONSEQUENCE, NOT A RULE
 ----------------------------------------------
@@ -118,10 +128,19 @@ stated together the nine decompose into two causes with different repairs, which
     a bare constant name and no quoted value. Nothing exists to compare, the gate's zero is
     correct, and the defect is only that `PASS` is the wrong word for a measurement that had
     no subject.
-  * **four are a real divergence** - `private-key` ×2 (cause 1 above) and `literal-password`
-    ×2 (cause 2). On the publishable one the character before the keyword is `_`; on the
-    other it is a letter. Both are credentials in the bytes that the gate cannot see, and one
-    of them is in a `base64` layer on a row that ships.
+  * **two are a real divergence** - `literal-password` ×2 (cause 2). On the publishable one
+    the character before the keyword is `_`; on the other it is a letter. Both are
+    credentials in the bytes the gate could not see, and one of them is in a `base64` layer
+    on a row that ships. The repaired gate returns FAIL on both.
+  * **and two are not a divergence at all**, which is the correction rather than the count.
+    The `private-key` ×2 were read as "two PEM blocks the gate has no shape for". Measured:
+    34 `BEGIN … PRIVATE KEY` markers per row, **0 `END` markers**, 32 of them inside docblock
+    prose. There is no key body on either row, so there is no value for any gate to compare
+    and the class is `name-only` in fact even though `SHAPE_KIND` calls the PATTERN
+    value-bearing. `reconcile()` classifies by pattern, as documented, so it still answers
+    `gate-cannot-see` on a bare header; what changed is that the finding behind those two
+    rows is now known to be documentation, and the repaired gate correctly stays silent on
+    it. The nine therefore decompose 5 / 2 / 2, not 5 / 4.
 
 `reconcile()` returns that decomposition per row. It is a comparison and writes nothing.
 
@@ -576,11 +595,23 @@ def inject():
     print("5. reconcile() returns each cause on an input built to produce it")
     case("no credential anywhere", reconcile(b"<?php echo 1;")["cause"], "agree")
     case("a bare constant name", reconcile(b"define('AUTH_KEY', X);")["cause"], "name-only")
-    case("a PEM block the gate has no shape for",
-         reconcile(b"-----BEGIN RSA PRIVATE KEY-----\nQUFBQUFB\n-----END RSA PRIVATE KEY-----"
+    # Both of these read `gate-cannot-see` until the gate was repaired. They are kept as
+    # `agree` rather than deleted: a control that only ever asserted the broken state would
+    # have gone green again the day somebody narrowed the gate back.
+    case("a complete PEM block, which the gate now has a shape for",
+         reconcile(b"-----BEGIN RSA PRIVATE KEY-----\nQUFBQUFBQUFBQUFBQUFB\n"
+                   b"-----END RSA PRIVATE KEY-----")["cause"], "agree")
+    # And the state the two real rows are actually in: a marker quoted in documentation,
+    # with no key body and no closing marker. The TAGGER matches it, the gate correctly does
+    # not, and `reconcile` classifies by pattern so it reports the divergence - which is the
+    # honest answer, because the pattern is value-bearing and this instance is not.
+    case("a PEM header in prose, with no key body",
+         reconcile(b"# the headers, e.g. `-----BEGIN RSA PRIVATE KEY-----MIIBOgIBAAJBAK`"
                    )["cause"], "gate-cannot-see")
-    case("a password on a name the gate's lookbehind blocks",
-         reconcile(b"$user_password = 'hunter2xx';")["cause"], "gate-cannot-see")
+    case("a password on a name the gate's lookbehind used to block",
+         reconcile(b"$user_password = 'hunter2xx';")["cause"], "agree")
+    case("`pwd`, which the gate had no keyword for",
+         reconcile(b"$pwd = 'hunter2xx';")["cause"], "agree")
     case("a password both sides can see", reconcile(b"$password = 'hunter2xx';")["cause"],
          "agree")
 

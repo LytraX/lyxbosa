@@ -1079,6 +1079,265 @@ obvious one is the weakest of the three:
 Run against the pre-change modules the second and third read `IGNORED` and `PRESENT` and the
 suite fails; the first reads `held` and passes. That is why there are three.
 
+### The five `clean` rows, ruled on and written — and what each one's evidence actually is
+
+Five local rows sat `publishable: true` with zero blockers, tagged `clean` alone and with no
+masking record. The cause is one cause: `sensitivity.classify()` has no decoder and `clean`
+is its **default branch** — `if not tags: tags.add("clean")`. Four are gzip streams and the
+fifth hides its payload in a base64 literal, so every regex in the rule saw compressed noise.
+The tag was not a judgement about these samples; it was the absence of one.
+
+`corpus/tag-sensitivity.py` writes the operator's ruling, and refuses to write one that the
+re-derivation over the row's own bytes does not support, or that leaves a re-derived tag
+unadjudicated. `publishable` stays computed by `shard-gate.py`. Identifiers below are
+described by shape; the evidence is on the rows in `sensitivity_tagged`.
+
+| row | ruling | what decided it |
+|---|---|---|
+| `cd98180175a5` | `path` | a stock `template-loader.php` (3,143 B) with `@include base64_decode(…)` prepended. The 96-character literal is its only layer and decodes to 72 bytes holding one absolute path of the form `/home/<8-char account>/public_html/…/<16 hex>.ttf`. 0 URLs, 0 e-mail shapes, 0 dotted quads anywhere in the file, so nothing else is proposed. |
+| `eba16e1e9159` | `c2`, `identity` | gzip → 118,904-byte posts-table dump. Exact map-identifier hits at lengths 8, 19 and 23, all 0/8000 in the stock null; the database is named after an 11-character token whose first 8 are an exact account identifier; one customer host (2-label). `identity` here rests on the customer host, not on the rule's e-mail branch — there are no e-mail shapes at all. 8 external hosts, none recognisable public infrastructure. |
+| `e50d85a3a815` | `c2`, `identity`, `path`, `secret`, `pii` | gzip → 2.78 MB full-site dump, 58 layers. 37 tables including users/usermeta/comments; 415 e-mail occurrences over 13 domains, 2 of them customer domains; one `phpass-hash`; two `/home*/<x>/` slots, one an exact 8-character account identifier. **`pii` is in `NEVER`: this row is permanently unpublishable, index row and hash only.** |
+| `c24465d301e2` | `c2`, `identity`; **`pii` rejected** | gzip → 675,278-byte posts table. One customer host (2-label) is what fires `identity`; database named after a 10-character token prefixed by a 7-character account identifier; 52 external hosts, none public infrastructure. `pii` fired on `form-field` alone, 34 times over spam post content — attacker-generated filler, not visitor data. Rejected on that reading; actual submitted values turning up later would be new evidence, not a re-opening. |
+| `1438674b06d8` | `identity`; **`pii` rejected**, **`c2` unresolved and left off** | see below. |
+
+**`1438674b06d8` — the account name is in the tar headers and nowhere else.** gzip → 5,027,840-byte
+tar, 256 members (222 regular files) under one top-level directory:
+
+```
+tar members                         : 256
+distinct uname / gname values       : 1 / 1, equal, 8 characters, an exact map identifier
+distinct (uid, gid) pairs           : 1
+members whose PATH contains it      : 0
+members whose BODY contains it      : 0
+```
+
+A member-level content scan sees nothing at all; only reading the container's own metadata
+finds it. This leak form is one nothing else in the tree looks for, and it is invisible to
+content masking by construction — §5.5 forbids touching the container and the identifier is
+*in* the container rather than in any member.
+
+**The rule's own evidence for that tag is different, and wrong.** `classify()` fires
+`identity` on `cust_hosts or emails or ips`; here that is 81 e-mail shapes across 44 domains,
+upstream contributor addresses in a translation-credits file, **0 of them on a customer
+domain**. The tag is right and the rule's reason for it is a false positive, which is exactly
+why the evidence is written onto the row rather than left implicit in the tag.
+
+`pii` is one occurrence — the word `phone` in a `readme.txt` changelog line, measured across
+all 222 regular members. `c2` is **unresolved and the tag is left off**: not one of the five
+`C2_HINTS` markers fires anywhere in the archive, so the tag would rest entirely on the
+"any external host" branch. 73 external hosts, 0 customer hosts, 17 matching a
+public-infrastructure keyword list, and all 73 occur in member bodies belonging to one
+upstream file-manager plugin — its cloud-storage volume drivers and its documentation. There
+is no separable campaign code to attribute the remaining 56 to. `c2` is in `ALWAYS_OK`, so
+leaving it off costs no publishability; adding it wrongly would put a false tag on the row
+for nothing.
+
+### The `c2` ruling on `1438674b06d8`, and the rule it generalises to
+
+**Ruled: leave it off.** Recorded in `corpus/taggings/2026-09-06-c2-ruling.json`, written onto
+the row, and stated as a rule in CORPUS_PLAN §4.1 — `c2` requires evidence of attacker
+control, never the presence of an external host, because the tag is in `ALWAYS_OK` and
+therefore buys a free pass through every masking gate rather than merely labelling a sample.
+The measurement that decided it is the negative one: **0 of the 5 `C2_HINTS` markers fire
+anywhere in the archive**, which is a stronger statement than any argument from the host list.
+
+**Two defects in `tag-sensitivity.py` came out of writing that ruling, and both are repaired
+with controls.**
+
+* **A later ruling erased the record it amended.** `build()` wrote a fresh
+  `sensitivity_tagged`, so applying the ruling took the tar-header finding — a measurement
+  that exists nowhere else — off the row. Prior `evidence` and `human_basis` are now carried
+  forward with the new ruling winning per key, the record being replaced is kept whole under
+  `supersedes`, `originally` carries the pre-first-ruling tags past a one-level chain, and
+  `assert_additive` **refuses any write that drops a recorded evidence key**. That last one is
+  the check that would have caught it.
+* **A ruling that changes no tag could not be written at all.** The tool refused it as
+  "nothing would move", which would have left the row saying `UNRESOLVED` after a person had
+  ruled — the stale-record defect this corpus keeps finding, in the one field whose purpose is
+  to say what a human decided. A ruling that closes a hold is now a legitimate write, and
+  `--restate` re-derives a record from a decision file it *already agrees with* so a gap can
+  be filled without editing the row: it may change no ruling and must add something.
+
+**The residual cost is recorded rather than papered over.** The row's top-level record now
+reads `was: ["identity"]` and `originally: ["identity"]`; the literal `was: ["clean"]` from
+the first write is gone, because it was destroyed before the repair existed. What survives on
+the row is the substantive fact — `derived.raw_tags: ["clean"]`, the machine reading over the
+bytes — plus the `cause`, the tar-header evidence and the superseded record. The fix stops it
+recurring; it does not undo it.
+
+### Four of the five are archives, and `not_applicable_reason` is now written from the repo
+
+§5.5 excludes archives from content masking entirely, so four of the five can never have the
+masking pass their tags demand. That decision is `masking.not_applicable_reason`, which 29
+rows already carried and **nothing in this tree wrote** — `mask-samples.py` reads it and
+refuses a row that has one.
+
+The obvious repair was the one `sensitivity.py` got: find the untracked original and
+reproduce it. **It is not available here, and the difference is the finding.** No `.py`
+anywhere on this machine writes the string, and `git log --diff-filter=A` puts the first
+commit of `mask-samples.py` a day *after* the rows appeared. The writer was never saved.
+There is nothing to hash and no behavioural probe that could be run against it, so
+`corpus/mark-not-maskable.py` re-derives the *claim* instead: it re-reads the container magic
+from the bytes (`gzip` on all four), records what it read and the sha256 it read it from, and
+refuses a row whose bytes are not a container — which is what happened to the fifth, a PHP
+file, on the live run.
+
+It deliberately does **not** write the seven other masking keys the 29 legacy rows carry
+(`plaintext_gate`, `encoded_layer_gate`, `detection_survived`, `changes`, `change_kinds`,
+`length_preserved`, `c2_kept`). Those are measurements and this tool takes none of them;
+copying them to make the new rows look like the old ones would be manufacturing a measurement.
+`--census` prints both populations so the difference is visible rather than discovered. The
+reason string is the 29's verbatim except for its final `Held local-only.`, which these rows
+have not earned.
+
+**It clears no blocker, and that is correct.** `shard-gate`'s "carries *tag* but no masking
+has been applied" is driven by `applied`, so an archive carrying an unmaskable identifier
+stays unpublishable permanently. Publishability moved by 0 rows.
+
+### The field census: three orphans were three because nobody had counted
+
+Three fields have been found one at a time, a round apart each, by somebody noticing. The
+question *how many more are there* had never been asked of the whole index, and it is
+mechanical. `corpus/field-provenance.py` parses every tracked module in `corpus/` and asks,
+for every field the rows actually carry, whether any of them can be shown to **write** it —
+`r["k"] = v`, a dict literal, `setdefault`, `pop`, or a module-level `KEY = "k"` written
+through — as opposed to merely mentioning it in `d.get("k")`.
+
+That distinction is the whole subject: `mask-samples.py` contains the literal
+`not_applicable_reason`, so any grep-based census would have called that field covered while
+the defect stayed open, and `--inject` asserts exactly that.
+
+```
+fields carried by rows        135   (9 value-keyed maps not descended into)
+  written by a tracked module  89
+  only READ by tracked modules  1
+  mentioned nowhere            45
+```
+
+**45, not three.** `written` is an over-count — a name in a write position might belong to
+some other dictionary — so `ORPHAN` is an under-count: every field it reports is really
+unaccounted for and there may be more. Two denominators are bounded by their own process and
+both are stated on every run: the fields are enumerated **from the rows**, so a field every
+row has since lost is invisible (`masking.encoded_layer_gate_uncapped` was an orphan on 3
+rows when `stamp-legacy.py` was written and is on 0 today), and the modules are enumerated
+from `corpus/*.py`, so a field written by a tool since deleted reads as an orphan.
+
+Three conditions hide under one phrase, and they need different repairs:
+
+* **the author exists and is untracked** → reproduce it and prove the reproduction
+  (`sensitivity.py`, `deobfuscate.py`);
+* **the author is gone** → re-derive the claim from the bytes and record who did
+  (`stamp-legacy.py`, `mark-not-maskable.py`);
+* **the author never existed** → the field is a convention, and the repair is to stop
+  treating it as a measurement.
+
+### The gate's two credential narrownesses, repaired, and what it cost
+
+`verify-content-mask.SECRET_SHAPES` had no PEM shape at all, and `quoted-credential` opened
+with `(?<![A-Za-z0-9_])` while the tagger's `literal-password` has no left boundary — so a
+password on a variable whose name *ends* with the keyword was tagged and never gated, and
+`pwd` was not a keyword here at all. §5.6 already rules that a lookaround should err towards
+over-matching and records two leaks from one that did not; this was the third. For a
+**differential** gate, over-matching is the strict direction: every extra literal is one more
+thing masking must have changed, so widening cannot make this gate laxer.
+
+Both are in `gate_provenance.TOOLS`, so the repair moved `tools_digest` from `6fecbeebbccc`
+to `83735611dab4` and put all 140 stamped rows into re-measurement. **That bill was paid in
+full and it is worth recording what it actually was**, because it is the price of every
+future repair to a TOOLS module:
+
+| | |
+|---|---|
+| stamped rows invalidated | 140 |
+| masked bytes on disk | 73 |
+| masked bytes **regenerated and hash-verified** from the originals | 132 of 142 (3 mismatched, 7 record no `masked_sha256`) |
+| rows re-stamped | 139 (7 published, 132 local) |
+| rows left `stale` | 1 published (`3529f0f6b2cd`), no reachable bytes |
+| rows that lost `publishable` for the length of a commit | 34 |
+| human clearances made inert | 2, both on `34bba99dae63` |
+
+`corpus/restage-masked.py` is what made the middle row possible. `content_mask.mask_sample`
+is deterministic in (bytes, map, vocabulary, flags), so the masked form can be regenerated
+and then **checked against the `masked_sha256` the row already records** — a regenerated file
+that hashes to it is not a plausible reconstruction, it is the same file. One attempt is
+made with the driver's own default flags; a mismatch is reported as a finding about the row
+rather than retried under other flags, because a tool that searched until something matched
+would manufacture the provenance claim it was asked to check.
+
+**Two tools were re-measuring two of the three gates their stamp claims.** `verify-and-stamp`
+re-ran `plaintext_gate` and `encoded_layer_gate` and said nothing about `secret_gate`, which
+is produced by a `TOOLS` module and was therefore always inside the stamp's claim; the same
+hole was in `remeasure-gates`. It mattered the moment the credential shapes moved: the digest
+moved for a change to exactly the verdict neither tool could see, and a re-stamp would have
+written a fresh stamp over rows whose recorded `secret_gate` the current tools do **not**
+produce. Both now take the pre-masking bytes and re-measure the differential, and both return
+**three** answers — `agrees`, `disagrees`, `cannot-check` — because a row nobody could measure
+and a row that disagrees need different work.
+
+**Six rows go `PASS` → `FAIL`, four of them publishable.** Of the four "real divergences"
+recorded last round, two moved, two do not exist, and four more were found outside the
+population that was searched:
+
+| row | was | tags | what the repair changed |
+|---|---|---|---|
+| `162ccc9adf4e` | `publishable: true` | `c2`,`secret` | **verdict.** 0→1 literal, carried over. The one the brief named. |
+| `fa4356393880` | `publishable: true` | `clean` | **verdict.** Tagged `clean`, so no rule ever asked it for a secret gate. |
+| `b839772db7c7` | `publishable: true` | `c2` | **verdict.** `c2` is in `ALWAYS_OK`; nothing was demanded of this row at all. |
+| `91d2ee9cdd6d` | `publishable: true` | `c2`,`identity` | **verdict.** 0→2 literals, both carried over. |
+| `e29dba8fde17` | blocked (unreviewed) | `secret` | **verdict**, on a row that was already blocked. |
+| `47e9334ce266` | blocked (unreviewed) | `c2`,`secret` | **verdict.** Passed over *two* literals while a third was invisible — outside the "zero literals" predicate entirely. |
+| `80d78e0b4ece`, `a0830cd1a181` | blocked | | **evidence only.** Already `FAIL`; carried literals 1 → 6 each. |
+| `24d902d48a0d`, `bba931abc09d` | blocked | | **nothing.** These are the two "PEM blocks": 34 `BEGIN … PRIVATE KEY` markers each, **0 `END` markers**, 32 of them inside docblock prose in a vendor crypto library a scan report quotes. No key body, so no value for any gate to compare. The PEM shape requires a complete block precisely so it does not fail them on documentation. |
+
+**The power of that re-measurement.** 132 rows record a `secret_gate`; before/after bytes
+exist for **132 of 142 masked rows** after regeneration, so the sweep is near-complete rather
+than the 64-of-132 it would have been from the surviving stage directories alone. The 10 rows
+outside it (3 regeneration mismatches, 7 with no recorded `masked_sha256`) are unmeasured, and
+at the observed rate of 6 movements in 132 rows one further movement among them would not be
+surprising.
+
+### The second decoder is now tracked, and the two vocabularies are reconciled
+
+`deobfuscation.decoded_form_tags` on 142 rows was written by
+`trail-data/incoming/2026-09-03/deobfuscate.py` — untracked, 3,208 bytes.
+`corpus/deobfuscate.py` reproduces it, asserts behavioural equality against the original over
+11 probes carrying no customer identifier, and reports `ok`/`moved`/`absent` for the
+reference rather than passing quietly where it is missing.
+
+Two vocabularies for one operation is how two artefacts that claim to be the same thing stop
+being the same thing, so `METHOD_ALIASES` states the correspondence and `reconcile_methods()`
+measures it:
+
+```
+hex-escape + octal-escape  ->  escape        two recorder names, one tracked name
+rot13                      ->  (none)        a branch the gate's decoder does not have
+(none)                     <-  raw-inflate   and the reverse: the tracked decoder finds a
+                                             zlib/gzip stream anywhere in the bytes, the
+                                             recorder only inflates what base64 produced
+```
+
+The names are only half of it. Every threshold differs too — base64 runs `{40,}` against
+`{16,}`, hex strings quoted-`{40,}` against unquoted-`{24,}`, `chr()` `{4,}` against `{6,}`,
+texty `>0.85` against `>0.80`, depth 6 against 4 — and the recorder does not de-duplicate
+layers by content while the tracked decoder does. Measured over the **8 of 142** rows whose
+bytes are reachable here: 357 recorder layers against 380 tracked, `hex-escape` 304 +
+`octal-escape` 12 against `escape` 337, and the two layer counts agree on **2 of 8** rows. A
+sample of 8 in 142 detects a discrepancy present on 10% of rows only 57% of the time; what
+these 8 establish is that the disagreement is common, not what its rate is.
+
+**It is kept out of `gate_provenance.TOOLS`, and not for last round's reason.** The argument
+for putting it in is real and should be stated: `sensitivity.py` was excluded because "a
+tagger produces no gate verdict", and a decoder is not a tagger — the encoded-layer gate *is*
+a decoder plus a predicate. Measured, the premise is false for this module: every
+`decode_layers` call in the gate path resolves to `verify-content-mask.decode_layers`, which
+is already in `TOOLS`, and nothing in `corpus/` reads `deobfuscation` except
+`adopt-decoded-tags.py`, which writes `sensitivity` — a publish blocker, not a gate verdict.
+`TOOLS` is not a list of important modules; it is the claim that editing a file invalidates
+stored gate verdicts, and this round has just measured what that claim costs. Spending it on
+a module that cannot alter one of those four verdicts would make the digest the thing people
+route around. And `TOOLS` would not address the real hazard anyway: it would say "the decoder
+changed", never "the two decoders disagree" — which is what `--reconcile` is for.
+
 ### `pending-promotions.jsonl` — measured by one side, applied by the other
 
 A rules round measures which `known_miss` rows its new rules now detect. It does not flip
@@ -1341,6 +1600,21 @@ reference point each time gives a smooth-looking series that compares nothing.
 The same applies to the benign side, though less often: adding sources to
 `benign/sources.jsonl` changes the false-positive denominator, so the FP *rate* before and
 after a lockfile change are also not directly comparable.
+
+### `make-summary.py --help` used to overwrite the summary
+
+The dispatch was `if "--check" in sys.argv: … else: write`, so `--help`, a typo, or any flag
+added later fell through to the **write** path. The one irreversible thing this tool does was
+the thing it did when it did not understand you, and the file it writes is the denominator
+every suite run quotes. `dispatch()` now returns an error for anything it does not recognise;
+`--inject` asserts all nine cases, including `[]` still meaning *write* — a dispatch that
+errored on everything would pass a suite made only of negatives.
+
+It is also now on the pre-report list in AGENTS.md. `--check` was the one gate not run before
+round 13 was reported green, and it was failing: the round moved 9 rows out of
+`local_only_publishable_no_blocker` and 2 clearances out of `cleared_by_human`, and the
+summary still asserted the old counts. The two `shard-gate` runs cannot see that, because they
+read the index and not the summary.
 
 ## What is deliberately not here
 

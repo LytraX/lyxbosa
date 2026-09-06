@@ -69,19 +69,35 @@ MAPS = [p for p in (VCM.INCIDENT_MAP, VCM.LEGACY_MAP) if os.path.exists(p)]
 GATES = ("plaintext_gate", "encoded_layer_gate")
 FINDINGS = {"plaintext_gate": "plaintext_finding",
             "encoded_layer_gate": "encoded_layer_finding"}
+SECRET = "secret_gate"
 RECORD_KEY = "remeasured"
-# `masking` keys this may write. Everything else in the block is somebody else's
-# measurement - detection parity is the scanner's, the secret gate is a differential over
-# bytes this tool is not given - and rewriting one from here would be inventing it.
-WRITABLE = set(GATES) | set(FINDINGS.values()) | {"provenance", RECORD_KEY}
+# `masking` keys this may write. Detection parity stays out: it is the scanner's
+# measurement, provenanced by `measured_with` rather than by the tools digest, and this tool
+# runs no scanner. The SECRET gate is now in, because it is produced by a module inside
+# `gate_provenance.TOOLS` and was therefore always covered by the stamp this tool writes -
+# it was left out only because the tool was given one file and the gate is a differential
+# over two. `--before` supplies the other one; without it a row that records a secret gate
+# is REFUSED rather than re-measured on two thirds of its record.
+WRITABLE = set(GATES) | set(FINDINGS.values()) | {SECRET, "secret_literals",
+                                                  "provenance", RECORD_KEY}
 
 
-def measure(data):
-    """(verdicts, findings) from the current gate over these bytes."""
+def measure(data, before=None):
+    """(verdicts, findings) from the current gate over these bytes.
+
+    `before` is the pre-masking bytes. Where it is given the differential secret gate is
+    re-measured too and lands in `verdicts[SECRET]` with its evidence under
+    `findings["secret_literals"]`; where it is not, neither key appears at all - absent and
+    `PASS` must not be the same answer.
+    """
     _ok, g = VCM.gate(data, *VCM.load_ids(MAPS))
     verdicts = {k: g[k] for k in GATES}
     findings = {FINDINGS[k]: g[FINDINGS[k]] for k in GATES
                 if FINDINGS[k] in g and g[k] != "PASS"}
+    if before is not None:
+        _sok, sres = VCM.secret_gate(before, data)
+        verdicts[SECRET] = sres[SECRET]
+        findings["secret_literals"] = {k: v for k, v in sres.items() if k != SECRET}
     return verdicts, findings
 
 
@@ -95,18 +111,24 @@ def moved(row, verdicts):
     """
     m = row.get("masking") or {}
     out = {}
-    for k in GATES:
+    for k in list(GATES) + ([SECRET] if SECRET in verdicts else []):
         was, now = SG.gate_result(m.get(k))[0], SG.gate_result(verdicts[k])[0]
         if was != now:
             out[k] = {"was": m.get(k), "was_class": was, "now": verdicts[k], "now_class": now}
     return out
 
 
-def build(row, data, by, at=None):
+def build(row, data, by, at=None, before=None):
     """(after_row, refusal). Exactly one is None."""
     if not by or not by.strip():
         return None, "an author is required: a rewritten measurement has an owner"
-    verdicts, findings = measure(data)
+    m0 = row.get("masking") or {}
+    if SECRET in m0 and before is None:
+        return None, ("the row records a secret_gate and no --before bytes were given. That "
+                      "gate is a differential and cannot be re-measured from one file; "
+                      "stamping the other two while leaving it is the two-file question "
+                      "asked about one file, which is the shape AGENTS.md opens with")
+    verdicts, findings = measure(data, before)
     delta = moved(row, verdicts)
     if not delta:
         return None, ("every recorded verdict already agrees with the current gate; "
@@ -114,9 +136,12 @@ def build(row, data, by, at=None):
                       "here would move a measurement that did not change")
     after = copy.deepcopy(row)
     m = after.setdefault("masking", {})
-    before = {k: m.get(k) for k in GATES}
-    for k in GATES:
+    keys = list(GATES) + ([SECRET] if SECRET in verdicts else [])
+    was = {k: m.get(k) for k in keys}
+    for k in keys:
         m[k] = verdicts[k]
+    if "secret_literals" in findings:
+        m["secret_literals"] = findings["secret_literals"]
     for k in FINDINGS.values():
         # A finding belongs to a failing verdict. When a gate goes back to PASS its finding
         # has to GO, or the row keeps evidence for a verdict it no longer records - which is
@@ -130,8 +155,10 @@ def build(row, data, by, at=None):
         "by": by.strip(),
         "at": (at or datetime.datetime.now().replace(microsecond=0)).isoformat(),
         "bytes_sha256": hashlib.sha256(data).hexdigest(),
-        "was": before,
-        "now": {k: verdicts[k] for k in GATES},
+        "before_bytes_sha256": (hashlib.sha256(before).hexdigest()
+                                if before is not None else None),
+        "was": was,
+        "now": {k: verdicts[k] for k in keys},
         "why": ("the recorded verdict and the current gate disagreed; the sample did not "
                 "change, the predicate did, and a clearance cannot be keyed to a finding "
                 "the record does not hold"),
@@ -167,6 +194,13 @@ def main():
     ap.add_argument("--expect-sha256", default=None,
                     help="what those bytes must hash to. Required unless the row records a "
                          "masked_sha256 of its own")
+    ap.add_argument("--before", dest="before_path", default=None,
+                    help="the PRE-masking bytes. Required where the row records a "
+                         "secret_gate: that gate is a differential and one file cannot "
+                         "answer it")
+    ap.add_argument("--expect-before-sha256", default=None,
+                    help="what the --before bytes must hash to. Defaults to the row's own "
+                         "sha256, which is what the pre-masking bytes are")
     ap.add_argument("--by", help="who is re-measuring")
     ap.add_argument("--apply", action="store_true", help="write; default is a dry run")
     ap.add_argument("--inject", action="store_true")
@@ -201,14 +235,25 @@ def main():
     print("row                     : %s" % row["sha256"][:12])
     print("bytes                   : %s (%d bytes, sha %s)"
           % (os.path.basename(a.bytes_path), len(data), got[:12]))
-    verdicts, _f = measure(data)
+    pre = None
+    if a.before_path:
+        with open(a.before_path, "rb") as fh:
+            pre = fh.read()
+        gotb = hashlib.sha256(pre).hexdigest()
+        wantb = a.expect_before_sha256 or row["sha256"]
+        if not gotb.startswith(wantb):
+            sys.exit("the --before bytes hash to %s and were expected to hash to %s; "
+                     "refusing" % (gotb[:16], wantb[:16]))
+        print("before bytes            : %s (%d bytes, sha %s)"
+              % (os.path.basename(a.before_path), len(pre), gotb[:12]))
+    verdicts, _f = measure(data, pre)
     delta = moved(row, verdicts)
     m = row.get("masking") or {}
-    for k in GATES:
+    for k in list(GATES) + ([SECRET] if SECRET in verdicts else []):
         print("  %-20s recorded=%-8s today=%-8s %s"
               % (k, json.dumps(m.get(k))[:20], verdicts[k],
                  "MOVED" if k in delta else "agrees"))
-    after, refusal = build(row, data, a.by or "-")
+    after, refusal = build(row, data, a.by or "-", before=pre)
     if refusal and not a.by:
         # Distinguish "nothing to do" from "you forgot the author", so a dry run without
         # --by still reports the measurement rather than an argument error.
@@ -239,7 +284,7 @@ def main():
         rows = read_jsonl(a.index)
         n_before = len(rows)
         row = one(rows)
-        after, refusal = build(row, data, a.by, at)
+        after, refusal = build(row, data, a.by, at, before=pre)
         if refusal:
             sys.exit("REFUSED on re-read under the lock: %s" % refusal)
         bad = assert_scoped(row, after)
@@ -317,6 +362,37 @@ def inject():
              assert_scoped(r0, after) or "clean", "clean")
         case("the scanner's own fields are untouched",
              m["detection_survived"] is True and m["rules_after"] == ["X1"], True)
+
+    print()
+    print("=== the secret gate is a differential, so one file cannot answer it ===")
+    # The defect this closes: the tool re-measured two of the four recorded gates and
+    # stamped provenance as though it had measured all of them. `secret_gate` is produced by
+    # a module inside gate_provenance.TOOLS, so the stamp always claimed it.
+    pw_before = b"<?php $user_password = 'abcd1234';\n"
+    pw_after = b"<?php $user_password = 'abcd1234';\n"      # masking did not touch it
+    sgrow = row(masking={"secret_gate": "PASS",
+                         "secret_literals": {"secret_literals_before": 0,
+                                             "secret_literals_after": 0}})
+    case("a row recording a secret_gate, with no --before bytes",
+         "refused" if build(sgrow, pw_after, "cl")[1] else "written", "refused")
+    a3, r3 = build(sgrow, pw_after, "cl", before=pw_before)
+    case("the same row WITH them", "written" if a3 else "refused: %s" % r3, "written")
+    if a3:
+        case("the moved secret verdict is written", a3["masking"]["secret_gate"], "FAIL")
+        case("its evidence is written beside it",
+             a3["masking"]["secret_literals"]["secret_literals_carried_over"], 1)
+        case("and the record identifies the BEFORE bytes too",
+             a3["masking"][RECORD_KEY]["before_bytes_sha256"]
+             == hashlib.sha256(pw_before).hexdigest(), True)
+        case("nothing outside masking's own keys moves",
+             assert_scoped(sgrow, a3) or "clean", "clean")
+    # The negative half: a row that records NO secret gate is not forced to supply bytes it
+    # has no reason to have, and no secret key appears out of nowhere.
+    a4, _r4 = build(row(), leaky, "cl")
+    case("a row with no secret_gate needs no --before", "written" if a4 else "refused",
+         "written")
+    case("and gains no secret_gate from a re-measurement that could not take one",
+         "secret_gate" in (a4 or {}).get("masking", {}), False)
 
     print()
     print("=== a verdict going back to PASS must take its finding with it ===")

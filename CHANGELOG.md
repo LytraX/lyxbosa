@@ -13,6 +13,70 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **The five unmasked-publishable rows are tagged, and the reason they read `clean` is on
+  the rows (`corpus/tag-sensitivity.py`, `corpus/taggings/2026-09-06-five-clean-rows.json`).**
+  `cd98180175a5` → `path`; `eba16e1e9159` → `c2`,`identity`; `e50d85a3a815` →
+  `c2`,`identity`,`path`,`secret`,`pii`, which puts it in `NEVER` and makes it permanently
+  unpublishable; `c24465d301e2` → `c2`,`identity` with `pii` **rejected** (form-field shape
+  over spam post content is attacker-generated filler); `1438674b06d8` → `identity` with
+  `pii` rejected and **`c2` left off and recorded as unresolved**.
+
+  The tool writes a *ruling*, not a re-derivation and not an adoption. A tag may not be added
+  unless `sensitivity.classify_deep` over the row's own hash-verified bytes also produces it,
+  every tag the re-derivation *does* produce must be adjudicated — added, rejected or held,
+  with a reason — and a silent pass over one is refused, because silence is what put these
+  rows at `clean` in the first place. The bytes question has **three** answers and
+  `unavailable` refuses the write. `publishable` stays computed by `shard-gate.py`.
+
+  **The evidence is on the row, because some of it exists nowhere else.** On `1438674b06d8`
+  the account name is in the `uname` and `gname` field of **all 256 tar member headers** and
+  in **0 member paths and 0 member bodies**; a member-level content scan sees nothing and only
+  the container's own metadata carries it. The row also records that the *rule's* reason for
+  its `identity` tag is different and wrong — 81 e-mail shapes over 44 domains, none on a
+  customer domain. And the cause is recorded on every one of the five: `classify()` has no
+  decoder and `clean` is its **default branch**.
+
+  **`1438674b06d8`'s `c2` is now ruled: left off** (`corpus/taggings/2026-09-06-c2-ruling.json`).
+  The decisive measurement is a negative one — **0 of the 5 `C2_HINTS` markers fire anywhere in
+  the archive** — and the ruling is recorded as a rule in CORPUS_PLAN §4.1, not only as a row
+  decision: **`c2` requires evidence of attacker control, never the presence of an external
+  host**, because the tag is in `ALWAYS_OK` and buys a free pass through every masking gate
+  rather than merely labelling a sample. "An external host inside a malicious archive" is guilt
+  by containment — the reasoning that produced the retracted `identity` on a Cloudflare footer
+  template's resolver address. `sensitivity.classify()` still emits `c2` on any external host
+  and is unchanged; that output is now explicitly a *proposal* a person must add, reject or
+  hold.
+
+  Movement, all attributed: local `publishable` 373 → 368; `clean` −5, `identity` +4, `c2`
+  +3, `path` +2, `pii` +1, `secret` +1; new blockers `carries identity but no masking has
+  been applied` ×3, `carries path…` ×1, `carries identity/path/secret…` ×1, `carries pii,
+  which is not maskable and is never published` ×1. No published row moved and no detection
+  figure was measured.
+
+- **`corpus/mark-not-maskable.py` — `masking.not_applicable_reason` is written from the
+  repository for the first time.** Four of the five are archive containers, which §5.5
+  excludes from content masking entirely, so what they need is the decision the 29 existing
+  rows carry — a field nothing in this tree writes and `mask-samples.py` only reads.
+
+  **The writer could not be brought in, and that is the finding.** No `.py` anywhere on this
+  machine writes the string, and `git log --diff-filter=A` puts `mask-samples.py`'s first
+  commit a day *after* the rows appeared: the author was never saved, so unlike
+  `sensitivity.py` there is nothing to hash and no behavioural probe to run. The tool
+  re-derives the *claim* instead — container magic re-read from the bytes, `gzip` on all four,
+  recorded with the sha256 it read — and refuses a row whose bytes are not a container, which
+  is what it did to the fifth (a PHP file) on the live run. It deliberately writes none of the
+  seven other masking keys the legacy rows carry: those are measurements it did not take.
+  Publishability moved by **0 rows**, and that is correct — `applied: false` still blocks.
+
+- **`corpus/field-provenance.py` — 45 fields in the index have no writer in this repository,
+  not three.** Three had been found one at a time, a round apart each, by somebody noticing.
+  This parses every tracked module and asks, per field the rows carry, whether anything can be
+  shown to **write** it rather than merely mention it — the distinction that matters, since
+  `mask-samples.py` contains the literal `not_applicable_reason` and any grep would have
+  called that field covered. 135 fields, 89 written, 1 read-only, **45 mentioned nowhere**.
+  `written` is an over-count so `ORPHAN` is an under-count, and both denominators are
+  enumerated by their own process and say so on every run.
+
 - **`corpus/sensitivity.py` — the rule that assigns every sensitivity tag is now in the
   repository.** It was `trail-data/incoming/2026-09-03/sensitivity.py`: gitignored, untracked,
   not covered by `gate_provenance.TOOLS`. Anyone cloning this repository could read the rows
@@ -185,6 +249,92 @@ commit list that CI generates per tag. Versions are the git tags described in
   tool in the tree writes.
 
 ### Changed
+
+- **A later ruling no longer erases the record it amends
+  (`corpus/tag-sensitivity.py`).** Writing the `c2` ruling exposed it: `build()` wrote a fresh
+  `sensitivity_tagged`, so the ruling took the tar-header finding — a measurement that exists
+  nowhere else — off the row. Prior `evidence` and `human_basis` are carried forward with the
+  new ruling winning per key, the superseded record is kept whole under `supersedes`,
+  `originally` carries the pre-first-ruling tags past a one-level chain, and `assert_additive`
+  now **refuses any write that drops a recorded evidence key**. A ruling that changes no tag is
+  also writable now — it used to be refused as "nothing would move", which would have left the
+  row reading `UNRESOLVED` after a person had ruled — and `--restate` re-derives a record from
+  a decision file it already agrees with, changing no ruling and required to add something.
+  Controls: 32 → 56 cases.
+
+- **`make-summary.py --help` used to overwrite `index-summary.json`.** The dispatch was
+  `if "--check" in sys.argv: … else: write`, so `--help`, a typo or any flag added later
+  reached the **write** path: the one irreversible thing this tool does was what it did when it
+  did not understand you, and it writes the denominator every suite run quotes. `dispatch()`
+  now errors on anything unrecognised, and `--inject` asserts all nine cases including `[]`
+  still meaning *write*.
+
+  **`--check` is now on a pre-report list in AGENTS.md**, alongside the two `shard-gate` runs.
+  It was the one gate not run before this round was reported green, and it was failing: the
+  round moved 9 rows out of `local_only_publishable_no_blocker` and 2 clearances out of
+  `cleared_by_human`, and the summary still asserted the old counts. Neither gate run can see
+  that — they read the index, not the summary. `index-summary.json` is regenerated in this
+  round.
+
+- **The secret gate can now see two credential forms it was blind to
+  (`corpus/verify-content-mask.py`).** `SECRET_SHAPES` had **no PEM shape at all**, and
+  `quoted-credential`'s `(?<![A-Za-z0-9_])` lookbehind blocked a password on a variable whose
+  name *ends* with the keyword — `$user_password`, `$adminpassword` — with no `pwd` keyword
+  either. The lookbehind is gone, `pwd` is in the list, and `pem-private-key` requires a
+  **complete** block: 32 of the 34 `BEGIN … PRIVATE KEY` markers on the rows this was written
+  for sit inside docblock prose, and a header-only shape would fail them on documentation.
+
+  Both files are in `gate_provenance.TOOLS`, so `tools_digest` moved `6fecbeebbccc` →
+  `83735611dab4` and all **140** stamped rows went into re-measurement. Paid deliberately and
+  measured: 73 rows had masked bytes on disk, `corpus/restage-masked.py` **regenerated and
+  hash-verified** 132 of 142 more from their originals (`content_mask.mask_sample` is
+  deterministic, and a regenerated file that hashes to the row's recorded `masked_sha256` *is*
+  that file), 139 rows were re-stamped, 1 published row is left `stale` for want of bytes, 34
+  rows lost `publishable` for the length of a commit, and 2 human clearances on
+  `34bba99dae63` went inert exactly as designed.
+
+  **Six rows go `PASS` → `FAIL`, four of them `publishable: true`** — `162ccc9adf4e`,
+  `fa4356393880` (tagged `clean`), `b839772db7c7` (tagged `c2`, which demands nothing) and
+  `91d2ee9cdd6d`. Only one of the four carries `secret`, which is why the nine "vacuous
+  passes" could see one of them: that population was selected by the tag written by the rule
+  whose blindness was the subject. Of the four divergences recorded last round, two moved
+  their verdict, two (`24d902d48a0d`, `bba931abc09d`) are not divergences at all — 34 PEM
+  headers and **zero** `END` markers between them — and four more were outside the search.
+  Local `publishable` 368 → 364; the published half is unchanged at 44,543.
+
+- **`verify-and-stamp.py` and `remeasure-gates.py` were asking a three-gate question about
+  two gates.** Both re-measured `plaintext_gate` and `encoded_layer_gate` and said nothing
+  about `secret_gate`, which a `TOOLS` module produces and the stamp therefore always claimed.
+  Both now take the pre-masking bytes and re-measure the differential, and both answer
+  **`agrees` / `disagrees` / `cannot-check`** — a row nobody could measure and a row that
+  disagrees need different work. Without this, the re-stamp after the gate repair would have
+  written fresh stamps over six rows whose recorded verdict the current tools do not produce.
+
+- **`corpus/deobfuscate.py` — the second decoder is tracked, and the two vocabularies are
+  reconciled.** It reproduces the untracked `trail-data/incoming/2026-09-03/deobfuscate.py`
+  that wrote `decoded_form_tags` on 142 rows, with behavioural equality asserted over 11
+  probes. `METHOD_ALIASES` states the correspondence: `hex-escape` + `octal-escape` **merge**
+  into the tracked `escape`, `rot13` is recorder-only, `raw-inflate` is tracked-only — so
+  every gzip container in the corpus is a layer to one decoder and nothing to the other. Every
+  threshold differs too, and the recorder does not de-duplicate layers. Measured on the 8 of
+  142 rows whose bytes are reachable: 357 recorder layers against 380 tracked, agreeing on
+  the count for 2 of 8.
+
+  **Kept out of `gate_provenance.TOOLS`, and not by inheriting last round's reasoning.** The
+  case for including a decoder is real — the encoded-layer gate *is* a decoder plus a
+  predicate — but measured, every `decode_layers` call in the gate path resolves to
+  `verify-content-mask.decode_layers`, which is already in `TOOLS`. This module decides no
+  gate verdict; `TOOLS` membership would invalidate 140 of them on every edit, which this
+  round has just priced. And it would not detect the actual hazard: it would say "the decoder
+  changed", never "the two decoders disagree" — which is what `--reconcile` measures.
+
+- **CORPUS_PLAN §11 gains an eighth appearance** and the heading moves from seven to eight.
+  The nine vacuous passes were nine because the predicate began *carries the `secret` tag*,
+  and the report that found them explicitly dismissed the other 69 rows recording
+  `before == after == 0` as owing nothing. Four publishable rows carrying an invisible
+  credential were in that dismissed set. **A reconciliation between two rules must be run
+  over the rows that record the measurement, never over the rows one of the rules labelled.**
+
 
 - **`FP_NOTE` is corrected and has moved out of the behavioural digest.** It said 36 hits
   come from identifiers of 6+ characters where `--stock-fp` prints **52**; 36 was `begins`
