@@ -902,6 +902,58 @@ Poisson. `index-summary.json` reads `cleared_by_human_findings: 2`, `cleared_by_
 FAIL`, which nobody cleared, so a second uncleared blocker survives the clearance exactly as
 the design requires. Two of its three blockers went; the third stayed.
 
+#### Re-measured 2026-09-06, and both findings are unchanged in shape
+
+Last round's gate repair moved the tools digest from `6fecbeebbccc` to `83735611dab4` at commit
+`194e969`, which made **both clearances inert** — exactly as designed, and confirmed rather than
+assumed by re-running `gate_provenance.stamp` at each commit in the range. A clearance is keyed
+to one finding measured by one set of tools, and both are allowed to move.
+
+So the findings were re-measured against today's gate rather than the old reason being copied
+forward under a new digest. The masked bytes were **regenerated and hash-verified** to the
+recorded `masked_sha256` first (the file left on disk from an older pass hashes to something
+else), so what was measured is the file the row stands behind:
+
+| | encoded-layer | plaintext |
+|---|---|---|
+| recorded | 1 identifier, len 6, 1 occurrence, `begins`, segment 25 | 1 identifier, len 3, 3 occurrences, `contains`, segments 19/70/74 |
+| today | **identical in every field** | **identical in every field** |
+
+**A clearance that can be transplanted is not a clearance.** These two are re-signable because
+a fresh measurement produces the same finding, not because the old reason still reads well.
+
+#### The secret-gate evidence went stale under a current stamp
+
+The row records `secret_literals` 1 / 1 / 1 and `masking.provenance.tools: 83735611dab4`, the
+current digest. Today's gate returns **2 / 2 / 2**. Re-running the pre-repair gate from
+`d548b3e` over the same two files returns 1 / 1 / 1 — matching the row exactly — so the payload
+was produced by the superseded predicate while the stamp beside it is current.
+
+Neither tool is at fault and both would do it again: `verify-and-stamp.py` compares gate
+*verdicts* and `FAIL` did not become `PASS`, so it stamped; `remeasure-gates.py` compares
+verdict *classes* and refuses where none moved, so it will not rewrite it. **Nothing in the
+tree compares the evidence**, and a finding payload can therefore go stale beneath a stamp that
+appears to certify it. Recorded as open.
+
+The extra literal is the second `quoted-credential` on the row, found only because `194e969`
+removed the pattern's left boundary so `$user_password` would be caught. Both literals sit in
+the same 119,508-byte `base64+inflate` layer and both are carried over unchanged: one is the
+19-byte jQuery-Terminal UI label already recorded above, and the other is a 15-character
+English prompt ending in `!`, under a camelCase key ending in `Password`, between two sibling
+message strings of the same form. Neither is a credential; the gate fails on *unchanged*, not
+on *present*.
+
+`corpus/secret-fp.py` is the null those readings are weighed against — the tracked
+`SECRET_SHAPES` predicate over stock CMS trees, which carry no customer credential by
+construction. It is a separate file precisely because `verify-content-mask.py` is inside
+`gate_provenance.TOOLS` and a new flag there would move the digest and invalidate every stamp
+again. Over **32,000 stock files**: 343 credential-shaped literals, 230 of them
+`quoted-credential`; the first literal's class (`kw=password`, 8–15 chars, no space) is **59 of
+230 — the largest class in the null** — and the second's (same but containing a space) is **9 of
+230**, with 87 of 230 containing a space at any length. **State the power:** at 8,000 files the
+second class showed **0 of 109**, which excluded nothing — the expected count there was ~2.8 and
+P(zero) ≈ 6%. The 32,000-file figure is the one to cite.
+
 ### Three findings recorded for a decision, and not decided here
 
 Three gate findings were on the operator's desk. Each is recorded on its row with the full

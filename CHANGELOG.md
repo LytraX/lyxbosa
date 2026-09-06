@@ -13,6 +13,147 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **`pre-push-check.py` now delegates `make-summary.py --check`, so a stale denominator
+  refuses a push.** The rule that it must be run was already in AGENTS.md, already annotated
+  with the note that it exists because a round was reported green while it was failing — and a
+  round was then reported green while it was failing. A written rule missed twice wants a gate,
+  not stronger wording, so the summary is enforced beside the index question
+  (`verify-infected-mask`) and the gate invariants (`shard-gate`).
+
+  **Controls run in both directions**, because a delegation that always refuses and one that
+  never fires look identical from a green run: a fresh summary must be accepted and a summary
+  **stale by one** must be refused, with the refusal asserted to name the field that drifted.
+  The stale case is a valid, plausible summary wrong by one rather than malformed JSON — a
+  broken file would prove only that broken files are caught. The control builds a temp
+  directory of symlinks to the real index halves with its own copy of the summary, so nothing
+  in the repository is written.
+
+- **`corpus/secret-fp.py` — the stock-CMS null for the secret gate's shapes, per class.**
+  `--stock-fp` and `--base-rate` are both nulls for the *identifier* gates; the secret gate had
+  none, so a row could record `secret_literals_carried_over: 2` with nothing to say whether two
+  credential-shaped literals in a megabyte of vendored library code is a lot or the number you
+  get for free. It imports the tracked `SECRET_SHAPES` predicate rather than restating it, and
+  it is a separate file **because `verify-content-mask.py` is inside `gate_provenance.TOOLS`**:
+  adding a mode there would move the digest and invalidate every stamp and both clearances
+  again, and a null is a measurement *about* a gate rather than part of it.
+
+  Over 32,000 stock files: 161 (0.50%) carry a credential-shaped literal, 343 literals, 230
+  `quoted-credential`. Broken down by keyword, value length and **whether the value contains a
+  space** — the discriminator that actually separates a credential from a UI message, reported
+  rather than assumed. 14 controls, including that a planted credential is counted, that a file
+  with none contributes zero *and is still counted as scanned*, that the space classes are
+  distinct, and that the keyword list has not drifted from the tracked pattern.
+
+- **`shard-gate.py` asserts `sum(placements.values()) == count`.** `placements` was an orphan on
+  33,555 rows, **15,674 of them published**, and no tracked module mentioned it. It is not dead
+  — it is a histogram of where on a real server the copies of a blob were found, over a closed
+  vocabulary of 11 labels — so it gets a reader rather than a deletion. The invariant holds on
+  **33,555 of 33,555**: 33,553 against `count`, and 2 against `copies_on_disk`, an older name
+  for the same quantity that was itself an orphan on exactly those two rows. Two orphans
+  resolved by one invariant.
+
+  Nine controls, both directions. **The invariant has never fired in anger** — it was written
+  over a population that already satisfies it, which is the condition AGENTS.md names as "not
+  yet a check", and that is why there are nine controls rather than a green run.
+
+- **`corpus/drop-field.py` — remove a dead field from an index, and refuse to do it blind.**
+  Removing a field from 47,133 rows is three lines of Python, and that is the problem: every
+  orphan this corpus has found was written by a script somebody ran once and never committed,
+  and a round that deletes one with an untracked one-liner has done the same thing in the other
+  direction. It refuses any field a tracked module writes or reads (delegated to
+  `field-provenance.py`, so the guard cannot drift from the census that justified the removal),
+  refuses `publishable` and anything under `masking`, refuses a deletion that would remove
+  nothing, and asserts after the edit that the row count, the row order and every other field
+  are unchanged. 19 controls.
+
+### Changed
+
+- **`corpus/field-provenance.py` no longer parses itself, and its map test is no longer a
+  count.** Both were making the orphan census report fewer orphans than there are, and one of
+  them was hiding fields the census had itself recorded as orphans.
+
+  `KNOWN` and `REMOVED` are dict literals keyed by field name, and a dict-literal key is a
+  write position, so the census was the sole claimed writer of six real index fields — and
+  `main()` prints only the states that are **not** `written`. `evidence_decoded`,
+  `evidence_encoded` and `hidden_by_encoding`, 142 rows each and listed in `KNOWN` *because* an
+  untracked decoder wrote them, were classified covered and never printed. **The note recording
+  them as orphans is what stopped them being reported.**
+
+  The map heuristic — "more than eight distinct children" — classified **ten** parents as
+  value-keyed maps. **One was.** The nine schema blocks it swallowed include `masking` (26
+  children): every gate verdict, every finding, `provenance`, `secret_literals`, the block a
+  human clearance is keyed to. An orphan anywhere under it was invisible to the tool whose
+  entire job is finding orphans. It ran the other way too — three value *keys* under
+  `sensitivity_review.adjudication` were reported as orphan fields because that parent had only
+  four children. The old docstring had predicted this in words ("a schema block with nine keys
+  would be misread as a map") and then nine were.
+
+  The test is now what actually distinguishes the two: **schema keys are written by a programmer
+  and are identifiers; value keys are data labels and are not.** Over both halves exactly four
+  parents have any non-identifier child and all four are real maps; every other parent's
+  children are identifiers without exception.
+
+  | | before | after | cause |
+  |---|---|---|---|
+  | fields carried by rows | 135 | 311 | nine schema blocks descended into for the first time, less the field removed below |
+  | value-keyed maps | 10 | 4 | the identifier test |
+  | written by a tracked module | 90 | 241 | the schema-block children, most of which do have writers |
+  | read-only | 1 | 3 | `placements` and `copies_on_disk` gained a tracked reader |
+  | **ORPHAN** | **44** | **67** | the census could finally see — not a change in the corpus |
+
+  Recorded as `CORPUS_PLAN.md` §11's **ninth** appearance, and the first that a check had
+  declared about itself before anyone asked: the docstring stated the row-side bound correctly
+  and in advance, and the two bounds it did not state were the larger ones. Writing a bound
+  down is cheap and it is not the check; sizing it is.
+
+### Measured, and open
+
+- **A finding payload can go stale beneath a stamp that appears to certify it.**
+  `34bba99dae63` records `secret_literals` 1 / 1 / 1 with `masking.provenance.tools:
+  83735611dab4` — the current digest. Today's gate returns **2 / 2 / 2**, and re-running the
+  pre-repair gate from `d548b3e` over the same two files returns 1 / 1 / 1, so the payload was
+  produced by the superseded predicate while the stamp beside it is current.
+
+  Neither tool is at fault and both would do it again. `verify-and-stamp.py` compares gate
+  *verdicts* and stamps where they agree — `FAIL` did not become `PASS`, so it stamped.
+  `remeasure-gates.py` compares verdict *classes* and refuses where none moved — so it will not
+  rewrite it, and correctly refused this row. **Nothing in the tree compares the evidence.**
+  Recorded as open rather than repaired.
+
+- **Both findings on `34bba99dae63` re-measured against the current gate and unchanged in every
+  field** — the encoded-layer finding is still one 6-character identifier, 1 occurrence,
+  `begins`, in a 25-character segment; the plaintext finding is still one 3-character
+  identifier, 3 occurrences, `contains`, segments 19/70/74. The masked bytes were regenerated
+  and hash-verified to the recorded `masked_sha256` first, because the file left on disk from an
+  older masking pass hashes to something else. The two human clearances remain **inert** against
+  the current digest, and the row now carries **three** blockers rather than two, so re-signing
+  them would not make it publishable — which is the design working, not a problem to solve.
+
+### Removed
+
+- **`origin.incident`, from 47,133 local rows and 0 published ones.** Flagged for review
+  because a field naming an incident is the shape that has caught this repository out before.
+  It is the opposite of that: **one distinct value across every row that carried it** — the
+  8-character constant `INCIDENT`, a hardcoded string literal in an untracked merge pass, with
+  no data path reaching it and no entry in either pseudonym map. Zero entropy, so it cannot
+  carry a customer identifier by construction. **No reader anywhere in 272 Python files.**
+  Completely redundant: `incident` was present *iff* `account_hash` was, so the `origin`
+  key-shape already separates the incident tree (47,133) from the legacy tree (1,123).
+
+  git cannot name the commit that last wrote it — the local half is gitignored and the writer
+  is untracked. A before/after census of every counted quantity in both halves is
+  byte-identical; 47,133 rows lost exactly that key and nothing else moved. **The untracked
+  writer still emits it**, so a future merge pass will put it back; that is a property of an
+  untracked writer, not of this removal, and it is why the removal is recorded in
+  `field-provenance.REMOVED`, which the census now prints.
+
+  **The reader search had to be redone.** The first sweep reported "nothing reads it" while
+  unable to see 237 of the 272 Python files: `grep` in this environment is a shell function
+  wrapping `ugrep --ignore-files`, which respects `.gitignore`, and `trail-data/` is gitignored
+  — so a recursive search from the repository root silently skipped every untracked script,
+  which is exactly where every orphan field's writer has turned out to live. The same shape as
+  the `/home/`-not-`/home2/` regex: a search whose blindness is invisible from its output.
+
 - **The five unmasked-publishable rows are tagged, and the reason they read `clean` is on
   the rows (`corpus/tag-sensitivity.py`, `corpus/taggings/2026-09-06-five-clean-rows.json`).**
   `cd98180175a5` → `path`; `eba16e1e9159` → `c2`,`identity`; `e50d85a3a815` →

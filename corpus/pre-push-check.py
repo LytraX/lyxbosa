@@ -26,6 +26,15 @@ WHAT IT CHECKS, and why each one is here rather than assumed:
   published index Delegated to verify-infected-mask.py, which owns that question.
   gate invariants Delegated to shard-gate.py: no `origin` on a published row, every
                   /home<digits>/<x>/ pseudonymous.
+  index summary   Delegated to make-summary.py --check: the denominator on disk must agree
+                  with the index it claims to summarise. AGENTS.md has required that run
+                  since the round it was written for, annotated with the note that it exists
+                  because a round was reported green while it was failing - and a round was
+                  then reported green while it was failing again. A written rule that has
+                  been missed twice does not want stronger wording, it wants a gate, so the
+                  rule is now enforced by the same script that enforces the other three.
+                  A stale summary is not a leak; it is a false denominator, and every
+                  measurement in a round report is quoted against it.
 
 WHAT IT DOES NOT DO: it does not sweep for substrings. Four such sweeps were written during
 that incident and all four manufactured hits. A two-letter account name matched 52,103 rows
@@ -154,6 +163,80 @@ def run_map(map_path, paths, quiet=False):
     return hits
 
 
+def summary_check(corpus_dir):
+    """(ok, output) from `make-summary.py --check` run against `corpus_dir`.
+
+    Parameterised on the directory rather than hardwired to `HERE` so `inject()` can point
+    it at a tree holding a deliberately stale summary. A delegation that is only ever run
+    against the real, currently-passing file is a delegation nobody has seen say no - which
+    is the same blindness as a check with no positive control, one level out.
+
+    `make-summary.py` locates everything it reads from its own `__file__`, and `abspath`
+    does not resolve symlinks, so a directory of symlinks to the real index halves is enough
+    to run the real script over a substituted summary.
+    """
+    r = subprocess.run([sys.executable, os.path.join(corpus_dir, "make-summary.py"),
+                        "--check"], capture_output=True, text=True)
+    return r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+
+
+def _summary_sandbox(tmp):
+    """A corpus directory of symlinks with its own copy of index-summary.json.
+
+    The summary is a COPY because it is the file under test; everything else is a symlink
+    because it is 62 MB and is not.
+    """
+    import shutil
+    for n in ("make-summary.py", "clearance.py", "index.jsonl"):
+        os.symlink(os.path.join(HERE, n), os.path.join(tmp, n))
+    if os.path.isdir(os.path.join(HERE, "local")):
+        os.symlink(os.path.join(HERE, "local"), os.path.join(tmp, "local"))
+    shutil.copy2(os.path.join(HERE, "index-summary.json"),
+                 os.path.join(tmp, "index-summary.json"))
+    return tmp
+
+
+def inject_summary():
+    """Both directions. A delegation that always refuses and one that never fires look
+    identical from a green run, so neither is assumed.
+
+    Nothing in the repository is written: the stale summary is a copy inside a temp tree.
+    """
+    import tempfile
+    ok_all = True
+    tmp = tempfile.mkdtemp(prefix="pre-push-summary-")
+    try:
+        _summary_sandbox(tmp)
+        fresh_ok, _out = summary_check(tmp)
+        if fresh_ok:
+            print("  a summary that agrees with the index           accepted")
+        else:
+            print("  FAIL: a fresh summary was refused"); ok_all = False
+
+        # Perturb one integer. Not a malformed file - that would prove only that a broken
+        # JSON is caught. A summary that is valid, plausible and wrong by one is the actual
+        # failure mode: a count that moved and a denominator that did not.
+        sp = os.path.join(tmp, "index-summary.json")
+        cur = json.load(open(sp))
+        field = next((k for k, v in sorted(cur.items()) if isinstance(v, int)), None)
+        if field is None:
+            print("  FAIL: no integer field to perturb"); return 1
+        cur[field] = cur[field] + 1
+        json.dump(cur, open(sp, "w"), indent=1, sort_keys=True)
+        stale_ok, out = summary_check(tmp)
+        if stale_ok:
+            print("  FAIL: a stale summary was accepted"); ok_all = False
+        else:
+            print("  a summary stale by one in %-20s refused" % field)
+            if field not in out:
+                print("  FAIL: the refusal did not name the field that drifted")
+                ok_all = False
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    return 0 if ok_all else 1
+
+
 def inject(paths):
     """Prove the sweep can fail. Writes nothing: a synthetic path list is enough."""
     m = json.load(open(MAPS[0]))
@@ -180,6 +263,10 @@ def inject(paths):
         if os.path.exists(tmp):
             os.unlink(tmp)
     print("  the sweep can fail, and does not fire on English" if ok else "  SELF-TEST FAILED")
+    print()
+    print("=== the make-summary delegation, in both directions ===")
+    if inject_summary():
+        ok = False
     return 0 if ok else 1
 
 
@@ -231,6 +318,12 @@ def main():
     print("  shard-gate on the published half              %s"
           % ("PASS" if r.returncode == 0 else "FAIL"))
     bad += (r.returncode != 0)
+    ok, out = summary_check(HERE)
+    print("  make-summary --check on the denominator      %s" % ("PASS" if ok else "FAIL"))
+    if not ok:
+        for line in out.strip().split("\n")[:8]:
+            print("      %s" % line)
+    bad += (not ok)
 
     print()
     if bad:

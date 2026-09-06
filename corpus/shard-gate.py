@@ -380,6 +380,78 @@ def integrityViolations(rows):
     return out
 
 
+# The placement vocabulary, closed. Eleven labels are carried by 33,555 rows and every one
+# of them was written by an untracked pass; listing them here is what turns "whatever that
+# pass emitted" into something a reader can be wrong about. A twelfth label is not a
+# failure of the corpus, it is a signal that a writer nobody tracks has changed its
+# categories - which is exactly how `sensitivity` and the decoded-form tags were found, one
+# round apart, by somebody noticing rather than by anything asking.
+PLACEMENT_LABELS = {
+    "live webroot: plugin or theme directory",
+    "live webroot: other",
+    "live account .trash (deleted site remnant)",
+    "live account home (outside the webroot)",
+    "inside the webroot",
+    "IR quarantine copy",
+    "account home ~/tmp",
+    "account home ~/.cache",
+    "shared system temp (/var/tmp)",
+    "cron-triggered copy",
+    "other",
+}
+
+
+def placementViolations(rows):
+    """`placements` must account for exactly as many copies as the row claims to have.
+
+    WHY THIS FIELD GETS A READER RATHER THAN A DELETION
+    ----------------------------------------------------
+    `placements` was an orphan: 33,555 rows carry it, 15,674 of them PUBLISHED, and no
+    tracked module in `corpus/` mentioned it. It is not dead, though - it is a histogram of
+    where on a real server the copies of a blob were found, which is corpus content a
+    consumer of the published half can actually use, and it stands in a checkable
+    relationship to a field that is tracked:
+
+        sum(placements.values()) == count
+
+    That held on 33,553 of 33,555 rows when this was written. The other two carry
+    `copies_on_disk` instead of `count` - an older name for the same quantity, itself an
+    orphan on exactly those two rows - and it agrees there too, so the invariant is
+    33,555 of 33,555 with both names allowed and neither assumed.
+
+    A field with no reader cannot go wrong in a way anything notices. This is the reader:
+    the untracked pass that writes `placements` also writes `count` from the same list, so
+    the two drifting apart means that pass changed on one side only, and nothing else in
+    the tree would see it.
+    """
+    out = []
+    for r in rows:
+        p = r.get("placements")
+        if p is None:
+            continue
+        if not isinstance(p, dict):
+            out.append((r["sha256"], "placements is %s, not a mapping" % type(p).__name__))
+            continue
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in p.values()):
+            out.append((r["sha256"], "placements holds a non-integer count"))
+            continue
+        unknown = sorted(set(p) - PLACEMENT_LABELS)
+        if unknown:
+            out.append((r["sha256"], "placement label not in the closed vocabulary: %r"
+                        % unknown[0][:48]))
+            continue
+        # `count` is the tracked name; `copies_on_disk` is the older one two published rows
+        # still use. Absent BOTH is a finding, not a skip - a histogram whose total nothing
+        # records is a histogram nothing can check.
+        total = r.get("count", r.get("copies_on_disk"))
+        if total is None:
+            out.append((r["sha256"], "placements with neither count nor copies_on_disk"))
+        elif sum(p.values()) != total:
+            out.append((r["sha256"], "placements sum to %d, row claims %d"
+                        % (sum(p.values()), total)))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The property this round exists to produce, asserted separately from the rule that
 # produces it.
@@ -630,6 +702,19 @@ def main(path, apply_fix=False):
             print("  ... and %d more" % (len(bad) - 10))
         print("  move these to observed_detection; expect stays absent until a verdict is set")
 
+    places = placementViolations(rows)
+    print("rows whose placements disagree with count :", len(places))
+    if places:
+        print()
+        print("=== INVARIANT: placements must account for every copy the row claims ===")
+        print("  `placements` is written by a pass this repository does not track, and so is")
+        print("  `count`, from the same list. Drift between them means that pass changed on")
+        print("  one side only, and until this check existed nothing in the tree read either.")
+        for sha, why in places[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(places) > 10:
+            print("  ... and %d more" % (len(places) - 10))
+
     forms = formViolations(rows)
     print("rows whose masked component is malformed :", len(forms))
     if forms:
@@ -663,7 +748,7 @@ def main(path, apply_fix=False):
     # something upstream changed a verdict or a tag without re-running this gate. Exiting
     # zero there is how "publishable flags corrected: 14" became a line nobody read.
     # The green result is the plain run afterwards.
-    return 1 if (stale or bad or leaks or forms or unread or badc) else 0
+    return 1 if (stale or bad or leaks or forms or unread or badc or places) else 0
 
 
 # ---------------------------------------------------------------------------
@@ -1085,8 +1170,45 @@ def inject(path):
     print("stale rows found in it        : over=%d under=%d drift=%d"
           % (len(over), len(under), len(drift)))
     print()
-    # Counted, never quoted. The number was hardcoded at 20 while the suite grew, which is
-    # a case count that cannot report a case being dropped.
+    # 6. placements against count. Both directions: this invariant has never fired in
+    # anger - it was written over a population that already satisfies it on all 33,555 rows
+    # - which is precisely the condition AGENTS.md names as "not yet a check".
+    print("=== placements: the histogram must account for every copy claimed ===")
+
+    def pcase(label, row, want_hit):
+        got = placementViolations([row])
+        ok = bool(got) == want_hit
+        ran.append(label)
+        print("  %-56s %-6s %s" % (label, "hit" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("hit" if want_hit else "clean")))
+        if not ok:
+            fails.append(label)
+
+    GOOD = {"live webroot: plugin or theme directory": 3, "IR quarantine copy": 1}
+    pcase("placements summing to count", dict(base, placements=dict(GOOD), count=4), False)
+    pcase("the same total under the older copies_on_disk name",
+          dict(base, placements=dict(GOOD), copies_on_disk=4), False)
+    pcase("no placements at all: not this check's business",
+          dict(base, count=9), False)
+    pcase("placements summing to one less than count",
+          dict(base, placements=dict(GOOD), count=5), True)
+    pcase("placements summing to one more than count",
+          dict(base, placements=dict(GOOD), count=3), True)
+    pcase("a histogram with no total recorded anywhere",
+          dict(base, placements=dict(GOOD)), True)
+    pcase("a label outside the closed vocabulary",
+          dict(base, placements={"somewhere new nobody declared": 4}, count=4), True)
+    pcase("placements recorded as a list",
+          dict(base, placements=["live webroot: other"], count=1), True)
+    pcase("a count that is a bool rather than an int",
+          dict(base, placements={"other": True}, count=1), True)
+
+    # Counted, never quoted, and printed LAST. It was hardcoded at 20 while the suite grew;
+    # then it was correct but emitted before the nine `pcase` checks ran, so the headline read
+    # "61 · 61 · 0" over a suite of 70 and would have read "failed: 0" while returning 1. A
+    # total is only a total when nothing can be added after it is printed.
+    print()
     print("cases: %d · passed: %d · failed: %d"
           % (len(ran), len(ran) - len(fails), len(fails)))
     for f in fails:

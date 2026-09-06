@@ -71,6 +71,30 @@ KNOWN = {
     "evidence_encoded": ("the same untracked decoder as decoded_form_tags"),
     "sensitivity": ("trail-data/incoming/2026-09-03/sensitivity.py, untracked; reproduced "
                     "as corpus/sensitivity.py"),
+    "placements": ("trail-data/incoming/2026-09-04/merge-context.py, untracked; it is not "
+                   "dead - 15,674 PUBLISHED rows carry it - and it now has a tracked reader "
+                   "in shard-gate.placementViolations, which asserts sum(placements) == "
+                   "count (or the older copies_on_disk)"),
+    "copies_on_disk": ("the older name for `count` on two published rows; read by the same "
+                       "shard-gate invariant as `placements`"),
+}
+
+# Fields REMOVED from the index, so the next census cannot rediscover them as new and so a
+# reader can tell "deleted on purpose" from "never existed". A removal is a decision with an
+# author, and `corpus/drop-field.py` is the only thing that should make one.
+REMOVED = {
+    "origin.incident": ("removed 2026-09-06 (cl) from 47,133 local rows, 0 published. One "
+                        "distinct value across every row that carried it: the 8-character "
+                        "constant `INCIDENT`, a string literal hardcoded in "
+                        "trail-data/incoming/2026-09-04/merge-context.py, untracked. Zero "
+                        "entropy, no data path to it, so it was never a customer identifier "
+                        "by construction; no reader anywhere in 272 python files; and "
+                        "perfectly redundant with the origin key-shape it co-occurred with "
+                        "(`account_hash` present iff `incident` was). git cannot name the "
+                        "commit: the local half is gitignored and the writer is untracked. "
+                        "The writer still emits it, so a future merge pass will put it "
+                        "back - that is a property of an untracked writer, not of this "
+                        "removal."),
 }
 
 
@@ -144,11 +168,22 @@ def key_positions(path):
     return written, read
 
 
+# This file writes no index row. It is a census, and its own bookkeeping tables - `KNOWN`,
+# `REMOVED` - are dict literals whose KEYS are field names, which `key_positions` reads as
+# write positions like any other. So the census counted itself as the writer of every field
+# it had recorded as an orphan, and `main()` does not print fields in the `written` state:
+# `evidence_decoded`, `evidence_encoded` and `hidden_by_encoding` were classified as covered
+# and never printed, by the note saying nobody covers them. Excluding this file is not a
+# special case, it is the truth about it - and it is asserted in `inject()` rather than left
+# to a comment.
+SELF = os.path.basename(__file__)
+
+
 def scan_modules(root=HERE):
-    """(writes, reads) over every tracked python module in `corpus/`."""
+    """(writes, reads) over every tracked python module in `corpus/`, except this one."""
     writes, reads = collections.defaultdict(set), collections.defaultdict(set)
     for fn in sorted(os.listdir(root)):
-        if not fn.endswith(".py"):
+        if not fn.endswith(".py") or fn == SELF:
             continue
         try:
             w, r = key_positions(os.path.join(root, fn))
@@ -161,17 +196,35 @@ def scan_modules(root=HERE):
     return writes, reads
 
 
-def field_census(paths, max_depth=2, map_threshold=8):
+def field_census(paths, max_depth=2, map_threshold=None):
     """({dotted field: row count}, {value-keyed parents}) over the index halves.
 
-    A dict whose KEYS are data rather than schema - `masking.not_masked`, `placements`,
-    every counter in the index - would otherwise contribute one "field" per distinct value
-    and drown the census in things no module could ever be expected to name. A parent with
-    more than `map_threshold` distinct children across the corpus is treated as one of
-    those: it is reported as a value-keyed map, its own name is still censused, and its
-    children are not. The threshold is a heuristic and is printed, because a schema block
-    with nine keys would be misread as a map and that possibility should be visible rather
-    than silent.
+    A dict whose KEYS are data rather than schema - `masking.not_masked`, `placements` -
+    would otherwise contribute one "field" per distinct value and drown the census in things
+    no module could ever be expected to name. So such a parent is reported as a value-keyed
+    map, its own name is still censused, and its children are not.
+
+    THE TEST USED TO BE "MORE THAN EIGHT CHILDREN", AND IT WAS WRONG BOTH WAYS
+    --------------------------------------------------------------------------
+    The previous docstring named the risk exactly - "a schema block with nine keys would be
+    misread as a map" - and then that is what happened, to nine blocks at once. Measured
+    over both halves, the count test classified ten parents as value-keyed. **One of them
+    was.** The other nine were schema blocks whose children were therefore never censused
+    at all, and they include `masking` (26 children), which holds every gate verdict, every
+    finding, `provenance` and `secret_literals` - the block a human clearance is keyed to.
+    An orphan field anywhere under it was invisible to the tool whose entire job is to find
+    orphan fields. It also ran the other way: three value KEYS under
+    `sensitivity_review.adjudication` were counted as fields and reported as orphans,
+    because that parent had only four children and stayed under the threshold.
+
+    The test is now what actually distinguishes the two: **schema keys are written by a
+    programmer and are identifiers; value keys are data labels and are not.** Over both
+    halves exactly four parents have any non-identifier child, and all four are real
+    value-keyed maps - `placements` (10 of 11), `masking.encoded_regions` (3 of 3),
+    `masking.not_masked` (2 of 2), `sensitivity_review.adjudication` (3 of 4). Every other
+    parent in the corpus has children that are identifiers without exception. So the rule is
+    a majority of non-identifier children, it needs no size threshold, and `map_threshold`
+    is accepted and ignored so an old caller does not silently get a different census.
     """
     counts = collections.Counter()
     children = collections.defaultdict(set)
@@ -195,7 +248,8 @@ def field_census(paths, max_depth=2, map_threshold=8):
                     children[prefix].add(k)
                 if isinstance(v, dict) and depth < max_depth:
                     stack.append((name, v, depth + 1))
-    maps = {p_ for p_, kids in children.items() if len(kids) > map_threshold}
+    maps = {p_ for p_, kids in children.items()
+            if kids and sum(1 for k in kids if not k.isidentifier()) * 2 > len(kids)}
     # pass two: count, not descending into a value-keyed map
     for row in rows:
         stack = [("", row, 0)]
@@ -225,6 +279,29 @@ def classify(counts, writes, reads):
         if leaf in KNOWN:
             detail += "  [known: %s]" % KNOWN[leaf]
         out.append((field, n, state, detail))
+    return out
+
+
+def report_removed():
+    if not REMOVED:
+        return
+    print()
+    print("=== fields REMOVED from the index, not merely absent ===")
+    for f, why in sorted(REMOVED.items()):
+        print("  %s" % f)
+        for line in _wrap(why, 88):
+            print("      %s" % line)
+
+
+def _wrap(text, width):
+    words, line, out = text.split(), "", []
+    for w in words:
+        if len(line) + len(w) + 1 > width:
+            out.append(line); line = w
+        else:
+            line = (line + " " + w).strip()
+    if line:
+        out.append(line)
     return out
 
 
@@ -265,6 +342,7 @@ def main():
         if s == "written":
             continue
         print("  %-11s %-42s %7d rows   %s" % (s, f, n, d))
+    report_removed()
     return 0
 
 
@@ -338,10 +416,14 @@ def inject():
 
         print()
         print("=== a value-keyed map must not become one field per value ===")
+        # The map fixture carries DATA LABELS, the way every real one in this corpus does
+        # ("live webroot: other", "hex-digest:not-a-tagged-secret"). It used to carry
+        # `value_0 … value_11`, which are identifiers, and so modelled a map that does not
+        # exist here while missing the property that separates the two.
         idx2 = os.path.join(tmp, "maps.jsonl")
         with open(idx2, "w", encoding="utf-8") as fh:
             for i in range(12):
-                fh.write(json.dumps({"counter": {"value_%d" % i: 1},
+                fh.write(json.dumps({"counter": {"a label: with punctuation %d" % i: 1},
                                      "schema": {"a": 1, "b": 2}}) + "\n")
         c2, maps = field_census([idx2])
         case("the map itself is censused", "counter" in c2, True)
@@ -350,6 +432,30 @@ def inject():
         case("a small schema block is still descended into",
              sorted(f for f in c2 if f.startswith("schema.")), ["schema.a", "schema.b"])
 
+        # The direction that was broken: a schema block with MORE children than the old
+        # count threshold. Nine such blocks were classified as maps and never descended
+        # into, `masking` among them.
+        idx3 = os.path.join(tmp, "wide-schema.jsonl")
+        wide = {"masking": {"k%02d" % i: 1 for i in range(26)}}
+        with open(idx3, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(wide) + "\n")
+        c3, maps3 = field_census([idx3])
+        case("a 26-key block of identifiers is NOT a map", sorted(maps3), [])
+        case("  and every one of its children is censused",
+             len([f for f in c3 if f.startswith("masking.")]), 26)
+
+        # And a small map must still be caught, which the count threshold could not do:
+        # three value keys under a four-child parent were reported as orphan FIELDS.
+        idx4 = os.path.join(tmp, "small-map.jsonl")
+        with open(idx4, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"adjudication": {"pii dropped": 1, "identity->c2": 2,
+                                                  "identity dropped": 1, "note": "x"}}) + "\n")
+        c4, maps4 = field_census([idx4])
+        case("a four-child parent of data labels is still a map", sorted(maps4),
+             ["adjudication"])
+        case("  so its value keys are not censused as fields",
+             [f for f in c4 if f.startswith("adjudication.")], [])
+
         print()
         print("=== the case this tool exists for: the real not_applicable_reason ===")
         rw, rr = scan_modules(HERE)
@@ -357,6 +463,29 @@ def inject():
             "not_applicable_reason", set()) | rw.get("not_applicable_reason", set()), True)
         case("and a grep would therefore have called it covered",
              bool(rr.get("not_applicable_reason")), True)
+
+        print()
+        print("=== the census must not count its own bookkeeping tables as writers ===")
+        # KNOWN and REMOVED are dict literals keyed by field name. Before this was fixed,
+        # three fields KNOWN recorded as orphans - evidence_decoded, evidence_encoded,
+        # hidden_by_encoding - were classified `written` by this file and then not printed,
+        # because main() prints only the states that are not `written`. The note saying
+        # nobody writes them was what stopped them being reported.
+        case("this file is not among the modules scanned",
+             SELF in {m for v in rw.values() for m in v} |
+                     {m for v in rr.values() for m in v}, False)
+        for f in ("evidence_decoded", "evidence_encoded", "hidden_by_encoding"):
+            case("  %s has no writer once KNOWN is excluded" % f, rw.get(f), None)
+        case("a field KNOWN records is still classified ORPHAN, with its note",
+             [st for fld, _n, st, _d in classify(collections.Counter(
+                 {"hidden_by_encoding": 1}), rw, rr) if fld == "hidden_by_encoding"],
+             ["ORPHAN"])
+        case("  and the note is still attached",
+             "known:" in classify(collections.Counter({"hidden_by_encoding": 1}),
+                                  rw, rr)[0][3], True)
+        # The other direction: excluding this file must not hide a REAL writer.
+        case("a field a real module writes is still written",
+             classify(collections.Counter({"sensitivity": 1}), rw, rr)[0][2], "written")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
