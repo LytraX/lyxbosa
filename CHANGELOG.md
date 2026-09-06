@@ -310,6 +310,24 @@ commit list that CI generates per tag. Versions are the git tags described in
   disagrees need different work. Without this, the re-stamp after the gate repair would have
   written fresh stamps over six rows whose recorded verdict the current tools do not produce.
 
+- **`corpus/deobfuscate.py` — the second decoder is tracked, and the two vocabularies are
+  reconciled.** It reproduces the untracked `trail-data/incoming/2026-09-03/deobfuscate.py`
+  that wrote `decoded_form_tags` on 142 rows, with behavioural equality asserted over 11
+  probes. `METHOD_ALIASES` states the correspondence: `hex-escape` + `octal-escape` **merge**
+  into the tracked `escape`, `rot13` is recorder-only, `raw-inflate` is tracked-only — so
+  every gzip container in the corpus is a layer to one decoder and nothing to the other. Every
+  threshold differs too, and the recorder does not de-duplicate layers. Measured on the 8 of
+  142 rows whose bytes are reachable: 357 recorder layers against 380 tracked, agreeing on
+  the count for 2 of 8.
+
+  **Kept out of `gate_provenance.TOOLS`, and not by inheriting last round's reasoning.** The
+  case for including a decoder is real — the encoded-layer gate *is* a decoder plus a
+  predicate — but measured, every `decode_layers` call in the gate path resolves to
+  `verify-content-mask.decode_layers`, which is already in `TOOLS`. This module decides no
+  gate verdict; `TOOLS` membership would invalidate 140 of them on every edit, which this
+  round has just priced. And it would not detect the actual hazard: it would say "the decoder
+  changed", never "the two decoders disagree" — which is what `--reconcile` measures.
+
 - **CORPUS_PLAN §11 gains an eighth appearance** and the heading moves from seven to eight.
   The nine vacuous passes were nine because the predicate began *carries the `secret` tag*,
   and the report that found them explicitly dismissed the other 69 rows recording

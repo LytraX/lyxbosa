@@ -1296,6 +1296,48 @@ outside it (3 regeneration mismatches, 7 with no recorded `masked_sha256`) are u
 at the observed rate of 6 movements in 132 rows one further movement among them would not be
 surprising.
 
+### The second decoder is now tracked, and the two vocabularies are reconciled
+
+`deobfuscation.decoded_form_tags` on 142 rows was written by
+`trail-data/incoming/2026-09-03/deobfuscate.py` — untracked, 3,208 bytes.
+`corpus/deobfuscate.py` reproduces it, asserts behavioural equality against the original over
+11 probes carrying no customer identifier, and reports `ok`/`moved`/`absent` for the
+reference rather than passing quietly where it is missing.
+
+Two vocabularies for one operation is how two artefacts that claim to be the same thing stop
+being the same thing, so `METHOD_ALIASES` states the correspondence and `reconcile_methods()`
+measures it:
+
+```
+hex-escape + octal-escape  ->  escape        two recorder names, one tracked name
+rot13                      ->  (none)        a branch the gate's decoder does not have
+(none)                     <-  raw-inflate   and the reverse: the tracked decoder finds a
+                                             zlib/gzip stream anywhere in the bytes, the
+                                             recorder only inflates what base64 produced
+```
+
+The names are only half of it. Every threshold differs too — base64 runs `{40,}` against
+`{16,}`, hex strings quoted-`{40,}` against unquoted-`{24,}`, `chr()` `{4,}` against `{6,}`,
+texty `>0.85` against `>0.80`, depth 6 against 4 — and the recorder does not de-duplicate
+layers by content while the tracked decoder does. Measured over the **8 of 142** rows whose
+bytes are reachable here: 357 recorder layers against 380 tracked, `hex-escape` 304 +
+`octal-escape` 12 against `escape` 337, and the two layer counts agree on **2 of 8** rows. A
+sample of 8 in 142 detects a discrepancy present on 10% of rows only 57% of the time; what
+these 8 establish is that the disagreement is common, not what its rate is.
+
+**It is kept out of `gate_provenance.TOOLS`, and not for last round's reason.** The argument
+for putting it in is real and should be stated: `sensitivity.py` was excluded because "a
+tagger produces no gate verdict", and a decoder is not a tagger — the encoded-layer gate *is*
+a decoder plus a predicate. Measured, the premise is false for this module: every
+`decode_layers` call in the gate path resolves to `verify-content-mask.decode_layers`, which
+is already in `TOOLS`, and nothing in `corpus/` reads `deobfuscation` except
+`adopt-decoded-tags.py`, which writes `sensitivity` — a publish blocker, not a gate verdict.
+`TOOLS` is not a list of important modules; it is the claim that editing a file invalidates
+stored gate verdicts, and this round has just measured what that claim costs. Spending it on
+a module that cannot alter one of those four verdicts would make the digest the thing people
+route around. And `TOOLS` would not address the real hazard anyway: it would say "the decoder
+changed", never "the two decoders disagree" — which is what `--reconcile` is for.
+
 ### `pending-promotions.jsonl` — measured by one side, applied by the other
 
 A rules round measures which `known_miss` rows its new rules now detect. It does not flip
