@@ -13,6 +13,34 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **The orphan census can say which verdicts rest on a shared leaf, and one orphan is
+  resolved by reading the table it is named in (`corpus/field-provenance.py`).** 43% of
+  non-orphan classifications sat on a leaf shared with another field and the figure appeared
+  once, in the header, so no individual verdict said whether it was one of them. It is now on
+  the verdict — and only where it can change the reading, because the bound is
+  one-directional: matching by leaf can only *add* matches, so a `written` or `read-only`
+  verdict on a shared leaf is weaker, while an `ORPHAN` is unaffected. A leaf no module names
+  at all is named for none of the fields on it.
+
+  `named_field_tables` reads a declared constant out of a module's syntax tree, so
+  `campaign_marker` — listed in `make-shard-manifest.INDEX_OWNED`, a bare string in a table
+  that `key_positions`' subscript-and-`.get()` sweep cannot see — is classified `read-only`
+  from the source rather than by a hand-written override. **Orphans 54 → 53**, `read-only`
+  23 → 24. The list of tables is named rather than pattern-matched: crediting every uppercase
+  tuple of strings would inflate `read-only` the way `written` is already inflated.
+
+  Ten more orphans are triaged into `KNOWN` with their causes, searched with `command grep`
+  over the 276 python files under `corpus/`, `trail-data/`, `docs/` and `tests/` found by
+  `find` — the shell's `grep` respects `.gitignore` and cannot see `trail-data`, which is
+  where every untracked writer named actually lives. Two are near-misses worth recording
+  because the next sweep would otherwise resolve them by accident: `fp_fixture` against
+  `verify.py`'s own `fp_fixtures`, `observed_by` against its `observed_by_rerun`, and the
+  `basis` leaf against `tag-sensitivity.py`'s `human_basis` and `make-summary.py`'s
+  `<no basis recorded>` placeholder — three substring collisions in a triage of eleven
+  fields, which is the rate to expect rather than a run of bad luck.
+  `prior_corpus` (2,494 rows) has no writer and no reader anywhere on this machine — its only
+  mentions are two docstrings citing `prior_corpus.family`, a field neither half carries.
+
 - **`corpus/lift-adjudication.py` — a human adjudication is no longer squatting in a gate's
   evidence key.** Two published rows, the polyglot siblings of §5.4, recorded
   `classification / decision / resolution / value / why_it_matters` under

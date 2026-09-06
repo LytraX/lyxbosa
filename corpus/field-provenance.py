@@ -52,7 +52,7 @@ TWO DENOMINATORS, BOTH BOUNDED BY THE PROCESS THAT PRODUCED THEM (§11)
     corpus/field-provenance.py --json
     corpus/field-provenance.py --inject
 """
-import argparse, ast, collections, json, os, sys
+import argparse, ast, collections, json, os, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -77,6 +77,50 @@ KNOWN = {
                    "count (or the older copies_on_disk)"),
     "copies_on_disk": ("the older name for `count` on two published rows; read by the same "
                        "shard-gate invariant as `placements`"),
+    # --- triaged 2026-09-07 (cl). Searched with `command grep` over the 276 python files
+    # under corpus/, trail-data/, docs/ and tests/ found by `find`, because the shell's
+    # `grep` respects .gitignore and cannot see trail-data at all - which is where every
+    # untracked writer named below actually lives.
+    "campaign_marker": ("written by trail-data/incoming/2026-09-03/derived/promote-sc.py "
+                        "and promote-round.py, untracked. Read by make-shard-manifest.py, "
+                        "which lists it in INDEX_OWNED so every manifest overwrites it from "
+                        "the row. The census used to call it an orphan because "
+                        "`key_positions` finds subscripts and `.get()` calls and this is a "
+                        "bare string in a table iterated later; `named_field_tables` reads "
+                        "that table out of the module's AST, so the resolution is derived "
+                        "and not asserted here"),
+    "attacker_written": ("written by trail-data/incoming/2026-09-03/round8/apply.py and "
+                         "plan.py and derived/promote-round.py, all untracked. No reader "
+                         "anywhere; orphan confirmed, writer named"),
+    "basis": ("`review.basis`, `sensitivity_evidence.derived.basis` and "
+              "`sensitivity_evidence.secret.basis` share this leaf. Written by "
+              "trail-data/incoming/2026-09-03/round8/plan.py, untracked. No tracked module "
+              "reads or writes the KEY - two mention the string and neither is a reader: "
+              "tag-sensitivity.py carries `human_basis`, a different field, and uses the "
+              "English word in a message; make-summary.py has the placeholder "
+              "`<no basis recorded>` for a missing `reason`. So all three are orphans, and "
+              "the shared leaf cannot be hiding a reader either way - sharing only ever "
+              "ADDS matches, see `leaf_collisions`. The first sweep here searched for the "
+              "quoted string and found neither module, which would have been the right "
+              "answer for the wrong reason"),
+    "prior_corpus": ("no writer and no reader on this machine. The only mentions are two "
+                     "DOCSTRINGS - incident_mask.py and verify-infected-mask.py - citing "
+                     "`prior_corpus.family` as a past failure, and that field does not "
+                     "exist in either half today. Carried in by an import that predates "
+                     "every tool here"),
+    "fp_fixture": ("orphan confirmed, and the near-miss is named so the next sweep does not "
+                   "resolve it by accident: corpus/verify.py holds `fp_fixtures` (PLURAL) "
+                   "ten times, which is that tool's own result key and not this row field"),
+    "observed_by": ("orphan confirmed, with the same trap: corpus/verify.py writes "
+                    "`observed_by_rerun`, a different key of its own, and a substring sweep "
+                    "for `observed_by` hits it"),
+    "carrier_format": ("no mention in any of the 276 python files, nor in docs/ or tests/. "
+                       "Orphan with no writer identifiable on this machine"),
+    "local_only_history": ("as carrier_format: no mention anywhere on this machine"),
+    "polymorphic_sibling_note": ("as carrier_format: no mention anywhere on this machine"),
+    "expect_provenance": ("no writer or reader; the single mention is "
+                          "docs/results/corpus-round-14-2026-09-06.md, a round report, "
+                          "which is not a reader"),
 }
 
 # Fields REMOVED from the index, so the next census cannot rediscover them as new and so a
@@ -245,6 +289,49 @@ SELF = os.path.basename(__file__)
 PARSED = []
 
 
+# Module-level ALL-CAPS tuples/lists/sets of plain strings that ARE a list of index field
+# names, named here rather than guessed at. `key_positions` finds subscripts and `.get()`
+# calls; a bare string in a table that is iterated later is neither, and this repository
+# writes that idiom constantly.
+#
+# Why a NAMED list and not "every uppercase tuple of strings": most such tables are not
+# field names at all - shape vocabularies, gate verdict values, regex labels - and crediting
+# their contents as reads would inflate `read-only` exactly the way `written` is already
+# inflated. §11 is about a denominator enumerated by the process that produced it; widening
+# this to a pattern would be a twelfth instance rather than a repair.
+FIELD_NAME_TABLES = {
+    "make-shard-manifest.py": ("INDEX_OWNED",),
+}
+
+
+def named_field_tables(path, names):
+    """{constant: [field names]} read from `path`'s AST, or {} where the shape is gone.
+
+    Parsed rather than imported (importing runs a tool) and rather than grepped (a text
+    search cannot tell one tuple from another) - the same tie `gate_evidence` makes for
+    `mask-samples.py`'s key tuple. A constant that is no longer a flat tuple of strings is
+    ABSENT from the result rather than empty, so `--inject` can tell "the shape moved" from
+    "the table is empty" instead of reporting agreement either way.
+    """
+    out = {}
+    with open(path, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for t in node.targets:
+            if not (isinstance(t, ast.Name) and t.id in names):
+                continue
+            v = node.value
+            if not isinstance(v, (ast.Tuple, ast.List, ast.Set)):
+                continue
+            vals = [e.value for e in v.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            if len(vals) == len(v.elts) and vals:
+                out[t.id] = vals
+    return out
+
+
 def scan_modules(root=HERE):
     """(writes, reads) over every tracked python module in `corpus/`, except this one."""
     writes, reads = collections.defaultdict(set), collections.defaultdict(set)
@@ -261,6 +348,12 @@ def scan_modules(root=HERE):
             writes[k].add(fn)
         for k in r:
             reads[k].add(fn)
+        # A field this module carries by naming it in a declared table is READ by it, not
+        # written: the table says the value comes from the row.
+        for _const, fields in named_field_tables(os.path.join(root, fn),
+                                                 FIELD_NAME_TABLES.get(fn, ())).items():
+            for k in fields:
+                reads[k].add(fn)
     return writes, reads
 
 
@@ -369,8 +462,30 @@ def leaf_collisions(counts):
     return shared, sum(len(v) for v in shared.values())
 
 
-def classify(counts, writes, reads):
-    """[(field, rows, state, detail)] - state is 'written', 'read-only' or 'ORPHAN'."""
+def classify(counts, writes, reads, shared=None):
+    """[(field, rows, state, detail)] - state is 'written', 'read-only' or 'ORPHAN'.
+
+    THE SHARED LEAF IS MARKED ON THE VERDICT, NOT ONLY IN A FOOTNOTE
+    ------------------------------------------------------------------
+    43% of non-orphan classifications rest on a leaf shared with another field, and that
+    figure used to appear once in the header - so a reader looking at any single `written`
+    row could not tell whether it was one of the 43%. It is now on the row.
+
+    **The bound is one-directional, and saying so is the point.** Matching by leaf can only
+    ADD matches: a module that names `basis` might mean any of the three fields on that
+    leaf. So
+
+      * a `written` or `read-only` verdict on a shared leaf is WEAKER than the same verdict
+        on its own leaf - the module may be naming a different field entirely;
+      * an `ORPHAN` verdict is UNAFFECTED by sharing. A leaf no module names at all is named
+        for none of the fields on it, however many there are, so sharing cannot manufacture
+        a false orphan.
+
+    That asymmetry is why the marker is only printed where it can change the reading, and
+    why the triage in `KNOWN` can confirm an orphan on a shared leaf at full confidence
+    while a non-orphan on one is explicitly flagged as resting on less.
+    """
+    shared = shared if shared is not None else leaf_collisions(counts)[0]
     out = []
     for field, n in counts.most_common():
         leaf = field.rsplit(".", 1)[-1]
@@ -380,6 +495,11 @@ def classify(counts, writes, reads):
             state, detail = "read-only", "read by %s" % ", ".join(sorted(reads[leaf])[:3])
         else:
             state, detail = "ORPHAN", "no tracked module in corpus/ mentions it"
+        others = [f for f in shared.get(leaf, ()) if f != field]
+        if others and state != "ORPHAN":
+            detail += ("  [leaf `%s` is shared with %s: this verdict may be about %s]"
+                       % (leaf, ", ".join(sorted(others)[:3]),
+                          "one of them" if len(others) > 1 else "that field"))
         if leaf in KNOWN:
             detail += "  [known: %s]" % KNOWN[leaf]
         out.append((field, n, state, detail))
@@ -652,6 +772,56 @@ def inject():
         toy = collections.Counter({"a.note": 1, "b.note": 1, "c.unique": 1})
         sh, on = leaf_collisions(toy)
         case("two fields sharing a leaf are counted as sharing it", sorted(sh), ["note"])
+
+        print()
+        print("=== a field named in a declared table is read, and the tie is to the AST ===")
+        _msm = os.path.join(HERE, "make-shard-manifest.py")
+        _tables = named_field_tables(_msm, FIELD_NAME_TABLES["make-shard-manifest.py"])
+        case("INDEX_OWNED was found in make-shard-manifest.py's AST",
+             "INDEX_OWNED" in _tables, True)
+        case("and campaign_marker is in it",
+             "campaign_marker" in _tables.get("INDEX_OWNED", []), True)
+        case("so it classifies as read, not orphan",
+             classify(collections.Counter({"campaign_marker": 1}), *scan_modules())[0][2],
+             "read-only")
+        # The extractor must report ABSENCE rather than an empty list, or the tie above
+        # passes by being blind the day the constant is renamed or reshaped.
+        _fd, _tmp = tempfile.mkstemp(suffix=".py")
+        with os.fdopen(_fd, "w") as fh:
+            fh.write("INDEX_OWNED = tuple(x for x in ())\n")
+        case("a constant that is no longer a flat tuple is absent, not empty",
+             named_field_tables(_tmp, ("INDEX_OWNED",)), {})
+        with open(_tmp, "w") as fh:
+            fh.write('OTHER = ("a", "b")\n')
+        case("and a table this does not ask for is not read",
+             named_field_tables(_tmp, ("INDEX_OWNED",)), {})
+        with open(_tmp, "w") as fh:
+            fh.write('INDEX_OWNED = ("a", "b")\n')
+        case("a real one is read", named_field_tables(_tmp, ("INDEX_OWNED",)),
+             {"INDEX_OWNED": ["a", "b"]})
+        os.unlink(_tmp)
+
+    # THE MARKER, IN BOTH DIRECTIONS AND IN BOTH STATES.
+        #
+        # It has to appear where the verdict could be about another field, and it has to STAY
+        # AWAY from an orphan, where sharing changes nothing - a marker on every row would say
+        # no more than the footnote it replaced.
+        _counts = collections.Counter({"a.note": 3, "b.note": 2, "c.own": 1, "d.note": 1})
+        _shared = leaf_collisions(_counts)[0]
+        _rows = {f: d for f, _n, _s, d in
+                 classify(_counts, {"note": {"m.py"}}, {}, shared=_shared)}
+        case("a written verdict on a shared leaf says so",
+             "leaf `note` is shared with" in _rows["a.note"], True)
+        case("and names the other fields it might be about",
+             "b.note" in _rows["a.note"] and "d.note" in _rows["a.note"], True)
+        _own = {f: d for f, _n, _s, d in
+                classify(_counts, {"own": {"m.py"}}, {}, shared=_shared)}
+        case("a written verdict on its OWN leaf does not", "is shared with" in _own["c.own"],
+             False)
+        _orph = {f: (s, d) for f, _n, s, d in classify(_counts, {}, {}, shared=_shared)}
+        case("an orphan on a shared leaf is still an orphan", _orph["a.note"][0], "ORPHAN")
+        case("and carries no sharing caveat, because sharing cannot make a false orphan",
+             "is shared with" in _orph["a.note"][1], False)
         case("and both are counted, not one", on, 2)
         case("a leaf nothing else uses is not counted",
              "unique" in sh, False)
