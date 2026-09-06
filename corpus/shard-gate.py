@@ -156,6 +156,30 @@ def _gate_blocker(label, verdict, detail):
             % (label, detail))
 
 
+DECISION = "decision"
+RESOLUTION = "resolution"
+
+
+def _decision_blocks(masking):
+    """(name, block) for every dict under `masking` that records a `decision`.
+
+    One level down, and one level down inside `gate_categories`, which is the second place
+    this index records a finding. Deliberately not keyed to a fixed list of finding names:
+    the field is a human's, the two rows that carry one put it inside
+    `encoded_layer_finding`, and a rule that only looked there would be a rule about where
+    somebody happened to write it.
+    """
+    out = []
+    for k, v in sorted((masking or {}).items()):
+        if isinstance(v, dict) and DECISION in v:
+            out.append((k, v))
+        if k == "gate_categories" and isinstance(v, dict):
+            for k2, v2 in sorted(v.items()):
+                if isinstance(v2, dict) and DECISION in v2:
+                    out.append(("gate_categories." + k2, v2))
+    return out
+
+
 def evaluate(r):
     why = []
     if r.get("verdict") == "unreviewed":
@@ -276,6 +300,32 @@ def evaluate(r):
                        % (b4, aft, sl.get("decoded_layers_before"),
                           sl.get("decoded_layers_after")))
 
+    # QUESTION FIVE: is there a recorded decision that says it is holding this row, with
+    # nothing recorded to say it was ever resolved?
+    #
+    # THE POPULATION IS ZERO AND THAT IS WHY THE CONTROLS ARE THE WHOLE OF THE CHECK.
+    # Two rows in the corpus carry a `decision` - both published, both `publishable: true`,
+    # both adjudicating one address inside an encoded layer - and both carry a `resolution`.
+    # Nothing in this repository reads either field. So this rule has never fired, cannot
+    # be validated against real data, and is exactly what AGENTS.md means by "a check that
+    # has never been observed to fail is not yet a check". It is written for its controls,
+    # which assert it in both directions; the live run is a census that says the population
+    # is zero, never evidence that the rule works.
+    #
+    # The hazard is precise. A block reading `decision: held for human confirmation; not
+    # published until resolved` with no `resolution` beside it is, to every tracked
+    # consumer of this index, identical to a row with nothing wrong: `publishable` is
+    # computed from the gate verdicts and the tags, none of which the decision touches. The
+    # sentence says the row is held and nothing holds it.
+    #
+    # Read one level down through `masking` and through `gate_categories`, because that is
+    # where a finding is recorded and a decision has so far been written inside one. Not
+    # clearable: `CLEARABLE_GATES` is the four recorded gate results, and a decision awaiting
+    # its own resolution is work to finish rather than evidence to judge.
+    for block_name, block in _decision_blocks(m):
+        if not block.get("resolution"):
+            why.append("masking.%s records a decision with no resolution" % block_name)
+
     # Detection parity is the one field whose meaning depends on whether a masking pass
     # happened at all. `applied: false` has two forms and they are told apart by which key
     # is set: `reason` ("no identifier to mask") is a pass that ran, and its
@@ -377,6 +427,82 @@ def integrityViolations(rows):
         exp = r.get("expect") or {}
         if exp.get("must_detect") and r.get("verdict") == "unreviewed":
             out.append(r["sha256"])
+    return out
+
+
+def mustDetectViolations(rows):
+    """`expect.must_detect` may not assert a rule the row's own post-masking scan did not see.
+
+    WHY THIS FIELD GETS A READER RATHER THAN A DELETION
+    ----------------------------------------------------
+    `masking.detection_after_masking` was an orphan: 6 published rows carry it and no
+    tracked module in `corpus/` mentioned it. It looks redundant beside `rules_after`, and
+    it is not - **no published row carries `rules_after` at all**, so on those six rows this
+    is the published half's only record of what the scanner matched after masking, and it is
+    the measurement `expect.must_detect` was taken from. Deleting it would delete the
+    evidence for six `must_detect` assertions and leave the assertions.
+
+    So it gets the relationship it stands in:
+
+        set(expect.must_detect) <= set(masking.detection_after_masking)
+
+    A subset and not equality, because `must_detect` is a floor - a suite assertion that
+    these rules must fire - while the recorded scan may legitimately have seen more. What it
+    may not be is a rule the row's own record says was not matched: that is an assertion
+    contradicting the measurement beside it, and it is exactly the shape §11 records for
+    `must_detect` populated from a rescan. It holds on 6 of 6 today, with equality on all
+    six.
+
+    Map-free and scanner-free, like every other invariant here: it compares two fields the
+    row already carries, so a stranger with the published half can run it.
+    """
+    out = []
+    for r in rows:
+        after = (r.get("masking") or {}).get("detection_after_masking")
+        if after is None:
+            continue
+        if not isinstance(after, list):
+            out.append((r["sha256"], "detection_after_masking is %s, not a list"
+                        % type(after).__name__))
+            continue
+        want = (r.get("expect") or {}).get("must_detect") or []
+        missing = sorted(set(want) - set(after))
+        if missing:
+            out.append((r["sha256"],
+                        "expect.must_detect asserts %s, which the row's own recorded "
+                        "post-masking scan did not match" % "/".join(missing)))
+    return out
+
+
+# `staging_dir` is a directory NAME, and the positive form of that is what is asserted.
+# Same discipline as `HOME_RE`/`ACCT_RE` above and for the same reason: 67 of the 75 rows
+# that carry it are PUBLISHED, no tracked module read it, and a field on a published row
+# that nothing looks at cannot go wrong in a way anything notices. Stating what is allowed -
+# one path component, from a conservative character set - is checkable without the account
+# map, which is the property that lets a stranger run it.
+#
+# Measured before it was armed: 13 distinct values over 75 rows, 7 to 32 characters, every
+# one a single component drawn from [A-Za-z0-9._-], and NONE of them matching an identifier
+# in either pseudonym map. They are attacker-created directory names. The value of the rule
+# is not today's population, it is that `staging_dir` can never come to hold `/home/<x>/…`
+# without something saying so.
+STAGING_DIR_RE = re.compile(r'^[A-Za-z0-9._-]{1,64}$')
+
+
+def stagingDirViolations(rows):
+    """`staging_dir` must be one path component, never a path."""
+    out = []
+    for r in rows:
+        v = r.get("staging_dir")
+        if v is None:
+            continue
+        if not isinstance(v, str):
+            out.append((r["sha256"], "staging_dir is %s, not a string" % type(v).__name__))
+        elif v in (".", ".."):
+            out.append((r["sha256"], "staging_dir is a relative path element"))
+        elif not STAGING_DIR_RE.match(v):
+            out.append((r["sha256"], "staging_dir is not a single path component from "
+                                     "[A-Za-z0-9._-]"))
     return out
 
 
@@ -715,6 +841,33 @@ def main(path, apply_fix=False):
         if len(places) > 10:
             print("  ... and %d more" % (len(places) - 10))
 
+    musts = mustDetectViolations(rows)
+    print("rows asserting a rule their own scan did not match :", len(musts))
+    if musts:
+        print()
+        print("=== INVARIANT: must_detect may not contradict detection_after_masking ===")
+        print("  `detection_after_masking` is the published half's only record of what the")
+        print("  scanner matched after masking - no published row carries `rules_after` - and")
+        print("  it is what `expect.must_detect` was taken from. An assertion the row's own")
+        print("  measurement contradicts is §11's must_detect-from-a-rescan, facing the other")
+        print("  way.")
+        for sha, why in musts[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(musts) > 10:
+            print("  ... and %d more" % (len(musts) - 10))
+
+    stages = stagingDirViolations(rows)
+    print("rows whose staging_dir is not a single component :", len(stages))
+    if stages:
+        print()
+        print("=== INVARIANT: staging_dir is a directory NAME, not a path ===")
+        print("  67 of the 75 rows carrying it are published and nothing read it. The positive")
+        print("  form is asserted rather than a hunt for host paths, so it needs no map.")
+        for sha, why in stages[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(stages) > 10:
+            print("  ... and %d more" % (len(stages) - 10))
+
     forms = formViolations(rows)
     print("rows whose masked component is malformed :", len(forms))
     if forms:
@@ -748,7 +901,8 @@ def main(path, apply_fix=False):
     # something upstream changed a verdict or a tag without re-running this gate. Exiting
     # zero there is how "publishable flags corrected: 14" became a line nobody read.
     # The green result is the plain run afterwards.
-    return 1 if (stale or bad or leaks or forms or unread or badc or places) else 0
+    return 1 if (stale or bad or leaks or forms or unread or badc or places
+                 or musts or stages) else 0
 
 
 # ---------------------------------------------------------------------------
@@ -1203,6 +1357,143 @@ def inject(path):
           dict(base, placements=["live webroot: other"], count=1), True)
     pcase("a count that is a bool rather than an int",
           dict(base, placements={"other": True}, count=1), True)
+
+    print()
+    # 7. two orphan fields given a reader. Neither invariant has ever fired: both were
+    # written over populations that already satisfy them (6 of 6, and 75 of 75), which is
+    # the condition AGENTS.md names as "not yet a check", so both directions are asserted
+    # here rather than inferred from a green run.
+    print("=== must_detect may not contradict the row's own post-masking scan ===")
+
+    def mcase(label, row, want_hit):
+        got = mustDetectViolations([row])
+        ok = bool(got) == want_hit
+        ran.append(label)
+        print("  %-56s %-6s %s" % (label, "hit" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("hit" if want_hit else "clean")))
+        if not ok:
+            fails.append(label)
+
+    mcase("must_detect exactly what the scan recorded",
+          dict(base, expect={"must_detect": ["BD012"]},
+               masking={"detection_after_masking": ["BD012"]}), False)
+    mcase("a scan that matched MORE than must_detect asserts",
+          dict(base, expect={"must_detect": ["BD012"]},
+               masking={"detection_after_masking": ["BD012", "EXP006"]}), False)
+    mcase("a known miss: nothing asserted, nothing matched",
+          dict(base, expect={"must_detect": []},
+               masking={"detection_after_masking": []}), False)
+    mcase("no detection_after_masking at all: not this check's business",
+          dict(base, expect={"must_detect": ["BD012"]}, masking={}), False)
+    mcase("must_detect asserts a rule the scan did not match",
+          dict(base, expect={"must_detect": ["BD012"]},
+               masking={"detection_after_masking": ["EXP006"]}), True)
+    mcase("must_detect asserts a rule against an empty scan",
+          dict(base, expect={"must_detect": ["BD012"]},
+               masking={"detection_after_masking": []}), True)
+    mcase("detection_after_masking recorded as a string",
+          dict(base, expect={"must_detect": []},
+               masking={"detection_after_masking": "BD012"}), True)
+
+    print()
+    print("=== staging_dir is a directory NAME, and the positive form says so ===")
+
+    def scase(label, value, want_hit):
+        got = stagingDirViolations([dict(base, staging_dir=value)])
+        ok = bool(got) == want_hit
+        ran.append(label)
+        print("  %-56s %-6s %s" % (label, "hit" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("hit" if want_hit else "clean")))
+        if not ok:
+            fails.append(label)
+
+    scase("an ordinary attacker directory name", "woo-paypal-stripe-gateway-wtC8pc", False)
+    scase("a short lowercase name", "acajapa", False)
+    scase("a name with a dot in it", "wp-admin.bak", False)
+    ran.append("no staging_dir at all: not this check's business")
+    none_hit = bool(stagingDirViolations([dict(base)]))
+    print("  %-56s %-6s %s" % ("no staging_dir at all: not this check's business",
+                               "hit" if none_hit else "clean", "ok" if not none_hit else "WRONG"))
+    if none_hit:
+        fails.append("no staging_dir at all: not this check's business")
+    scase("a host path", "/home/acct01/public_html", True)
+    scase("a home path with a digit suffix on /home", "/home2/acct01", True)
+    scase("a bare traversal element", "..", True)
+    scase("a windows-style path", "C:\\wwwroot\\site", True)
+    scase("a name with a slash anywhere in it", "wp-content/uploads", True)
+    scase("an empty string", "", True)
+    scase("a value that is not a string at all", ["dir"], True)
+
+    print()
+    # 8. a recorded decision must carry its resolution. The population is TWO rows, both
+    # resolved, so this rule has never fired and cannot fire on today's corpus. These cases
+    # are not a supplement to a live result - they are the whole of it.
+    print("=== a decision that says it holds the row must say it was resolved ===")
+
+    def dcase(label, masking, want_hit):
+        row = dict(base, masking=masking)
+        _ok, why = evaluate(row)
+        hit = [w for w in why if "records a decision with no resolution" in w]
+        got = bool(hit)
+        ok = got == want_hit
+        ran.append(label)
+        print("  %-56s %-6s %s" % (label, "blocks" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("blocks" if want_hit else "clean")))
+        if not ok:
+            fails.append(label)
+        return why
+
+    HELD = "held for human confirmation; not published until resolved"
+    RESOLVED = {"resolution": "attacker-owned; kept as an IOC", "method": "read locally"}
+    masked_ok = dict(MASKED)
+    dcase("a decision with a resolution beside it",
+          dict(masked_ok, encoded_layer_finding={"decision": HELD,
+                                                 "resolution": dict(RESOLVED)}), False)
+    dcase("the same decision with no resolution",
+          dict(masked_ok, encoded_layer_finding={"decision": HELD}), True)
+    dcase("a resolution recorded as empty",
+          dict(masked_ok, encoded_layer_finding={"decision": HELD, "resolution": {}}), True)
+    dcase("a resolution and no decision: not this check's business",
+          dict(masked_ok, encoded_layer_finding={"resolution": dict(RESOLVED)}), False)
+    dcase("an ordinary finding with neither",
+          dict(masked_ok, encoded_layer_finding={"occurrences": 3}), False)
+    dcase("a decision recorded under gate_categories, the other place findings live",
+          dict(masked_ok, gate_categories={"plaintext_finding": {"decision": HELD}}), True)
+    dcase("and there with its resolution",
+          dict(masked_ok, gate_categories={"plaintext_finding": {"decision": HELD,
+                                                                 "resolution": "done"}}),
+          False)
+    # §8: one cause, one reason. A row already blocked for something else must gain exactly
+    # one more, not two, and the existing blockers must be untouched.
+    both = dcase("a row already blocked elsewhere gains exactly one reason",
+                 dict(masked_ok, encoded_layer_gate="FAIL",
+                      encoded_layer_finding={"decision": HELD}), True)
+    n = len([w for w in both if "records a decision with no resolution" in w])
+    ran.append("exactly one decision reason")
+    print("  %-56s %-6s %s" % ("and exactly one, not one per place it looked", n,
+                               "ok" if n == 1 else "WRONG (wanted 1)"))
+    if n != 1:
+        fails.append("exactly one decision reason")
+    # Not clearable, asserted rather than assumed: only a recorded gate result is a finding.
+    ran.append("a decision blocker is not a clearable finding")
+    not_clearable = DECISION not in clearance.CLEARABLE_GATES
+    print("  %-56s %-6s %s" % ("a decision is not in CLEARABLE_GATES",
+                               "yes" if not_clearable else "no",
+                               "ok" if not_clearable else "WRONG"))
+    if not not_clearable:
+        fails.append("a decision blocker is not a clearable finding")
+    # And the live census, which is a statement about the population and not a pass: the
+    # rule fires on nothing today, and two rows carry a decision for it to fire on.
+    carriers = [r for r in rows if _decision_blocks(r.get("masking") or {})]
+    unresolved = [r for r in carriers
+                  if any(not b.get("resolution")
+                         for _n, b in _decision_blocks(r.get("masking") or {}))]
+    print("  rows carrying a recorded decision : %d" % len(carriers))
+    print("  of those, unresolved              : %d   (the population this rule has ever "
+          "had to act on)" % len(unresolved))
 
     # Counted, never quoted, and printed LAST. It was hardcoded at 20 while the suite grew;
     # then it was correct but emitted before the nine `pcase` checks ran, so the headline read

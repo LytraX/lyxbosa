@@ -98,6 +98,32 @@ REMOVED = {
 }
 
 
+# A control suite is not a writer. Every tool in this tree carries one, and a control
+# fixture is a dict literal - `{"decision": …, "resolution": …}` - which `key_positions`
+# reads as a write position exactly like a real one. Nothing that runs against the index
+# passes through these functions.
+#
+# THIS IS THE SAME DEFECT THIS FILE ALREADY DOCUMENTS ABOUT ITSELF, IN A SECOND PLACE.
+# `KNOWN` and `REMOVED` are dict literals keyed by field name, so the census was the sole
+# claimed writer of six real index fields until it stopped parsing itself. Control fixtures
+# are the same shape one level along, and the count is not small: measured over both halves,
+# NINE fields carried by rows have no write position anywhere in `corpus/` outside a control
+# suite - including `account_hash` on 67,985 rows and `origin.account_hash` on 47,133, whose
+# only mention in this repository is a fixture in `regen-tiers.py --inject`. Every one of
+# them was being reported as covered.
+CONTROL_SUITES = ("inject", "_selftest")
+
+
+def _control_nodes(tree):
+    """Every node inside a control-suite function, by identity."""
+    inside = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in CONTROL_SUITES:
+            for c in ast.walk(n):
+                inside.add(id(c))
+    return inside
+
+
 def key_positions(path):
     """({written}, {read}) - the string constants this module writes and reads as keys.
 
@@ -105,10 +131,16 @@ def key_positions(path):
     exactly that idiom - `RECORD_KEY = "sensitivity_adopted"`, then `after[RECORD_KEY] = …`.
     Without it `adopt-decoded-tags.py` and `tag-sensitivity.py` both report their own record
     field as an orphan, which is a false finding in the direction that wastes a round.
+
+    Write positions inside `inject()` and `_selftest()` do NOT count - see `CONTROL_SUITES`.
+    Read positions still do: a control that reads a field is a tracked reader of it in the
+    only sense this census measures, and the asymmetry is deliberate, because `written` is
+    the state that hides a field from the report.
     """
     with open(path, encoding="utf-8") as fh:
         tree = ast.parse(fh.read())
     written, read = set(), set()
+    control = _control_nodes(tree)
 
     consts = {}
     for node in tree.body:
@@ -125,28 +157,26 @@ def key_positions(path):
             return consts.get(node.id)
         return None
 
+    def write(s, node):
+        if s and id(node) not in control:
+            written.add(s)
+
     for node in ast.walk(tree):
         # r["k"] = v  /  del r["k"]
         if isinstance(node, (ast.Assign, ast.AugAssign, ast.Delete)):
             targets = node.targets if hasattr(node, "targets") else [node.target]
             for t in targets:
                 if isinstance(t, ast.Subscript):
-                    k = const(t.slice)
-                    if k:
-                        written.add(k)
+                    write(const(t.slice), node)
         # {"k": v}
         elif isinstance(node, ast.Dict):
             for k in node.keys:
-                s = const(k)
-                if s:
-                    written.add(s)
+                write(const(k), node)
         elif isinstance(node, ast.Call):
             fn = node.func
             name = fn.attr if isinstance(fn, ast.Attribute) else None
             if name in ("setdefault", "pop") and node.args:
-                s = const(node.args[0])
-                if s:
-                    written.add(s)
+                write(const(node.args[0]), node)
             elif name == "get" and node.args:
                 s = const(node.args[0])
                 if s:
@@ -154,7 +184,7 @@ def key_positions(path):
             elif name == "dict":
                 for kw in node.keywords:
                     if kw.arg:
-                        written.add(kw.arg)
+                        write(kw.arg, node)
         elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
             s = const(node.slice)
             if s:
@@ -179,9 +209,20 @@ def key_positions(path):
 SELF = os.path.basename(__file__)
 
 
+# How many modules were actually parsed. It used to be reported as
+# `len({m for v in writes.values() for m in v})` - the number of modules with at least one
+# WRITE position, printed under the label "tracked modules parsed". The two were the same
+# number by accident and stopped being it the moment control fixtures stopped counting as
+# writes: three modules whose only key literals are in their control suite dropped out, and
+# the line read "30 parsed" over a directory of 34. A count is not a count of what its label
+# says until something makes it so.
+PARSED = []
+
+
 def scan_modules(root=HERE):
     """(writes, reads) over every tracked python module in `corpus/`, except this one."""
     writes, reads = collections.defaultdict(set), collections.defaultdict(set)
+    del PARSED[:]
     for fn in sorted(os.listdir(root)):
         if not fn.endswith(".py") or fn == SELF:
             continue
@@ -189,6 +230,7 @@ def scan_modules(root=HERE):
             w, r = key_positions(os.path.join(root, fn))
         except SyntaxError:                                          # pragma: no cover
             continue
+        PARSED.append(fn)
         for k in w:
             writes[k].add(fn)
         for k in r:
@@ -327,7 +369,9 @@ def main():
         return 0
 
     print("index halves read      : %s" % ", ".join(os.path.basename(p) for p in paths))
-    print("tracked modules parsed : %d" % len({m for v in writes.values() for m in v}))
+    print("tracked modules parsed : %d   (of which any field name appears in: %d)"
+          % (len(PARSED), len({m for v in writes.values() for m in v}
+                              | {m for v in reads.values() for m in v})))
     print("fields carried by rows : %d   (value-keyed maps not descended: %d)"
           % (len(rows), len(maps)))
     print("  written by a tracked module : %d" % tally["written"])
@@ -455,6 +499,42 @@ def inject():
              ["adjudication"])
         case("  so its value keys are not censused as fields",
              [f for f in c4 if f.startswith("adjudication.")], [])
+
+        print()
+        print("=== a control fixture is not a writer, and a control READER still is ===")
+        # The same defect as the KNOWN/REMOVED tables below, one module along: every tool
+        # here carries an `inject()` and a control fixture is a dict literal. Measured over
+        # both halves, NINE fields carried by rows had no write position anywhere outside a
+        # control suite - `account_hash` on 67,985 rows and `origin.account_hash` on 47,133
+        # among them - and all nine were being reported as covered.
+        #
+        # Both directions. Without the negative half the rule could simply be "ignore these
+        # functions entirely", which would throw away real read coverage: eight of those
+        # nine turned out to have a genuine tracked READER, and only `deobfuscation.status`
+        # (645 rows) was a true orphan the census had been hiding.
+        with open(os.path.join(tmp, "controlled.py"), "w", encoding="utf-8") as fh:
+            fh.write("def build(r):\n"
+                     "    r['written_for_real'] = 1\n"
+                     "def inject():\n"
+                     "    row = {'written_only_in_a_fixture': 1}\n"
+                     "    return row.get('read_only_in_a_fixture')\n"
+                     "def _selftest():\n"
+                     "    return {'written_only_in_a_selftest': 2}\n")
+        wc, rc = scan_modules(tmp)
+        case("a field written in build() is written",
+             sorted(wc.get("written_for_real", ())), ["controlled.py"])
+        case("a field written only inside inject() is NOT",
+             wc.get("written_only_in_a_fixture"), None)
+        case("nor one written only inside _selftest()",
+             wc.get("written_only_in_a_selftest"), None)
+        case("but a field READ inside a control is still read",
+             sorted(rc.get("read_only_in_a_fixture", ())), ["controlled.py"])
+        # And on the real tree, which is where the nine were found.
+        rw0, _rr0 = scan_modules(HERE)
+        case("account_hash has no real write position in corpus/",
+             rw0.get("account_hash"), None)
+        case("deobfuscation.status's leaf has none either",
+             rw0.get("status"), None)
 
         print()
         print("=== the case this tool exists for: the real not_applicable_reason ===")

@@ -36,6 +36,21 @@ than something that happened. Every other key stays add-only and the assertion s
 it. The safety property is unchanged and is not the assertion: a stamp is written only where
 `reverify()` says the current gate returns what the row records, so a replacement can never
 launder a verdict that moved - it can only restate one that did not.
+
+"WHAT THE ROW RECORDS" IS THE WHOLE FINDING, NOT THE VERDICT CLASS
+------------------------------------------------------------------
+It used to be the verdict class alone, and that let a payload go stale beneath a stamp that
+appears to certify it: on `34bba99dae63` the recorded `secret_literals` reads 1/1/1 where the
+current gate returns 2/2/2, `FAIL` did not become `PASS`, so this tool stamped - and
+`remeasure-gates.py`, which refuses where no verdict moved, would not write the fresh payload
+either. Neither tool was wrong about the verdict and the row was unrepairable by either.
+
+That drift is strictly worse than the blind spots closed before it, because those blocked
+rows and this one AUTHORISES one: the evidence is what a person reads when they judge a
+finding, and `clearance.finding_digest` is taken over exactly that evidence, so a payload
+moving under a current stamp un-anchors a human decision rather than raising a blocker. The
+comparison now runs through `gate_evidence.py`, which `remeasure-gates.py` also uses, so the
+two tools cannot go back to disagreeing about what they compare.
 """
 import argparse, copy, hashlib, importlib.util, json, os, sys
 
@@ -43,6 +58,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from indexio import read_jsonl, write_jsonl_atomic, index_lock          # noqa: E402
 import gate_provenance                                                  # noqa: E402
+import gate_evidence                                                    # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "vcm_stamp", os.path.join(HERE, "verify-content-mask.py"))
@@ -57,25 +73,12 @@ _sgspec.loader.exec_module(SG)
 MAPS = [p for p in (VCM.INCIDENT_MAP, VCM.LEGACY_MAP) if os.path.exists(p)]
 
 
-def _norm(v):
-    """A recorded verdict as its CLASS, so two records can be compared.
-
-    Delegated to `shard-gate.gate_result` so there is one parser for a gate value in the
-    tree rather than two that disagree. This used to be `v if isinstance(v, str) else
-    ("FAIL" if v else v)`, which reads any truthy non-string as a failure. That is the safe
-    direction and it is safe by accident: it cannot tell a dict recording `result: FAIL`
-    from one recording `result: PASS`, and it would have read the second as a failure and
-    refused to stamp a row that agreed with the gate. Six rows in the local half store the
-    encoded verdict in exactly that older dict schema.
-    """
-    return SG.gate_result(v)[0]
-
-
 # Every recorded gate whose producer is inside `gate_provenance.TOOLS`, and therefore every
 # verdict this tool's stamp actually claims. `detection_survived` is deliberately absent: it
 # is the scanner's measurement, provenanced by `measured_with` rather than by the tools
-# digest, and `gate_provenance` says so in as many words.
-STAMPED_GATES = ("plaintext_gate", "encoded_layer_gate", "secret_gate")
+# digest, and `gate_provenance` says so in as many words. Taken from `gate_evidence` rather
+# than restated, so the set this tool stamps and the set it compares cannot come apart.
+STAMPED_GATES = gate_evidence.STAMPED_GATES
 
 
 def reverify(row, data, before=None):
@@ -95,27 +98,42 @@ def reverify(row, data, before=None):
     So the secret gate is re-measured where the pre-masking bytes are supplied, and where
     they are not the answer is `cannot-check` and the row is refused. A row that records no
     `secret_gate` owes none and is unaffected.
+
+    AND IT USED TO COMPARE THE VERDICT AND NOT THE FINDING
+    ------------------------------------------------------
+    Three gates re-measured, and only their verdict CLASSES compared. `gate_evidence.compare`
+    now compares each recorded finding as well, so a row whose payload the current tools
+    would not produce is refused even where `FAIL` is still `FAIL`. `disagrees` covers both
+    causes and the detail says which - §8 counts causes, and the repairs differ: a moved
+    verdict needs a decision, a moved payload needs `remeasure-gates.py`.
+
+    The verdict class is still compared through `shard-gate.gate_result`, inside
+    `gate_evidence`, so there is one parser for a gate value in the tree rather than two that
+    disagree. That mattered on its own: the comparison here was once `v if isinstance(v, str)
+    else ("FAIL" if v else v)`, which reads any truthy non-string as a failure - safe by
+    accident, and unable to tell a dict recording `result: FAIL` from one recording
+    `result: PASS`. Six rows in the local half store the encoded verdict in that older dict
+    schema.
     """
     ids, keep = VCM.load_ids(MAPS)
     _ok, g = VCM.gate(data, ids, keep)
     m = row.get("masking") or {}
-    out = {}
-    for k in ("plaintext_gate", "encoded_layer_gate"):
-        out[k] = {"recorded": _norm(m.get(k)), "today": _norm(g.get(k))}
+    today = {"plaintext_gate": (g["plaintext_gate"], g.get("plaintext_finding")),
+             "encoded_layer_gate": (g["encoded_layer_gate"], g.get("encoded_layer_finding"))}
     unchecked = []
     if "secret_gate" in m:
         if before is None:
             unchecked.append("secret_gate: the differential needs the pre-masking bytes")
         else:
             _sok, sres = VCM.secret_gate(before, data)
-            out["secret_gate"] = {"recorded": _norm(m.get("secret_gate")),
-                                  "today": _norm(sres["secret_gate"])}
-    detail = {"gates": out, "unchecked": unchecked,
+            today["secret_gate"] = (sres["secret_gate"],
+                                    {k: v for k, v in sres.items() if k != "secret_gate"})
+    state, per = gate_evidence.compare(m, today, SG.gate_result)
+    detail = {"gates": per, "unchecked": unchecked,
               "finding": g.get("encoded_layer_finding") or g.get("plaintext_finding")}
     if unchecked:
         return "cannot-check", detail
-    return ("agrees" if all(v["recorded"] == v["today"] for v in out.values())
-            else "disagrees"), detail
+    return ("agrees" if state == "agrees" else "disagrees"), detail
 
 
 def additions(row, data):
@@ -237,11 +255,26 @@ def main():
           "to re-measure)" % cannot)
     for sha, d in refused:
         g = d.get("gates") or {}
-        print("    %s  %s%s" % (sha[:12], json.dumps(g),
-                                "  UNCHECKED: " + "; ".join(d["unchecked"])
-                                if d.get("unchecked") else ""))
-        if d.get("finding"):
-            print("        finding: %s" % json.dumps(d["finding"])[:220])
+        # Per gate rather than one blob: the detail now carries whole findings, and a
+        # `json.dumps` of them buries the answer in the false-positive note. What a reader
+        # needs is which gate, which cause, and - for a payload that moved - which fields.
+        print("    %s  %s%s"
+              % (sha[:12],
+                 "; ".join("%s: %s" % (k, v[0]) for k, v in sorted(g.items())
+                           if v[0] != "agrees") or "all recorded gates agree",
+                 "  UNCHECKED: " + "; ".join(d["unchecked"])
+                 if d.get("unchecked") else ""))
+        for k, (st, det) in sorted(g.items()):
+            if st == "verdict-moved":
+                print("        %s  recorded %s, today %s"
+                      % (k, det["verdict"]["recorded"], det["verdict"]["today"]))
+            elif st == "evidence-moved":
+                for f, mv in sorted((det.get("evidence") or {}).items()):
+                    print("        %s.%s  %s -> %s"
+                          % (k, f, json.dumps(mv["recorded"])[:60],
+                             json.dumps(mv["today"])[:60]))
+        if d.get("refused"):
+            print("        %s" % d["refused"])
     if not a.apply:
         print()
         print("dry run: nothing written. Pass --apply.")
@@ -281,7 +314,18 @@ def _agrees(row, data, before=None):
 
 def inject():
     """It must stamp an agreeing row, refuse a disagreeing one, and never overwrite."""
-    fails = []
+    fails, ran = [], []
+
+    def case(label, got, want):
+        """Counted, not tallied by hand: the total used to be the literal 14, and a
+        hardcoded total cannot report a case that was dropped."""
+        ok = got == want
+        ran.append(label)
+        print("  %-52s %-16s %s" % (label, str(got)[:16],
+                                    "ok" if ok else "WRONG (wanted %s)" % (want,)))
+        if not ok:
+            fails.append(label)
+
     ids, keep = VCM.load_ids(MAPS)
     clean = b"<?php\n$a = 'wp-content/plugins/akismet/index.php';\n$b = 1;\n"
     _ok, g = VCM.gate(clean, ids, keep)
@@ -290,65 +334,37 @@ def inject():
               "masking": {"applied": True, "plaintext_gate": g["plaintext_gate"],
                           "encoded_layer_gate": g["encoded_layer_gate"],
                           "detection_survived": True, "note": "kept"}}
-    agrees, _d = _agrees(row_ok, clean)
     print("=== a row the gate still agrees with ===")
-    print("  %-52s %s" % ("re-verification agrees", "yes" if agrees else "WRONG"))
-    if not agrees:
-        fails.append("agreeing row not recognised")
+    case("re-verification agrees", _agrees(row_ok, clean)[0], True)
     add = additions(row_ok, clean)
     after = copy.deepcopy(row_ok)
     after["masking"].update(add)
-    bad = assert_additive(row_ok, after)
-    print("  %-52s %s" % ("the write is additive", "yes" if bad is None else "WRONG: " + bad))
-    if bad:
-        fails.append("write was not additive")
-    print("  %-52s %s" % ("it adds provenance", "yes" if "provenance" in add else "WRONG"))
-    if "provenance" not in add:
-        fails.append("no provenance added")
+    case("the write is additive", assert_additive(row_ok, after) or "clean", "clean")
+    case("it adds provenance", "provenance" in add, True)
 
     print()
     print("=== a row the gate no longer agrees with must be REFUSED ===")
     row_bad = copy.deepcopy(row_ok)
     row_bad["masking"]["plaintext_gate"] = "FAIL"      # records FAIL; the gate says PASS
-    agrees, _d = _agrees(row_bad, clean)
-    print("  %-52s %s" % ("recorded FAIL, gate says PASS", "refused" if not agrees
-                          else "WRONG: stamped anyway"))
-    if agrees:
-        fails.append("a disagreeing row was accepted")
-
+    case("recorded FAIL, gate says PASS", _agrees(row_bad, clean)[0], False)
     row_bad2 = copy.deepcopy(row_ok)
     row_bad2["masking"]["encoded_layer_gate"] = "FAIL"
-    agrees, _d = _agrees(row_bad2, clean)
-    print("  %-52s %s" % ("recorded encoded FAIL, gate says PASS",
-                          "refused" if not agrees else "WRONG: stamped anyway"))
-    if agrees:
-        fails.append("a disagreeing encoded verdict was accepted")
+    case("recorded encoded FAIL, gate says PASS", _agrees(row_bad2, clean)[0], False)
 
-    # The older schema, in both directions. `_norm` used to read any truthy non-string as
-    # FAIL, which refuses a dict-form PASS that agrees with the gate and accepts nothing it
-    # should not - safe, and unable to tell the two apart. Six local rows carry this form.
+    # The older schema, in both directions. The comparison used to read any truthy
+    # non-string as FAIL, which refuses a dict-form PASS that agrees with the gate and
+    # accepts nothing it should not - safe, and unable to tell the two apart. Six local
+    # rows carry this form.
     row_dict_pass = copy.deepcopy(row_ok)
     row_dict_pass["masking"]["encoded_layer_gate"] = {"result": "PASS", "occurrences": 0}
-    agrees, _d = _agrees(row_dict_pass, clean)
-    print("  %-52s %s" % ("recorded dict PASS, gate says PASS",
-                          "stamped" if agrees else "WRONG: refused an agreeing row"))
-    if not agrees:
-        fails.append("a dict-form PASS was read as a disagreement")
+    case("recorded dict PASS, gate says PASS", _agrees(row_dict_pass, clean)[0], True)
     row_dict_fail = copy.deepcopy(row_ok)
     row_dict_fail["masking"]["encoded_layer_gate"] = {"result": "FAIL",
                                                       "distinct_identifiers": 2}
-    agrees, _d = _agrees(row_dict_fail, clean)
-    print("  %-52s %s" % ("recorded dict FAIL, gate says PASS",
-                          "refused" if not agrees else "WRONG: stamped anyway"))
-    if agrees:
-        fails.append("a dict-form FAIL was stamped over a passing gate")
+    case("recorded dict FAIL, gate says PASS", _agrees(row_dict_fail, clean)[0], False)
     row_skip = copy.deepcopy(row_ok)
     row_skip["masking"]["encoded_layer_gate"] = "SKIPPED-oversize (>1MB)"
-    agrees, _d = _agrees(row_skip, clean)
-    print("  %-52s %s" % ("recorded SKIPPED, gate says PASS",
-                          "refused" if not agrees else "WRONG: stamped anyway"))
-    if agrees:
-        fails.append("a SKIPPED verdict was stamped as if it had been measured")
+    case("recorded SKIPPED, gate says PASS", _agrees(row_skip, clean)[0], False)
 
     print()
     print("=== the secret gate: a third state, because it cannot always be checked ===")
@@ -369,18 +385,66 @@ def inject():
              pw_after_same, "disagrees"),
             ("records PASS, the credential was replaced: gate says PASS", pw_before,
              pw_after_moved, "agrees")):
-        got, _d = reverify(sgrow, data, before)
-        ok = got == want
-        print("  %-52s %-14s %s" % (label, got, "ok" if ok else "WRONG (wanted %s)" % want))
-        if not ok:
-            fails.append("secret gate state: " + label)
+        case(label, reverify(sgrow, data, before)[0], want)
     # The negative half: a row recording NO secret gate must not be made uncheckable by a
     # gate it never owed.
-    got, _d = reverify(row_ok, clean)
-    print("  %-52s %-14s %s" % ("a row that records no secret_gate", got,
-                                "ok" if got == "agrees" else "WRONG"))
-    if got != "agrees":
-        fails.append("a row owing no secret gate was refused")
+    case("a row that records no secret_gate", reverify(row_ok, clean)[0], "agrees")
+
+    print()
+    print("=== the finding under the verdict, which is what a clearance is keyed to ===")
+    # The defect this closes. Both these rows record the verdict the current gate returns;
+    # what has moved is the payload beneath it. `34bba99dae63` is the live instance -
+    # `secret_literals` 1/1/1 recorded, 2/2/2 measured, FAIL both times - and before this
+    # the tool stamped it, which is a claim that the current tools produced a payload they
+    # do not.
+    _sok, sres = VCM.secret_gate(pw_before, pw_after_same)
+    ev = {k: v for k, v in sres.items() if k != "secret_gate"}
+    drift = copy.deepcopy(row_ok)
+    drift["masking"]["secret_gate"] = sres["secret_gate"]
+    drift["masking"]["secret_literals"] = dict(
+        ev, secret_literals_before=ev["secret_literals_before"] + 1)
+    state, det = reverify(drift, pw_after_same, pw_before)
+    case("the verdict holds and the payload moved", state, "disagrees")
+    case("and the cause is named as the payload, not the verdict",
+         det["gates"]["secret_gate"][0], "evidence-moved")
+    case("and the field that moved is named",
+         list((det["gates"]["secret_gate"][1].get("evidence") or {})),
+         ["secret_literals_before"])
+    # Both directions: an unmoved payload must still stamp, or this refuses everything and
+    # a green run cannot tell the two apart.
+    same = copy.deepcopy(row_ok)
+    same["masking"]["secret_gate"] = sres["secret_gate"]
+    same["masking"]["secret_literals"] = dict(ev)
+    case("the same payload, re-measured, still stamps",
+         reverify(same, pw_after_same, pw_before)[0], "agrees")
+    # And the schema rule, which was measured over the 132 masked rows before it was armed:
+    # 126 of them record 12 `secret_literals` keys where the gate emits 13, the odd one
+    # being a constant string of prose. Refusing on that would put 95% of the population
+    # into re-measurement.
+    thin = copy.deepcopy(row_ok)
+    thin["masking"]["secret_gate"] = sres["secret_gate"]
+    thin["masking"]["secret_literals"] = {k: v for k, v in ev.items() if k != "note"}
+    case("a row recording fewer keys than the gate emits still stamps",
+         reverify(thin, pw_after_same, pw_before)[0], "agrees")
+    # An identifier finding, so the case is not made only over the secret gate. The
+    # false-positive figure is in the payload deliberately: `clearance.finding_digest`
+    # covers it, and `fp-note.txt` now sits OUTSIDE the tools digest, so a re-measured
+    # figure moves every clearance while `provenance.tools` does not move at all.
+    leaky = b"<?php $p = '/home/" + (max((i for i in ids if len(i) >= 6), key=len,
+                                         default="acct01").encode()) + b"/x.php';\n"
+    _ok2, g2 = VCM.gate(leaky, ids, keep)
+    fprow = {"sha256": "1" * 64,
+             "masking": {"applied": True, "plaintext_gate": g2["plaintext_gate"],
+                         "encoded_layer_gate": g2["encoded_layer_gate"],
+                         "gate_categories": {"plaintext_finding":
+                                             dict(g2["plaintext_finding"])}}}
+    case("an identifier finding that still measures the same", _agrees(fprow, leaky)[0],
+         True)
+    stalefp = copy.deepcopy(fprow)
+    stalefp["masking"]["gate_categories"]["plaintext_finding"]["false_positive_note"] = (
+        "a figure that has since been re-measured")
+    case("the same finding citing a superseded false-positive rate",
+         _agrees(stalefp, leaky)[0], False)
 
     print()
     print("=== a stamp may be REPLACED only under --restamp, and nothing else with it ===")
@@ -391,52 +455,33 @@ def inject():
     stamped["masking"]["provenance"] = {"tools": "0" * 12, "map": None, "at": "2026-01-01"}
     restamped = copy.deepcopy(stamped)
     restamped["masking"].update(additions(stamped, clean))
-    bad_off = assert_additive(stamped, restamped, restamp=False)
-    bad_on = assert_additive(stamped, restamped, restamp=True)
-    print("  %-52s %s" % ("a stale stamp, without --restamp",
-                          "refused" if bad_off else "WRONG: overwrote it silently"))
-    if not bad_off:
-        fails.append("a stamp was replaced without --restamp")
-    print("  %-52s %s" % ("a stale stamp, with --restamp",
-                          "replaced" if bad_on is None else "WRONG: " + str(bad_on)))
-    if bad_on is not None:
-        fails.append("--restamp could not replace a stale stamp")
+    case("a stale stamp, without --restamp",
+         bool(assert_additive(stamped, restamped, restamp=False)), True)
+    case("a stale stamp, with --restamp",
+         assert_additive(stamped, restamped, restamp=True) or "replaced", "replaced")
     smuggled = copy.deepcopy(restamped)
     smuggled["masking"]["plaintext_gate"] = "PASS-ish"
-    bad = assert_additive(stamped, smuggled, restamp=True)
-    print("  %-52s %s" % ("--restamp does not license any other overwrite",
-                          "caught" if bad else "WRONG: missed"))
-    if not bad:
-        fails.append("--restamp allowed a second key to move")
+    case("--restamp does not license any other overwrite",
+         bool(assert_additive(stamped, smuggled, restamp=True)), True)
     # And the property that makes the overwrite safe is not the assertion at all: a stamp is
     # written only where the current gate returns what the row records, so a replacement can
     # restate a verdict and never launder one.
     moved = copy.deepcopy(stamped)
     moved["masking"]["plaintext_gate"] = "FAIL"
-    agrees, _d = _agrees(moved, clean)
-    print("  %-52s %s" % ("a stale stamp on a verdict that MOVED",
-                          "refused" if not agrees else "WRONG: would be restamped"))
-    if agrees:
-        fails.append("a re-stamp was offered on a row whose verdict moved")
+    case("a stale stamp on a verdict that MOVED", _agrees(moved, clean)[0], False)
 
     print()
     print("=== the additive assertion must be able to fail ===")
     tampered = copy.deepcopy(row_ok)
     tampered["masking"]["note"] = "changed"
-    bad = assert_additive(row_ok, tampered)
-    print("  %-52s %s" % ("an existing key changed", "caught" if bad else "WRONG: missed"))
-    if not bad:
-        fails.append("the additive assertion cannot see an overwrite")
+    case("an existing key changed", bool(assert_additive(row_ok, tampered)), True)
     tampered2 = copy.deepcopy(row_ok)
     tampered2["verdict"] = "benign"
-    bad = assert_additive(row_ok, tampered2)
-    print("  %-52s %s" % ("a key outside masking changed",
-                          "caught" if bad else "WRONG: missed"))
-    if not bad:
-        fails.append("the additive assertion only looks inside masking")
+    case("a key outside masking changed", bool(assert_additive(row_ok, tampered2)), True)
 
     print()
-    print("cases: 14 · passed: %d · failed: %d" % (14 - len(fails), len(fails)))
+    print("cases: %d · passed: %d · failed: %d"
+          % (len(ran), len(ran) - len(fails), len(fails)))
     for f in fails:
         print("FAIL:", f)
     return 1 if fails else 0

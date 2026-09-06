@@ -124,19 +124,43 @@ def build(row, gate, by, reason, ids, prov_maps=MAPS):
                       "Describe a collision by shape, never by spelling it out - the index "
                       "is a tracked file." % (len(shapes), shapes))
     digest = clearance.finding_digest(m, gate)
+    pin = {"tools": m["provenance"].get("tools"), "map": m["provenance"].get("map")}
+    # THE DUPLICATE TEST USED TO REFUSE THE ONE ACT THE MECHANISM REQUIRES.
+    #
+    # It compared the gate and the digest and stopped there, so a clearance that had gone
+    # INERT because the tools digest moved - the state this design deliberately produces,
+    # and the state both clearances on `34bba99dae63` were in - could never be re-signed.
+    # The refusal even named the case ("an inert one being papered over") while being unable
+    # to tell it from a genuine duplicate: the finding is the same, and what has changed is
+    # the pin, which the test did not read. A check blind to the thing it names.
+    #
+    # So the comparison is (gate, finding, PIN). Same finding under the same pin is a
+    # duplicate and refused. Same finding under a pin that has since moved is the re-signing
+    # this mechanism is built to demand, and it is appended - never edited over the old one,
+    # because the record of who judged what under which gate is a history and not a slot.
+    superseded = None
     for existing in clearance.row_clearances(row):
-        if isinstance(existing, dict) and existing.get("finding_digest") == digest \
-                and existing.get("gate") == gate:
-            return None, ("this exact finding already carries a clearance by %r; re-signing "
-                          "it is either a mistake or an inert one being papered over"
+        if not (isinstance(existing, dict) and existing.get("gate") == gate
+                and existing.get("finding_digest") == digest):
+            continue
+        if clearance._prov_key(existing.get("gate_provenance")) == pin:
+            return None, ("this exact finding already carries a clearance by %r, judged "
+                          "against the provenance the row records now; re-signing it would "
+                          "be a duplicate rather than a re-judgement"
                           % existing.get("by"))
-    return {"gate": gate,
-            "finding_digest": digest,
-            "by": by.strip(),
-            "at": datetime.datetime.now().replace(microsecond=0).isoformat(),
-            "reason": reason.strip(),
-            "gate_provenance": {"tools": m["provenance"].get("tools"),
-                                "map": m["provenance"].get("map")}}, None
+        superseded = existing
+    out = {"gate": gate,
+           "finding_digest": digest,
+           "by": by.strip(),
+           "at": datetime.datetime.now().replace(microsecond=0).isoformat(),
+           "reason": reason.strip(),
+           "gate_provenance": pin}
+    if superseded is not None:
+        # Which record this one re-signs, so two clearances over one finding read as a
+        # history rather than as a pair of independent judgements.
+        out["supersedes"] = {"at": superseded.get("at"), "by": superseded.get("by"),
+                             "gate_provenance": superseded.get("gate_provenance")}
+    return out, None
 
 
 def assert_additive(before, after):
@@ -229,10 +253,14 @@ def main():
 # ---------------------------------------------------------------------------------------
 
 def inject():
-    fails = []
+    fails, ran = [], []
 
     def case(label, got, want):
+        """Counted, not tallied by hand. The total was the literal 19 while the suite ran
+        more than 19 cases, so a case added or dropped could not be seen from the report -
+        which is the shape of every other defect in this tree."""
         ok = got == want
+        ran.append(label)
         print("  %-62s %-9s %s" % (label, got, "ok" if ok else "WRONG (wanted %s)" % want))
         if not ok:
             fails.append(label)
@@ -305,6 +333,49 @@ def inject():
              "yes" if clearance.malformed(c) is None else clearance.malformed(c), "yes")
 
     print()
+    print("=== an INERT clearance must be re-signable, and a live one must not ===")
+    # The duplicate test compared the gate and the digest and not the pin, so the one act
+    # this design demands - re-judging a finding whose gate provenance has moved - was
+    # refused by the tool that exists to record it. Both clearances on `34bba99dae63` were
+    # in exactly that state, and the refusal it produced named the case it could not see.
+    #
+    # Both directions, because a rule that refuses everything and one that refuses nothing
+    # are indistinguishable from a green run.
+    old_pin = {"tools": "0" * 12, "map": NOW["map"]}
+    stale_c = dict(c_first, gate_provenance=old_pin, at="2026-01-01T00:00:00", by="cl")
+    inert_row = row(clearances=[stale_c])
+    resigned, why = build(inert_row, "encoded_layer_gate", "cl",
+                          "re-read against the current gate, same collision", ids)
+    case("the same finding under a pin that has since moved",
+         "written" if resigned else "refused: %s" % why, "written")
+    if resigned:
+        case("it pins the provenance the row records NOW",
+             "yes" if resigned["gate_provenance"] == PROV else "no", "yes")
+        case("and it names the record it re-signs",
+             "yes" if resigned.get("supersedes", {}).get("gate_provenance") == old_pin
+             else "no", "yes")
+        # The property that matters is not the write, it is that the row is cleared again.
+        after_row = row(clearances=[stale_c, resigned])
+        case("the re-signed clearance actually applies",
+             "yes" if clearance.applies(resigned, after_row, "encoded_layer_gate")[0]
+             else "no", "yes")
+        case("and the superseded one is still inert, not edited away",
+             "yes" if (not clearance.applies(stale_c, after_row, "encoded_layer_gate")[0]
+                       and after_row["clearances"][0] == stale_c) else "no", "yes")
+    # The negative half, restated where it can be seen next to its opposite: a live
+    # clearance for the same finding under the SAME pin is a duplicate and stays refused.
+    live_row = row(clearances=[c_first])
+    case("the same finding under the pin the row already records",
+         "refused" if build(live_row, "encoded_layer_gate", "cl", "again", ids)[1]
+         else "written", "refused")
+    case("and the refusal says it is a duplicate rather than a re-judgement",
+         "yes" if "duplicate" in (build(live_row, "encoded_layer_gate", "cl", "again",
+                                        ids)[1] or "") else "no", "yes")
+    # A first clearance carries no `supersedes` at all: the key must mean something.
+    case("a first clearance names nothing it supersedes",
+         "supersedes" in (c or {}), False)
+
+    print()
     print("=== the write must be additive, and must not compute publishability ===")
     base = row()
     after = copy.deepcopy(base)
@@ -318,7 +389,8 @@ def inject():
          "caught" if assert_additive(after, after2) else "MISSED", "caught")
 
     print()
-    print("cases: 19 · passed: %d · failed: %d" % (19 - len(fails), len(fails)))
+    print("cases: %d · passed: %d · failed: %d"
+          % (len(ran), len(ran) - len(fails), len(fails)))
     for f in fails:
         print("FAIL:", f)
     return 1 if fails else 0

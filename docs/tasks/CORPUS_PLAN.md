@@ -1318,9 +1318,9 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, nine appearances: a measurement that cannot deliver bad news
+## 11. One property, ten appearances: a measurement that cannot deliver bad news
 
-Nine separate cautions in this plan share one diagnostic tell. Five of them are the same
+Ten separate cautions in this plan share one diagnostic tell. Five of them are the same
 statement in different clothes; two reach the same place by a different mechanism and
 need a different repair, which is exactly why they are worth listing together:
 
@@ -1401,10 +1401,34 @@ identifiers without exception. Corrected population: **311 fields carried, 4 map
 3 read-only, 67 ORPHAN** — against 135 / 10 / 90 / 1 / 44 before. The orphan count did not grow
 because the corpus changed; it grew because the census could finally see.
 
-**Assume a tenth exists in whatever you measure next** — and note that the first nine were
-found by somebody reading, while three of this one's parts were found by asking a tool to state
-the size of a limit it had already written down. Writing the bound down is cheap and it is not
-the check. Sizing it is the check.
+**A tenth, found 2026-09-06 — the same census, the same bound, a fourth way, and this one was
+predicted by the repair itself.** The second row of the table above says the census "parsed
+itself": `KNOWN` and `REMOVED` are dict literals keyed by field name, and a dict-literal key is
+a write position. Excluding this file fixed that instance and not the property. **Every tool in
+`corpus/` carries an `inject()`, and a control fixture is a dict literal.** Measured over both
+halves, **nine fields carried by rows have no write position anywhere in `corpus/` outside a
+control suite** — `account_hash` on 67,985 rows and `origin.account_hash` on 47,133 among them,
+whose only mention in this repository is a fixture in `regen-tiers.py --inject` — and all nine
+were being reported as covered.
+
+The correction is *not* to ignore those functions: a control that READS a field is a tracked
+reader of it in the only sense this census measures. Write positions inside `inject()` and
+`_selftest()` stop counting; read positions still do. Eight of the nine turn out to have a
+genuine reader elsewhere and move to `read-only`; exactly one — `deobfuscation.status`, 645
+rows — was a true orphan the census had been hiding behind a fixture. A second, smaller
+instance came with it: the line printed as `tracked modules parsed` was computed as *the number
+of modules with at least one write position*, which had been the same number by coincidence and
+stopped being it the moment fixtures stopped counting — it read **30** over a directory of 34.
+
+Corrected population, both halves, 2026-09-06: **314 fields carried, 4 maps, 237 written, 13
+read-only, 64 ORPHAN**.
+
+**Assume an eleventh exists in whatever you measure next** — and note that the first nine were
+found by somebody reading, while three of the ninth's parts and all of the tenth were found by
+asking a tool to state the size of a limit it had already written down. Writing the bound down
+is cheap and it is not the check. Sizing it is the check. The tenth is the sharper lesson:
+**a bound that has been repaired in one place has not been repaired**, because the property
+that produced it is still in the tool.
 
 The four original instances:
 
