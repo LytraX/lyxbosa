@@ -399,8 +399,13 @@ def _profile(pairs):
 # do that.
 #
 # The AST holds the FILENAME and the loader, which are behaviour; the prose is data. Editing
-# `fp-note.txt` now moves nothing, and `--assert-note-is-not-behaviour` is the control that
-# says so. Whitespace is collapsed so re-wrapping the file cannot change the stored string
+# `fp-note.txt` now moves nothing, and `corpus/digest-controls.py --inject` is the control
+# that says so - it also answers to `--assert-note-is-not-behaviour`, the name this comment
+# used to give it while nothing implemented it. It lives THERE and not here because an
+# argparse branch added to this file would move the `tools` digest and re-measure all 140
+# stamped rows, to install a check whose subject is that prose edits do not do that. A
+# comment is absent from the AST, so repointing this line costs nothing.
+# Whitespace is collapsed so re-wrapping the file cannot change the stored string
 # either. A missing file is a hard failure rather than an empty note: a finding that cites a
 # false-positive rate it cannot state is a finding with the qualifier silently removed, and
 # `clearance.finding_digest` covers this string, so a silent empty would move every digest.

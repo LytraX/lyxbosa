@@ -13,6 +13,71 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **`corpus/sensitivity.py` — the rule that assigns every sensitivity tag is now in the
+  repository.** It was `trail-data/incoming/2026-09-03/sensitivity.py`: gitignored, untracked,
+  not covered by `gate_provenance.TOOLS`. Anyone cloning this repository could read the rows
+  and not the rule that made them — could not re-run it, review it, or tell whether it had
+  changed since the rows were written. **It was never only the `secret` tag.** `classify()`
+  returns one set covering `content`, `path`, `identity`, `secret`, `c2`, `pii` and `clean`,
+  and all six modules that call it take the whole set; only `unreviewed` and `undecidable` are
+  outside its vocabulary. The unreviewable surface was 92 `secret` rows plus 45,242 `clean`,
+  4,277 `content`, 788 `c2`, 287 `identity`, 178 `pii` and 46 `path`. 235 rows carry a
+  `sensitivity_evidence` block that is this function's `ev` dict verbatim, which is what
+  attributes them to the rule rather than to a convention.
+
+  It **reproduces** the original rather than improving it — a tracked module whose behaviour
+  differs from the one that ran cannot be used to review the rows it produced.
+  `--verify-reference` reports `ok`/`moved`/`absent` (three answers, never two, so a stranger
+  without the gitignored file gets *cannot check* rather than a quiet pass) and `--inject`
+  asserts behavioural equality over 16 probes carrying no customer identifier. Two known
+  defects are **reported and deliberately not fixed**, because either would move tag counts on
+  rows nobody has re-read: `identity` fires on any e-mail or IP (81 upstream contributor
+  addresses on one sample, none on a customer domain), and `c2` fires on any external host
+  (20 of 73 on that sample are php.net, wordpress.org, github.com, MDN and two CDNs — and `c2`
+  is in `ALWAYS_OK`, so a wrong `c2` never blocks).
+
+  `classify_deep()` adds what the rule never had: a decoder, and specifically
+  `verify-content-mask.decode_layers` — the gate's own, so a tag and a gate that disagree are
+  disagreeing about a rule and never about which bytes each read. **This is the cause of all
+  five local rows that sit `publishable: true` with zero blockers, tagged `clean` alone.**
+  `classify()` has no decoder; four of the five are gzip streams and the fifth hides its
+  payload in a base64 literal, so every regex sees compressed noise and falls through to
+  `if not tags: tags.add("clean")`. `clean` is the **default branch of a function that cannot
+  read its input**, and it is the tag that means publish as-is. §5.4 already says the absence
+  of a plaintext hit is evidence the encoder worked, not evidence the sample is clean.
+
+  `reconcile()` states the two credential definitions together. They may legitimately differ,
+  and the boundary is a property of the pattern: the tagger asks *is a credential present* and
+  should over-match, the gate asks *did masking change every credential-shaped literal* and
+  needs a value it can capture — **a shape with no capturable value can only be tagged, never
+  gated**, which `SHAPE_KIND` records. Two ways they are wrongly narrower, both measured:
+  `verify-content-mask.SECRET_SHAPES` has **no PEM shape at all**, and its `quoted-credential`
+  lookbehind `(?<![A-Za-z0-9_])` blocks a password assigned to a variable whose name ends with
+  the keyword — `$user_password`, `$adminpassword`, `$pwd`. §5.6 already rules that lookarounds
+  should err towards over-matching and records two leaks from one that did not; this is the
+  third, on credentials. The nine rows that pass `secret_gate` over zero literals then
+  decompose without a rule of their own: **five are name-only** (a bare constant, nothing to
+  compare, the zero is correct) and **four are a real divergence** — two PEM blocks, two
+  blocked passwords, one of them on a `publishable: true` row inside a `base64` layer.
+
+  Kept **out of `gate_provenance.TOOLS`** deliberately: `TOOLS` is the modules that decide a
+  stored *gate verdict*, and a tagger produces none. `sensitivity.digest()` gives a
+  sensitivity claim its own provenance instead. `gate_provenance.tools_digest()` is
+  `6fecbeebbccc` before and after, **0 rows re-stamped**.
+
+- **`corpus/digest-controls.py`** — the control `verify-content-mask.py` named and nobody
+  wrote. That file's comment says "`--assert-note-is-not-behaviour` is the control that says
+  so"; the flag existed nowhere in the tree. The property is true, but a true property with no
+  check is one edit from being a false property with no check. It cannot live where it was
+  promised — `verify-content-mask.py` is in `TOOLS`, so an argparse branch there moves the
+  digest and re-measures 140 stamped rows *to install a check whose subject is that prose edits
+  do not do that*. A comment is absent from the AST, so repointing the line costs nothing.
+  Eight cases in four pairs, each an edit that must not move a digest beside one that must:
+  prose, a comment, a docstring and a tagging-rule change leave `tools` at `6fecbeebbccc`; a
+  constant and a regex literal move it; and the tagging-rule change moves the tagger's own
+  digest, or the tagger would have provenance in name only. It also answers to
+  `--assert-note-is-not-behaviour`.
+
 - **`corpus/adopt-decoded-tags.py` — `sensitivity` now describes the sample's decoded form,
   not its wrapper.** A `deobfuscation` block records `encoded_form_tags` for the bytes as
   collected and `decoded_form_tags` for everything a static decoder gets out of them. On
