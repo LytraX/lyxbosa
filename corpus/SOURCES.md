@@ -1079,6 +1079,92 @@ obvious one is the weakest of the three:
 Run against the pre-change modules the second and third read `IGNORED` and `PRESENT` and the
 suite fails; the first reads `held` and passes. That is why there are three.
 
+### The five `clean` rows, ruled on and written — and what each one's evidence actually is
+
+Five local rows sat `publishable: true` with zero blockers, tagged `clean` alone and with no
+masking record. The cause is one cause: `sensitivity.classify()` has no decoder and `clean`
+is its **default branch** — `if not tags: tags.add("clean")`. Four are gzip streams and the
+fifth hides its payload in a base64 literal, so every regex in the rule saw compressed noise.
+The tag was not a judgement about these samples; it was the absence of one.
+
+`corpus/tag-sensitivity.py` writes the operator's ruling, and refuses to write one that the
+re-derivation over the row's own bytes does not support, or that leaves a re-derived tag
+unadjudicated. `publishable` stays computed by `shard-gate.py`. Identifiers below are
+described by shape; the evidence is on the rows in `sensitivity_tagged`.
+
+| row | ruling | what decided it |
+|---|---|---|
+| `cd98180175a5` | `path` | a stock `template-loader.php` (3,143 B) with `@include base64_decode(…)` prepended. The 96-character literal is its only layer and decodes to 72 bytes holding one absolute path of the form `/home/<8-char account>/public_html/…/<16 hex>.ttf`. 0 URLs, 0 e-mail shapes, 0 dotted quads anywhere in the file, so nothing else is proposed. |
+| `eba16e1e9159` | `c2`, `identity` | gzip → 118,904-byte posts-table dump. Exact map-identifier hits at lengths 8, 19 and 23, all 0/8000 in the stock null; the database is named after an 11-character token whose first 8 are an exact account identifier; one customer host (2-label). `identity` here rests on the customer host, not on the rule's e-mail branch — there are no e-mail shapes at all. 8 external hosts, none recognisable public infrastructure. |
+| `e50d85a3a815` | `c2`, `identity`, `path`, `secret`, `pii` | gzip → 2.78 MB full-site dump, 58 layers. 37 tables including users/usermeta/comments; 415 e-mail occurrences over 13 domains, 2 of them customer domains; one `phpass-hash`; two `/home*/<x>/` slots, one an exact 8-character account identifier. **`pii` is in `NEVER`: this row is permanently unpublishable, index row and hash only.** |
+| `c24465d301e2` | `c2`, `identity`; **`pii` rejected** | gzip → 675,278-byte posts table. One customer host (2-label) is what fires `identity`; database named after a 10-character token prefixed by a 7-character account identifier; 52 external hosts, none public infrastructure. `pii` fired on `form-field` alone, 34 times over spam post content — attacker-generated filler, not visitor data. Rejected on that reading; actual submitted values turning up later would be new evidence, not a re-opening. |
+| `1438674b06d8` | `identity`; **`pii` rejected**, **`c2` unresolved and left off** | see below. |
+
+**`1438674b06d8` — the account name is in the tar headers and nowhere else.** gzip → 5,027,840-byte
+tar, 256 members (222 regular files) under one top-level directory:
+
+```
+tar members                         : 256
+distinct uname / gname values       : 1 / 1, equal, 8 characters, an exact map identifier
+distinct (uid, gid) pairs           : 1
+members whose PATH contains it      : 0
+members whose BODY contains it      : 0
+```
+
+A member-level content scan sees nothing at all; only reading the container's own metadata
+finds it. This leak form is one nothing else in the tree looks for, and it is invisible to
+content masking by construction — §5.5 forbids touching the container and the identifier is
+*in* the container rather than in any member.
+
+**The rule's own evidence for that tag is different, and wrong.** `classify()` fires
+`identity` on `cust_hosts or emails or ips`; here that is 81 e-mail shapes across 44 domains,
+upstream contributor addresses in a translation-credits file, **0 of them on a customer
+domain**. The tag is right and the rule's reason for it is a false positive, which is exactly
+why the evidence is written onto the row rather than left implicit in the tag.
+
+`pii` is one occurrence — the word `phone` in a `readme.txt` changelog line, measured across
+all 222 regular members. `c2` is **unresolved and the tag is left off**: not one of the five
+`C2_HINTS` markers fires anywhere in the archive, so the tag would rest entirely on the
+"any external host" branch. 73 external hosts, 0 customer hosts, 17 matching a
+public-infrastructure keyword list, and all 73 occur in member bodies belonging to one
+upstream file-manager plugin — its cloud-storage volume drivers and its documentation. There
+is no separable campaign code to attribute the remaining 56 to. `c2` is in `ALWAYS_OK`, so
+leaving it off costs no publishability; adding it wrongly would put a false tag on the row
+for nothing.
+
+### The `c2` ruling on `1438674b06d8`, and the rule it generalises to
+
+**Ruled: leave it off.** Recorded in `corpus/taggings/2026-09-06-c2-ruling.json`, written onto
+the row, and stated as a rule in CORPUS_PLAN §4.1 — `c2` requires evidence of attacker
+control, never the presence of an external host, because the tag is in `ALWAYS_OK` and
+therefore buys a free pass through every masking gate rather than merely labelling a sample.
+The measurement that decided it is the negative one: **0 of the 5 `C2_HINTS` markers fire
+anywhere in the archive**, which is a stronger statement than any argument from the host list.
+
+**Two defects in `tag-sensitivity.py` came out of writing that ruling, and both are repaired
+with controls.**
+
+* **A later ruling erased the record it amended.** `build()` wrote a fresh
+  `sensitivity_tagged`, so applying the ruling took the tar-header finding — a measurement
+  that exists nowhere else — off the row. Prior `evidence` and `human_basis` are now carried
+  forward with the new ruling winning per key, the record being replaced is kept whole under
+  `supersedes`, `originally` carries the pre-first-ruling tags past a one-level chain, and
+  `assert_additive` **refuses any write that drops a recorded evidence key**. That last one is
+  the check that would have caught it.
+* **A ruling that changes no tag could not be written at all.** The tool refused it as
+  "nothing would move", which would have left the row saying `UNRESOLVED` after a person had
+  ruled — the stale-record defect this corpus keeps finding, in the one field whose purpose is
+  to say what a human decided. A ruling that closes a hold is now a legitimate write, and
+  `--restate` re-derives a record from a decision file it *already agrees with* so a gap can
+  be filled without editing the row: it may change no ruling and must add something.
+
+**The residual cost is recorded rather than papered over.** The row's top-level record now
+reads `was: ["identity"]` and `originally: ["identity"]`; the literal `was: ["clean"]` from
+the first write is gone, because it was destroyed before the repair existed. What survives on
+the row is the substantive fact — `derived.raw_tags: ["clean"]`, the machine reading over the
+bytes — plus the `cause`, the tar-header evidence and the superseded record. The fix stops it
+recurring; it does not undo it.
+
 ### `pending-promotions.jsonl` — measured by one side, applied by the other
 
 A rules round measures which `known_miss` rows its new rules now detect. It does not flip

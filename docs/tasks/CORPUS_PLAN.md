@@ -298,6 +298,27 @@ a hardcoded password hash. A `wp-config.php` flagged by `BD004` is benign *and* 
 sensitive. An upstream Symfony polyfill is benign and carries nothing. Classifying on one
 axis and assuming the other follows is how secrets end up in a public corpus.
 
+#### `c2` requires evidence of attacker control, never the presence of an external host
+
+Ruled 2026-09-06. `c2` is in `shard-gate.ALWAYS_OK`, so applying it is not a description of
+the sample — **it buys a free pass through every masking gate**. A tag that grants an
+exemption has to be earned by positive evidence, and the bar is evidence of *attacker
+control*: a known C2 marker, a paste or tunnel host, a callback the sample actually contacts.
+
+"An external host referenced from a malicious sample is attacker infrastructure" is **guilt
+by containment**, and it is the same reasoning that produced the retracted `identity` on a
+Cloudflare footer template's resolver address. The case that settled it: a trojanised
+upstream file-manager tarball where **0 of the 5 `C2_HINTS` markers fire anywhere in the
+archive**, all 73 external hosts sit in the plugin's own cloud-storage volume drivers and
+documentation, and 17 are recognisable public infrastructure outright. The tag was left off.
+
+`sensitivity.classify()` still emits `c2` on any external host, and that is reported as a
+known defect rather than repaired, because changing it moves tag counts on 791 rows nobody
+has re-read. **The rule binds the human adjudicating a row, and the mechanical tag is a
+proposal it rules on** — which is exactly the relationship `tag-sensitivity.py` enforces:
+every tag the re-derivation proposes must be added, rejected or held, and a `c2` proposal
+resting on containment alone is one to reject.
+
 **Axis A — verdict**
 
 | verdict | meaning |

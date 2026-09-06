@@ -1,0 +1,22 @@
+{
+ "signed_off_by": "the operator (ruling of 2026-09-06, on the hold raised in 2026-09-06-five-clean-rows.json)",
+ "date": "2026-09-06",
+ "cause": "`c2` requires evidence of attacker control, and never the mere presence of an external host. The tag is in shard-gate.ALWAYS_OK, so applying it is not a description of the sample - it buys a free pass through every masking gate. A tag that grants an exemption has to be earned by positive evidence, not by containment: `an external host inside a malicious archive` is guilt by containment, the same reasoning that produced the retracted `identity` on a Cloudflare footer template's resolver address three rounds ago. This ruling closes the hold recorded on 1438674b06d8 and states the rule the next such row is decided by.",
+ "identifier_policy": "identifiers by shape only; see the companion decision file.",
+ "rows": [
+  {
+   "sha256": "1438674b06d8644c33bf3aabdb91a51ec53ab4eb3db798a30992312ff7bad865",
+   "reject": {
+    "c2": "RULED, closing the hold. The bar for `c2` is positive evidence of attacker control, and this archive measures the opposite: 0 of the 5 C2_HINTS markers fire anywhere in it - 0 telegram, 0 gsocket, 0 raw-paste-host, 0 tor, 0 tunnel - so the tag would rest entirely on the rule's `external-host` branch. All 73 external hosts occur in member bodies belonging to one upstream file-manager plugin: its cloud-storage volume drivers and its documentation. 17 match a public-infrastructure keyword list outright and 0 are customer hosts. `an external host referenced from a malicious sample is attacker infrastructure` is guilt by containment; it holds for a webshell and not for a trojanised upstream tarball. `0 of 5 markers fire` is a stronger negative than any argument that could be made from the host list.",
+    "pii": "one keyword occurrence, `phone`, in a `readme.txt` changelog line, measured across all 222 regular members. A documentation word, not personal data. Rejected in the companion decision file and restated here because every tag the re-derivation proposes must be adjudicated in every ruling."
+   },
+   "evidence": {
+    "identity": "gzip container, 1,361,890 bytes, inflating to a 5,027,840-byte tar of 256 members (222 regular files) under one top-level directory. THE FINDING: the `uname` and `gname` fields of ALL 256 member headers carry one single value - an exact map account identifier of 8 characters - and there is exactly 1 distinct (uid, gid) pair. That identifier appears in 0 of 256 member PATHS and in 0 of 256 member BODIES. A member-level content scan sees nothing at all; only reading the container's own metadata finds it. This is a leak form nothing else in the tree looks for, and it is invisible to content masking by construction: 5.5 forbids touching the container, and the identifier is IN the container rather than in any member.",
+    "identity_machine_basis_differs": "the rule emits `identity` on this row for a different reason than the one above, and its reason is wrong. `classify()` fires `identity` on `cust_hosts or emails or ips`; here that is 81 e-mail-shaped strings across 44 domains, which are upstream contributor addresses in a translation-credits file, and 0 of them are on a customer domain. The tag is right and the rule's evidence for it is a false positive - which is why the evidence is written onto the row rather than left implicit in the tag.",
+    "c2_ruling_basis": "0 of the 5 C2_HINTS markers fire anywhere in the archive; 73 external hosts, 0 customer hosts, 17 matching a public-infrastructure keyword list, all 73 in member bodies of one upstream file-manager plugin's cloud-storage drivers and documentation. Recorded as evidence because a rejection that rests on a measurement should carry it."
+   },
+   "note": "This ruling changes no tag. It closes an open question, which is a change to the record: an unresolved tag on a row is a question and a rejected one is an answer, and a row that keeps saying UNRESOLVED after somebody has ruled is the stale-record defect this corpus keeps finding, in the one field that exists to say what a human decided.",
+   "evidence_note": "carried verbatim from 2026-09-06-five-clean-rows.json. A ruling supersedes the record it amends, so it must restate what that record stood on - the tar-header finding exists nowhere else and the first version of this ruling took it off the row."
+  }
+ ]
+}

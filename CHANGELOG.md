@@ -13,6 +13,46 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ### Added
 
+- **The five unmasked-publishable rows are tagged, and the reason they read `clean` is on
+  the rows (`corpus/tag-sensitivity.py`, `corpus/taggings/2026-09-06-five-clean-rows.json`).**
+  `cd98180175a5` → `path`; `eba16e1e9159` → `c2`,`identity`; `e50d85a3a815` →
+  `c2`,`identity`,`path`,`secret`,`pii`, which puts it in `NEVER` and makes it permanently
+  unpublishable; `c24465d301e2` → `c2`,`identity` with `pii` **rejected** (form-field shape
+  over spam post content is attacker-generated filler); `1438674b06d8` → `identity` with
+  `pii` rejected and **`c2` left off and recorded as unresolved**.
+
+  The tool writes a *ruling*, not a re-derivation and not an adoption. A tag may not be added
+  unless `sensitivity.classify_deep` over the row's own hash-verified bytes also produces it,
+  every tag the re-derivation *does* produce must be adjudicated — added, rejected or held,
+  with a reason — and a silent pass over one is refused, because silence is what put these
+  rows at `clean` in the first place. The bytes question has **three** answers and
+  `unavailable` refuses the write. `publishable` stays computed by `shard-gate.py`.
+
+  **The evidence is on the row, because some of it exists nowhere else.** On `1438674b06d8`
+  the account name is in the `uname` and `gname` field of **all 256 tar member headers** and
+  in **0 member paths and 0 member bodies**; a member-level content scan sees nothing and only
+  the container's own metadata carries it. The row also records that the *rule's* reason for
+  its `identity` tag is different and wrong — 81 e-mail shapes over 44 domains, none on a
+  customer domain. And the cause is recorded on every one of the five: `classify()` has no
+  decoder and `clean` is its **default branch**.
+
+  **`1438674b06d8`'s `c2` is now ruled: left off** (`corpus/taggings/2026-09-06-c2-ruling.json`).
+  The decisive measurement is a negative one — **0 of the 5 `C2_HINTS` markers fire anywhere in
+  the archive** — and the ruling is recorded as a rule in CORPUS_PLAN §4.1, not only as a row
+  decision: **`c2` requires evidence of attacker control, never the presence of an external
+  host**, because the tag is in `ALWAYS_OK` and buys a free pass through every masking gate
+  rather than merely labelling a sample. "An external host inside a malicious archive" is guilt
+  by containment — the reasoning that produced the retracted `identity` on a Cloudflare footer
+  template's resolver address. `sensitivity.classify()` still emits `c2` on any external host
+  and is unchanged; that output is now explicitly a *proposal* a person must add, reject or
+  hold.
+
+  Movement, all attributed: local `publishable` 373 → 368; `clean` −5, `identity` +4, `c2`
+  +3, `path` +2, `pii` +1, `secret` +1; new blockers `carries identity but no masking has
+  been applied` ×3, `carries path…` ×1, `carries identity/path/secret…` ×1, `carries pii,
+  which is not maskable and is never published` ×1. No published row moved and no detection
+  figure was measured.
+
 - **`corpus/sensitivity.py` — the rule that assigns every sensitivity tag is now in the
   repository.** It was `trail-data/incoming/2026-09-03/sensitivity.py`: gitignored, untracked,
   not covered by `gate_provenance.TOOLS`. Anyone cloning this repository could read the rows
@@ -185,6 +225,18 @@ commit list that CI generates per tag. Versions are the git tags described in
   tool in the tree writes.
 
 ### Changed
+
+- **A later ruling no longer erases the record it amends
+  (`corpus/tag-sensitivity.py`).** Writing the `c2` ruling exposed it: `build()` wrote a fresh
+  `sensitivity_tagged`, so the ruling took the tar-header finding — a measurement that exists
+  nowhere else — off the row. Prior `evidence` and `human_basis` are carried forward with the
+  new ruling winning per key, the superseded record is kept whole under `supersedes`,
+  `originally` carries the pre-first-ruling tags past a one-level chain, and `assert_additive`
+  now **refuses any write that drops a recorded evidence key**. A ruling that changes no tag is
+  also writable now — it used to be refused as "nothing would move", which would have left the
+  row reading `UNRESOLVED` after a person had ruled — and `--restate` re-derives a record from
+  a decision file it already agrees with, changing no ruling and required to add something.
+  Controls: 32 → 56 cases.
 
 - **`FP_NOTE` is corrected and has moved out of the behavioural digest.** It said 36 hits
   come from identifiers of 6+ characters where `--stock-fp` prints **52**; 36 was `begins`
