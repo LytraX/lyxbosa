@@ -11,6 +11,136 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ## Unreleased
 
+### Added
+
+- **Gate provenance (`corpus/gate_provenance.py`), and `shard-gate.py` requires it.** A
+  stored `plaintext_gate: PASS` was a claim about what *some* version of the gate said, and
+  nothing in the index recorded which. Re-gating by hand found **5 of 95 local rows and 1 of
+  8 rows in the published half** at `PASS` under a predicate the current gate rejects; in
+  every case the sample was unchanged and the predicate had moved.
+
+  The stamp is an **AST digest** of the six modules that decide spans and verdicts,
+  docstrings stripped, plus a digest of the maps' behavioural surface (identifiers, keep
+  list, tier table). An AST because comments and formatting are absent from one by
+  construction — a docstring rewrite must not move it and a changed regex literal must. A
+  git commit was rejected: every record this round had to repair was written by an
+  *uncommitted* tree, so a commit id would have been absent or confidently wrong.
+
+  `verify()` returns three answers, never two — `ok`, `absent`, `stale`. The `tools` half is
+  always checkable because those modules are tracked; the `map` half only where the maps
+  exist, and it reports `map not checked` rather than passing quietly. In the gate the
+  question is asked first inside the `applied` branch, and `absent`/`stale` raise **one**
+  blocker because §8 counts reasons and the repair is the same for both; the diagnosis goes
+  in a report line printed on every run.
+
+  16 control cases. Five logic changes must move the digest — including the slot-rule
+  delimiter guard reversed to the positive-list form, which is the exact change that turned
+  two recorded passes into failures with no field in the index moving — and three prose
+  changes must not. `shard-gate --inject` goes from 16 to 20 and fails against the
+  pre-change gate on exactly the two new positive cases.
+
+- **`corpus/verify-and-stamp.py`** — provenance for a row whose bytes are already built.
+  Re-runs the gate over the bytes the row stands behind and stamps **only where the current
+  verdict equals the recorded one**, refusing the row where it does not: a stamp asserts
+  that these tools produced these verdicts, and writing one over a verdict they would not
+  produce is the lie the field exists to prevent. Additive, and asserted to be — its own
+  control caught the first version of that assertion seeing an overwritten key but not an
+  added one.
+
+- **`corpus/stamp-legacy.py`** — an author, a date and a re-checked claim for a field no
+  tool in the tree writes.
+
+### Changed
+
+- **The whole masked population is re-measured and stamped.** All 134 local rows with
+  `masking.applied` were resolved to their source bytes (134 of 134) and re-masked; 132
+  cleared and now carry provenance, 2 were refused by the secret gate and keep their
+  superseded records, which the new rule now blocks. In the published half 7 of 8 rows were
+  re-verified against **the bytes actually inside the shard tarballs** and stamped; the
+  eighth is reported below.
+
+  Every movement has a cause. `masked_sha256` moved on **74 of 132** rows and every one of
+  them carried a superseded record — zero of the 52 rows measured in the last two rounds
+  moved, which dates the masker change precisely. `plaintext_gate` `PASS → FAIL` on 3 and
+  `encoded_layer_gate` `FAIL → PASS` on 4, all superseded, all with moved bytes: the slot
+  maskers now fire where they did not, so four rows stopped leaking into a decoded layer.
+  One row gained an encoded `FAIL`. Local publishable **378 → 377**, that one row.
+
+  The encoded-layer blocker reads **2 → 3**, and the four rows that stopped failing did not
+  reduce it: all four are tagged `clean` alone, so `unmasked` is empty, the masking branch is
+  skipped and they never contributed to it. A blocker count is a count of rows the gate
+  *reached*.
+
+- **The two legacy fields have authors.** `encoded_layer_gate_uncapped` (3 rows) is gone,
+  regenerated away by the re-measurement. `not_applicable_reason` (29 rows) is stamped
+  `legacy` with the author — an uncommitted state of `mask-samples.py`, which the current
+  driver still *reads* and never writes — and the date it first appears, 2026-09-04 16:33, at
+  the same count. The stamp carries a **re-verification** rather than a label: each row's
+  claim to be an archive container was re-read from the source bytes, 27 tar (`ustar` at 257)
+  and 2 gzip, and the tool refuses to stamp a claim it cannot confirm, because a legacy
+  marker on an unverified claim launders it.
+
+### Measured, not changed
+
+- **The five known gate failures are recorded on their rows rather than in a report.** All
+  five now carry the blocker and the finding. Four were already blocked for other reasons —
+  an unreviewed verdict and a `pii` tag — and their findings are strong: `exact`-position
+  hits at lengths 8 and 12, which the stock-CMS null produces rarely and never in that
+  combination. The fifth, `34bba99dae63`, was `publishable: true` with no blockers and is now
+  blocked. Both of its findings read as collisions against the profile: a **3-character**
+  identifier in `contains` position inside 19-, 70- and 74-character segments (base64), and a
+  **6-character** identifier in `begins` position inside a 25-character segment of a decoded
+  PHP function table. The verdict on whether either is real is a human's; what changed is
+  that the row states the evidence instead of a bare `PASS`.
+
+- **One published row is left for a decision rather than written.** `3529f0f6b2cd` records
+  `encoded_layer_gate: PASS` and the current gate returns `FAIL` on the bytes in the shard: a
+  3-character identifier, `contains` position, inside a 97-character base64 segment, at
+  decode layer 0 — the same ~98 KB stage the row's own note says the original gate read, so
+  the change is the predicate and not the reach. `verify-and-stamp.py` refused it, the other
+  seven are stamped, and the published half therefore reports one over-claimed row until
+  someone decides. Writing it either way flips a `publishable` in the published half, which
+  is not this round's call to make.
+
+### Fixed
+
+- **The docs conflated "published" with "distributed", and it produced a wrong conclusion
+  about public exposure.** `SOURCES.md` called shards "release assets" and
+  `KNOWN_ISSUES.md` said two samples "ship in" one — present tense for an intended state.
+  Reading both, a gate failure on a published row looked like a statement about bytes already
+  in public. **No shard has ever been distributed**: all 24 assets across the 6 releases are
+  scanner binaries, `corpus/shards/` has zero tracked files and no download URL is referenced
+  anywhere in the tree. `published` is a classification meaning *cleared to be distributed*,
+  and `published_shipped_as_bytes: 84` means *would ship if a shard were released*. Both are
+  now stated where they are used, and the three places that implied otherwise are corrected.
+
+- **A confidence grade was written for the encoded-layer gate, measured, and withdrawn.**
+  The plan was to call a hit from a 6+ character identifier high confidence — it comes from
+  the containment rule — and a shorter one low, since the short rule is a whole-alphabetic-run
+  test. A null model supported it: 660 trials of 98,473 bytes of random base64 gave 0.23
+  short-name hits per trial against 0.0015 containment hits, about 150 to 1.
+
+  **Random base64 was the wrong null.** Decoded layers are frequently code, and code is
+  exactly where an account name that is also an English fragment collides. Re-run against
+  8,000 stock CMS files — which carry no customer of ours, so every hit is a false positive —
+  the predicate produces **127 false positives across 104 files (1.3%), and 36 of them come
+  from identifiers of 6 or more characters**. The case that caught it was real: a
+  six-character account name inside `imagick_…` in a 473 KB decoded PHP function table, which
+  the length rule would have labelled high confidence.
+
+  That is §11 — a denominator enumerated by a process that does not resemble the population
+  bounds the result and not reality — so no grade is emitted and the gate verdict is
+  unchanged. What a finding now records instead is the evidence: identifier lengths,
+  positions (`exact`/`begins`/`contains`), the size of the segment the identifier sits in,
+  the layer that carried it, and the measured false-positive rate. A 3-character identifier
+  *contained* in a 97-character segment reads differently from an exact match on its own, and
+  the row now says which without ever naming anything. `--stock-fp` regenerates the table and
+  `--base-rate` regenerates the base64 null that misled it, both from the real predicate.
+
+  An earlier report of this measurement said containment fired **zero** times in 5.9 MB. That
+  was one 60-trial sample read as a property; a different seed produces one, reproducibly.
+  A base rate of zero means "not observed yet" until it has been looked for at scale.
+
 ### Detection coverage
 
 **Corpus detection is 696 of 1,299 reviewed malicious samples (53.6%), from 172 of 774

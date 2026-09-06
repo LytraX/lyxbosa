@@ -67,8 +67,26 @@ import json, os, re, sys, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy
 
+import gate_provenance
+
 ALWAYS_OK = {"clean", "c2"}
 NEVER = {"pii", "content"}
+
+# The maps are gitignored and out of repo. `gate_provenance.verify` checks the `tools` half
+# always - those five modules are tracked, so a stranger who clones this repository can
+# recompute it - and the `map` half only where the maps exist, saying which it managed. That
+# ordering is what keeps this gate runnable by someone who has the index and nothing else,
+# which §7.2's map-free invariants exist to guarantee.
+PROV_MAPS = [p for p in (os.path.join("trail-data", "incoming", "2026-09-03", "private",
+                                      "account-mapping.json"),
+                         os.path.join("trail-data", "incoming", "2026-09-03", "private",
+                                      "infected-tree-mapping.json"))
+             if os.path.exists(p)]
+
+
+def provenance_state(m):
+    """'ok', 'absent' or 'stale' for one masking block. Three answers, never two."""
+    return gate_provenance.verify(m.get("provenance"), PROV_MAPS)[0]
 
 def evaluate(r):
     why = []
@@ -89,6 +107,21 @@ def evaluate(r):
         if not m.get("applied"):
             why.append("carries %s but no masking has been applied" % "/".join(sorted(unmasked)))
         else:
+            # Asked FIRST, because it decides whether the three verdicts below are worth
+            # reading at all. A recorded `PASS` is a claim about what some version of the
+            # gate said, and until this round nothing recorded which version. Re-gating by
+            # hand found 5 of 95 local rows and 1 of 8 rows in the published half sitting at
+            # `PASS` under a predicate that had since been tightened; the samples had not
+            # changed, and no field in the index could have shown it.
+            #
+            # Absent and stale are one blocker rather than two on purpose. §8 counts
+            # reasons, and the repair is identical for both - re-measure with
+            # `mask-samples.py`. The distinction is diagnostic, not actionable, so it goes
+            # in the gate's report and not in the row's blocker list.
+            state = provenance_state(m)
+            if state != "ok":
+                why.append("gate results have no usable provenance: cannot tell whether "
+                           "the tools that produced them still agree")
             if m.get("plaintext_gate") != "PASS":
                 why.append("plaintext gate did not pass")
             if m.get("encoded_layer_gate") != "PASS":
@@ -326,6 +359,17 @@ def main(path, apply_fix=False):
             sys.exit("refusing to write: %d row(s) still stale after recompute"
                      % sum(len(x) for x in left))
 
+    # Always printed, never only when it is non-zero. "absent" and "stale" are one blocker
+    # because the repair is the same, and they are two lines here because the diagnosis is
+    # not: absent means nothing ever recorded what measured the row, stale means the tools
+    # have moved since. A gate that reports only the blocker cannot tell you which.
+    prov = collections.Counter()
+    for r in rows:
+        m = r.get("masking") or {}
+        if m.get("applied"):
+            prov[provenance_state(m)] += 1
+    print("masked rows by gate provenance       :", dict(sorted(prov.items())))
+
     bad = integrityViolations(rows)
     print("unreviewed rows asserting must_detect :", len(bad))
     if bad:
@@ -434,14 +478,31 @@ def inject(path):
     # 4. the secret gate. The other three masking gates pass on both rows below, so each
     # case isolates the secret rule and nothing else: if the rule is absent, both are
     # reported "clean" and this suite fails, which is what it is for.
+    NOW = gate_provenance.stamp(PROV_MAPS)
+    # Every masked fixture carries current provenance, so a case about the secret rule
+    # fails for the secret rule and not for the provenance one. Without this the two
+    # positive secret cases would still read "over" - for the wrong reason - which is a
+    # control that passes while measuring something else.
     MASKED = {"applied": True, "plaintext_gate": "PASS", "encoded_layer_gate": "PASS",
-              "detection_survived": True}
+              "detection_survived": True, "provenance": NOW}
     case("secret row, masking applied, no secret_gate recorded",
          dict(base, sensitivity=["c2", "secret"], publishable=True, masking=dict(MASKED)),
          "over")
     case("secret row, masking applied, secret_gate FAIL",
          dict(base, sensitivity=["c2", "secret"], publishable=True,
               masking=dict(MASKED, secret_gate="FAIL")), "over")
+
+    # 5. gate provenance. A recorded verdict is a claim about what some version of the
+    # gate said; until this round nothing recorded which version, and 5 of 95 local rows
+    # and 1 of 8 published rows were sitting at PASS under a predicate since tightened.
+    PASSING = {"applied": True, "plaintext_gate": "PASS", "encoded_layer_gate": "PASS",
+               "detection_survived": True}
+    case("every gate passes but nothing records what measured them",
+         dict(base, sensitivity=["c2", "identity"], publishable=True,
+              masking=dict(PASSING)), "over")
+    case("every gate passes, provenance is from superseded tools",
+         dict(base, sensitivity=["c2", "identity"], publishable=True,
+              masking=dict(PASSING, provenance={"tools": "0" * 12, "map": None})), "over")
 
     print()
     print("=== negative controls: each must be SILENT ===")
@@ -465,6 +526,18 @@ def inject(path):
                        "not_applicable_reason": "a genuine tar container (5.5)"},
               publish_blocker="carries secret but no masking has been applied",
               publish_blockers=["carries secret but no masking has been applied"]), "clean")
+    case("every gate passes and the current tools measured them",
+         dict(base, sensitivity=["c2", "identity"], publishable=True,
+              masking=dict(PASSING, provenance=NOW)), "clean")
+    # Provenance is asked only where the gate verdicts are read. A row with no masking
+    # applied is blocked once, for one cause, and must not collect a second reason - the
+    # 14-row tally drift, in its third possible form.
+    case("no masking applied: provenance is not a second blocker",
+         dict(base, sensitivity=["c2", "identity"], publishable=False,
+              masking={"applied": False, "not_applicable_reason": "a container"},
+              publish_blocker="carries identity but no masking has been applied",
+              publish_blockers=["carries identity but no masking has been applied"]),
+         "clean")
     r = json.loads(json.dumps(real))
     case("a real row from %s, untouched" % os.path.basename(path), r, "clean")
 
@@ -496,7 +569,7 @@ def inject(path):
     print("stale rows found in it        : over=%d under=%d drift=%d"
           % (len(over), len(under), len(drift)))
     print()
-    print("cases: 16 · passed: %d · failed: %d" % (16 - len(fails), len(fails)))
+    print("cases: 20 · passed: %d · failed: %d" % (20 - len(fails), len(fails)))
     for f in fails:
         print("FAIL:", f)
     return 1 if fails else 0

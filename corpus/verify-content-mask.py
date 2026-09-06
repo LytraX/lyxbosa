@@ -240,10 +240,128 @@ def _kind(ident):
     return "domain" if "." in ident else "acct"
 
 
+def _profile(pairs):
+    """The facts that decide what a finding is worth, recorded instead of a verdict.
+
+    THIS STARTED AS A CONFIDENCE GRADE AND THE GRADE DID NOT SURVIVE MEASUREMENT.
+    The plan was to call a hit from an identifier of six characters or more "high
+    confidence" - it comes from `_is_a_leak`'s containment rule - and a shorter one "low",
+    since the short rule is the whole-ALPHABETIC-run test and looks cheap. A null model over
+    random base64 supported it: 660 trials of 98,473 bytes produced 0.23 short-name hits per
+    trial and 0.0015 containment hits, about 150 to 1.
+
+    **Random base64 was the wrong null.** Decoded layers are frequently code - a PHP
+    function-name table, a plugin manifest, a wordlist - and code is where an account name
+    that is also an English fragment collides. Re-run against 8,000 stock CMS files, which
+    contain no customer of ours by construction so every hit is a false positive: 127 hits
+    across 104 files, and **36 of them are containment hits from identifiers of six
+    characters or more** - 20 `begins`, 16 `contains`. Even `exact` produced 15 at length 8.
+    On realistic content the long rule is not meaningfully safer than the short one, and a
+    label saying otherwise would have been a licence rather than a measurement. The case
+    that caught it was real: a six-character account name sitting inside `imagick_...` in a
+    473 KB decoded function table, which the length rule would have called high confidence.
+
+    That is §11 exactly - a denominator enumerated by a process that does not resemble the
+    population bounds the result and not reality - so no grade is emitted. What is recorded
+    is the evidence a human needs and the gate verdict is unchanged: lengths, positions, the
+    size of the segment the identifier sits in, and the layer that carried it. A `contains`
+    hit inside a 25-character segment reads differently from an `exact` hit on its own, and
+    now the row says which it was without ever naming the identifier.
+    """
+    contained, truncated = pairs
+    idents = {i for _, i, _, _, _ in contained} | {i for _, _, i, _ in truncated}
+    return {"distinct_identifiers": len(idents),
+            "kinds": sorted({_kind(i) for i in idents}),
+            "occurrences": len(contained) + len(truncated),
+            # Lengths and positions, never names. These are what decide what the finding is
+            # worth, and neither identifies anyone.
+            "identifier_lengths": sorted({len(i) for i in idents}),
+            "positions": sorted({p for _, _, _, _, p in contained}
+                                | ({"truncation"} if truncated else set())),
+            "segment_lengths": sorted({len(seg) for seg, _, _, _, _ in contained}),
+            "false_positive_note": FP_NOTE}
+
+
+FP_NOTE = ("a hit is not by itself a leak: over 8,000 stock CMS files, which carry no "
+           "customer identifier by construction, this predicate produces 127 false "
+           "positives across 104 files (1.3%) - 83 'exact', 20 'begins', 24 'contains', and "
+           "36 of them from identifiers of 6+ characters. Re-run with --stock-fp.")
+
+
+def stock_fp(ids, keep, roots, sample=8000, seed=4242):
+    """The null model that matters, regenerated rather than quoted.
+
+    Stock CMS trees contain no customer of ours, so every hit is a false positive. This is
+    the same reference `incident_mask.collisions()` uses and for the same reason.
+    """
+    import random
+    files = []
+    for root in roots:
+        for base, _dirs, names in os.walk(root):
+            for n in names:
+                p = os.path.join(base, n)
+                try:
+                    if 200 <= os.path.getsize(p) <= 2000000:
+                        files.append(p)
+                except OSError:
+                    pass
+    random.Random(seed).shuffle(files)
+    by = {}
+    scanned = hitfiles = 0
+    for p in files[:sample]:
+        try:
+            data = open(p, "rb").read()
+        except OSError:
+            continue
+        scanned += 1
+        c, t = _hits(data.decode("latin-1"), ids, keep)
+        if c or t:
+            hitfiles += 1
+        for seg, ident, _n, _s, pos in c:
+            by["len=%d %s" % (len(ident), pos)] = by.get("len=%d %s" % (len(ident), pos), 0) + 1
+        for _v, _l, ident, _s in t:
+            by["len=%d truncation" % len(ident)] = by.get("len=%d truncation" % len(ident), 0) + 1
+    return {"files_scanned": scanned, "files_with_a_hit": hitfiles,
+            "total_false_positives": sum(by.values()),
+            "by_class": dict(sorted(by.items(), key=lambda kv: -kv[1]))}
+
+
+def base_rate(ids, keep, size=98473, trials=60, seed=20260906):
+    """The null model the grading rests on, runnable rather than quoted.
+
+    A figure written into a comment is a figure nobody can challenge. This regenerates it:
+    random base64 of `size` bytes, the real identifier set, the real predicate.
+    """
+    import random
+    rng = random.Random(seed)
+    fired = 0
+    total = 0
+    by_len = {}
+    for _ in range(trials):
+        blob = base64.b64encode(rng.randbytes(size * 3 // 4)).decode()[:size]
+        c, t = _hits(blob, ids, keep)
+        n = len(c) + len(t)
+        total += n
+        if n:
+            fired += 1
+        for i in ({i for _, i, _, _, _ in c} | {i for _, _, i, _ in t}):
+            by_len[len(i)] = by_len.get(len(i), 0) + 1
+    return {"trials": trials, "bytes_each": size,
+            "trials_with_a_hit": fired, "mean_hits": total / trials,
+            "hits_by_identifier_length": dict(sorted(by_len.items())),
+            "containment_hits": sum(v for k, v in by_len.items()
+                                    if k >= V.LONG_ENOUGH_TO_BE_ONLY_A_NAME)}
+
+
 def gate(data, ids, keep):
     """(ok, result) for one sample's bytes.
 
     `result` names the gate that failed, the shapes involved and how many, and nothing else.
+
+    A finding records the evidence rather than a verdict about it - lengths, positions, the
+    size of the segment the identifier sits in, the layer that carried it. See `_profile`
+    for why no confidence grade is emitted: the one that was written for this round did not
+    survive its own null model.
     """
     plain_c, plain_t = _hits(data.decode("latin-1"), ids, keep)
     layers = decode_layers(data)
@@ -253,12 +371,6 @@ def gate(data, ids, keep):
         if c or t:
             enc.append((meth, c, t))
 
-    def summarise(pairs):
-        idents = {i for _, i, _, _, _ in pairs[0]} | {i for _, _, i, _ in pairs[1]}
-        return {"distinct_identifiers": len(idents),
-                "kinds": sorted({_kind(i) for i in idents}),
-                "occurrences": len(pairs[0]) + len(pairs[1])}
-
     res = {
         "plaintext_gate": "FAIL" if (plain_c or plain_t) else "PASS",
         "encoded_layer_gate": "PASS",
@@ -266,24 +378,19 @@ def gate(data, ids, keep):
         "layer_methods": sorted({m for m, _ in layers}),
     }
     if plain_c or plain_t:
-        res["plaintext_finding"] = summarise((plain_c, plain_t))
+        res["plaintext_finding"] = _profile((plain_c, plain_t))
         res["plaintext_finding"]["note"] = ("identifier names deliberately not recorded "
                                             "here; they are the thing being masked")
     if enc:
-        idents = set()
-        occ = 0
-        for _, c, t in enc:
-            idents |= {i for _, i, _, _, _ in c} | {i for _, _, i, _ in t}
-            occ += len(c) + len(t)
+        allc, allt = [], []
+        for _m, c, t in enc:
+            allc += c
+            allt += t
         res["encoded_layer_gate"] = "FAIL"
-        res["encoded_layer_finding"] = {
-            "distinct_identifiers": len(idents),
-            "kinds": sorted({_kind(i) for i in idents}),
-            "occurrences": occ,
-            "methods": sorted({m for m, _, _ in enc}),
-            "note": ("identifier names deliberately not recorded here; they are the thing "
-                     "being masked"),
-        }
+        res["encoded_layer_finding"] = _profile((allc, allt))
+        res["encoded_layer_finding"]["methods"] = sorted({m for m, _, _ in enc})
+        res["encoded_layer_finding"]["note"] = ("identifier names deliberately not recorded "
+                                                "here; they are the thing being masked")
     ok = res["plaintext_gate"] == "PASS" and res["encoded_layer_gate"] == "PASS"
     return ok, res
 
@@ -344,7 +451,31 @@ def inject(ids, keep, sample=None):
     if not ok:
         failures.append("fires on the unmodified masked sample")
 
+    # ------------------------------------------------------------------------------------
+    # What a finding records. Both identifiers are chosen by LENGTH at run time and never
+    # written down: length is the variable under test, and spelling one into this file would
+    # put a customer name in git.
+    # ------------------------------------------------------------------------------------
+    shortest = min((i for i in ids if len(i) < V.LONG_ENOUGH_TO_BE_ONLY_A_NAME
+                    and i.isalpha()), key=len, default=None)
     print()
+    print("=== a finding records the evidence a human needs, and never a name ===")
+    for label, ident in (("a short identifier", shortest), ("a long identifier", longest)):
+        if ident is None:
+            continue
+        buf = b"<?php $x='" + base64.b64encode(b"aaaa9" + ident.encode() + b"9aaaa") + b"';"
+        _, r = gate(buf, ids, keep)
+        f = r.get("encoded_layer_finding") or {}
+        has = all(k in f for k in ("identifier_lengths", "positions", "segment_lengths",
+                                   "false_positive_note"))
+        named = any(ident.lower() in json.dumps(f).lower() for _ in (0,))
+        good = r["encoded_layer_gate"] == "FAIL" and has and not named
+        print("   +  %-42s %s" % (label + " in a base64 layer",
+                                  "FAIL, evidence recorded, no name" if good else "WRONG"))
+        if not good:
+            failures.append("finding shape: " + label)
+
+
     print("planted into the plaintext")
     for name, form in PLANT:
         planted = base + b"\n" + (form % longest).encode("latin-1") + b"\n"
@@ -422,12 +553,49 @@ def main():
                     help="the pre-masking bytes of the single file being gated, so the "
                          "differential secret gate can run as well as the identifier gates")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--trials", type=int, default=60,
+                    help="trials for --base-rate; the quoted figures are from 660")
+    ap.add_argument("--stock-fp", action="store_true",
+                    help="regenerate the false-positive table the findings cite: the same "
+                         "predicate over stock CMS trees, which carry no customer of ours, "
+                         "so every hit is a false positive")
+    ap.add_argument("--stock-root", action="append",
+                    default=[os.path.join("trail-data", "CMS"),
+                             os.path.join("trail-data", "CMS-ext")])
+    ap.add_argument("--base-rate", action="store_true",
+                    help="re-run the null model the confidence grading rests on: random "
+                         "base64 through the real predicate, so the figure in the grading "
+                         "is reproducible rather than quoted")
     a = ap.parse_args()
 
     maps = a.map or [INCIDENT_MAP, LEGACY_MAP]
     ids, keep = load_ids(maps)
     print("maps                         : %s" % ", ".join(os.path.basename(m) for m in maps))
     print("client identifiers to look for: %d" % len(ids))
+
+    if a.stock_fp:
+        ids, keep = load_ids(a.map or [INCIDENT_MAP, LEGACY_MAP])
+        r = stock_fp(ids, keep, a.stock_root, sample=a.trials if a.trials != 60 else 8000)
+        print(json.dumps(r, indent=1))
+        print()
+        print("%d false positive(s) across %d of %d stock files (%.2f%%); "
+              "%d from identifiers of %d+ characters"
+              % (r["total_false_positives"], r["files_with_a_hit"], r["files_scanned"],
+                 100.0 * r["files_with_a_hit"] / max(r["files_scanned"], 1),
+                 sum(v for k, v in r["by_class"].items()
+                     if int(k.split("=")[1].split()[0]) >= V.LONG_ENOUGH_TO_BE_ONLY_A_NAME),
+                 V.LONG_ENOUGH_TO_BE_ONLY_A_NAME))
+        return 0
+
+    if a.base_rate:
+        ids, keep = load_ids(a.map or [INCIDENT_MAP, LEGACY_MAP])
+        r = base_rate(ids, keep, trials=a.trials)
+        print(json.dumps(r, indent=1, sort_keys=True))
+        print()
+        print("short-name rule fired in %d of %d trials (%.1f%%); containment fired %d time(s)"
+              % (r["trials_with_a_hit"], r["trials"],
+                 100.0 * r["trials_with_a_hit"] / r["trials"], r["containment_hits"]))
+        return 0
 
     if a.inject:
         print()
