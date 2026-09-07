@@ -83,6 +83,19 @@ def _pct(num, den):
     return "%.1f%%" % round(100.0 * num / den, 1)
 
 
+def _rate(v):
+    """0.2992 -> '29.9%'. A rate the summary already computed, not a division done twice.
+
+    `_pct` exists for figures whose numerator and denominator are both published; the family
+    macro average has no such pair - it is a mean of per-family rates - so re-deriving it here
+    would mean this file owning a second definition of it. It does not. It formats the one
+    `make-summary.py` computed.
+    """
+    if v is None:
+        raise Missing("rate is null")
+    return "%.1f%%" % round(100.0 * v, 1)
+
+
 def _get(s, key):
     if key not in s:
         raise Missing("index-summary.json has no key %r - regenerate it with "
@@ -104,6 +117,16 @@ def figures(s):
     top_fam, top_n = max(km_by_fam.items(), key=lambda kv: (kv[1], kv[0]))
     tech_pub, tech_known = len(_get(s, "techniques_published")), len(_get(s, "techniques_known"))
     classified = v["benign"] + v["malicious"]
+    fam = _get(s, "family_detection")
+    pop = _get(s, "malicious_family_population")
+    popd = _get(s, "malicious_family_population_detected")
+    rerun = _get(s, "family_rerun_power")
+    cond = _get(s, "families_detection_conditioned")
+    # The bucket is named in the table because "61 rows under a provenance label" with no
+    # label is a figure a reader cannot check. If a second one is ever ruled a bucket, this
+    # renders both rather than silently naming the first: a table that quietly stopped
+    # mentioning one is the stale-set failure this file exists to prevent.
+    bucket_label = "`, `".join(sorted(cond)) if cond else "none"
     return {
         "detection_pct": _pct(det, rev),
         "detection_ratio": "%s of %s" % (_n(det), _n(rev)),
@@ -123,6 +146,29 @@ def figures(s):
         "local_rows": _n(_get(s, "local_only")),
         "shipped_as_bytes": _n(_get(s, "published_shipped_as_bytes")),
         "fetched_not_shipped": _n(_get(s, "published_fetched_not_shipped")),
+        # --- family-weighted detection ---------------------------------------------------
+        # Every one of these is read from the summary and none is recomputed here, for the
+        # reason in IT READS THE SUMMARY, NEVER THE INDEX above: a family figure this file
+        # derived itself could agree with the index while disagreeing with the denominator,
+        # which is the two-denominators defect one level further out.
+        "family_count": _n(fam["families"]),
+        "family_fully_detected": _n(fam["fully_detected"]),
+        "family_partially_detected": _n(fam["partially_detected"]),
+        "family_completely_missed": _n(fam["completely_missed"]),
+        "family_macro_pct": _rate(fam["macro_rate"]),
+        # From the integer pair, never from the stored rate: both are published, so there is
+        # no reason to round a rounded number. The stored `micro_rate` is kept for anything
+        # reading the summary directly, and `--inject` asserts the two agree to a decimal.
+        "family_micro_pct": _pct(fam["detected_rows"], fam["rows"]),
+        "family_micro_ratio": "%s of %s" % (_n(fam["detected_rows"]), _n(fam["rows"])),
+        "unfamilied_rows": _n(pop["unfamilied"]),
+        "unfamilied_detected": _n(popd["unfamilied"]),
+        "bucketed_rows": _n(pop["provenance_bucketed"]),
+        "bucketed_label": "`%s`" % bucket_label,
+        "rows_without_technique": _n(_get(s, "malicious_rows_without_technique")),
+        "family_rerun_full": _n(rerun["every_member_rerun"]),
+        "family_rerun_none": _n(rerun["no_member_rerun"]),
+        "family_rerun_none_rows": _n(rerun["rows_in_families_with_no_member_rerun"]),
         "shipped_by_reason": ", ".join(
             "%s %s" % (_n(c), r) for r, c in sorted(
                 _get(s, "published_shipped_by_reason").items(),
@@ -165,6 +211,55 @@ def render_readme_figures(f):
     ]
 
 
+def render_readme_family(f):
+    """The family split, the macro/micro gap, and the populations the gap is silent about.
+
+    The last three rows are not decoration. A reader who sees only the first six learns that
+    the scanner catches 9 campaigns of 38 and misses 24, and would reasonably conclude the
+    corpus says so about the whole reviewed set. It does not: 531 reviewed malicious rows
+    carry no family, 530 of them are detected, and no figure above them counts one. The rows
+    naming that, the provenance bucket and the re-run power are what stop the table being a
+    more precise version of the same overstatement.
+    """
+    return [
+        (None, "| figure | value | denominator |"),
+        (None, "|---|---|---|"),
+        ("family_fully_detected",
+         "| **Families fully detected** | **%s** | of %s campaign families |"
+         % (f["family_fully_detected"], f["family_count"])),
+        ("family_partially_detected",
+         "| **Families partially detected** | **%s** | of %s campaign families |"
+         % (f["family_partially_detected"], f["family_count"])),
+        ("family_completely_missed",
+         "| **Families completely missed** | **%s** | of %s campaign families |"
+         % (f["family_completely_missed"], f["family_count"])),
+        ("family_macro_pct",
+         "| Macro average — every family weighted equally | %s | mean per-family detection "
+         "over %s families |" % (f["family_macro_pct"], f["family_count"])),
+        ("family_micro_pct",
+         "| Micro average — every sample weighted equally | %s | %s samples carrying a "
+         "campaign family |" % (f["family_micro_pct"], f["family_micro_ratio"])),
+        ("detection_pct",
+         "| Sample-weighted detection, whole reviewed set | %s | %s reviewed malicious "
+         "samples |" % (f["detection_pct"], f["detection_ratio"])),
+        ("unfamilied_rows",
+         "| Reviewed malicious rows carrying no family | %s | %s of them detected — outside "
+         "every family figure above |" % (f["unfamilied_rows"], f["unfamilied_detected"])),
+        ("bucketed_rows",
+         "| Rows under a provenance label rather than a campaign | %s | %s — membership "
+         "conditioned on detection, so excluded |"
+         % (f["bucketed_rows"], f["bucketed_label"])),
+        ("techniques",
+         "| Technique coverage | %s | distinct techniques; the same %s rows carry none |"
+         % (f["techniques"], f["rows_without_technique"])),
+        ("family_rerun_full",
+         "| Families a stranger can re-run in full | %s | of %s; %s have no re-runnable "
+         "member, holding %s rows |"
+         % (f["family_rerun_full"], f["family_count"], f["family_rerun_none"],
+            f["family_rerun_none_rows"])),
+    ]
+
+
 def render_sources_index_halves(f):
     return [
         (None, "| file | rows | tracked? | what it is |"),
@@ -197,6 +292,7 @@ def render_sources_shipped(f):
 
 REGIONS = [
     ("README.md", "corpus-figures", render_readme_figures),
+    ("README.md", "family-detection", render_readme_family),
     ("corpus/SOURCES.md", "index-halves", render_sources_index_halves),
     ("corpus/SOURCES.md", "shipped-vs-fetched", render_sources_shipped),
 ]
@@ -439,6 +535,69 @@ def inject():
              n > 0 and "malicious_detected_runnable" in out)
         case("  ...and no region was rendered with None", "None" not in out)
         open(sp, "w", encoding="utf-8").write(original)
+
+        # 6. A FAMILY FIGURE THAT DRIFTS MUST FAIL THE SAME WAY A DETECTION FIGURE DOES.
+        #    This round added a second table to README.md, and a generated region nobody has
+        #    seen refuse is not yet defended. Each of the three family states is drifted
+        #    separately, because a check that only ever watched "fully detected" would let a
+        #    partial silently become a miss - which is the collapse the three-state split
+        #    exists to prevent.
+        for key, figname in (("fully_detected", "family_fully_detected"),
+                             ("partially_detected", "family_partially_detected"),
+                             ("completely_missed", "family_completely_missed")):
+            s2 = json.loads(original)
+            s2["family_detection"][key] += 1
+            json.dump(s2, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
+            n, out = check()
+            case("family %-22s drifted by one       refused and named" % key,
+                 n > 0 and figname in out)
+        open(sp, "w", encoding="utf-8").write(original)
+
+        # 7. THE UNFAMILIED POPULATION CANNOT SILENTLY LEAVE THE TABLE.
+        #    The whole credibility of a family figure rests on the 531 rows it is silent
+        #    about being stated beside it. If that count moves and the document does not, the
+        #    table is asserting a gap that is no longer the gap.
+        s2 = json.loads(original)
+        s2["malicious_family_population"]["unfamilied"] += 1
+        json.dump(s2, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
+        n, out = check()
+        case("the unfamilied population drifted                refused",
+             n > 0 and "unfamilied_rows" in out)
+        open(sp, "w", encoding="utf-8").write(original)
+
+        #    ...and the same for the provenance bucket, which is the other row a reader needs
+        #    in order to add the table back up to the reviewed total.
+        s2 = json.loads(original)
+        s2["malicious_family_population"]["provenance_bucketed"] += 1
+        json.dump(s2, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
+        n, out = check()
+        case("the provenance bucket count drifted              refused",
+             n > 0 and "bucketed_rows" in out)
+        open(sp, "w", encoding="utf-8").write(original)
+
+        # 8. NO FIGURE IS ROUNDED TWICE. The rendered micro average is taken from the
+        #    published integer pair; the summary also stores the rate. They must agree to the
+        #    printed decimal. They did not: 105/707 rendered as 14.8% from a 4dp stored rate
+        #    and 14.9% from the pair, and the prose beside the table said 14.9%.
+        s3 = json.loads(original)
+        fam3 = s3["family_detection"]
+        case("micro average agrees with the stored rate to 1dp",
+             _pct(fam3["detected_rows"], fam3["rows"]) == _rate(fam3["micro_rate"]))
+        case("  ...and the macro rate survives being rendered",
+             _rate(fam3["macro_rate"]) == "%.1f%%" % round(100.0 * fam3["macro_rate"], 1))
+
+        # 9. The family region must be defended by the same MISSING_IS_AN_ERROR rule as the
+        #    first one. It is a different entry in REGIONS and could have been added without
+        #    ever being asserted absent.
+        famrel, famname = "README.md", "family-detection"
+        pf = os.path.join(tmp, famrel)
+        wholef = open(pf, encoding="utf-8").read()
+        open(pf, "w", encoding="utf-8").write(
+            re.sub(_BEGIN_RE % re.escape(famname), "", wholef))
+        n, out = check()
+        case("the family region with no BEGIN marker           refused",
+             n > 0 and "MISSING REGION" in out)
+        open(pf, "w", encoding="utf-8").write(wholef)
 
         n, _out = check()
         case("the tree restored                                accepted", n == 0)

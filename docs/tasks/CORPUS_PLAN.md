@@ -1387,9 +1387,9 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, eleven appearances: a measurement that cannot deliver bad news
+## 11. One property, twelve appearances: a measurement that cannot deliver bad news
 
-Eleven separate cautions in this plan share one diagnostic tell. Five of them are the same
+Twelve separate cautions in this plan share one diagnostic tell. Five of them are the same
 statement in different clothes; two reach the same place by a different mechanism and
 need a different repair, which is exactly why they are worth listing together:
 
@@ -1520,7 +1520,43 @@ dotted path would report almost every field as an orphan. What is owed is the nu
 Corrected population, both halves, 2026-09-06: **316 fields carried, 4 maps, 239 written, 23
 read-only, 54 ORPHAN**, of which 113 non-orphan classifications are leaf-shared.
 
-**Assume a twelfth exists in whatever you measure next** — and note that the first nine were
+**A twelfth, found 2026-09-07, and it is the first time the property is in the *numerator's
+own selection rule* rather than in a denominator.** `import-infected-tree.py` assigns the
+family label `legacy-infected-tree-sample` under `if hit and not chk["container_scoped"]` — a
+sample is in that family **because the scanner flagged it**, which the row records as `reason:
+detected-and-read`. Its 61 members are 61 of 61 detected, and they could not have been
+anything else: no rule change in either direction can move that figure, because a sample the
+rules stopped catching would never have been given the label.
+
+Counted as a family — and it was, in the first pass at this round's metric — it made family
+coverage read **10 fully detected of 39** instead of **9 of 38**, in the flattering direction,
+with a fully-detected cell that is a tautology. This is §4.4's `discovered_by` property
+arriving through a *label* rather than through a collection route, which is why nothing that
+watches denominators saw it: `malicious_reviewed` is right, `malicious_detected` is right, and
+the defect is entirely in how the rows are grouped.
+
+Sized, by a census over all 39 labelled families rather than a sample: it is the only one.
+Three independent properties agree and each was computed over every family — its 61 members
+carry **39 distinct expected rule-sets with no rule shared by all of them**, spanning eight
+unrelated rule prefixes, where every other multi-member family either shares a rule across all
+its detected members or fires a single set; its one technique is the most generic in the
+vocabulary and no other family carries it; and its `verdict_reason` is a five-way disjunction
+of unrelated malware classes. The repair is the §11 repair and not a deletion: the rows stay in
+the reviewed total under a named third population, because a sample that was reviewed does not
+stop having been reviewed, and `make-summary.py` now recomputes the rule-set dispersion every
+run so that a second bucket arriving under a new reason code is *named* rather than counted.
+
+**And the same round found the property in the metric's own denominator, which is the ordinary
+form.** 531 of the 1,299 reviewed malicious rows carry no family at all, so a family-weighted
+figure is bounded by who did the labelling. They are not a random 531: **530 of them are
+detected**, holding most of the recorded detections, so silently excluding them takes
+sample-weighted detection over what remains from 53.6% to **21.6%**. The same 531 rows — the
+identical set, not merely the same count — carry no `technique` either, so technique coverage
+is silent about exactly the same population and the two coverage figures do not corroborate
+each other. Both are published beside the rates rather than folded into them, and the three
+populations are asserted to sum to `malicious_reviewed`.
+
+**Assume a thirteenth exists in whatever you measure next** — and note that the first nine were
 found by somebody reading, while three of the ninth's parts and all of the tenth were found by
 asking a tool to state the size of a limit it had already written down. Writing the bound down
 is cheap and it is not the check. Sizing it is the check. The tenth is the sharper lesson:
