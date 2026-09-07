@@ -999,6 +999,64 @@ finding. The published half reads **44,543 publishable of 44,544, 0 stale**; the
 row is `3529f0f6b2cd` on missing gate provenance, blocked by the previous round rather than
 this one. The figure recorded here as 44,544 predates that block.
 
+### 7.3 The gate has to be run over the archives, not only over the index
+
+§7.2 is written as a list of properties of a shard, and every tool that enforced it read the
+index instead. That is not the same question. An index is a description; a shard is the thing
+a stranger downloads, and the two can disagree in ways no index-side check can see:
+
+- the shard can carry bytes no row accounts for;
+- the shard can carry bytes whose row has since been blocked — a tar written before a re-tag
+  does not announce that its contents moved;
+- a row's recorded gate PASS can have been computed over different bytes than the ones packed,
+  which is `fixture` working as designed and evidence about the wrong artefact all the same;
+- a recorded gate result can simply be stale, because the predicate moved and the row was
+  never re-measured.
+
+`corpus/shard-census.py` asks all four of the archives, plus §7.2's own bullets — every sample
+`publishable: true`, no `pii`/`content` anywhere, and the three copies of each sample's
+`expect` (the shard's `MANIFEST.json`, the tracked `corpus/expect/<shard>.json`, and the row)
+agreeing. `--regate` re-runs the identifier gates over the shipped bytes and diffs them against
+the rows, delegated to `verify-content-mask.py` rather than reimplemented.
+
+**Run it before a release, alongside the four commands in AGENTS.md.** A green `shard-gate.py`
+means the index is self-consistent. It has never meant the shards are safe to publish.
+
+**The masking-survival bullet needs the scanner and is a census, not a sample.** `verify.py`
+unpacks the shards and runs `check` per sample: 140 malicious members, 98 executed and
+98 rule-exact, 42 recorded `known_miss` still missed, 0 regressions; 6 benign members
+(2 samples, 4 carriers) clean with 0 false positives. 146 of 146 executed, so a discrepancy on
+any single member is detected with certainty rather than with a sampling power that would have
+to be quoted.
+
+### 7.4 Distribution: the shard is the tar, and the tar is reproducible
+
+**Tag.** A corpus shard set gets its **own tag**, never a scanner release. The six existing
+releases each carry exactly the four scanner binaries and nothing else; hanging a corpus on
+`v2.1.0` would change what an already-published release contains and would tie a corpus that
+versions on review rounds to a binary that versions on rules. Use a dated series —
+`corpus-YYYY.MM.N`.
+
+**Reproducibility, measured.** `build-shard.sh` emitted members in readdir order with the
+staging pass's mtimes and the building user's ownership, so *none of the eight shipped shards
+rebuilt to its own bytes* — same content, same permissions, different archive. It now pins
+member order, mtime (`SOURCE_DATE_EPOCH`, defaulting to 0 rather than to a value that moves),
+ownership and permissions, and `--selftest` builds the same content twice through deliberately
+perturbed stage metadata and requires one hash.
+
+**The `.zip` cannot be reproducible and that decides which hash a release note may quote.**
+ZipCrypto prefixes every entry with a randomised 12-byte encryption header: three wraps of one
+byte-identical input give three hashes, measured. So **the `.tar.zst` hash is the one that
+certifies the artefact**; a `.zip` hash attests to one upload arriving intact and nothing more.
+
+**And the password is settled, in the first of the two possible readings.** It is an
+anti-scanner measure — it stops GitHub and endpoint AV flagging the repository, and stops
+casual scraping and accidental execution — and it is *not* confidentiality. §7.1 already said
+so; what was missing was the consumer's half. The passphrase travels with the shard, in
+`SOURCES.md`, in the build script's output and in the release notes, because a shard nobody can
+open is not published either. Masking remains the actual control.
+
+
 ## 8. Golden test suite
 
 One command, machine-readable output, every past mistake permanent.
@@ -1638,3 +1696,56 @@ decompose 5 name-only / 2 real / 2 documentation, not 5 / 4.
 A ninth instance should be assumed to exist in whatever is measured next — the same standing
 assumption §5.3 makes about masking, and for the same reason: this class of error is invisible
 to reading the code, because the code computes exactly what it says it computes.
+
+### The ninth, found 2026-09-07: the shard census that could not see the shards
+
+The reconciliation round was given a gap to explain: the eight shards hold **142** files under
+`samples/`, `index-summary.json` claimed `published_shipped_as_bytes: 84`, and the 58 between
+them were unaccounted. Both halves of that gap were an enumeration bounding its own answer,
+in two different ways, and the second one was introduced by the tool written to measure the
+first.
+
+**The 84 was computed from a hand-maintained set of reason codes, and the set was stale.**
+`make-summary.SHIPPED` names the reason codes whose samples ship as bytes; anything outside it
+is reported as `published_fetched_not_shipped`, which asserts the sample is reproducible from a
+pinned source. `undetected-pool-review` was added as a reason code and never added to the set,
+so its **58** rows — every one of them in a built shard, and reproducible from nothing — were
+counted as fetchable. The file's own comment predicted this exactly: *"nothing catches a stale
+set."* Nothing did, for as long as it took to open a shard. `--check` passed throughout,
+because the summary agreed with the index; both `shard-gate.py` runs passed throughout,
+because they read the index and the index was never asked about the archives. **A summary that
+agrees with the index says nothing about whether either describes what shipped.**
+
+**Then the census written to check it reported 6 orphans that were not orphans.** Keyed on the
+row's `sha256`, it found no row for six of the 142 and called them unaccounted. Every one was
+named by its row, through a key the census did not read: `masking.masked_sha256`,
+`masking.remeasured.bytes_sha256`, or `fixture.fixture_sha256`. A row's `sha256` is the blob as
+*collected*; what ships can legitimately be a masked or generated-carrier derivative, and the
+row records which. The census had enumerated "bytes the index knows" using one of the four keys
+the index uses to know them — the same shape as the sweep that matched `/home/` and not
+`/home2/`, arrived at from the opposite direction.
+
+The premise the round was given was wrong in the same place and worth correcting: *"a fixture
+is not an indexed row."* Every fixture **is** an indexed row. Seven rows carry a `fixture` key
+recording the collected original, the extracted payload, the generated carrier, and
+`fixture_sha256` — the bytes that actually ship. The substitution is auditable rather than
+implicit, which is better than the premise assumed, and `shard-gate.py` already checks it
+(`fixtures that do not describe what they ship: 0`).
+
+`shard-census.py` now takes all four keys, and `--inject` drops each one in turn and asserts
+the census reports a false orphan without it — a control on the *resolver* rather than on the
+result, because the defect was never in what the census found, it was in what it could look up.
+It also compares `make-summary.SHIPPED` against the reason codes it observes actually shipping,
+which is the control that file asked for and could not host: `make-summary.py` must run without
+the shards, so the check belongs to the tool that has them open.
+
+**What the shards were carrying, which is the reason any of this matters.** Asked of the
+archives instead of the index, the same round found a published row that is `publishable:
+false` today sitting in a built shard, four fixtures whose recorded gate PASS was computed over
+bytes other than the ones shipped, and — re-running the identifier gate over the shipped bytes
+— a `staging-directory-review` row recording `plaintext_gate: PASS` that the current predicate
+refuses. **134 of the 142 rows carry no `masking.provenance` at all**, so nothing in the index
+dates a recorded gate result against the predicate that produced it, and the drift was
+invisible by construction.
+
+A tenth instance should be assumed to exist in whatever is measured next.

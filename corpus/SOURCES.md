@@ -8,7 +8,8 @@ corpus/
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
   fetch-benign.sh                   downloads, verifies hashes, unpacks. Downloads are not committed
   resolve-benign.py                 closes rows byte-identical to a file in a pinned source
-  shard-gate.py                     §7.2 — computes `publishable` and fails the build
+  shard-gate.py                     §7.2 over the INDEX — computes `publishable`, fails the build
+  shard-census.py                   §7.3 over the ARCHIVES — resolves every packed member to a row
   clearance.py                      the rule for a human-cleared gate finding; a library, no writes
   clear-finding.py                  the only writer of `clearances`; refuses more than it accepts
   adopt-decoded-tags.py             the only writer of `sensitivity` from `decoded_form_tags`
@@ -1610,15 +1611,48 @@ same shard stop being the same shard.
 
 ### On the password
 
-`malicious-polyglots-001.tar.zst.zip` is the same shard inside a zip with the passphrase
-`infected`. The passphrase is deliberately public and documented here, because §7.1 is
-explicit: **if CI can open the archive, so can anyone.** It is not a confidentiality control
-and must never be treated as one. It buys three real things: GitHub's and AV vendors'
-scanners stop flagging the repository as malware-hosting, contributors' endpoint AV stops
-quarantining files on clone, and casual scraping and accidental execution get harder.
+Every `<shard>.tar.zst` has a `<shard>.tar.zst.zip` beside it: the same archive inside a zip
+with the passphrase `infected`. All eight shards are wrapped this way, not just the polyglot
+one this section used to name.
+
+The passphrase is deliberately public and documented here, because §7.1 is explicit: **if CI
+can open the archive, so can anyone.** It is not a confidentiality control and must never be
+treated as one. It buys three real things: GitHub's and AV vendors' scanners stop flagging
+the repository as malware-hosting, contributors' endpoint AV stops quarantining files on
+clone, and casual scraping and accidental execution get harder.
 
 **Masking is the actual control.** Nothing enters a shard unmasked, which is what
-`shard-gate.py` exists to enforce.
+`shard-gate.py` and `shard-census.py` exist to enforce — the first over the index, the second
+over the archives themselves.
+
+So the purpose is settled and it is the first of the two readings: **anti-scanner, not
+confidential.** The passphrase therefore travels with the shard, in this file, in the release
+notes and in the build script's own output. A shard nobody can open is not published either.
+
+#### What a consumer does with one
+
+```
+unzip -P infected malicious-polyglots-001.tar.zst.zip   # -> malicious-polyglots-001.tar.zst
+sha256sum malicious-polyglots-001.tar.zst               # compare with the release note
+tar -I zstd -xf malicious-polyglots-001.tar.zst         # -> MANIFEST.json, samples/, carriers/
+```
+
+`MANIFEST.json` is the shard's own copy of every member's `expect`, and
+`corpus/expect/<shard>.json` in this repository is the tracked copy of the same thing. They
+are byte-identical by intent.
+
+**These are live malware samples.** They extract read-only (mode 0400) for that reason. Do
+not place them under a web root or anywhere a PHP handler can reach.
+
+#### Which hash certifies the shard
+
+**The `.tar.zst` hash, never the `.zip` hash.** The tar is reproducible: `build-shard.sh`
+pins member order, mtimes, ownership and permissions, and `--selftest` asserts that two
+builds of the same content agree through perturbed stage metadata. The zip is not
+reproducible and cannot be made so — ZipCrypto prefixes every entry with a randomised
+12-byte encryption header, so three wraps of one byte-identical input give three hashes,
+measured. A `.zip` hash proves a file arrived intact from one upload; it says nothing about
+whether the contents are what was built. Verify by unwrapping and hashing the tar.
 
 ## Running the suite, and the review-round workflow
 

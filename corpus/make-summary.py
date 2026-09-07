@@ -34,10 +34,26 @@ CLEARABLE = clearance.CLEARABLE_GATES
 # Reason codes whose samples ship as BYTES in a shard. Everything else is an index row plus
 # a lockfile entry, reproducible with fetch-benign.sh rather than shipped (SOURCES.md 6).
 SHIPPED = {"media-polyglot", "staging-directory-review", "outside-webroot-sweep",
-           "doorway-kit-review"}
+           "doorway-kit-review", "undetected-pool-review"}
 # Adding a reason code without adding it here silently reclassifies its samples as
 # "reproducible from a pinned source", which is the opposite of the truth. --check catches a
 # stale summary; nothing catches a stale set, so keep this beside the shard that uses it.
+#
+# NOTHING CAUGHT IT, AND THE COMMENT ABOVE PREDICTED EXACTLY HOW.
+# ---------------------------------------------------------------
+# `undetected-pool-review` was added as a reason code and not added here, so its 58 rows -
+# every one of them shipping as bytes in `malicious-uploaders-001`, `malicious-db-dropin-001`
+# and `benign-attacker-artefacts-001` - were counted under `published_fetched_not_shipped`,
+# which asserts they are reproducible from a pinned source. They are not; nothing outside
+# the shard has them. `published_shipped_as_bytes` read 84 against 142 members actually
+# shipped, and both `--check` and both `shard-gate` runs passed throughout, because the
+# summary agreed with the index and the index was never asked about the archives.
+#
+# The control this comment asked for now exists and is not in this file: `shard-census.py`
+# opens the shards, resolves every member to its row, and asserts this set equals the set of
+# reason codes it actually observed. A stale set is now a failure with a name rather than a
+# silent reclassification. It cannot live here - this file must run without the shards,
+# which are gitignored release assets - so it lives with the tool that has them open.
 
 def build():
     pub = [json.loads(l) for l in open(os.path.join(HERE, "index.jsonl"))]

@@ -11,6 +11,57 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ## Unreleased
 
+### Fixed
+
+- **`published_shipped_as_bytes` was never a count of shipped bytes, and 58 samples were
+  reported as the opposite of what they are.** It counts published rows whose reason code
+  appears in a hand-maintained `SHIPPED` set in `make-summary.py`. `undetected-pool-review`
+  was added as a reason code and never added to that set, so its 58 rows were counted under
+  `published_fetched_not_shipped` — which asserts they are reproducible from a pinned source.
+  They are not: nothing outside the shard has them. The 58 are 46 in
+  `malicious-db-dropin-001`, 11 in `malicious-uploaders-001`, 1 in
+  `benign-attacker-artefacts-001`, each resolved individually by hash. **The file's own
+  comment predicted it** — *"`--check` catches a stale summary; nothing catches a stale set"* —
+  and nothing did, because `--check` compares the summary to the index and both `shard-gate`
+  runs read the index, which was never asked about the archives. The count moves 84 → 142 and
+  44,460 → 44,402, two numbers by 58 in opposite directions.
+
+- **No shard rebuilt to its own bytes.** Same content, same mtimes, same ownership, same
+  permissions, different member order, because `tar -cf - .` emits readdir order. Permissions
+  were also inconsistent across shards from the same script — 117 of 142 samples at `0400`, 25
+  at `0644`. `build-shard.sh` now pins order, mtime, ownership and permissions, and
+  `--selftest` builds the same content twice through perturbed stage metadata and requires one
+  hash. All eight `.tar.zst` now reproduce. The `.zip` wrappers **cannot**: ZipCrypto prefixes
+  each entry with a randomised 12-byte header, so three wraps of one input give three hashes.
+  The selftest asserts that too, so a future reproducible zip flags the comment rather than
+  quietly falsifying it.
+
+### Added
+
+- **`corpus/shard-census.py`** — the §7.2 gate run over the archives as they are rather than
+  over the index that describes them: publishability, `pii`/`content` absence, the differential
+  secret check, detection survival, and three-way agreement between each shard's
+  `MANIFEST.json`, its tracked copy in `corpus/expect/` and the index row. 16 controls, each
+  catching its planted defect. Census over all 142 samples and 146 members, so a discrepancy on
+  any single member is detected with certainty rather than with a power figure.
+
+- **CORPUS_PLAN §7.4 — how a consumer opens a shard.** The passphrase is `infected`, public by
+  design and identical on all eight; `SOURCES.md` had named it for one. The purpose is
+  anti-scanner, not confidentiality — it stops drive-by antivirus pickup and casual scraping of
+  live malware, and a password published beside the file would be theatre if it claimed
+  anything more. Samples extract read-only at `0400` and are live malware.
+
+### Known before publication
+
+Three staleness findings stop the upload and are recorded rather than worked around: one
+blocked row sitting inside a built shard, one row recording `plaintext_gate: PASS` that the
+current gate refuses on the shipped bytes, and four fixtures whose recorded gate evidence was
+computed over the collected original rather than the generated carrier that ships (all four
+pass when re-run over the shipped bytes — the row simply does not say so). **134 of the 142
+shipped rows carry no `masking.provenance`**, so nothing dates a recorded result against the
+predicate that produced it.
+
+
 ### Added
 
 - **The prose a gate finding carries is out of the AST, and the price was paid once
