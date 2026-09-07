@@ -11,6 +11,90 @@ commit list that CI generates per tag. Versions are the git tags described in
 
 ## Unreleased
 
+### Added
+
+- **`corpus/derived_db.py` and `corpus/derive-index-db.py` — a derived SQLite read index over
+  both halves, whose freshness guarantee is refusal at read time.** The JSONL stays the source
+  of truth; the database is one-way, gitignored, rebuildable in 2.16 s, and never authoritative
+  about anything. It exists because every tool re-parses 61.4 MB — 92,800 rows, about 0.77 s of
+  `json.loads` — on every invocation, dozens of times a round, and because nothing could ask for
+  the rows in one cluster, carrying one tag, or under one path prefix without scanning all of
+  them.
+
+  **The check is not a `--check`.** `derived_db.open_ro()` verifies freshness as part of opening
+  the file and raises if it cannot, so a stale read is unperformable rather than merely
+  detectable, and there is no flag to skip it. That shape is chosen against this repository's
+  record: `index-summary.json` could sit stale until a human ran `--check` and it did, twice;
+  `make-summary.SHIPPED` carried the comment *"nothing catches a stale set"* and nothing did, so
+  58 samples were reported as reproducible from upstream when they exist nowhere but inside a
+  shard. Both are one defect — the detector separate from the use. `--check` exists and is
+  useful; it is not the mechanism.
+
+  **What freshness means is stored, not assumed.** A `source` table records each JSONL's
+  sha256, row count and a cheap fingerprint; a `meta` table records the schema version and the
+  build time. On open, the schema version must match exactly, the *set* of sources must match
+  the machine, every sha256 must be recomputed and equal, and the rows the database holds per
+  half must equal the count it recorded. The refusal names which source moved. Hashing costs
+  0.055 s, about 7% of the parse it replaces, and is paid every open. The fingerprint may only
+  ever say *definitely stale* and is never consulted by `open_ro`: both halves are written by
+  `write_jsonl_atomic`, so a fast path that can wrongly answer "fresh" is the failure mode
+  restated.
+
+  **Three structural rules.** The builder reads under `indexio.index_lock`, both halves,
+  published first — held 0.17 s of a 2.16 s build and released before the SQLite work, so a
+  concurrent write makes the result *stale* rather than *wrong*. The database is assembled in a
+  sibling temp file and `os.replace()`d in, so a reader never sees a partial build. Consumers
+  open `file:...?mode=ro`, and the file is left in `DELETE` journal mode and never WAL, because
+  a WAL database cannot be opened read-only without writing a `-shm` beside it.
+
+  **The whole row is kept as JSON** beside the extracted columns, which is why the database is
+  169.8 MB from 61.4 MB (277%). The census reports 326 dotted fields carried by rows and 53
+  orphans, and its standing caution is that a field every row has lost is invisible to a census
+  enumerated from the rows; a normalised schema that dropped unmodelled fields would make that
+  worse and would do it quietly.
+
+  **56 controls, both directions**, since a refusal that always fires and one that never fires
+  look identical from a green run. The one that matters: an index edited **in place** with its
+  size, mtime and inode restored to exactly what the database recorded — the fingerprint cannot
+  prove it stale, and `open_ro` refuses it anyway. Beside it, the controls that stop the refusal
+  from being vacuous: an index atomically rewritten to identical bytes still opens, an index
+  touched but not changed still opens, and a published-only database is legitimate where there
+  is no local half.
+
+- **`corpus/derive-index-db.py --bench`** — measured rather than asserted, freshness check
+  charged to every query because a consumer pays it every invocation:
+
+  | query | rows | scan | db open | db rows | db keys | speed-up |
+  |---|---|---|---|---|---|---|
+  | cluster: one `family` | 495 | 0.77 s | 0.069 s | 0.007 s | 0.001 s | **10.1×** |
+  | tag: `sensitivity` contains `c2` | 791 | 0.77 s | 0.053 s | 0.011 s | 0.002 s | **11.9×** |
+  | path prefix: one 3-segment masked prefix | 10,254 | 0.77 s | 0.053 s | 0.245 s | 0.043 s | **2.6×** |
+
+  `db rows` materialises every match through `json.loads`; `db keys` answers the same query
+  without doing so, which is what a result list needs — the gap between those two columns is
+  row materialisation, not index cost, and it is the whole of the third row's weaker figure.
+  The speed-up quotes the pessimistic column. Every result set is reconciled against the scan
+  in the same run, and a difference is reported as a failure rather than as a speed-up.
+
+### Measured, not changed
+
+- **No detection figure moved and none needed measuring.** This round adds a reader over the
+  index and changes no row, no rule and no binary; `build-release/` was not rebuilt.
+  `shard-gate.py` passes on both halves and `make-summary.py --check` agrees, all three
+  unchanged from before the round.
+
+- **The field census reads 326 fields carried and 53 orphans, against the 316 and 54 that
+  CORPUS_PLAN §11 records for 2026-09-06.** The cause is the two rounds merged since
+  (`corpus/clear-for-publication`, `corpus/release-flags`). Measured from git on the half that
+  has history: the published index carried 158 dotted keys at `7f38f1f` and carries 202 today,
+  **+44 and none removed**, almost all of them the `masking.secret_literals.*`,
+  `masking.plaintext_finding.*` and `masking.remeasured.*` blocks those rounds wrote. The union
+  over both halves moved only +10, so 34 of the 44 were already carried by the local half — and
+  the orphan count fell by one because `origin.incident` was removed outright, which
+  `field-provenance.py` reports under *fields REMOVED from the index*. **The local half's
+  contribution to this delta is not measurable**: it is gitignored and has no history, so the
+  +10 and the −1 are attributed to the published side plus a bound, not decomposed.
+
 ### Fixed
 
 - **`published_shipped_as_bytes` was never a count of shipped bytes, and 58 samples were

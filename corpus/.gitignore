@@ -21,3 +21,20 @@ local/
 
 # Bytecode cache from importing indexio.py as a module.
 __pycache__/
+
+# The derived SQLite read index and any journal SQLite puts beside it. Built by
+# derive-index-db.py from both halves of the index; one-way, rebuildable, never
+# authoritative about anything.
+#
+# It is gitignored for the same reason local/ is, and this entry is deliberately
+# redundant with the local/ rule above so that the reason is written where somebody
+# looking for the database will find it: THE DATABASE CONTAINS CUSTOMER IDENTIFIERS.
+# It holds every local row verbatim, so the local half's origin.path, account_hash and
+# site values are inside it by construction. It is exactly as unpublishable as
+# local/index-local.jsonl and it must never be force-added, uploaded, or attached to
+# an issue. See SOURCES.md, "The derived SQLite read index".
+local/index.db
+local/index.db-journal
+local/index.db-wal
+local/index.db-shm
+local/index.db.*.tmp

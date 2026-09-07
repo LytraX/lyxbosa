@@ -28,6 +28,9 @@ corpus/
   mask-samples.py                   runs §5.6's three checks over a batch and records the result
   promote-gate.py                   §5.3 — the map-AWARE check, run when a row is promoted
   index-summary.json                the denominator: counts and blockers, tracked
+  derived_db.py                     the derived SQLite read index: builder and reader, a library
+  derive-index-db.py                builds it; --check, --inject and --bench
+  local/index.db                    that database (gitignored; DERIVED, never authoritative)
   shards/                           built shards (gitignored; LOCAL ONLY - none has ever been distributed)
 ```
 
@@ -1461,6 +1464,190 @@ the new path is clean cannot tell you the old path was the cause.
 | `media-clean-not-published` | structurally clean media: no code, so a false positive or customer content |
 | `staging-directory-review` | a human opened the whole directory, confirmed it is attacker staging, and the sample passed both gates |
 | `doorway-kit-review` | a human read one legacy-tree doorway kit end to end — deployers, generator, installed `.htaccess`, templates — and ruled on the whole kit |
+
+### The derived SQLite read index
+
+`corpus/local/index.db` is a one-way derivation of both halves, built by
+`corpus/derive-index-db.py` and read through `corpus/derived_db.py`. **The JSONL stays the
+source of truth.** The database is gitignored, local, rebuildable in about two seconds, and
+never authoritative about anything.
+
+It exists because every tool here re-parses 61.4 MB on every invocation — 92,800 rows, about
+0.77 s of `json.loads` before the tool does any of its own work — and because a tool that
+wants the rows in one family, or carrying one tag, or under one path prefix has no way to ask
+for them: it scans everything and filters in Python. Measured on this machine, three such
+queries answered from the database against a full scan, freshness check included:
+
+| query | rows | scan | db open | db rows | db keys | speed-up |
+|---|---|---|---|---|---|---|
+| cluster: one `family` | 495 | 0.77 s | 0.069 s | 0.007 s | 0.001 s | **10.1×** |
+| tag: `sensitivity` contains `c2` | 791 | 0.77 s | 0.053 s | 0.011 s | 0.002 s | **11.9×** |
+| path prefix: one 3-segment masked prefix | 10,254 | 0.77 s | 0.053 s | 0.245 s | 0.043 s | **2.6×** |
+
+`db open` is the freshness check and is charged to every query, because a consumer pays it
+every invocation. `db rows` materialises each matching row through `json.loads`; `db keys`
+answers the same query without doing so, which is what a result list actually needs — the gap
+between the two columns is row materialisation and not index cost. The speed-up column quotes
+the pessimistic one. The database is **169.8 MB from 61.4 MB of JSONL, 277%**: the whole row
+is stored as JSON *and* the extracted columns are stored again beside it, which is the
+deliberate trade below.
+
+#### The guarantee is refusal at read time, not a `--check` somebody remembers
+
+`derived_db.open_ro()` verifies freshness as part of opening the file and raises if it cannot.
+A stale read is not *detectable*, it is *unperformable*. There is no flag to skip it and there
+must never be one.
+
+That shape is chosen against this repository's own record, twice:
+
+* `index-summary.json` could sit stale until a human ran `make-summary.py --check`. It did,
+  twice, and the second time a round was reported green while it was failing. AGENTS.md now
+  requires the run and `pre-push-check.py` now enforces it — because a written rule that has
+  been missed twice wants a gate, not stronger wording.
+* `make-summary.SHIPPED` is a hand-maintained set carrying the comment *"nothing catches a
+  stale set."* Nothing caught it. 58 samples were counted as reproducible from a pinned source
+  when they exist nowhere but inside a shard.
+
+Both are one defect: the detector was separate from the use, so the use could happen without
+the detector. `derive-index-db.py --check` exists because asking the question directly is
+useful and because its output carries detail an exception cannot — but it is **not** the
+mechanism, and no consumer is asked to run it.
+
+#### What freshness means, written down rather than assumed
+
+The `source` table records, per JSONL the build read: repo-relative path, **sha256 of its
+bytes**, row count, and a cheap fingerprint (size, mtime, inode). The `meta` table records the
+**schema version** and the **build time**. On open, all four of these must hold:
+
+1. the schema version is one this module recognises, **exactly** — not merely `>=`;
+2. the set of sources recorded equals the set present on this machine now (a public clone with
+   no local half builds a legitimate published-only database; reading it where the local half
+   *does* exist would answer about half the corpus while looking like it answered about all of
+   it);
+3. every recorded sha256 equals the file's sha256 **recomputed now**;
+4. the row count stored per source equals the rows the database actually holds for that half,
+   which catches a truncated or hand-edited database rather than a moved source.
+
+Anything else raises, and the message names which source moved rather than reporting that
+something did. Hashing 61.4 MB costs about 0.055 s — roughly 7% of the JSONL parse it
+replaces — and is paid on every open. That is the price of the guarantee.
+
+**The fingerprint may only ever say "definitely stale".** `definitely_stale()` returns True
+when size, mtime or inode disagree with the record and otherwise returns False meaning *not
+proven stale* — never *fresh*. `open_ro()` does not call it at all. The reason is exact: both
+halves are written by `indexio.write_jsonl_atomic`, whose `os.replace()` can hand back any
+(size, mtime, inode) triple it likes, so a fast path that can wrongly answer "fresh" is the
+whole failure mode restated with a stopwatch attached. The control for this is not an
+argument: `--inject` edits an index **in place**, restores its size, mtime and inode to
+exactly what the database recorded, asserts that the fingerprint therefore cannot prove
+staleness — and asserts `open_ro` refuses it anyway.
+
+**Freshness is not correctness.** A passing open proves the database was built from exactly
+these bytes; it does not prove the builder derived them faithfully. That is a different
+question with a different check: `--check` re-reads both halves and reconciles every row,
+every extracted column, every tag and every path (92,800 rows, 377,242 tags, 48,256 paths,
+1.8 s). Nor is it proof against a forger — anyone who can write the file can rewrite the
+`source` table. The controls cover accident and drift, not deliberate editing, and consumers
+open `mode=ro` so that "anyone" excludes them.
+
+#### Three structural rules
+
+**The builder reads under `indexio.index_lock`,** both halves, published first so two builders
+cannot deadlock. Same reason `shard-gate.py --fix` does: deriving from rows another writer is
+mid-merge on produces a database that matches nothing, and a half-merged index is internally
+consistent so nothing downstream can tell. The lock is held for the read and hash only —
+**0.17 s of a 2.16 s build** — and released before the SQLite work. That is deliberate: what
+is recorded is the sha256 of the bytes actually read, so an index written during the build
+makes the result *stale*, not *wrong*, and the reader refuses stale. Holding the lock across
+the whole build would block writers for seconds to convert a refusal into a wait.
+
+**The database is assembled in a sibling temp file and `os.replace()`d into place,** exactly
+as `write_jsonl_atomic` does, so a reader sees the whole old database or the whole new one and
+never a partial build. "Opened while the builder is running" is therefore defined behaviour
+rather than a race, and `--inject` asserts both halves of it: a build refuses an index whose
+lock is held, and an existing database still opens while that lock is held.
+
+**Consumers open read-only,** through a `file:...?mode=ro` URI. The builder is the only writer.
+The moment anything else can write this file it stops being derived and becomes a second
+source of truth, which is the one thing it must not be. The final database is left in SQLite's
+default `DELETE` journal mode and **never WAL**, because a WAL database cannot be opened
+`mode=ro` without creating a `-shm` beside it, and a reader that has to write something in
+order to read is not read-only. `--inject` asserts the `INSERT` fails, the `DROP` fails, and
+that reading leaves no `-wal` or `-shm` behind.
+
+#### The whole row is kept as JSON, and that is the point of the 277%
+
+`row.json` holds the source line verbatim; the extracted columns are an index onto it, not a
+replacement for it. The census over both halves reports **326 dotted fields carried by rows,
+53 of them orphans** — written by no tracked tool (`field-provenance.py`, 2026-09-07). That
+census has been wrong about its own population four separate times, each time by enumerating
+fields through something that could not see all of them, and its standing caution is that
+**a field every row has lost is invisible to a census enumerated from the rows**. A normalised
+schema that dropped unmodelled fields would make a field invisible to the next census the
+moment it stopped being extracted, and would do it silently. Keeping the row means this
+database can lose a *column* and never lose a *field*. `--inject` asserts it directly: a field
+no column extracts survives verbatim in `row.json`.
+
+What *is* extracted, and why those: `sha256`, `size`, `half`, `line_no`, `bucket`, `family`,
+`staging_dir`, `verdict`, `publishable`, `reason`, `account_hash`, `origin_path`; a `row_tag`
+table for the list-valued fields (`sensitivity`, `technique`, `discovered_by`,
+`publish_blockers`, `collected_from`, `expect.must_detect`, and the keys of `placements`); and
+a `row_path` table for prefix scans. **"Cluster" is not a field in either half** — it is the
+three columns this corpus actually groups by, `bucket` (6 values), `family` (46) and
+`staging_dir` (75 rows), and `find_by_cluster` accepts those three by name rather than an
+arbitrary column so the query surface is something the schema version covers.
+`collected_from` looks path-shaped and is not: all 52,219 of its entries are operation labels
+and not one contains a `/`, so it is indexed as a tag. `origin.path` is the only path-valued
+field, it is a local-half field by the gate's own rule that a published row carries no
+`origin`, and a prefix search is therefore a search of the local half whatever else it says.
+
+`row.sha256` is indexed and **not** unique. It happens to be unique across both halves today —
+44,544 + 48,256 distinct, zero overlap, measured 2026-09-07 — but a `UNIQUE` constraint would
+make a cache into an opinionated validator, crashing the build on a future duplicate instead
+of leaving that finding to the tool whose job it is.
+
+#### It is for finding rows, not for counting them
+
+`derived_db` exposes finders and **no counters**, on purpose. Every count a round quotes comes
+from the JSONL or from `index-summary.json`. A denominator enumerated by a derived artefact is
+CORPUS_PLAN §11's property with an extra layer of indirection, and this corpus has eleven
+recorded instances of it already. If a figure is ever taken from here it must be reconciled
+against the JSONL **in the same run** — which is what `--check` does, and what `--bench` does
+to every query it times, reporting a result-set difference as a failure rather than as a
+speed-up.
+
+#### It contains customer identifiers, and it is not in `pre-push-check.py`
+
+The database holds every local row verbatim, so the local half's `origin.path`, `account_hash`
+and `site` values are inside it by construction. It is exactly as unpublishable as
+`local/index-local.jsonl`. `corpus/.gitignore` names `local/index.db` and its journal, WAL,
+shm and temp siblings explicitly — redundantly with the `local/` rule already above it — so
+that the reason is written where somebody looking for the database will find it. Being
+redundant, those five patterns are shadowed and would never be observed to fire, which is the
+shape this repository keeps paying for; they were checked in isolation in a scratch repository
+carrying that block and not the `local/` rule, where all five match and `index-local.jsonl`
+stays visible.
+
+**Its freshness check is deliberately not wired into `pre-push-check.py`,** and that omission
+is a decision rather than an oversight. That gate guards publication and this database never
+ships. Adding an unrelated local-cache check to it would dilute what `SAFE TO PUSH` means, and
+the leak gate's entire value is that it says exactly one thing. The reader is the enforcement
+point, and it enforces on every open rather than once before a push.
+
+#### Controls
+
+`corpus/derive-index-db.py --inject` runs **56 controls in both directions**, because a
+refusal that always fires and one that never fires look identical from a green run and that
+shape has now appeared three times here. Every negative case has a positive beside it: a fresh
+database opens; an index atomically rewritten to *identical bytes* still opens (new inode, new
+mtime — content is the contract); an index touched but not changed still opens; a
+published-only database is legitimate where there is no local half. Against those: a half that
+gained a row, a half that lost one, both at once with both named, a newer schema version, an
+older one, a non-numeric one, none at all, a file that is not SQLite, a zero-length file, some
+other SQLite database, a right-version database missing the tables that version means, no file
+at all, a half that disappeared, a half that appeared, rows deleted from the database with the
+`source` table untouched, and the in-place tamper described above. `reconcile()` ships its own control: a database with one column edited and one row's
+tags dropped is caught, and a faithful one reconciles clean.
 
 ## The benign half is fetched, not shipped
 
