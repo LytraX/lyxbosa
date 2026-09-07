@@ -102,7 +102,7 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Fixed
 
-- **Four more stale figures and five release-state assertions, found by sweeping the class
+- **Four more stale figures and eight release-state assertions, found by sweeping the class
   rather than the two reported instances.** The reviewer found one of each; a fix sized to that
   report would have been sized to the report rather than to the problem. Every tracked document
   was swept with `command grep` over `git ls-files` — not the shell's `grep` wrapper, which
@@ -129,8 +129,20 @@ are correct as of the round that recorded them and are deliberately never regene
   `QUARANTINE_REVIEW_QUEUE.md`'s second copy of the technique-coverage figure was **deleted
   rather than generated**, because removing a duplicate beats checking one.
 
-- **Five sentences asserted a release state that the 2026-09-07 release falsified**, and the
-  right repair differs per sentence — generate it, date it, or rewrite it as history.
+- **Eight sentences asserted a release state that the 2026-09-07 release falsified**, and the
+  right repair differs per sentence — generate it, date it, or rewrite it as history. Three are
+  in `SOURCES.md`, one in `KNOWN_ISSUES.md`, and four are in changelog entries that this round
+  moved, where the released section they now sit in makes them history by position and they are
+  dated in place besides.
+
+  *The count was first reported as five, in this entry and in the commit message that landed
+  it.* A line-based `command grep` matched seven; the eighth is the `SOURCES.md` five-row
+  finding, whose sentence **wraps** — the line ends at `no shard has ever been` and the next
+  begins `distributed,` — so the pattern could not see it, and it was found separately by
+  reading. Recounting over unwrapped prose gives eight. The lesson is the one §11 keeps
+  recording: a population enumerated by a line-based sweep is bounded by the sweep's line
+  model, not by the prose. It is left corrected here rather than quietly, because a count that
+  moved is not a result until it says why.
   `SOURCES.md`'s tree listing and its *`published` is a classification* section both said no
   shard had ever been distributed, in the present tense; both are rewritten as history with the
   current state beside them, because the distinction they draw is now load-bearing rather than
