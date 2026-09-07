@@ -59,6 +59,7 @@ sys.path.insert(0, HERE)
 from indexio import read_jsonl, write_jsonl_atomic, index_lock          # noqa: E402
 import gate_provenance                                                  # noqa: E402
 import gate_evidence                                                    # noqa: E402
+import clearance                                                        # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "vcm_stamp", os.path.join(HERE, "verify-content-mask.py"))
@@ -137,10 +138,41 @@ def reverify(row, data, before=None):
 
 
 def additions(row, data):
-    """The keys this would add. Never a key the row already has."""
+    """The keys this would add. Never a key the row already has.
+
+    THE STAMP NAMES THE BYTES IT WAS TAKEN OVER
+    --------------------------------------------
+    `gate_provenance.stamp` answers *which predicate* measured this row and says nothing
+    about *what it measured*. For a row whose collected blob is the thing that ships those
+    are the same question. For a row that ships a generated carrier they are not, and
+    `shard-census.py` had to report four published rows as "gate result describes bytes
+    other than the ones shipped" - a recorded PASS that is true of the original and
+    unevidenced about the fixture in the tar. Both halves are needed for a stranger to
+    re-derive a published result: the predicate, and the input.
+
+    `bytes_sha256` is written by this tool rather than by `gate_provenance.stamp`, and that
+    is deliberate. `gate_provenance.py` is one of the six modules inside `TOOLS`, so adding
+    a key there would move the digest and put every stamped row back into re-measurement for
+    a field that is not part of the predicate. The digest is the claim about the tools; this
+    is the claim about the input, and they are separately sourced on purpose.
+
+    It is safe against the clearance machinery by construction rather than by luck:
+    `clearance._prov_key` reads `tools` and `map` and nothing else - "the half of a
+    provenance stamp that is about the gate rather than about the clock" - so a stamp that
+    gains a key cannot inert a clearance pinned to the stamp before it. `--inject` asserts
+    that in both directions rather than citing it.
+
+    `masked_sha256` is added only where a masking pass was actually APPLIED. It used to be
+    added wherever the row had no hash of its own, which was harmless while this tool could
+    only see applied rows and is wrong now that it can see the 123 that record a gate result
+    without one: their masked form is their input, whose hash the row already records as
+    `sha256`, and writing a second field saying so states a masking that did not happen.
+    """
     m = row.get("masking") or {}
-    add = {"provenance": gate_provenance.stamp(MAPS)}
-    if "masked_sha256" not in m and not row.get("fixture"):
+    st = gate_provenance.stamp(MAPS)
+    st["bytes_sha256"] = hashlib.sha256(data).hexdigest()
+    add = {"provenance": st}
+    if m.get("applied") and "masked_sha256" not in m and not row.get("fixture"):
         add["masked_sha256"] = hashlib.sha256(data).hexdigest()
     return add
 
@@ -207,7 +239,27 @@ def main():
         if r["sha256"] not in paths:
             continue
         m = r.get("masking") or {}
-        if not m.get("applied"):
+        # WHAT OWES A STAMP IS A RECORDED GATE RESULT, NOT AN APPLIED MASKING PASS.
+        #
+        # This read `if not m.get("applied"): continue`, and that is the Question Three
+        # defect in the tool that WRITES the record rather than in the one that reads it.
+        # `applied` is a claim about whether the masker changed anything; a stamp certifies
+        # a gate verdict. 123 published rows record `plaintext_gate: PASS` and
+        # `encoded_layer_gate: PASS` with `applied: false` and the reason "no identifier to
+        # mask: the independent gate found none" - a gate that RAN, over bytes that ship,
+        # producing a published claim that nothing dated. This tool could not see one of
+        # them, so none of the 134 could be stamped by the tool written to stamp them.
+        #
+        # It is not hypothetical staleness: `a3edd57e2ceb` is in that population, and it is
+        # the row whose recorded `plaintext_gate: PASS` the current gate refuses on the very
+        # bytes in the shard. One row out of the 123 was re-measured by hand and it had
+        # moved.
+        #
+        # The 11 remaining rows record an EMPTY masking block - no verdict, no parity, no
+        # reason - and are skipped here on the correct ground: a row that records no gate
+        # result owes no provenance for one. That is the same absence/FAIL separation
+        # `shard-gate.evaluate` keeps, one layer down.
+        if not any(g in m for g in STAMPED_GATES):
             continue
         # An entry is either the path to the bytes the row stands behind, or
         # {"after": …, "before": …} where the pre-masking bytes are also on hand. The
@@ -469,6 +521,60 @@ def inject():
     moved = copy.deepcopy(stamped)
     moved["masking"]["plaintext_gate"] = "FAIL"
     case("a stale stamp on a verdict that MOVED", _agrees(moved, clean)[0], False)
+
+    print()
+    print("=== the stamp names the BYTES it was taken over ===")
+    # Half of what a stranger needs to re-derive a published gate result. The other half is
+    # the tools digest, and until now the row recorded only that.
+    st = additions(row_ok, clean)["provenance"]
+    case("a stamp records the sha256 of what it gated",
+         st.get("bytes_sha256"), hashlib.sha256(clean).hexdigest())
+    other = b"<?php\n$a = 'wp-content/plugins/akismet/index.php';\n$b = 2;\n"
+    case("gating different bytes records a different digest",
+         additions(row_ok, other)["provenance"]["bytes_sha256"] != st["bytes_sha256"], True)
+    # The property that makes this safe to add at all, asserted rather than cited: a
+    # clearance is pinned to `tools`+`map` only, so a stamp that gains a key must not inert
+    # one. Both directions - a clearance pinned to the OLD stamp still applies to the new,
+    # and a clearance pinned to a different tools digest still does not.
+    row_pinned = copy.deepcopy(row_ok)
+    row_pinned["masking"]["provenance"] = st
+    # Keyed to the finding this row actually holds, so the only thing the case can turn on
+    # is the provenance comparison it is about.
+    pinned = {"gate": "plaintext_gate",
+              "finding_digest": clearance.finding_digest(row_pinned["masking"],
+                                                         "plaintext_gate"),
+              "by": "cl", "at": "2026-01-01T00:00:00",
+              "reason": "a four-character token, by shape", "reasoned_by": "assistant",
+              "gate_provenance": {"tools": st["tools"], "map": st["map"]}}
+    row_pinned["clearances"] = [pinned]
+    case("a clearance pinned before the key was added still applies",
+         clearance.applies(pinned, row_pinned, "plaintext_gate")[0], True)
+    stale_pin = copy.deepcopy(pinned)
+    stale_pin["gate_provenance"] = {"tools": "0" * 12, "map": st["map"]}
+    case("a clearance pinned to another predicate still does not",
+         clearance.applies(stale_pin, row_pinned, "plaintext_gate")[0], False)
+
+    print()
+    print("=== a recorded gate result owes a stamp; an applied masking pass is not the test ===")
+    # The population this was blind to: 123 published rows record both identifier gates
+    # with `applied: false`, and the loop skipped every one of them.
+    gate_no_pass = {"applied": False, "plaintext_gate": "PASS",
+                    "encoded_layer_gate": "PASS", "detection_survived": True,
+                    "reason": "no identifier to mask"}
+    case("records a gate with applied:false -> stampable",
+         any(g in gate_no_pass for g in STAMPED_GATES), True)
+    case("an EMPTY masking block -> owes nothing",
+         any(g in {} for g in STAMPED_GATES), False)
+    case("applied:true with no gate recorded -> owes nothing",
+         any(g in {"applied": True} for g in STAMPED_GATES), False)
+    # And the second half of that repair: a row that applied no masking must not gain a
+    # `masked_sha256`, which would state a masking that did not happen.
+    case("applied:false gains provenance but not masked_sha256",
+         sorted(additions({"sha256": "2" * 64, "masking": gate_no_pass}, clean)),
+         ["provenance"])
+    case("applied:true still gains both",
+         sorted(additions({"sha256": "2" * 64, "masking": {"applied": True}}, clean)),
+         ["masked_sha256", "provenance"])
 
     print()
     print("=== the additive assertion must be able to fail ===")

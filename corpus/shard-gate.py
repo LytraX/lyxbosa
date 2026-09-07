@@ -69,6 +69,7 @@ from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy
 
 import gate_provenance
 import clearance
+import credential_disposition
 import finding_notes
 
 ALWAYS_OK = {"clean", "c2"}
@@ -683,6 +684,90 @@ def adjudicationViolations(rows):
     return out
 
 
+def credentialDispositionViolations(rows):
+    """A credential kept on purpose must say so in a form somebody else could audit.
+
+    WHY THIS FIELD EXISTS AND WHY IT NEEDS A READER
+    ------------------------------------------------
+    `secret_gate` is a differential: it fails on a credential-shaped literal that is
+    byte-identical before and after masking. A row recording `changes: 0` therefore fails it
+    for every literal it carries, by construction, and two published rows were in exactly
+    that state with nothing recorded - no gate result, no finding, no decision - because
+    `evaluate()` demands a `secret_gate` only from a `secret`-tagged row and neither carries
+    the tag. The rule passed because it never looked, which is the shape AGENTS.md opens
+    with rather than a judgement about credentials.
+
+    `keep-credential.py` runs the gate and writes the keep as a decision. This is what stops
+    that decision becoming the next place a claim hides.
+
+    Four rules, and the third is the one that can say no:
+
+      * every disposition is well-formed by `credential_disposition.malformed` - the closed
+        vocabulary, the required keys, an integer length agreeing with the class form, and a
+        keyword the gate can actually report.
+      * `about` names a gate the row RECORDS. A decision about a measurement the row does
+        not carry is a decision about nothing - the same rule `adjudicationViolations`
+        applies one field over, and for the same reason.
+      * **a row may not keep more literals than survived masking.** The count of
+        dispositions is checked against the row's own `secret_literals_carried_over`, so the
+        record cannot claim a keep the evidence does not support. This is the half that
+        makes the block evidence rather than prose: the number comes from the gate.
+      * a disposition on a row recording no `secret_gate` at all is refused, because the
+        evidence it is a decision about does not exist.
+
+    The keys are read BY NAME here, not through a loop over `credential_disposition.REQUIRED`
+    - `field-provenance.key_positions` counts a field as read when its name appears as a
+    `.get()` argument or a subscript, and a tuple of constants iterated with `d.get(k)` is
+    invisible to it. The whole point of a reader is that the census can see it.
+    """
+    out = []
+    for r in rows:
+        m = r.get("masking") or {}
+        ds = m.get(credential_disposition.FIELD)
+        if ds is None:
+            continue
+        if not isinstance(ds, list):
+            out.append((r["sha256"], "%s is %s, not a list"
+                        % (credential_disposition.FIELD, type(ds).__name__)))
+            continue
+        if "secret_gate" not in m:
+            out.append((r["sha256"], "records a kept credential and no secret_gate result "
+                                     "for it to be a decision about"))
+            continue
+        bad = None
+        for d in ds:
+            bad = credential_disposition.malformed(d, recorded_gates=set(m))
+            if bad:
+                out.append((r["sha256"], "a disposition is unreadable: %s" % bad))
+                break
+            # Named individually so the census can see each one read. Values never appear
+            # in a refusal: shape, keyword and length are what a reader needs.
+            if not isinstance(d.get("shape"), str) or not isinstance(d.get("keyword"), str):
+                out.append((r["sha256"], "a disposition records a non-string shape/keyword"))
+                bad = True
+                break
+            if not isinstance(d.get("value_character_classes"), str):
+                out.append((r["sha256"], "a disposition records no class form"))
+                bad = True
+                break
+            for k in ("disposition", "classification", "ground", "about", "value_length"):
+                if d.get(k) is None:
+                    out.append((r["sha256"], "a disposition records no %s" % k))
+                    bad = True
+                    break
+            if bad:
+                break
+        if bad:
+            continue
+        sl = m.get("secret_literals")
+        carried = sl.get("secret_literals_carried_over") if isinstance(sl, dict) else None
+        if isinstance(carried, int) and len(ds) > carried:
+            out.append((r["sha256"], "keeps %d credential(s) where the gate recorded %d "
+                                     "carried over: the record claims more than the "
+                                     "evidence" % (len(ds), carried)))
+    return out
+
+
 # What a gate finding may contain, and nothing else. Taken from `verify-content-mask._profile`
 # - counts, lengths, positions, the segment size and the layer that carried it - plus the two
 # prose keys the gate attaches. Measured over both halves before arming: 12 finding blocks,
@@ -1221,6 +1306,22 @@ def main(path, apply_fix=False):
         if len(adjs) > 10:
             print("  ... and %d more" % (len(adjs) - 10))
 
+    creds = credentialDispositionViolations(rows)
+    print("kept credentials that are not auditable :", len(creds))
+    if creds:
+        print()
+        print("=== INVARIANT: a credential kept on purpose must say so auditably ===")
+        print("  `secret_gate` is a differential, so a row recording changes:0 fails it for")
+        print("  every literal it carries. Two published rows were in that state with no")
+        print("  gate result recorded at all, because the rule demanded one only from a")
+        print("  `secret`-tagged row and neither carries the tag. The keep is now a decision")
+        print("  against a recorded finding, and a row may not keep more literals than the")
+        print("  gate says survived.")
+        for sha, why in creds[:10]:
+            print("  %s  %s" % (sha[:12], why))
+        if len(creds) > 10:
+            print("  ... and %d more" % (len(creds) - 10))
+
     shapes = findingShapeViolations(rows)
     print("gate findings recording something no gate emits : %d" % len(shapes))
     if shapes:
@@ -1295,7 +1396,7 @@ def main(path, apply_fix=False):
     # zero there is how "publishable flags corrected: 14" became a line nobody read.
     # The green result is the plain run afterwards.
     return 1 if (stale or bad or leaks or forms or unread or badc or places
-                 or musts or stages or adjs or iocs or fixes or shapes) else 0
+                 or musts or stages or adjs or iocs or fixes or shapes or creds) else 0
 
 
 # ---------------------------------------------------------------------------
@@ -1750,6 +1851,70 @@ def inject(path):
           dict(base, placements=["live webroot: other"], count=1), True)
     pcase("a count that is a bool rather than an int",
           dict(base, placements={"other": True}, count=1), True)
+
+    print()
+    # 6b. kept credentials. The population is two published rows, both written this round,
+    # so the live run says nothing about whether the rule works - the controls are the whole
+    # of the check, in both directions.
+    print("=== a credential kept on purpose must be auditable ===")
+
+    def ccase(label, row, want_hit):
+        got = credentialDispositionViolations([row])
+        ok = bool(got) == want_hit
+        ran.append(label)
+        print("  %-56s %-6s %s" % (label, "hit" if got else "clean",
+                                   "ok" if ok else "WRONG (wanted %s)"
+                                   % ("hit" if want_hit else "clean")))
+        if not ok:
+            fails.append(label)
+
+    KEPT = {"shape": "quoted-credential", "keyword": "pass", "value_length": 7,
+            "value_character_classes": ".$aaaa.", "disposition": "kept-as-indicator",
+            "classification": "attacker infrastructure", "ground": "read from the match",
+            "about": "secret_gate"}
+    okm = {"applied": True, "changes": 0, "secret_gate": "FAIL",
+           "secret_literals": {"secret_literals_carried_over": 1},
+           "credential_dispositions": [dict(KEPT)]}
+    ccase("a well-formed keep against a recorded gate", dict(base, masking=dict(okm)), False)
+    ccase("no dispositions at all: not this check's business",
+          dict(base, masking={"applied": True, "secret_gate": "PASS"}), False)
+    ccase("a disposition with no secret_gate to be about",
+          dict(base, masking={"applied": True, "credential_dispositions": [dict(KEPT)]}),
+          True)
+    ccase("about names a gate the row does not record",
+          dict(base, masking=dict(okm, credential_dispositions=[
+              dict(KEPT, about="plaintext_gate")])), True)
+    ccase("a disposition outside the closed vocabulary",
+          dict(base, masking=dict(okm, credential_dispositions=[
+              dict(KEPT, disposition="ignored")])), True)
+    ccase("a keyword the gate cannot report",
+          dict(base, masking=dict(okm, credential_dispositions=[
+              dict(KEPT, keyword="passphrase")])), True)
+    ccase("a length disagreeing with the class form",
+          dict(base, masking=dict(okm, credential_dispositions=[
+              dict(KEPT, value_length=99)])), True)
+    ccase("a blank ground",
+          dict(base, masking=dict(okm, credential_dispositions=[
+              dict(KEPT, ground="   ")])), True)
+    ccase("keeping more literals than the gate says survived",
+          dict(base, masking=dict(okm, credential_dispositions=[dict(KEPT), dict(KEPT)])),
+          True)
+    ccase("keeping fewer than survived is not this rule's business",
+          dict(base, masking=dict(okm, secret_literals={"secret_literals_carried_over": 3})),
+          False)
+    ccase("dispositions recorded as an object rather than a list",
+          dict(base, masking=dict(okm, credential_dispositions=dict(KEPT))), True)
+    # And the one that matters most: this must not be a route to publishable. A kept
+    # credential on a row that records the FAIL still blocks until a clearance is written.
+    blocked = dict(base, masking=dict(okm), sensitivity=["c2"])
+    blocked.pop("clearances", None)
+    ran.append("a kept credential does not by itself clear the gate")
+    _ok, whyb = evaluate(blocked)
+    hit = any("secret" in w for w in whyb)
+    print("  %-56s %-6s %s" % ("a kept credential does not by itself clear the gate",
+                               "blocked" if hit else "open", "ok" if hit else "WRONG"))
+    if not hit:
+        fails.append("a kept credential does not by itself clear the gate")
 
     print()
     # 7. two orphan fields given a reader. Neither invariant has ever fired: both were

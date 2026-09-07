@@ -114,6 +114,20 @@ def main():
             # must_not_detect path below, where they belong.
             if r.get("verdict") != "malicious":
                 continue
+            # A row that is not publishable is not in a public shard - `shard-census.py`
+            # fails the build on exactly that - so looking for it there and reporting its
+            # absence as a failure is asking the wrong question. Two rows entered this state
+            # when a round adjudicated them unpublishable and dropped their files: the rows
+            # stay, with their family, their verdict and their `expect`, because a sample
+            # that was reviewed does not stop having been reviewed. What changed is where
+            # its bytes are, and this loop is about the bytes.
+            #
+            # It is NOT skipped silently. `held` below already carries the local-only
+            # population, and the count is printed, so a family disappearing from the suite
+            # is visible as a number rather than as nothing.
+            if r.get("publishable") is not True:
+                res["not_shipped"] = res.get("not_shipped", 0) + 1
+                continue
             exp = r.get("expect") or {}
             want = sorted(exp.get("must_detect", []))
             known = bool(exp.get("known_miss"))
@@ -398,6 +412,14 @@ def main():
               % (ben["clean"], ben["samples"], ben["false_positives"]))
         print("  rule-exact   %6d / %-6d matched the expected rule"
               % (mal["rule_exact"], mal["detected"]))
+        if res.get("not_shipped"):
+            # Printed rather than passed over: a reviewed family whose bytes were dropped
+            # out of a shard leaves the suite testing less than the index describes, and the
+            # only thing worse than that happening is it happening quietly.
+            print("  not shipped  %6d          reviewed malicious row(s) adjudicated "
+                  "unpublishable," % res["not_shipped"])
+            print("                              so their bytes are in no shard and this "
+                  "run could not execute them")
         print()
         d = res["detection"]
         print("  Detection      %4d / %-5d reviewed malicious samples detected   (%s)"

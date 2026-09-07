@@ -51,16 +51,183 @@ commit list that CI generates per tag. Versions are the git tags described in
   live malware, and a password published beside the file would be theatre if it claimed
   anything more. Samples extract read-only at `0400` and are live malware.
 
-### Known before publication
+### Known before publication — all five closed
 
-Three staleness findings stop the upload and are recorded rather than worked around: one
+Three staleness findings stopped the upload and were recorded rather than worked around: one
 blocked row sitting inside a built shard, one row recording `plaintext_gate: PASS` that the
 current gate refuses on the shipped bytes, and four fixtures whose recorded gate evidence was
 computed over the collected original rather than the generated carrier that ships (all four
-pass when re-run over the shipped bytes — the row simply does not say so). **134 of the 142
-shipped rows carry no `masking.provenance`**, so nothing dates a recorded result against the
+pass when re-run over the shipped bytes — the row simply did not say so). **134 of the 142
+shipped rows carried no `masking.provenance`**, so nothing dated a recorded result against the
 predicate that produced it.
 
+All of it is closed below. `corpus/shard-census.py --regate` now reports zero findings where
+it reported five, over 140 samples rather than 142. **Nothing has been uploaded and no release
+has been created**; `corpus/release-assets.sh --print-upload corpus-2026.09.1` emits the
+command and has no code path that publishes.
+
+
+### Added
+
+- **Two ambiguous findings were put to the masker before being adjudicated, and it refused
+  both — so both files are dropped rather than cleared.** The ruling was *do not adjudicate
+  what you can mask*, and §5.4's relaxation covers a short identifier inside a plain base64
+  region. Neither region qualified, for two different reasons, and both were measured rather
+  than argued.
+
+  **`a3edd57e2ceb` (`otykhyc.gif`, `malicious-staging-001`)** — the 4-character `contains` hit
+  at offset 20,902 sits inside a 66-character run that `content_mask.B64_RUN` matches, so the
+  masker reaches it in the only sense its regex can. The run ends in a single `=` and so has
+  **65 data characters**, which is not a valid base64 length; `b64decode(validate=True)` raises
+  and `mask_encoded_layers` takes the bare `except: continue` without even a report entry.
+  §5.4's *first* per-region condition is that the region decodes. It is not an encoded layer at
+  all. The full masker run confirms it: **0 changes, output byte-identical to input, 0 of 4,089
+  encoded regions acted on**, and `plaintext_gate` still FAIL.
+
+  **`3529f0f6b2cd` (`malicious-outside-webroot-001`)** is the opposite shape and the more
+  interesting refusal. Its 131,300-character outer region **passes every §5.4 condition** — it
+  decodes, and this encoder reproduces it byte for byte — so the masker reaches it in full,
+  decodes 98,473 bytes and applies the plaintext masker. Nothing changes, because the hit is a
+  3-character token inside a 97-character mixed-case run with a **digit on each side**, and
+  `incident_mask.tiers()` demotes a name that short to positional masking (unrestricted
+  containment reports one such name 49,292 times across this corpus). The gate, deliberately
+  wider, counts a short identifier when neither neighbour is *alphabetic* — a digit is not.
+  **The region is maskable and the finding is not reachable by masking**, and the reason it is
+  not reachable is the same measurement that makes the finding a probable coincidence. Widening
+  the masker is the repair that must not be made: §5.6 forbids it in sample bytes, and
+  `content_mask.py` is in `gate_provenance.TOOLS`, so the edit would invalidate all 142 stamps.
+
+  **What the shards lose.** `malicious-staging-001` 67 → 66 members: the dropped sample is one
+  of **40** carrying `must_detect: ["OBF041"]` in a 52-member family, **39 remain**, and the set
+  of its techniques that no remaining member carries is **empty**.
+  `malicious-outside-webroot-001` 2 → 1: the survivor is the polymorphic sibling `37927df458e5`
+  with an **identical eight-technique list**, all gates PASS and `publishable: true`. Both are
+  `known_miss` with `must_detect: []`, so the shard's detection content is unchanged and
+  KNOWN_ISSUES issue 3 now rests on one sample rather than two.
+
+  The applicable statistic is the corpus-wide **P ≈ 21%**; the per-file 2.5% is not quoted,
+  because it was computed for the most extreme of 142 files after seeing it, which is §11's
+  denominator-chosen-by-the-numerator in its purest form. Both readings stand and neither
+  decided anything: the mask was attempted first and failed, and a region that cannot be masked
+  costs one sample out of 142 against an irreversible publication.
+
+- **`verify-and-stamp.py` skipped every row it was written to stamp, and the stamp now names
+  its bytes.** The loop opened `if not m.get("applied"): continue` — a claim about whether the
+  *masker changed bytes* — while a stamp certifies a *gate verdict*. **123 published rows record
+  both identifier gates with `applied: false`** and the reason "no identifier to mask: the
+  independent gate found none": a gate that ran, over bytes that ship, producing a published
+  claim nothing dated. That is §7.2's own correction — *whether the evidence is READ must not
+  depend on the claim it might contradict* — in the tool that **writes** the record. Not
+  hypothetical: `a3edd57e2ceb` is in that population and its recorded PASS is a FAIL on the
+  bytes in the tar.
+
+  The 134 are two populations, not one: **123 record gate results and owe a stamp; 11 record an
+  empty `masking: {}`** — tagged `clean` or `c2`, both in `ALWAYS_OK` — and owe nothing, which
+  is reported rather than silently skipped. **131 rows stamped** (122 added, 9 replaced under
+  `--restamp`), **0 refused, 0 not-checkable**.
+
+  `masking.provenance` gains `bytes_sha256`, the digest of what the gate was re-run over: both
+  halves are needed to re-derive a published result, the predicate and the input. Written here
+  and **not** in `gate_provenance.stamp()`, because that file is in `TOOLS` and the digest must
+  not move for a field that is not part of the predicate — **`tools` stayed
+  `c5c21c570397`**. Safe against clearances by construction rather than by luck:
+  `clearance._prov_key` reads `tools` and `map` only, asserted in both directions by a control.
+  `masked_sha256` is no longer added where masking was not applied, which would have stated a
+  masking that did not happen on 122 rows.
+
+- **`shard-census.py` reads the stamp's bytes, which closes the four fixture findings.** The
+  four generated carriers re-measure **PASS on both gates over the bytes that ship**, and
+  `remeasure-gates.py` correctly **refuses** to rewrite a record that did not move. What was
+  missing was never the measurement but the statement of which bytes it was about, so the census
+  accepts a fixture-resolved member only where `masking.provenance.bytes_sha256` **equals** the
+  member's own hash. The field is evidence, not an assertion: a stamp naming other bytes leaves
+  the finding standing, asserted in both directions.
+
+- **A credential kept on purpose now says so (`corpus/keep-credential.py`,
+  `corpus/credential_disposition.py`).** The two `pdf-magic-fake-supercache` rows each carry one
+  `quoted-credential` literal and neither carries the `secret` tag, so `evaluate()` demanded no
+  `secret_gate`, none ran, no finding existed, and **the rule passed in silence** — the eighth
+  form of this defect.
+
+  **The literal is not a password value, and reading it makes the keep stronger.** The captured
+  group is `.$<var>.` — PHP string-concatenation syntax between two delimiters, from the
+  backdoor generating `<a href="?pass='.$var.'&…">`. The access password is a runtime variable
+  and **is not in these bytes**. Kept for the same reason the campaign hosts on those rows are
+  kept (§4.1).
+
+  The gate is now run and its answer recorded: **FAIL on both**, correctly — `secret_gate` is a
+  differential and `changes: 0` means every literal is carried over by construction. The FAIL
+  **blocks**, and the keep is a `clear-finding.py` clearance signed by a person and keyed to the
+  finding digest. `keep-credential.py` can only ever make a row *less* publishable: the
+  disposition is the argument, the clearance is the authorisation, written by different tools on
+  purpose. A disposition records shape, keyword, value length and character-class form and
+  **never a value**; there is deliberately no digest, because the shape key already ties the
+  record to the bytes and a truncated digest of a short word is dictionary-recoverable.
+  `shard-gate` checks the record against itself (a row may not keep more literals than the gate
+  says survived); `shard-census --regate` checks it against the tar, in both directions.
+
+  **The null is reported and deliberately not relied on.** Over 12,000 stock CMS PHP files: 73
+  `quoted-credential` literals in 68 files (0.57%), 3 containing a variable sigil, and 0 of this
+  exact form. **State the power:** 0 of 73 excludes a class rate above roughly 4% by the rule of
+  three and says nothing below it — the trap round 14 recorded when a class read 0 of 109 and
+  was 3.9% at four times the sample. The argument rests on reading the match.
+
+- **`corpus/release-assets.sh` — the checksum list is derived in the run that verifies it.**
+  There is no stored list: `--verify` recomputes each inner `.tar.zst` hash from disk, unwraps
+  each `.zip` and asserts the tar inside is that same file, rebuilds each shard from its own
+  contents and asserts byte-identity, and only then writes `SHA256SUMS`; on any failure it
+  writes nothing. `--print-upload` emits the tag and `gh release create` command and has **no
+  code path that publishes**. Six controls. One of them failed usefully: every case printed
+  `caught` while the script exited 1, because `scratch()` appended to an array inside `$( )` —
+  a subshell — so the cleanup list stayed empty, the `EXIT` trap returned 1 on the empty
+  expansion, and every temp directory was being left on disk. Found only because the exit status
+  was checked and not just the output.
+
+### Fixed
+
+- **No shard had ever been rebuilt with the reproducibility repair, so none of the eight
+  reproduced.** The previous round fixed `build-shard.sh` and its `--selftest`; the eight
+  artefacts on disk were never rebuilt through it. Measured before anything changed, by
+  extracting each shipped shard and repacking it: **all eight DIFFER**, and the archives say why
+  — `lytrax/lytrax` ownership, real mtimes, `MANIFEST.json` at `0644`, readdir order. All eight
+  were rebuilt through the tracked script and **all eight now reproduce from an extraction**.
+  Six changed by rebuild alone and two by rebuild plus a dropped member; the six were predicted
+  from the pre-change extraction and came out identical, which is what makes the other two
+  attributable to the drop. A checksum list written before this round would have been internally
+  consistent and wrong about every one of the eight files.
+
+- **Two predicates said "ships" and tested "published", and a dropped member separated them.**
+  `make-summary.SHIPPED` counts a reason code, which records how a sample was *found* and not
+  that its bytes are in a shard; rewriting a discovery route to fix arithmetic would destroy the
+  provenance instead. The count gains the condition the archives already enforce — the census
+  fails the build on "shipped row is not publishable today" — hoisted to `ships_as_bytes()` so
+  it can carry a control. `published_shipped_as_bytes` **142 → 140**.
+  `malicious_detected_runnable`'s own comment already said *"how many **ship** and can therefore
+  actually be re-run"* while the predicate said "published": it read 98 where `verify.py`
+  executed 97 and printed **NOT RECONCILED**. **98 → 97**, and the figure now reconciles.
+
+- **`verify.py` reported two families as "not present in any shard"** — the right check asking
+  the wrong question, since an unpublishable row is not in a public shard by design. It skips
+  rows that are not `publishable` and **prints the count**, because a family disappearing from
+  the suite must be visible as a number rather than as nothing.
+
+- **`a3edd57e2ceb`'s `plaintext_gate` was a stale PASS**, re-measured against the file in the
+  tar: **verdict-moved to FAIL**, finding recorded, `publishable` recomputed by
+  `shard-gate.py --fix`, which is the only writer of that field. **Published `publishable`
+  44,543 → 44,542**, that row alone. Left standing and stated rather than repaired: the row
+  still carries `masking.reason: "no identifier to mask…"` beside the FAIL that contradicts it —
+  true on the other 122 rows that share the sentence, false on this one, and a one-invariant
+  repair for the next round.
+
+- **`docs/corpus-release-notes.md`** — written for a stranger rather than for us: what the eight
+  shards are, that the samples are live malware extracting read-only at `0400`, the passphrase
+  and the §7.4 open procedure, how to verify an asset and why the `.tar.zst` hash is the one
+  that certifies it, and what the figures mean — **including that the headline 53.6% mixes in
+  1,131 samples of the rules' own source material while the in-scope figure is 631 of 703**.
+  With an explicit section on what a consumer may and may not conclude: not precision, which is
+  a field-scan measurement; not a false-positive rate transferable off pinned upstream CMS
+  source; and not a detection rate for their own server, over a corpus 48% of which is still
+  unreviewed.
 
 ### Added
 
