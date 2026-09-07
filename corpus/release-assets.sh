@@ -213,6 +213,11 @@ case "${1:-}" in
     ;;
   --print-upload)
     TAG="${2:?usage: --print-upload <tag>}"
+    HEAD_SHA="$(git rev-parse HEAD)"
+    # Read from the API rather than assumed: there is no repo-level 'latest' pin to check,
+    # so what a new release would displace is whatever GitHub computes today.
+    LATEST_TAG="$(gh api repos/:owner/:repo/releases/latest --jq .tag_name 2>/dev/null \
+                  || echo '(could not read; check before publishing)')"
     # Printed, never run. Creating a release is irreversible in the way that matters: an
     # asset can be fetched, cached and indexed within minutes of going up, and this
     # repository's own history records that deleting the objects afterwards did not remove
@@ -223,11 +228,25 @@ case "${1:-}" in
     echo
     echo "# 2. Its own tag, on the commit that produced these bytes - never retrofitted onto"
     echo "#    a scanner release, which would change what an already-published release holds."
-    echo "git tag -a $TAG -m 'LyxBoSa malware corpus, $TAG'"
+    echo "#    The commit is named rather than implied: 'git tag -a $TAG' alone tags whatever"
+    echo "#    HEAD happens to be, and the tag has to name the index state that was gated."
+    echo "git tag -a $TAG -m 'LyxBoSa malware corpus, $TAG' $HEAD_SHA"
     echo "git push origin $TAG"
     echo
     echo "# 3. Upload the wrappers plus the checksum file of the inner tars."
+    echo "#"
+    echo "#    --latest=false is REQUIRED, not tidiness. GitHub has no repository setting for"
+    echo "#    which release is latest; it computes it per release, and every existing release"
+    echo "#    here is draft=false prerelease=false, so a release created today takes the"
+    echo "#    label from $LATEST_TAG. /releases/latest is what a stranger and most install"
+    echo "#    scripts fetch, and it would hand them malware shards instead of the scanner."
+    echo "#"
+    echo "#    --verify-tag makes step 3 depend on step 2 having worked. Without it, a typo in"
+    echo "#    the tag name creates a SECOND tag and a release nobody meant to publish, and a"
+    echo "#    published release is the one thing here that cannot be taken back."
     echo "gh release create $TAG \\"
+    echo "  --latest=false \\"
+    echo "  --verify-tag \\"
     echo "  --title '$TAG' \\"
     echo "  --notes-file docs/corpus-release-notes.md \\"
     echo "  corpus/shards/SHA256SUMS \\"
