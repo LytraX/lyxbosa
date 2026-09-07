@@ -113,7 +113,13 @@ jobs:
       - name: Build release notes
         run: |
           version="${GITHUB_REF_NAME#v}"
-          previous=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          # --match 'v*' because the corpus has its own tag series, corpus-YYYY.MM.N, on a
+          # different cadence. Without it the newest tag of EITHER series wins: from HEAD
+          # today an unfiltered describe returns corpus-2026.09.1, so the next scanner
+          # release would have announced "Since corpus-2026.09.1" and listed a commit range
+          # starting at a corpus review round. Scanner releases are v-tags; ask only about
+          # those. See docs/RELEASING.md and corpus/CHANGELOG.md for the two series.
+          previous=$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
 
           # Everything under "## [1.2.0]" (or "## 1.2.0") up to the next "## ".
           # Dots in the version are escaped so 2.1.0 cannot match 2x1y0, and the

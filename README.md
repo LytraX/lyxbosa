@@ -241,60 +241,99 @@ as clean.
 
 ## Detection coverage
 
-Two figures, each stated with its denominator, each reproducible from a clean checkout:
+Every figure here is stated with its denominator, and the two that matter most — detection
+and the false-positive rate — are reproducible from a clean checkout:
 
 ```
 corpus/fetch-benign.sh     # download and hash-verify the pinned benign corpus
 corpus/verify.py           # run the golden suite
 ```
 
-**False-positive rate: 0.0223% — 44 of 197,559 files.** The benign corpus is 136 sources
-pinned by version and sha256 in `corpus/benign/sources.jsonl` — 87 WordPress plugins, 22
-themes, 24 core versions and 3 trees of rendered HTML documentation. Nothing is shipped:
-the script downloads each one and fails hard on a hash mismatch, so the corpus regenerates
-anywhere and yields the same number. All 44 are upstream library code (mostly the Freemius
-SDK, plus an FPDF class and a handful of plugin internals), pinned as `known_fp` fixtures —
-a rule change that fixes one is reported, and a fixed one that comes back fails the suite.
-They stay counted inside the 44; pinning a defect does not remove it from its own total.
+**The table below is generated.** Every number in it is written from
+`corpus/index-summary.json` by [`corpus/doc-figures.py`](corpus/doc-figures.py), and
+`corpus/doc-figures.py --check` fails if this file disagrees with the corpus. It is not
+hand-maintained, because it was, and it went stale by several rounds in both directions
+without anything noticing. The prose around it is written by a person and survives
+regeneration untouched.
 
-The rate rose because the denominator and the numerator grew together: 50 sources were
-added in one round, the versions taken from what was actually installed on collected hosts
-rather than from what upstream ships today. **A rate that rises when the corpus is
-honestly extended is the corpus working.** The previous figure, 8 of 146,712, was measured
-over a benign tree that did not contain most of the plugin versions the scanner meets.
+<!-- BEGIN GENERATED corpus-figures — corpus/doc-figures.py writes this block; edit the tool, not the block -->
+| figure | value | denominator |
+|---|---|---|
+| **Detection** | **53.6%** | 696 of 1,299 reviewed malicious samples |
+| **Detection, excluding the rules' own source material** | **89.8%** | 631 of 703 samples |
+| Recorded known misses | 603 | 72 of them outside that source material |
+| Largest single known-miss family | 495 | `seo-doorway-madxtube-2017` |
+| Samples a stranger can re-run | 97 | ship as bytes carrying a recorded expected rule |
+| Technique coverage | 90 of 123 | distinct techniques in the reviewed set |
+| Corpus | 92,800 blobs | 46,016 classified, 46,784 unreviewed |
+| Of those, the tree the rules were written against | 1,131 blobs | excluded from the second detection figure |
+<!-- END GENERATED corpus-figures -->
 
-**Detection: 22.2% — 172 of 774 confirmed-malicious samples.** The other 602 are recorded
-known misses: real malware this version does not catch. 495 of them are one 2017 SEO doorway
-campaign, and the rule that would close them is deliberately not written — see
+**Read the two detection figures together, and prefer the second.** The first denominator
+includes the tree that the first version of these rules was written against. Measuring a rule
+set against its own source material reports how well it memorised that tree, not how well it
+generalises, so the in-scope figure is the honest one — and it is a *lower* bound set by the
+same reviewing process that produced it, not a ceiling.
+
+The denominator is every reviewed malicious sample, so reviewing a family the scanner misses
+lowers this figure and shipping a rule for one raises it. Both directions are intended: it
+measures coverage, not progress. It has read 10.0%, 15.5%, 16.5%, 22.2% and 45.4% at various
+points, and the earlier high figures were over denominators a tenth the current size — which
+is why the sample count is quoted beside the percentage every time and never summarised as a
+trend. A jump is as likely to be a denominator moving as a rule landing: the largest single
+jump in this project's history, 22.2% to 53.6%, came from ruling 525 quarantined samples
+malicious in one round, 524 of which were already detected. No rule changed.
+
+**A known miss is recorded malware this version does not catch**, verified per file rather
+than inferred from a directory scan. The largest family in that count is one 2017 SEO doorway
+campaign, and the rule that would close it is deliberately not written — see
 [docs/RULE_CANDIDATES.md](docs/RULE_CANDIDATES.md) §4, where it was measured against rendered
 documentation and took 494 false positives in 506 at-risk files. The remainder includes a
 fake-plugin family whose payloads are named `.png` (§2) and the webshells staged outside the
 web root that [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) issue 3 rests on.
 
-The denominator is every reviewed malicious sample, so reviewing a family the scanner misses
-lowers this figure and shipping a rule for one raises it. Both directions are intended: it
-measures coverage, not progress. It has read 10.0%, 15.5%, 16.5% and 45.4% at various points,
-and the earlier high figures were over denominators a tenth this size — which is why the
-sample count is quoted beside the percentage every time and not summarised as a trend.
+**Samples a stranger can re-run** are the ones whose bytes ship in a public shard *and* whose
+expected rule is recorded, so the claim can be checked rather than believed. The rest of the
+reviewed set is held locally — most of it carries customer content that cannot be masked —
+and its results come from a recorded scan rather than from a run you can repeat. That count is
+a regression denominator, not recall, and is never quoted as one.
 
-**Regression: 98 of 98 expected detections still firing.** A separate measurement over a
-separate denominator, the samples already known to be detected. It is not recall and is not
-quoted as one.
+**Technique coverage** should be read as a staleness signal rather than as completion: the
+denominator is enumerated from what has been reviewed, so it cannot see a technique sitting in
+the blobs that have not been. A coverage number going *down* is the healthy outcome of
+reviewing something new.
 
-**Precision is not reported.** `tp/(tp+fp)` moves with the malicious-to-benign ratio, which
-is about 1 in 35,000 on a real host and in any curated corpus is chosen by whoever did the
-reviewing. False-positive rate and detection are each computed within a single population,
-so neither depends on that ratio. Precision belongs to a field scan, which supplies the real
-ratio by construction.
+**False-positive rate: 0.0223% — 44 of 197,559 files**, measured on 2026-09-07 with the
+scanner build `4c3e0af08988`. This one is dated rather than generated, and deliberately so: it
+is a measurement over a binary and a fetched tree, not a count the corpus index can produce,
+so the honest form is a figure tied to the build that produced it. A stale date is visible; a
+stale number is not.
 
-**Technique coverage: 90 of 123** distinct techniques in the reviewed set have a sample the
-suite checks. Read it as a staleness signal rather than completion — the denominator is
-enumerated from what has been reviewed, so it cannot see a technique in the blobs that have
-not been.
+The benign corpus is 136 sources pinned by version and sha256 in
+`corpus/benign/sources.jsonl` — 87 WordPress plugins, 22 themes, 24 core versions and 3 trees
+of rendered HTML documentation. Nothing is shipped: the script downloads each one and fails
+hard on a hash mismatch, so the corpus regenerates anywhere and yields the same number. All 44
+are upstream library code (mostly the Freemius SDK, plus an FPDF class and a handful of plugin
+internals), pinned as `known_fp` fixtures — a rule change that fixes one is reported, and a
+fixed one that comes back fails the suite. They stay counted inside the 44; pinning a defect
+does not remove it from its own total.
 
-The corpus holds 91,669 blobs, of which 12,249 are classified and 79,420 are unreviewed. Its
-construction, the classification rules and the reasoning behind each denominator are in
-[docs/tasks/CORPUS_PLAN.md](docs/tasks/CORPUS_PLAN.md).
+That rate rose because the denominator and the numerator grew together: 50 sources were added
+in one round, the versions taken from what was actually installed on collected hosts rather
+than from what upstream ships today. **A rate that rises when the corpus is honestly extended
+is the corpus working.** The previous figure, 8 of 146,712, was measured over a benign tree
+that did not contain most of the plugin versions the scanner meets.
+
+**Precision is not reported.** `tp/(tp+fp)` moves with the malicious-to-benign ratio, which is
+about 1 in 35,000 on a real host and in any curated corpus is chosen by whoever did the
+reviewing. False-positive rate and detection are each computed within a single population, so
+neither depends on that ratio. Precision belongs to a field scan, which supplies the real ratio
+by construction.
+
+The corpus's construction, the classification rules and the reasoning behind each denominator
+are in [docs/tasks/CORPUS_PLAN.md](docs/tasks/CORPUS_PLAN.md); the published shards and what a
+consumer may conclude from them are in
+[docs/corpus-release-notes.md](docs/corpus-release-notes.md).
 
 ## CLI Reference
 
@@ -463,6 +502,12 @@ See [docs/BUILDING.md](docs/BUILDING.md).
 
 ## Changes
 
-[CHANGELOG.md](CHANGELOG.md) — what changed per release, and anything a configuration or
-a calling script has to do differently. Releasing is
-[docs/RELEASING.md](docs/RELEASING.md).
+[CHANGELOG.md](CHANGELOG.md) — the **scanner**: detection rules, the CLI, report formats and
+binary releases, versioned on the `v*` tags. Anything a configuration or a calling script has
+to do differently is here. Releasing is [docs/RELEASING.md](docs/RELEASING.md).
+
+[corpus/CHANGELOG.md](corpus/CHANGELOG.md) — the **corpus**: the sample index, the published
+shards, masking and publication gates, and the measurement rounds, versioned on the
+`corpus-YYYY.MM.N` tags. The two series move on different cadences on purpose — the scanner
+versions on rules, the corpus on review rounds — and each file's header says which questions
+belong to it.

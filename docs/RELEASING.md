@@ -97,6 +97,13 @@ changelog entry has to say, so the two steps feed each other.
 
 ### 2. Close out the changelog
 
+**This page is about the `v*` scanner tags only.** The corpus has its own tag series,
+`corpus-YYYY.MM.N`, cut per review round rather than per rule, and its own changelog at
+[`corpus/CHANGELOG.md`](../corpus/CHANGELOG.md). Nothing in this workflow builds or publishes
+a corpus release — `corpus/release-assets.sh` does that — and a corpus tag does not trigger
+`.github/workflows/build.yml`, which only matches `v*`. Close out the changelog that matches
+the tag you are cutting; closing out both is how one round ends up described twice.
+
 [`CHANGELOG.md`](../CHANGELOG.md) carries an `## Unreleased` section that is written as
 the work lands, not at release time. Closing it out means renaming that heading to the
 version and the date, and opening a fresh empty one above it:

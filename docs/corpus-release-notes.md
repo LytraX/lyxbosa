@@ -124,7 +124,11 @@ publishing a customer identifier is not.
 
 ## What the figures mean
 
-Measured with the scanner build `4c3e0af08988`, over this corpus, on 2026-09-07:
+Measured with the scanner build `4c3e0af08988`, on 2026-09-07, over the corpus **as it stood
+at this tag**. These are release figures and are deliberately frozen: they describe the eight
+shards you just downloaded, not the corpus as it is today. For the current figures, read the
+generated table in the repository's `README.md`, which is written from `index-summary.json`
+and moves when the corpus does.
 
 | | |
 |---|---|

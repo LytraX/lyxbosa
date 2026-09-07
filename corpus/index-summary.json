@@ -136,6 +136,13 @@
   "undetected-pool-review": 58
  },
  "published_shipped_as_bytes": 140,
+ "published_shipped_by_reason": {
+  "doorway-kit-review": 8,
+  "media-polyglot": 7,
+  "outside-webroot-sweep": 1,
+  "staging-directory-review": 66,
+  "undetected-pool-review": 58
+ },
  "sensitivity_tags": {
   "c2": 791,
   "clean": 45237,

@@ -43,15 +43,25 @@ closes nothing. **Every entry below is a human decision.**
 
 ## Read this first: two answers set the headline, in opposite directions
 
-Detection stands at **172 / 774 = 22.2%**. Two entries in this queue move it, and the gap
-between them is the whole figure:
+> **Status, added 2026-09-07: the Q-FLAG half of this decision has been taken.** Round 12
+> ruled 525 quarantine rows malicious — 524 of which the binary already detected — and the
+> headline moved to what the projection below anticipated, by slightly more than it
+> anticipated. **Q1 has not been decided and the argument against admitting it stands.** The
+> figures in this section are the *baseline the decision was taken against* and are left in
+> the past tense rather than refreshed: a projection is only readable beside the number it was
+> projecting from. For the current figure, read the generated table in
+> [`README.md`](../../README.md) — it is written from `index-summary.json` and is the only
+> place a live detection figure belongs.
 
-| if the operator rules … malicious | detection becomes |
-|---|---|
-| nothing | 172 / 774 = 22.2% |
-| **Q-FLAG, the 469 flagged code rows** | **641 / 1,243 = 51.6%** |
-| **Q1, the 10,220-row generated text corpus** | **198 / 11,020 = 1.8%** |
-| both | 667 / 11,489 = 5.8% |
+When this queue was written detection stood at **172 / 774 = 22.2%**. Two entries in it moved
+that figure, and the gap between them was the whole question:
+
+| if the operator rules … malicious | detection was projected to become | outcome |
+|---|---|---|
+| nothing | 172 / 774 = 22.2% | — |
+| **Q-FLAG, the 469 flagged code rows** | **641 / 1,243 = 51.6%** | **taken in round 12; 525 rows were ruled rather than 469, and detection landed at 696 / 1,299 = 53.6%** |
+| **Q1, the 10,220-row generated text corpus** | **198 / 11,020 = 1.8%** | not taken |
+| both | 667 / 11,489 = 5.8% | not taken |
 
 Both are honest under §8 — detection is *supposed* to fall when a family nothing catches is
 reviewed. But Q1 is 10,220 near-identical fragments emitted by one generator in four
@@ -203,8 +213,9 @@ base64 `@include` prepended to a core file, file-manager shells, PHP under a med
 inside a core directory. Six are HTML flagged `SEO005`, five are `.htaccess` flagged `BD017`, and nine are binary.
 
 **These are the only rows in the bucket that can raise detection**, because a row already
-detected raises numerator and denominator together. Reviewing all 469 as malicious takes
-detection from 22.2% to 51.6%.
+detected raises numerator and denominator together. Reviewing all 469 as malicious was
+projected to take detection from 22.2% to 51.6%; round 12 ruled 525 rows and it landed at
+53.6%.
 
 > **Q-FLAG. Review individually, not in bulk.** They are already sorted by rule and by
 > operation. This is the highest-value entry in the queue and it is nobody's bulk decision.
@@ -234,8 +245,10 @@ bottom of the queue and should not be answered last.
 * the scan flags exactly **one** of the 19.
 
 The technique is cross-account credential **read** through a symlink farm. The corpus knows
-`cross-account-write` and `credential-harvest`; it does not know this one. Technique coverage
-is 90 of 123, and §8 says a coverage number going down is the healthy outcome.
+`cross-account-write` and `credential-harvest`; it does not know this one. Reviewing it will
+push technique coverage *down*, and §8 says that is the healthy outcome. The current coverage
+figure is not restated here — it is generated into `README.md` from `index-summary.json`, and
+a second hand-written copy of a generated number is the thing that goes stale.
 
 > **Q-RISK. Rule these `malicious`, tag `secret` + `identity` + `pii`, and hold permanently.**
 > They are 19 rows whose bytes are eleven other customers' database credentials.

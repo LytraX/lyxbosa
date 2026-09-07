@@ -2,7 +2,7 @@
 
 ```
 corpus/
-  index.jsonl                       the published half: one row per unique blob, 44,544 rows
+  index.jsonl                       the published half: one row per unique blob (count below, generated)
   make-summary.py                   regenerates index-summary.json from the two halves
   expect/                           golden expectations, per shard
   benign/sources.jsonl              pinned benign sources: name, version, url, sha256, size
@@ -31,39 +31,58 @@ corpus/
   derived_db.py                     the derived SQLite read index: builder and reader, a library
   derive-index-db.py                builds it; --check, --inject and --bench
   local/index.db                    that database (gitignored; DERIVED, never authoritative)
-  shards/                           built shards (gitignored; LOCAL ONLY - none has ever been distributed)
+  shards/                           built shards (gitignored; a release is uploaded FROM here, never committed)
+  doc-figures.py                    writes the generated figure regions in README.md and this file
 ```
 
 ## `published` is a classification, not a distribution state
 
-**No shard has ever been distributed.** All 24 assets across the 6 releases are scanner
-binaries; `corpus/shards/` is gitignored, has zero tracked files, exists only on the machine
-that built it, and nothing in this tree references a shard download URL. Every shard is a
-local build artefact awaiting a decision to publish.
+**Three states, and they are still three states now that the third one has happened.** A row
+can be *cleared to publish*; its bytes can be *built into a local shard*; a shard can be
+*actually distributed*. Until 2026-09-07 only the first two had ever been true here, and
+earlier versions of this section said so in the present tense. That sentence stopped being
+true when the eight shards of `corpus-2026.09.1` were uploaded, and it is restated as history
+rather than deleted, because the reasoning it records is the reason the distinction is now
+load-bearing instead of merely tidy.
 
-So `publishable: true` and the `published` half of the index mean **"cleared to be
-distributed"**, and `published_shipped_as_bytes: 84` means **"would ship as bytes in a shard
-if one were released"**. Neither says anything has left this machine. A blocker on a
-`published` row is a *pre-publication* blocker: it costs a rebuild, not a disclosure.
+**What is distributed, exactly.** Eight `.tar.zst.zip` shards and a `SHA256SUMS`, attached to
+the `corpus-2026.09.1` tag on 2026-09-07, carrying 144 members between them: 140 samples that
+have an index row, plus 4 generated carriers that do not. `corpus/shards/` is still gitignored
+and still has zero tracked files — the archives are release assets, not repository contents —
+so *in the tree* and *in public* remain different questions, and `git ls-files` answers
+neither of them about a shard. Ask the release, or ask `shard-census.py`, which opens the
+archives.
 
-This is written down because the distinction was blurred and it cost real work. This file
+So `publishable: true` and the `published` half of the index still mean **"cleared to be
+distributed"** and still do not mean "distributed": the published half is two orders of
+magnitude larger than the set that ships as bytes, and the exact two counts are generated
+under *The benign half is fetched, not shipped* below rather than repeated here. A blocker on
+a published row whose bytes are in no shard costs a rebuild. A blocker on one of the shipped
+rows is about material a stranger already has, and that is a different failure with a
+different remedy — which is why `shard-census.py` opens the archives instead of trusting the
+index's opinion of them.
+
+This is written down because the distinction was blurred once and cost real work. This file
 called shards "release assets" and `docs/KNOWN_ISSUES.md` said two samples "ship in" one of
 them - present tense for an intended state - and a careful reading of both produced a
 conclusion that a customer identifier was already public. It was not. Three minutes of
 checking `git ls-files` and the release assets settled it, and the wrong conclusion had
 already been reasoned three steps forward. **Say which state you mean**: cleared to publish,
-built locally, or actually distributed. They are three different things and only the first
-two have ever been true here.
+built locally, or actually distributed. They are three different things, and which of them
+are true changes on a release day — so a sentence that asserts one of them wants a date on
+it, not a present tense.
 
 ## The index
 
 The index is **split in two, and both halves matter**:
 
+<!-- BEGIN GENERATED index-halves — corpus/doc-figures.py writes this block; edit the tool, not the block -->
 | file | rows | tracked? | what it is |
 |---|---|---|---|
 | `index.jsonl` | 44,544 | yes | published samples — the ones a public suite can verify |
 | `local/index-local.jsonl` | 48,256 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
+<!-- END GENERATED index-halves -->
 
 "index.jsonl is small and lives in git" and "the index lists every blob including local-only"
 were in tension; splitting resolves it without dropping the accounting. **`index-summary.json`
@@ -384,7 +403,7 @@ The population it lands on, measured against `index-local.jsonl` rather than ass
 | no masking record at all | 32 |
 
 **The number this table replaces was 17, and it was stale rather than wrong.** It was written
-into this file, into CORPUS_PLAN §7.2 and into CHANGELOG in the round that added
+into this file, into CORPUS_PLAN §7.2 and into the corpus changelog in the round that added
 `mask-samples.py`. Two things are measured rather than argued. First, no reading of the
 question yields it: seven variants of the predicate — any masking record rather than an
 applied one, both halves, widened to `identity`, keyed on the row's secret evidence instead
@@ -647,8 +666,13 @@ being demanded.
 Only one of the five is under-tagged for the reason the gate gives. Four are shape false
 positives — and the brief that framed this round offered two possibilities where the bytes
 show three, because a row can be under-tagged for a reason **other** than the finding that
-exposed it. The published half holds none of these rows and no shard has ever been
-distributed, so nothing here is or was exposed.
+exposed it. **Nothing here is or was exposed, and that survives the release.** When this was
+written no shard had been distributed, which made the point trivially; `corpus-2026.09.1`
+shipped on 2026-09-07 and the claim was re-checked rather than inherited. All five rows are
+local-only, and none of their digests appears among the 149 distinct hashes in the eight
+shipped manifests — a complete enumeration of every member of every shard against every one
+of the five, so a hit would have been found with certainty rather than with a sampling power
+that would need quoting.
 
 | row | carried literal | verdict |
 |---|---|---|
@@ -1040,7 +1064,7 @@ this one is a different animal:
 | the segment | `<id:6c>tructimages\|imagick` |
 | its neighbours | `…\|imagick_cropthumbnailimage\|imagick_current\|imagick_cyclecolormapimage\|imagick_decipherimage\|imagick_<id:6c>tructimages\|imagick_deleteimageartifact\|imagick_despeckleimage\|…` |
 
-**This is the imagick case.** It is the specific hit CHANGELOG records as having killed the
+**This is the imagick case.** It is the specific hit `corpus/CHANGELOG.md` records as having killed the
 encoded-layer confidence grade — "a six-character account name inside `imagick_…` in a 473 KB
 decoded PHP function table" — and the layer size matches to the byte. The entry sits in
 alphabetical order between two neighbouring `imagick_` functions, in a table of them.
@@ -1077,7 +1101,7 @@ split 109/6/1 at 3/4/6 characters. This matters because the plaintext clearance 
 quietly moved would be a judgement about something else. 0.182 × 5.91 = 1.08, which is the
 expectation the reason quotes.
 
-**One figure does not reproduce and its cause is not established.** CHANGELOG records the
+**One figure does not reproduce and its cause is not established.** `corpus/CHANGELOG.md` records the
 short-name arm at 0.23 hits per trial; the same command, same fixed seed, same map digest
 (`9268d21c394b`, unmoved since) and the tools digest that round ended at
 (`07079af767d4`; it has since moved once, to `6fecbeebbccc`, for the note relocation above)
@@ -1651,10 +1675,12 @@ tags dropped is caught, and a faithful one reconciles clean.
 
 ## The benign half is fetched, not shipped
 
-Of the 44,544 published rows, **44,460 are reproducible from a pinned source or from the
-stock CMS tree** and are therefore *not* shipped as blobs — they are an index row plus a
-lockfile entry. **84** samples *would* ship as bytes if a shard were released: 7 polyglot fixtures, 67 staging samples, 8
-doorway-kit samples and 2 outside-webroot wrappers.
+<!-- BEGIN GENERATED shipped-vs-fetched — corpus/doc-figures.py writes this block; edit the tool, not the block -->
+Of the 44,544 published rows, **44,404 are reproducible from a pinned source or from the
+stock CMS tree** and are therefore *not* shipped as blobs — they are an index row
+plus a lockfile entry. **140** ship as bytes in a public shard:
+66 staging-directory-review, 58 undetected-pool-review, 8 doorway-kit-review, 7 media-polyglot, 1 outside-webroot-sweep.
+<!-- END GENERATED shipped-vs-fetched -->
 
 That is the point of §6: the benign half is a lockfile and a script, so anyone can
 regenerate it and get the same false-positive number, instead of taking ours on trust.
@@ -1665,9 +1691,13 @@ VERIFY_ONLY=1 corpus/fetch-benign.sh   # re-check hashes already on disk
 corpus/fetch-benign.sh --inject     # the control: prove the hash gate can refuse
 ```
 
-`benign/sources.jsonl` currently pins **136 sources**: 87 WordPress plugins, 22 themes,
-24 WordPress core versions including deliberately old ones because an outdated core is what
-a real host looks like, and 3 trees of rendered HTML.
+`benign/sources.jsonl` pins **136 sources**: 87 WordPress plugins, 22 themes, 24 WordPress
+core versions including deliberately old ones because an outdated core is what a real host
+looks like, and 3 trees of rendered HTML. That composition is restated once in `README.md`
+and nowhere else; it is not in a generated region because it is a count of a tracked lockfile
+rather than of the index, so `doc-figures.py` — which reads only `index-summary.json` by
+design — cannot produce it. The lockfile and this sentence are edited in the same commit or
+neither is right, and `wc -l benign/sources.jsonl` settles it in one command.
 
 **The versions are derived, not chosen.** The first 86 sources pinned each slug at whatever
 upstream shipped that day, which pins the version a host is *least* likely to be running.
