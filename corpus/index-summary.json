@@ -1,8 +1,10 @@
 {
- "cleared_by_human_by_gate": {},
- "cleared_by_human_findings": 0,
+ "cleared_by_human_by_gate": {
+  "secret_gate": 2
+ },
+ "cleared_by_human_findings": 2,
  "cleared_by_human_note": "a gate finding a person read and ruled a collision, recorded on the row with who, when, why, the digest of the finding it is about and the gate provenance it was judged against. `publishable` is still computed: a cleared row is publishable because the gate says so given a recorded human input, never because the field was written over. A clearance stops applying by itself when either the finding or the gate that produced it moves, and shard-gate.py reports the ones that have. Counted here so the number can be watched: it is the only route by which a recorded FAIL becomes a publishable row",
- "cleared_by_human_rows": 0,
+ "cleared_by_human_rows": 2,
  "discovered_by_blobs": {
   "directory-context": 31060,
   "lyxbosa-scan": 419,
@@ -80,7 +82,7 @@
  "local_only_publishable_no_blocker_note": "rows held local-only that the section 7.2 gate does not block. Held for a reason outside the gate's remit - no shard carries their bytes, or they lack the family/technique classification a published row needs - so they appear under no blocker and would otherwise be an unattributed count",
  "malicious_detected": 696,
  "malicious_detected_excl_predates_ruleset": 631,
- "malicious_detected_runnable": 98,
+ "malicious_detected_runnable": 97,
  "malicious_known_miss": 603,
  "malicious_known_miss_by_family": {
   "<unfamilied>": 1,
@@ -121,8 +123,8 @@
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
  "predates_ruleset_blobs": 1131,
  "published": 44544,
- "published_cleared_by_human_rows": 0,
- "published_fetched_not_shipped": 44402,
+ "published_cleared_by_human_rows": 2,
+ "published_fetched_not_shipped": 44404,
  "published_reason_codes": {
   "doorway-kit-review": 8,
   "media-polyglot": 7,
@@ -133,7 +135,7 @@
   "stock-cms-hash-resolved-prior": 609,
   "undetected-pool-review": 58
  },
- "published_shipped_as_bytes": 142,
+ "published_shipped_as_bytes": 140,
  "sensitivity_tags": {
   "c2": 791,
   "clean": 45237,

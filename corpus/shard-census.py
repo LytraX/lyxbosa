@@ -65,9 +65,13 @@ be: 142 samples is small enough that a sampled answer would only be quoting its 
   corpus/shard-census.py --json          machine-readable
   corpus/shard-census.py --inject        prove each check can fail, then exit
 """
-import argparse, collections, hashlib, json, os, shutil, subprocess, sys, tempfile
+import argparse, collections, hashlib, importlib.util, json, os, shutil, subprocess
+import sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import credential_disposition                                           # noqa: E402
+
 SHARDS = os.path.join(HERE, "shards")
 EXPECT = os.path.join(HERE, "expect")
 INDEX = os.path.join(HERE, "index.jsonl")
@@ -226,8 +230,20 @@ def census(rows, shard_roots, expect_dir=EXPECT, keys=SHIPPED_KEYS):
                 # them if the row records it against those bytes.
                 m = row.get("masking") or {}
                 if is_sample and (m.get("plaintext_gate") or m.get("encoded_layer_gate")):
+                    # Three keys IDENTIFY the shipped bytes by being what resolved them, and
+                    # a fourth SAYS so: `masking.provenance.bytes_sha256` is written by
+                    # `verify-and-stamp.py` as the digest of the bytes it re-ran the gate
+                    # over. It is accepted only where it equals what actually shipped, so
+                    # the field is evidence and not an assertion - a stamp naming other
+                    # bytes leaves the finding standing. That is the route the four
+                    # generated carriers take: the gate really was re-run over the fixture
+                    # in the tar, and the row now records which bytes that was.
+                    prov = m.get("provenance") or {}
                     named = via in ("sha256", "masking.masked_sha256",
                                     "masking.remeasured.bytes_sha256")
+                    if not named and prov.get("bytes_sha256") == h:
+                        named = True
+                        res["resolved_via"]["+ masking.provenance.bytes_sha256"] += 1
                     if not named:
                         res["findings"]["gate result describes bytes other than the ones shipped"].append(
                             "%s  resolved via %s; gates recorded against %s"
@@ -289,6 +305,48 @@ def regate(rows, shard_roots, keys=SHIPPED_KEYS, tool=None):
         raise SystemExit("error: %s produced no JSON: %s" % (tool, (r.stderr.decode())[:300]))
     got = json.loads(out[out.index("["):out.rindex("]") + 1])
 
+    # The credential half, and it is in here rather than in `census()` because the cost is
+    # only paid for rows that record a keep - two today - and because this is the pass that
+    # already has the shipped bytes in hand.
+    #
+    # `shard-gate.credentialDispositionViolations` checks the record against ITSELF: the
+    # shape is well-formed, the count does not exceed the row's own evidence. That is an
+    # index-side question and it cannot see whether the literal described is the literal in
+    # the tar. This can, and it is the same split §7.3 draws for everything else - an index
+    # is a description, a shard is what a stranger downloads.
+    #
+    # Both directions, because a matcher that can only report one of them is half a check:
+    # a literal in the bytes with no disposition is a credential kept with nothing saying
+    # why, and a disposition matching no literal is a keep recorded about bytes that no
+    # longer carry it.
+    creds = []
+    want_creds = {p_ for p_, (_s, _r, hit) in
+                  ((os.path.basename(f), meta[os.path.basename(f)]) for f in files)
+                  if hit is not None
+                  and credential_disposition.recorded(hit[0].get("masking"))}
+    if want_creds:
+        _cspec = importlib.util.spec_from_file_location(
+            "vcm_census", os.path.join(HERE, "verify-content-mask.py"))
+        _vcm = importlib.util.module_from_spec(_cspec)
+        _cspec.loader.exec_module(_vcm)
+        for f in files:
+            base = os.path.basename(f)
+            if base not in want_creds:
+                continue
+            shard, rel, hit = meta[base]
+            row = hit[0]
+            with open(f, "rb") as fh:
+                lits = _vcm.secret_literals(fh.read())
+            unrecorded, unmatched = credential_disposition.matches(row.get("masking"), lits)
+            for u in unrecorded:
+                creds.append("%s/%s  a %s literal of %d characters is kept with no "
+                             "disposition recording why (row %s)"
+                             % (shard, rel, u[0], u[1], row["sha256"][:12]))
+            for u in unmatched:
+                creds.append("%s/%s  a disposition describes a %s literal of %d characters "
+                             "that these bytes do not carry (row %s)"
+                             % (shard, rel, u[0], u[1], row["sha256"][:12]))
+
     dis, failing = [], []
     for g in got:
         shard, rel, hit = meta.get(g["file"], (None, g["file"], None))
@@ -304,7 +362,8 @@ def regate(rows, shard_roots, keys=SHIPPED_KEYS, tool=None):
                            "(row %s, provenance=%s)"
                            % (where, gate, rec, g[gate], hit[0]["sha256"][:12],
                               bool((hit[0].get("masking") or {}).get("provenance"))))
-    return {"gated": len(got), "disagreements": dis, "failing": failing}
+    return {"gated": len(got), "disagreements": dis, "failing": failing,
+            "credentials": creds, "credential_rows": len(want_creds)}
 
 
 def report(res):
@@ -433,6 +492,40 @@ def inject():
         "gate result describes bytes other than the ones shipped",
         expect_files={"s": man_blob})
 
+    # The other direction, which is what makes the new key evidence rather than a licence:
+    # the SAME row, with a stamp naming the bytes that actually ship, must stop firing - and
+    # a stamp naming anything else must not.
+    def gatebind_row(bytes_sha):
+        return dict(base_row, sha256="3" * 64,
+                    fixture={"fixture_sha256": ph, "carrier_is_generated": True},
+                    masking={"plaintext_gate": "PASS", "encoded_layer_gate": "PASS",
+                             "provenance": {"tools": "0" * 12, "map": None,
+                                            "at": "2026-01-01T00:00:00",
+                                            "bytes_sha256": bytes_sha}})
+
+    def gatebind_clean(label, row):
+        nonlocal ok
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "s")
+            for rel, data in shard([base_entry]).items():
+                q = os.path.join(root, rel)
+                os.makedirs(os.path.dirname(q), exist_ok=True)
+                open(q, "wb").write(data)
+            ed = os.path.join(tmp, "expect")
+            os.makedirs(ed)
+            open(os.path.join(ed, "s.json"), "wb").write(man_blob)
+            res = census([row], {"s": root}, expect_dir=ed, keys=SHIPPED_KEYS)
+            hit = "gate result describes bytes other than the ones shipped" in res["findings"]
+            print("  %-58s %s" % (label, "MISSED" if hit else "clean"))
+            if hit:
+                ok = False
+
+    gatebind_clean("a stamp naming the bytes that shipped clears it", gatebind_row(ph))
+    run("a stamp naming OTHER bytes does not", [gatebind_row("9" * 64)],
+        {"s": shard([base_entry])},
+        "gate result describes bytes other than the ones shipped",
+        expect_files={"s": man_blob})
+
     print("manifest bookkeeping")
     run("a member the manifest does not list", [base_row],
         {"s": shard([base_entry], {"samples/b.php": b"<?php echo 1;"})},
@@ -504,6 +597,63 @@ def inject():
                               "correct" if quiet else "WRONG"))
         ok = ok and quiet
 
+    print("kept credentials, against the bytes rather than the record")
+    # The index-side rule lives in `shard-gate` and can only check the record against
+    # itself. This is the half that reads the tar, so its controls plant the defect in the
+    # BYTES and in the RECORD separately - a literal nothing accounts for, and a keep about
+    # a literal that is not there.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "s")
+        credpay = b"<?php $u='http://h/x.php?pass=\'.$abcd.\''; $q=1;\n"
+        files = {"MANIFEST.json": json.dumps([{"file": "samples/a.php",
+                                               "sha256": sha256(credpay), "name": "a"}]).encode(),
+                 "samples/a.php": credpay}
+        for rel, data in files.items():
+            q = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(q), exist_ok=True)
+            open(q, "wb").write(data)
+        stub3 = os.path.join(tmp, "stub3.py")
+        open(stub3, "w").write(
+            "import json,os,sys\n"
+            "fs=[a for a in sys.argv[1:] if not a.startswith('--')]\n"
+            "print(json.dumps([{'file':os.path.basename(f),'plaintext_gate':'PASS',\n"
+            "  'encoded_layer_gate':'PASS','layers_decoded':0,'layer_methods':[]}\n"
+            "  for f in fs]))\n")
+        kept = {"shape": "quoted-credential", "keyword": "pass", "value_length": 7,
+                "value_character_classes": ".$aaaa.",
+                "disposition": "kept-as-indicator", "classification": "attacker",
+                "ground": "read from the match", "about": "secret_gate"}
+        crow = dict(base_row, sha256=sha256(credpay),
+                    masking={"plaintext_gate": "PASS", "encoded_layer_gate": "PASS",
+                             "secret_gate": "FAIL",
+                             "credential_dispositions": [dict(kept)]})
+        gc = regate([crow], {"s": root}, tool=stub3)
+        clean = not gc.get("credentials")
+        print("  %-58s %s" % ("a keep that matches the literal in the tar",
+                              "clean" if clean else "MISSED"))
+        ok = ok and clean
+
+        wrong = dict(crow, masking=dict(crow["masking"],
+                                        credential_dispositions=[dict(kept, value_length=9,
+                                            value_character_classes=".$aaaaaa.")]))
+        gw = regate([wrong], {"s": root}, tool=stub3)
+        both = len(gw.get("credentials") or []) == 2
+        print("  %-58s %s" % ("a keep describing a literal the bytes do not carry",
+                              "caught" if both else "MISSED"))
+        ok = ok and both
+
+        # And the direction that is the whole reason the field exists: a credential in the
+        # shipped bytes that no disposition accounts for. The row must record SOME keep or
+        # this pass never looks at it, which is itself the gap `shard-gate` closes from the
+        # index side - so the fixture records one about a different shape.
+        gap = dict(crow, masking=dict(crow["masking"],
+                                      credential_dispositions=[dict(kept, shape="bcrypt")]))
+        gg = regate([gap], {"s": root}, tool=stub3)
+        seen = any("no disposition recording why" in x for x in (gg.get("credentials") or []))
+        print("  %-58s %s" % ("a literal in the tar that no disposition accounts for",
+                              "caught" if seen else "MISSED"))
+        ok = ok and seen
+
     print()
     # A carrier legitimately has no row; asserting that keeps the orphan rule from being
     # satisfied by calling everything a carrier.
@@ -560,7 +710,8 @@ def main():
 
     if a.json:
         print(json.dumps(res, indent=1, sort_keys=True))
-        return 1 if (res["findings"] or (res.get("regate") or {}).get("failing")) else 0
+        rg = res.get("regate") or {}
+        return 1 if (res["findings"] or rg.get("failing") or rg.get("credentials")) else 0
     rc = report(res)
     if a.regate:
         g = res["regate"]
@@ -571,7 +722,12 @@ def main():
             print("  %-46s : %d" % (label, len(g[key])))
             for x in g[key]:
                 print("      %s" % x)
-        if g["failing"] or g["disagreements"]:
+        print("  %-46s : %d   (over %d row(s) recording a keep)"
+              % ("kept credentials not matched in the shipped bytes",
+                 len(g.get("credentials") or []), g.get("credential_rows", 0)))
+        for x in (g.get("credentials") or []):
+            print("      %s" % x)
+        if g["failing"] or g["disagreements"] or g.get("credentials"):
             rc = 1
     return rc
 

@@ -605,41 +605,6 @@
   "note": "shipped as collected: the identifier gate found nothing to mask, so detection parity holds by construction"
  },
  {
-  "name": "fake-plugin-image-payload-loader--a3edd57e",
-  "file": "samples/achodaki/assets/images/otykhyc.gif",
-  "sha256": "a3edd57e2ceb491b5c90e11c4017457638a7173c37c2df5fdaaadacb5e0da6c1",
-  "source_sha256": "a3edd57e2ceb491b5c90e11c4017457638a7173c37c2df5fdaaadacb5e0da6c1",
-  "size": 469199,
-  "verdict": "malicious",
-  "family": "fake-plugin-image-payload-loader",
-  "sensitivity": [
-   "clean"
-  ],
-  "expect": {
-   "must_detect": [
-    "OBF041"
-   ],
-   "must_not_detect": [],
-   "closed_known_miss": {
-    "date": "2026-09-05",
-    "rule": "OBF041",
-    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
-   }
-  },
-  "technique": [
-   "fake-plugin-header",
-   "string-split-include",
-   "custom-alphabet-strtr",
-   "base64",
-   "payload-in-fake-image",
-   "extension-magic-mismatch",
-   "reversed-base64"
-  ],
-  "staging_dir": "achodaki",
-  "masked": false,
-  "note": "shipped as collected: the identifier gate found nothing to mask, so detection parity holds by construction"
- },
- {
   "name": "fake-plugin-image-payload-loader--6195cbb5",
   "file": "samples/achodaki/assets/images/xiqiko.png",
   "sha256": "6195cbb5653fc528aff488e2208d13c924eb43cefffdfd0f4edaea04d4d1af8b",

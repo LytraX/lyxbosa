@@ -55,12 +55,47 @@ SHIPPED = {"media-polyglot", "staging-directory-review", "outside-webroot-sweep"
 # silent reclassification. It cannot live here - this file must run without the shards,
 # which are gitignored release assets - so it lives with the tool that has them open.
 
+def ships_as_bytes(r):
+    """Does this row's sample ship as BYTES in a public shard?
+
+    Two conditions, and the second one was missing.
+
+    The reason code says the sample's bytes are the artefact rather than a fetch recipe. It
+    does not say the bytes are IN a shard, and the two came apart the moment a round dropped
+    a member: two rows were adjudicated unpublishable and their files removed from
+    `malicious-staging-001` and `malicious-outside-webroot-001`, while their rows kept the
+    reason code that records how they were FOUND - which is right, because a discovery route
+    is not a publication decision, and rewriting it to fix the arithmetic would destroy the
+    provenance instead.
+
+    So the count gains the condition the archives already enforce. `shard-census.py` fails
+    the build on "shipped row is not publishable today", so a row that is not publishable is
+    not in a public shard, and counting it as shipped bytes asserts a file a stranger cannot
+    fetch. 142 -> 140, and the two are exactly the two that were dropped.
+    """
+    return r.get("reason") in SHIPPED and r.get("publishable") is True
+
+
 def build():
     pub = [json.loads(l) for l in open(os.path.join(HERE, "index.jsonl"))]
     locp = os.path.join(HERE, "local", "index-local.jsonl")
     loc = [json.loads(l) for l in open(locp)] if os.path.exists(locp) else []
     allr = pub + loc
-    shipped = sum(1 for r in pub if r.get("reason") in SHIPPED)
+    # PUBLISHABLE IS PART OF THE PREDICATE, AND IT WAS NOT.
+    # --------------------------------------------------------
+    # The reason code says a sample's bytes are the artefact rather than a fetch recipe. It
+    # does not say the bytes are IN a shard, and the two came apart the moment a round
+    # dropped a member: two rows were adjudicated unpublishable and their files removed from
+    # `malicious-staging-001` and `malicious-outside-webroot-001`, while their rows kept the
+    # reason code that records how they were FOUND - which is right, because a discovery
+    # route is not a publication decision and rewriting it would destroy the provenance to
+    # fix the arithmetic.
+    #
+    # So the count gains the condition the archives already enforce: `shard-census.py` fails
+    # the build on "shipped row is not publishable today", so a row that is not publishable
+    # is not in a public shard, and counting it as shipped bytes asserts a file a stranger
+    # cannot fetch. 142 -> 140, and the two are the two that were dropped.
+    shipped = sum(1 for r in pub if ships_as_bytes(r))
 
     # The one mechanism that can turn a recorded gate FAIL into a publishable row. It is
     # counted here so it is never invisible: a human override that only shows up when
@@ -121,8 +156,13 @@ def build():
                                   and (r.get("expect") or {}).get("must_detect")),
         "malicious_known_miss": sum(1 for r in allr if r.get("verdict") == "malicious"
                                     and (r.get("expect") or {}).get("known_miss")),
-        # of the detected ones, how many ship and can therefore actually be re-run
-        "malicious_detected_runnable": sum(1 for r in pub if r.get("verdict") == "malicious"
+        # Of the detected ones, how many SHIP and can therefore actually be re-run - and
+        # "ship" is `ships_as_bytes`, not "is in the published index". The two were the same
+        # number until a round dropped two members out of two shards, and then this counted
+        # 98 while `verify.py` executed 97 and reported the detection figure as NOT
+        # RECONCILED. The comment on this line already said "ship"; the predicate did not.
+        "malicious_detected_runnable": sum(1 for r in pub if ships_as_bytes(r)
+                                           and r.get("verdict") == "malicious"
                                            and (r.get("expect") or {}).get("must_detect")),
         "malicious_no_expectation": sum(1 for r in allr if r.get("verdict") == "malicious"
                                         and not (r.get("expect") or {}).get("must_detect")
@@ -237,6 +277,26 @@ def inject():
                                   % (want_action or "error")))
         if not ok:
             fails.append(" ".join(argv) or "(none)")
+    print()
+    print("=== what counts as shipping as bytes ===")
+    # Both directions. The predicate was the reason code alone and could not tell a row
+    # whose file is in the tar from one whose file was dropped out of it.
+    pcases = [("a publishable row with a shipping reason code",
+               {"reason": "media-polyglot", "publishable": True}, True),
+              ("the same row, adjudicated unpublishable",
+               {"reason": "media-polyglot", "publishable": False}, False),
+              ("a publishable row whose reason is a fetch recipe",
+               {"reason": "benign-upstream", "publishable": True}, False),
+              ("publishable absent entirely",
+               {"reason": "media-polyglot"}, False)]
+    for label, row, want in pcases:
+        got = ships_as_bytes(row)
+        ok = got == want
+        cases.append((label, None, None))
+        print("  %-52s %-6s %s" % (label, got, "ok" if ok else "WRONG (wanted %s)" % want))
+        if not ok:
+            fails.append(label)
+
     print()
     print("cases: %d · passed: %d · failed: %d"
           % (len(cases), len(cases) - len(fails), len(fails)))
