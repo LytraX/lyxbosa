@@ -38,6 +38,59 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Added
 
+- **A local cluster-review tool for the 531 unfamilied rows, and the finding that labelling
+  them raises the family-weighted rate mechanically.** `corpus/review-app.py` (a loopback
+  server), `corpus/assign-family.py` (the tracked writer) and `corpus/family_evidence.py` (the
+  rule that a family is defined by bytes). None of them is published and the app is never an
+  artifact or a hosted page: it renders `origin.path`, account names and live malware bytes on
+  screen by design, which is why it binds `127.0.0.1`, checks the `Host` header, escapes every
+  byte it renders and serves `default-src 'none'` so nothing a sample references is fetched.
+
+  **The headline does not move and the family figures move a great deal.** A pilot session
+  labelled 180 of the 531 rows as 7 families. Sample-weighted detection is **696 of 1,299,
+  53.6%, before and after** — assigning a family changes no verdict and no expectation.
+  Family-weighted detection would go from **micro 14.9% to 32.1% and macro 29.9% to 40.8%**,
+  and every one of the 7 new families is *fully detected*.
+
+  That movement is a property of which rows were left unlabelled, not of the scanner. **530 of
+  the 531 unfamilied rows carry an expected rule (99.8%); 105 of the 707 already-labelled rows
+  do (14.9%).** So any family drawn from the unfamilied population is fully detected before
+  anybody looks at it, and a family-weighted figure computed after labelling them measures the
+  labelling backlog. Nothing was written to either index this round; the session is validated
+  and held.
+
+- **`ruleset_determined()` — the refusal `family_bucket_suspects` structurally cannot make.**
+  The 531 collapse into 95 clusters keyed on `expect.must_detect`, which is the scanner's
+  output, so a family lifted whole from a cluster is conditioned on detection exactly as
+  `legacy-infected-tree-sample` was. The dispersion test cannot see it: that test names a
+  family whose members share *no* rule, and a cluster-lifted family shares *every* rule, so it
+  passes trivially. The writer refuses a session in which every family is a function of the
+  recorded rule-set, and records `ruleset_determined` on each row. A family escapes by
+  splitting a cluster or taking part of one — which is what the byte markers are for.
+
+- **Dispersion is now a share, not a boolean, because the boolean refused two real families.**
+  `family_bucket_suspects` asks whether the intersection of a family's rule-sets is empty, and
+  **one outlier member empties an intersection.** Run over the pilot it named two families of
+  seven: a file-manager shell where **16 of 17** members share one rule, and a doorway set
+  where **24 of 26** do. The shape it was built to catch sits at **15%** — 39 distinct
+  rule-sets over 61 members — and every other labelled family in the index today sits at
+  **100%**. The boolean cannot tell 15% from 94%.
+
+  `family_evidence.DISPERSION_FLOOR` is 50%, and the calibration is **one positive and six
+  negatives, which is not a calibration**: it is a floor at 15% and a ceiling at 92% with
+  nothing observed between. The boolean is still computed and still reported, because the
+  census applies it. What actually stops a pile from being recorded is `verify_markers`: every
+  member must carry a literal re-read from its own bytes by the writer, and five unrelated
+  malware classes have no such literal to share. That refusal does not consult the scanner.
+
+- **What one screen can and cannot decide, censused over all 95 clusters and all 531 rows.**
+  38 clusters (378 rows) carry a literal shared by two or more members and distinctive enough
+  to rule on. 53 clusters are singletons with no second member on the screen, but **50 of the
+  53 carry a literal some other row also carries** and are reachable from the marker view. 3
+  clusters (87 rows) share only corpus-generic literals and 1 cluster (13 rows) shares nothing
+  at all. **428 of 531 rows are reachable from a screen; 103 are not** and need the decoded
+  payload rather than the bytes as stored. Not a sample — every cluster was measured.
+
 - **Family-weighted detection, published beside the sample-weighted figure, with the
   population it is silent about named in the same table.** The sample figure is dominated by
   whichever campaign was collected most heavily: one 2017 doorway campaign supplies **495 of

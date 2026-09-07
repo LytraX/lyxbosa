@@ -38,3 +38,20 @@ local/index.db-journal
 local/index.db-wal
 local/index.db-shm
 local/index.db.*.tmp
+
+# Review sessions written by review-app.py: the proposals file assign-family.py consumes and
+# the log every timing figure in a round report comes from.
+#
+# Covered already by the local/ rule above, and named here anyway for the same reason
+# local/index.db is: THE SESSION FILES CONTAIN CUSTOMER IDENTIFIERS AND MALWARE. A proposal
+# records the literals a reviewer picked out of sample bytes, and malware hardcodes its
+# victim - so a marker can be a customer's own host. The log records which screens were
+# opened, and a screen is named after a rule-set or a literal. review-app.py renders
+# origin.path and account names on purpose, because a reviewer deciding what a file is needs
+# to see where it sat; that is why it binds 127.0.0.1 and why it is never an artifact, a
+# hosted page, or anything with a URL somebody else can reach.
+#
+# assign-family.py sweeps the recorded name, basis and markers with the same leak predicate
+# pre-push-check.py uses, and refuses the write if one carries an identifier - but that
+# guards the INDEX. Nothing guards these files except this line and the rule above.
+local/review-sessions/
