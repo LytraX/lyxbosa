@@ -47,6 +47,26 @@
     "**/vcpkg_installed": true
   },
 
+  // The excludes above cover ripgrep, the watcher and the explorer - none of them cover
+  // cpptools, which walks its own tree. With no c_cpp_properties.json its browse.path
+  // defaulted to ${workspaceFolder} recursively, so the tag parser walked the same 11 GB
+  // and followed the same 47,855 symlinks that ripgrep did. cpptools has no equivalent of
+  // search.followSymlinks, so exclusion is the only lever there is. Measured on
+  // 2026-09-07: cpptools reached 38.5 GB RSS / 46.9 GB virtual and the kernel OOM-killed
+  // it, which broke the WSL user session and put the distro into a restart loop.
+  //
+  // Kept separate from files.exclude on purpose: that one governs the explorer, and
+  // trail-data/ has to stay visible there (see above). build/ is deliberately NOT
+  // excluded - compile_commands.json and the generated headers live in it.
+  "C_Cpp.files.exclude": {
+    "**/trail-data/**": true,
+    "**/corpus/**": true,
+    "**/vcpkg_installed/**": true,
+    "**/build-*/**": true,
+    "**/node_modules/**": true,
+    "**/.git/**": true
+  },
+
   // The PHP language server would otherwise index every sample in the corpus - live
   // webshells included - which is both enormous and pointless: this is a C++ project.
   "php.problems.enabled": false,
