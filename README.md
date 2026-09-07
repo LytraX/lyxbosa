@@ -311,43 +311,96 @@ missed samples and one missed family. Sample weighting says the scanner misses a
 family weighting says it misses one thing prolifically. A reader needs both to know which,
 so both are generated here, from the same rows and the same detection predicate.
 
+**There is a column per sampling frame and no single family rate, deliberately.** A family
+rate is a rate over the families somebody happened to label, and the two batches of labelling
+this corpus has were selected in opposite ways. Reporting one number across both would average
+two biases and name the result after the scanner.
+
 *The family names below and elsewhere in this file are attacker-campaign labels — the names
 given to malware families and kits during review. They are not customer or site identifiers,
 and no customer identifier appears in this corpus's published index.*
 
 <!-- BEGIN GENERATED family-detection — corpus/doc-figures.py writes this block; edit the tool, not the block -->
+| figure | families labelled before this writer | families labelled from the unfamilied pool |
+|---|---|---|
+| **Sampling frame** | **sampling frame not recorded** | **detection-conditioned — 530 of 531 rows in the pool carry an expected rule** |
+| Campaign families | 38 | 7 |
+| Rows carrying the label | 707 | 180 |
+| Families fully detected | 9 | 7 |
+| Families partially detected | 5 | 0 |
+| Families completely missed | 24 | 0 |
+| Macro average — every family weighted equally | 29.9% | 100.0% |
+| Micro average — every sample weighted equally | 14.9% (105 of 707) | 100.0% (180 of 180) |
+
 | figure | value | denominator |
 |---|---|---|
-| **Families fully detected** | **9** | of 38 campaign families |
-| **Families partially detected** | **5** | of 38 campaign families |
-| **Families completely missed** | **24** | of 38 campaign families |
-| Macro average — every family weighted equally | 29.9% | mean per-family detection over 38 families |
-| Micro average — every sample weighted equally | 14.9% | 105 of 707 samples carrying a campaign family |
-| Sample-weighted detection, whole reviewed set | 53.6% | 696 of 1,299 reviewed malicious samples |
-| Reviewed malicious rows carrying no family | 531 | 530 of them detected — outside every family figure above |
+| **Sample-weighted detection, whole reviewed set** | **53.6%** | 696 of 1,299 reviewed malicious samples — unchanged by any labelling |
+| Reviewed malicious rows carrying no family | 351 | 350 of them detected — outside both columns above |
 | Rows under a provenance label rather than a campaign | 61 | `legacy-infected-tree-sample` — membership conditioned on detection, so excluded |
-| Technique coverage | 90 of 123 | distinct techniques; the same 531 rows carry none |
-| Families a stranger can re-run in full | 23 | of 38; 11 have no re-runnable member, holding 561 rows |
+| Technique coverage | 90 of 123 | distinct techniques; 531 reviewed malicious rows carry none |
+| Families a stranger can re-run in full | 23 | of 45; 18 have no re-runnable member, holding 741 rows |
 <!-- END GENERATED family-detection -->
 
-**The last four rows are the honest part of this table.** A family figure can only be computed
-over families that exist, and a family exists because somebody assigned one. 531 reviewed
-malicious rows carry no family at all, and they are not a random 531 — 530 of them are
-detected, so they hold most of the recorded detections while appearing in none of the family
-percentages. Sample-weighted detection over only the rows that *do* carry a campaign family is
-14.9%, against 53.6% over the whole reviewed set; the difference is almost entirely those 531.
-The metric is bounded by the labelling effort, not by the corpus, and it is published with
-that named rather than quietly.
+**Neither column is the headline, and refusing to pick one is the result of this round.**
+The right-hand families were defined by bytes — a literal shared across their members, re-read
+from each sample by the writer that recorded the label — so no rule change could move a single
+membership decision. But they were all drawn from one pool, the reviewed malicious rows
+carrying no family, and when they were assigned that pool held **530 detected rows out of
+531**. Exactly one row in it was undetected, so at most one family drawn from it could ever
+have scored below 100%. Their rate was settled before anybody opened a file.
 
-**Macro and micro are both reported because they disagree.** The macro average weights every
-family equally and reads 29.9%; the micro average over the identical rows weights every sample
-equally and reads 14.9%. A macro average that tracked the micro average on every input would
-not be measuring anything the micro average does not; the gap is the measurement.
+The tempting repair is to exclude them and keep the left-hand column as the real number. That
+column is not a clean control either, and in the opposite direction: **602 of its 707 rows are
+recorded known misses**, because a mass miss is what gets investigated and labelled, and one
+2017 doorway campaign supplies 495 of them. Drop that single family and the same micro average
+reads **49.5%** instead of 14.9%. Promoting it to *the* family rate would publish a figure that
+can only ever deliver bad news. This corpus has already shipped a metric that could not deliver
+bad news — the provenance label described below, which read 61 of 61 — and the mirror image of
+that mistake is not a fix.
+
+So both columns, each under its own frame, and no number spanning them. A rate across the two
+would be a rate over a population nobody drew, and `corpus/doc-figures.py --check` refuses any
+document with a generated region that quotes one — including this one, which is why the number
+is not printed here. It also refuses a per-frame rate that appears anywhere in such a document
+without its own denominator and its own frame beside it.
+
+**What the table is still silent about.** A family figure can only be computed over families
+that exist, and a family exists because somebody assigned one. The reviewed malicious rows
+carrying no family are counted in the second table above rather than left out of it, and they
+are not a random selection — almost every one of them is detected, so they hold most of the
+recorded detections while appearing in neither column. That count *falls* as labelling
+proceeds, and a falling number here is not the gap closing. A census over all 95 rule-set
+clusters and all 531 rows, run on 2026-09-07 and re-derived on 2026-09-08, found **428
+reachable** by a literal shared distinctively across a cluster and **103 that are not**: 87 in
+three clusters whose only cluster-wide literal is carried by roughly a fifth of the pool, 13 in
+one cluster sharing no literal at all, and 3 singletons. Those need the sample's decoded
+payload rather than its stored bytes. The census is a floor rather than a ceiling — the first
+session labelled 16 of those 103 by splitting a cluster on a literal only a minority of its
+members carry — but **87 rows remain out of reach of this method** and stay counted where they
+are.
+
+**Macro and micro are both reported because they disagree.** Within the left-hand frame the
+macro average weights every family equally and reads 29.9%; the micro average over the
+identical rows weights every sample equally and reads 14.9%. A macro average that tracked the
+micro average on every input would not be measuring anything the micro average does not; the
+gap is the measurement. In the right-hand frame they agree at 100.0%, which is not two
+measurements agreeing — it is one pool showing through twice.
 
 **Three states, never two.** A family counts as fully detected only if every member carries an
 expected rule and as completely missed only if none does; the five in between are reported as
 their own count. Collapsing partial into either neighbour discards exactly which campaigns the
 scanner catches most of, which is the information a rule author needs first.
+
+**A contaminated frame is not the same failure as a conditioned membership, and the corpus
+records them under separate keys.** In the paragraph below, a sample is in the label *because
+the scanner flagged it*: reading the code that assigns it is enough to see the problem, and no
+rule change could move the figure. In the right-hand column above, every membership decision
+would survive any rule change and the code that assigns them never consults the scanner — it is
+the pool they were selected out of that is detection-dense. The first is visible in the
+assigning code; the second is invisible there and shows up only when the pool is counted.
+`index-summary.json` carries `families_detection_conditioned` for the first and
+`families_sampling_frame_conditioned` for the second, and folding them together would discard
+the distinction.
 
 **One label is excluded from the family counts, and its rows are not.**
 `legacy-infected-tree-sample` groups 61 samples that entered the corpus *because the scanner
@@ -359,11 +412,14 @@ carry 39 different expected rule-sets with no rule shared by all of them, while 
 multi-member family either shares a rule or fires a single set. `make-summary.py` recomputes
 that dispersion every run, so a second bucket arriving later is named rather than counted.
 
-**Technique coverage is the same question a third way, and it shares the same blind spot.**
-The 90-of-123 figure counts techniques with a runnable published sample. The rows carrying no
-technique are not merely as numerous as the rows carrying no family — they are the same 531
-rows. The two coverage figures do not corroborate each other; they are silent about the same
-part of the corpus.
+**Technique coverage is the same question a third way, and it was silent about the same
+rows.** The 90-of-123 figure counts techniques with a runnable published sample. Until this
+round the rows carrying no technique were not merely as numerous as the rows carrying no
+family — they were the identical 531 rows, so the two coverage figures could not corroborate
+each other. Assigning families moved one of the two and not the other: 180 rows now carry a
+campaign label and still carry no technique, so the sets have come apart and the technique
+count has not moved at all. That is worth watching rather than celebrating — the overlap
+shrinking is a labelling artefact in exactly the way the family rate would have been.
 
 **Technique coverage** should be read as a staleness signal rather than as completion: the
 denominator is enumerated from what has been reviewed, so it cannot see a technique sitting in

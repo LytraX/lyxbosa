@@ -101,7 +101,7 @@ __all__ = ["LOCAL_INDEX", "POPULATION_BUCKET", "population", "ruleset_key",
            "ruleset_clusters", "SampleStore", "markers_for", "detection_references",
            "ruleset_determined", "verify_markers", "audit", "FAMILY_NAME_RE",
            "check_family_name", "MARKER_MIN", "MARKER_MAX", "READ_CAP",
-           "EVIDENCE_FIELD", "load_make_summary"]
+           "EVIDENCE_FIELD", "load_make_summary", "FRAME_MARGIN", "frame_detail"]
 
 LOCAL_INDEX = os.path.join(HERE, "local", "index-local.jsonl")
 
@@ -416,6 +416,89 @@ def dispersion_detail(family_rows):
             "intersection_empty": not set.intersection(*sets)}
 
 
+# ------------------------------------------------------------------------ the sampling frame
+
+# A DEFINITION CAN BE CLEAN WHILE THE POOL IT WAS DRAWN FROM IS NOT.
+# -------------------------------------------------------------------
+# `ruleset_determined` and `dispersion_detail` above both interrogate the definition: they ask
+# whether membership is a function of the scanner's output. Neither can see the second failure,
+# because it is not in the family at all - it is in the set the family was selected out of.
+#
+# This writer draws from one pool: reviewed malicious rows carrying no family. When this was
+# written that pool held 531 rows of which 530 carry an expected rule - 99.8% - against 696 of
+# 1,299 over the reviewed malicious set as a whole, 53.6%. There is exactly ONE undetected row
+# in the entire pool, so at most one family drawn from it can score below 100%, and it can miss
+# by at most one member. Every family's rate is settled before anybody opens a file.
+#
+# This is NOT the failure `families_detection_conditioned` records in `index-summary.json`.
+# There the MEMBERSHIP rule reads the scanner's output: `if hit`, so a sample joins because it
+# was flagged. Here membership is byte-defined and marker-verified, and the seven families of
+# the first session would each survive any rule change. It is the SAMPLING FRAME that is
+# conditioned. The two are separate keys for that reason, and collapsing them would throw away
+# the distinction: the first is caught by reading the assigning code, the second is invisible
+# there and shows up only when the pool is counted.
+#
+# Both figures are censuses - every row counted, nothing sampled - so the comparison carries no
+# sampling error and needs no significance test. What it needs is to be RECORDED, on the row,
+# beside the label, so a reader a year from now does not re-derive it from population counts
+# that will have moved underneath them.
+#
+# THE MARGIN IS NOT A CALIBRATION, for the same reason `DISPERSION_FLOOR` is not one. The one
+# observed contaminated frame sits 46.2 points from its reviewed set; the alternative it is
+# being separated from - a pool that is a fair draw - sits at 0. Ten points is the middle of an
+# empty range. A frame landing near it is a case this repository has never seen, and the right
+# response is for a person to look at the pool rather than to move the number. Both shares are
+# recorded on every row so a later reader can apply their own rule to the same figures.
+FRAME_MARGIN = 0.10
+
+
+def frame_detail(pool_rows, reviewed_rows, ms=None):
+    """The sampling frame a family drawn from `pool_rows` inherits, measured against the
+    reviewed malicious set it was drawn out of.
+
+    `reviewed_rows` must be BOTH index halves. 140 of the 1,299 reviewed malicious rows live in
+    the published half, and comparing the pool against the local half alone would compare it
+    against a set the pool is a larger share of - a reference that moves when rows are published
+    and has nothing to do with the frame.
+
+    `detection_conditioned` is the recorded judgement; `pool_detected_share`,
+    `reviewed_detected_share` and `gap` are the figures it was reached from, so it can be
+    disagreed with rather than merely believed.
+    """
+    ms = ms or load_make_summary()
+    pool_n = len(pool_rows)
+    pool_det = sum(1 for r in pool_rows if ms.is_detected(r))
+    rev = [r for r in reviewed_rows if r.get("verdict") == "malicious"]
+    rev_n = len(rev)
+    rev_det = sum(1 for r in rev if ms.is_detected(r))
+    pool_share = (pool_det / float(pool_n)) if pool_n else None
+    rev_share = (rev_det / float(rev_n)) if rev_n else None
+    gap = (pool_share - rev_share) if (pool_share is not None and rev_share is not None) else None
+    return {
+        # Says WHICH of the two failures this is, in the record itself, because the two keys in
+        # index-summary.json read alike at a glance and a reader meeting one row has no census
+        # in front of them.
+        "kind": "sampling-frame",
+        "membership_conditioned_on_detection": False,
+        "pool": "reviewed malicious rows carrying no family, bucket %r" % POPULATION_BUCKET,
+        "pool_rows": pool_n,
+        "pool_detected": pool_det,
+        "pool_undetected": pool_n - pool_det,
+        "pool_detected_share": round(pool_share, 6) if pool_share is not None else None,
+        "reviewed_rows": rev_n,
+        "reviewed_detected": rev_det,
+        "reviewed_detected_share": round(rev_share, 6) if rev_share is not None else None,
+        "gap": round(gap, 6) if gap is not None else None,
+        "margin": FRAME_MARGIN,
+        "detection_conditioned": bool(gap is not None and abs(gap) > FRAME_MARGIN),
+        "note": ("the family's definition is byte-defined and marker-verified and is not "
+                 "conditioned on detection; the POOL it was drawn from is. %d of the %d rows in "
+                 "the pool carry an expected rule, so at most %d family drawn from it can score "
+                 "below 100%%. A rate over this family measures the pool, not the scanner"
+                 % (pool_det, pool_n, pool_n - pool_det)),
+    }
+
+
 def ruleset_determined(family_rows, population_rows):
     """Is this family's membership a function of the recorded rule-set?
 
@@ -499,7 +582,7 @@ def verify_markers(family_rows, markers, store):
 def audit(all_rows, session=None, ms=None):
     """What the assignment did, measured from the rows rather than from the session file.
 
-    Three questions, and the round's rule is that a session which fails any of them is wrong
+    Four questions, and the round's rule is that a session which fails any of them is wrong
     now rather than at the next census:
 
       dispersion    `family_bucket_suspects` over every reviewed malicious row. It must name
@@ -511,6 +594,11 @@ def audit(all_rows, session=None, ms=None):
                     be 100% and a reader needs to see that stated rather than discover it - the
                     530 detected rows of the 531 are why, and it is a property of the
                     population and not of the labelling.
+      frame         the sampling frame recorded on the rows, READ BACK OFF THEM rather than
+                    recomputed. `--audit` runs long after the write, when the pool has shrunk by
+                    everything labelled since; recomputing here would report a frame these rows
+                    were never assigned under. Every distinct frame is listed, so a scope
+                    holding two says so rather than showing one and implying it is the only one.
     """
     ms = ms or load_make_summary()
     mal = [r for r in all_rows if r.get("verdict") == "malicious"]
@@ -545,7 +633,17 @@ def audit(all_rows, session=None, ms=None):
                          "below_floor": (d["top_rule_share"] is not None
                                          and d["top_rule_share"] < DISPERSION_FLOOR)}
     n_det = sum(1 for v in determined.values() if v["ruleset_determined"])
+    frames, seen_frames = [], set()
+    for r in mine:
+        fr = r[EVIDENCE_FIELD].get("sampling_frame")
+        if isinstance(fr, dict):
+            k = json.dumps(fr, sort_keys=True)
+            if k not in seen_frames:
+                seen_frames.add(k)
+                frames.append(fr)
     return {
+        "sampling_frames": frames,
+        "sampling_frame": frames[0] if len(frames) == 1 else None,
         "families": new_families,
         "rows_assigned": len(mine),
         "dispersion_names": named,

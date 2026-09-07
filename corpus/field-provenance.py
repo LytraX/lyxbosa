@@ -117,6 +117,15 @@ KNOWN = {
     "carrier_format": ("no mention in any of the 276 python files, nor in docs/ or tests/. "
                        "Orphan with no writer identifiable on this machine"),
     "local_only_history": ("as carrier_format: no mention anywhere on this machine"),
+    # --- triaged 2026-09-08 (cl), the round that first wrote this field to the index.
+    "family_evidence": ("written by corpus/assign-family.py, which is TRACKED - the census "
+                        "reports it read-only because that writer assigns through the "
+                        "constant `fe.EVIDENCE_FIELD` rather than through a literal, and "
+                        "`key_positions` matches subscripts and `.get()` calls by name. Same "
+                        "shape as `campaign_marker` above and the opposite of a missing "
+                        "writer: named here so a later sweep does not read `read-only` as "
+                        "`nobody writes this`. Read by family_evidence.audit and by "
+                        "make-summary.family_frame / recorded_frame, both tracked"),
     "polymorphic_sibling_note": ("as carrier_format: no mention anywhere on this machine"),
     "expect_provenance": ("no writer or reader; the single mention is "
                           "docs/results/corpus-round-14-2026-09-06.md, a round report, "

@@ -43,6 +43,18 @@ WHAT IT REFUSES, AND WHY EACH REFUSAL IS SEPARATE FROM THE OTHERS
                       malware hardcodes its victim: a family named after a string that turns
                       out to be a customer's own host would write that host into the index.
 
+WHAT IT RECORDS THAT NOTHING REFUSES
+-------------------------------------
+The sampling frame. Every refusal above interrogates the DEFINITION - is this family a renamed
+rule-set, does it group a pile, are its markers really in the bytes. None of them can see the
+pool the family was selected out of, because that is not a property of the family at all. This
+writer draws from one pool and that pool is 530-of-531 detected, so every family it produces is
+fully detected before anybody opens a file. That is not a reason to refuse - the labels are
+correct and the rows deserve them - so `family_evidence.frame_detail()` measures it and
+`apply_to_row` writes it onto every row beside the label. See `family_evidence.FRAME_MARGIN`
+for why it is recorded rather than refused, and why it is a different key in the summary from
+the detection-conditioned MEMBERSHIP bucket the importer produced.
+
 WHAT IT WILL NOT TOUCH
 -----------------------
 `publishable`, which is computed by the gates and is nobody's to set by hand, and every other
@@ -70,6 +82,11 @@ import family_evidence as fe                                            # noqa: 
 from indexio import index_lock, write_jsonl_atomic, read_jsonl          # noqa: E402
 
 WRITER = "corpus/assign-family.py"
+
+# The other half. The sampling frame compares the pool against the whole reviewed malicious set
+# and 140 of those 1,299 rows are published, so measuring against the index being written would
+# compare the pool against a reference that moves every time a row is published.
+PUBLISHED_INDEX = os.path.join(HERE, "index.jsonl")
 
 # The leak predicate, loaded the way pre-push-check.py loads it: from the module that owns the
 # question rather than restated here. A second opinion about what a leak is would be a second
@@ -142,6 +159,20 @@ def read_proposals(path):
     return props, sessions.pop()
 
 
+def reviewed_rows(rows, index_path):
+    """`rows` plus the half it is not, so the frame's reference is the whole reviewed set.
+
+    Which half to add is decided from the path rather than assumed, because `--index` can point
+    this writer at either one and adding `index.jsonl` to itself would count 140 rows twice - a
+    reference set that disagrees with `index-summary.json` by construction.
+    """
+    other_path = (fe.LOCAL_INDEX
+                  if os.path.abspath(index_path) == os.path.abspath(PUBLISHED_INDEX)
+                  else PUBLISHED_INDEX)
+    other = read_jsonl(other_path) if os.path.isfile(other_path) else []
+    return rows + other
+
+
 def apply_to_row(row, prop, cluster_key, now):
     """A copy of `row` carrying the family and its evidence. Nothing else may differ.
 
@@ -169,6 +200,12 @@ def apply_to_row(row, prop, cluster_key, now):
         # family this round's pilot found the census WILL name needs its number on the row, so
         # the next reader of that census output can see 94% instead of re-deriving it.
         "dispersion": prop["_dispersion"],
+        # The pool this family was selected out of, and how far its detection share sits from
+        # the reviewed set. Indexed here rather than derived later because the pool SHRINKS as
+        # rows are labelled: re-deriving this in a year would measure a different population and
+        # quietly answer a different question. Subscripted, not `.get`, so a proposal that
+        # reached this function without a measured frame is a crash and not a null field.
+        "sampling_frame": prop["_sampling_frame"],
         "review_seconds": prop.get("review_seconds"),
     }
     changed = {k for k in set(out) | set(row) if out.get(k, KeyError) != row.get(k, KeyError)}
@@ -179,7 +216,7 @@ def apply_to_row(row, prop, cluster_key, now):
     return out
 
 
-def validate(props, rows, store, ms, maps=None):
+def validate(props, rows, store, ms, maps=None, reviewed=None):
     """(refusals, post_state_rows, report). `refusals` empty means the write may proceed.
 
     Everything is decided against the POST state, computed in memory, before anything is
@@ -193,6 +230,10 @@ def validate(props, rows, store, ms, maps=None):
         by_sha.setdefault(r.get("sha256"), []).append(r)
     pop = fe.population(rows, ms=ms)
     pop_sha = {r["sha256"] for r in pop}
+    # Measured against the pre-write pool, which is the pool these proposals were actually
+    # drawn from. Computing it after the write would measure the pool the NEXT session will
+    # draw from and record it on this one's rows.
+    frame = fe.frame_detail(pop, reviewed if reviewed is not None else rows, ms=ms)
 
     seen, per_prop = set(), []
     for i, p in enumerate(props, 1):
@@ -259,6 +300,7 @@ def validate(props, rows, store, ms, maps=None):
         p["_ruleset_determined"] = is_det
         p["_cluster_keys"] = keys
         p["_dispersion"] = fe.dispersion_detail(fam_members.get(p.get("family")) or [])
+        p["_sampling_frame"] = frame
     det = {f: v[0] for f, v in det.items()}
     if det and all(det.values()):
         refusals.append(
@@ -303,7 +345,8 @@ def do_apply(props, path, store, ms):
     """
     with index_lock(path):
         rows = read_jsonl(path)
-        refusals, post, report = validate(props, rows, store, ms)
+        refusals, post, report = validate(props, rows, store, ms,
+                                          reviewed=reviewed_rows(rows, path))
         if refusals:
             return 1, report, refusals
         write_jsonl_atomic(path, post)
@@ -337,6 +380,14 @@ def print_report(report):
              ", ".join(report["dispersion_below_floor"]) or "none"))
     print("  ruleset-determined       %d of %d families"
           % (report["ruleset_determined_families"], len(report["determined"])))
+    fr = report.get("sampling_frame") or {}
+    if fr:
+        print("  sampling frame           %s - the pool is %d of %d detected (%.1f%%) against "
+              "%d of %d (%.1f%%) over the reviewed set"
+              % ("DETECTION-CONDITIONED" if fr["detection_conditioned"] else "not conditioned",
+                 fr["pool_detected"], fr["pool_rows"], 100 * (fr["pool_detected_share"] or 0),
+                 fr["reviewed_detected"], fr["reviewed_rows"],
+                 100 * (fr["reviewed_detected_share"] or 0)))
     if report["determined"]:
         print("  recorded as detected     %d of %d assigned rows  (a property of the "
               "population: 530 of the 531 carry an expected rule)"
@@ -404,8 +455,9 @@ def inject():
     with open(fakemap, "w", encoding="utf-8") as fh:
         json.dump({"mapping": {"zzfakeclientname": "acct99"}}, fh)
 
-    def refused(props, rows, store, maps=(fakemap,)):
-        r, _post, _rep = validate([dict(p) for p in props], rows, store, ms, maps=list(maps))
+    def refused(props, rows, store, maps=(fakemap,), reviewed=None):
+        r, _post, _rep = validate([dict(p) for p in props], rows, store, ms, maps=list(maps),
+                                  reviewed=reviewed if reviewed is not None else rows)
         return r
 
     # Two rule-set clusters, so a family can be built that is NOT a function of the rule-set.
@@ -559,10 +611,63 @@ def inject():
          [m for m in refused([pile], pile_rows, _FakeStore(scattered))
           if "carry none of the markers" in m or "at least 2" in m] != [], True)
 
+    print("the sampling frame - recorded, never refused, and separate from membership")
+    # A pool every one of whose rows is detected, against a reviewed set that is half detected.
+    # This is the real shape: 530 of 531 against 696 of 1,299.
+    hot_pool = [_row("h%063d" % i, ["OBF001"]) for i in range(10)]
+    cold = ([_row("k%063d" % i, ["OBF001"]) for i in range(5)]
+            + [_row("m%063d" % i, []) for i in range(5)])
+    f_hot = fe.frame_detail(hot_pool, hot_pool + cold, ms=ms)
+    case("a pool detected far above the set it came from is CONDITIONED",
+         f_hot["detection_conditioned"], True)
+    case("  ...and the figures it was judged from are on the record",
+         (f_hot["pool_detected"], f_hot["pool_rows"], f_hot["reviewed_detected"],
+          f_hot["reviewed_rows"]), (10, 10, 15, 20))
+    # The accepting direction, and it is the one that matters: a check that calls every frame
+    # contaminated is not measuring the frame, it is a constant.
+    fair = [_row("p%063d" % i, ["OBF001"]) for i in range(5)] + \
+           [_row("q%063d" % i, []) for i in range(5)]
+    f_fair = fe.frame_detail(fair, fair + fair, ms=ms)
+    case("  ...a pool detected at the same rate as its set is NOT conditioned",
+         f_fair["detection_conditioned"], False)
+    case("  ...and a pool detected far BELOW its set is conditioned too, not only above",
+         fe.frame_detail([_row("r%063d" % i, []) for i in range(10)],
+                         [_row("r%063d" % i, []) for i in range(10)]
+                         + [_row("s%063d" % i, ["OBF001"]) for i in range(30)],
+                         ms=ms)["detection_conditioned"], True)
+    case("  ...the frame says membership is NOT what is conditioned",
+         f_hot["membership_conditioned_on_detection"], False)
+    # And it reaches the row, which is the whole point of measuring it.
+    props_f = [base()]
+    _r, post_f, rep_f = validate([dict(p) for p in props_f], rows, store, ms, maps=[fakemap],
+                                 reviewed=rows)
+    written = [r for r in post_f if isinstance(r.get(fe.EVIDENCE_FIELD), dict)]
+    case("every written row carries a sampling frame",
+         (len(written), all(isinstance(r[fe.EVIDENCE_FIELD].get("sampling_frame"), dict)
+                            for r in written)), (3, True))
+    case("  ...and the audit reads it back off the rows rather than recomputing",
+         rep_f["sampling_frame"] is not None and rep_f["sampling_frame"]["kind"], "sampling-frame")
+    case("  ...one frame across the session is reported as one, not as a list of three",
+         len(rep_f["sampling_frames"]), 1)
+    # A proposal that reached the writer without a measured frame must crash, not write a null.
+    try:
+        apply_to_row(rows[0], dict(base(), _ruleset_determined=False,
+                                   _dispersion=fe.dispersion_detail(rows[:3])),
+                     "OBF001,OBF002", "T")
+        got = "wrote a row with no frame"
+    except KeyError:
+        got = "KeyError"
+    case("a proposal with no measured frame is a crash, not a null field", got, "KeyError")
+    # The reference set is the OTHER half, chosen from the path rather than assumed.
+    case("the reviewed reference for the local half adds the published half",
+         os.path.basename(PUBLISHED_INDEX), "index.jsonl")
+
     print("the row the writer produces")
     r0 = rows[0]
+    frame0 = fe.frame_detail(rows[:3], rows, ms=ms)
     out = apply_to_row(r0, dict(base(), _ruleset_determined=False,
-                            _dispersion=fe.dispersion_detail(rows[:3])),
+                            _dispersion=fe.dispersion_detail(rows[:3]),
+                            _sampling_frame=frame0),
                    "OBF001,OBF002", "T")
     case("only family and family_evidence differ",
          sorted(k for k in set(out) | set(r0) if out.get(k) != r0.get(k)),
@@ -660,7 +765,8 @@ def main(argv=None):
 
     if not args.apply:
         rows = read_jsonl(args.index)
-        refusals, _post, report = validate(props, rows, store, ms)
+        refusals, _post, report = validate(props, rows, store, ms,
+                                           reviewed=reviewed_rows(rows, args.index))
         print_report(report)
         for m in refusals:
             print("  REFUSE: %s" % m)

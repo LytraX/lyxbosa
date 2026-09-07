@@ -38,6 +38,76 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Added
 
+- **The 180 rows are applied, and the family rate is published once per sampling frame with
+  neither called the headline.** The seven families from the pilot session are recorded on 180
+  of the 531 unfamilied rows. **Sample-weighted detection does not move: 696 of 1,299, 53.6%,
+  before and after** — assigning a family changes no verdict and no expectation. The published
+  family figures do not move either, and that is the point of the round: the rows they moved
+  into are a second column, not the same one.
+
+  **A clean definition drawn out of a contaminated pool is a second failure, and it is not the
+  one `families_detection_conditioned` records.** That key names a label whose *membership* is
+  conditioned on detection — `if hit`, visible in the assigning code. The seven new families
+  have none of that shape: each is defined by a literal shared across its members, every marker
+  is re-read from the sample bytes by the writer, and a member carrying none of them is
+  refused. But all seven were drawn from one pool, and when they were assigned that pool held
+  **530 detected rows out of 531** against 696 of 1,299 across the reviewed set. Exactly one
+  row in it was undetected, so at most one family drawn from it could ever have scored below
+  100%. All seven came out fully detected.
+
+  The frame is now measured at write time by `family_evidence.frame_detail()` and recorded on
+  every row as `family_evidence.sampling_frame`, because by the time anything re-derives it the
+  pool has shrunk by everything labelled since. `index-summary.json` gains
+  **`families_sampling_frame_conditioned`** — its own key, deliberately not folded into
+  `families_detection_conditioned`, because the two are found by different means and a reader
+  who has seen one will not look for the other.
+
+- **`family_detection_by_frame`, and no rate across the two frames anywhere.** Had the old
+  single rate survived this write it would have read **micro 32.1% and macro 40.8%**, up from
+  14.9% and 29.9%, with every new family fully detected and not one verdict changed. A reader
+  would have seen the scanner improve by seventeen points because somebody worked through a
+  queue.
+
+  **Excluding the new families and keeping 14.9% was refused, and the measurement is why.**
+  That population is not a clean control either: **602 of its 707 rows are recorded known
+  misses**, because a mass miss is what gets investigated and labelled, and a single 2017
+  doorway campaign supplies 495 of them. Drop that one family and the same micro average reads
+  **49.5%**. Both frames are contaminated, in opposite directions, and nothing in this corpus
+  establishes that either is a fair draw — so both are published, each under its own frame, and
+  neither is the headline. The sample-weighted figure over the whole reviewed set stays the one
+  number with a denominator nobody chose.
+
+- **`corpus/doc-figures.py --check` now refuses a document that publishes a family rate without
+  its population.** Two rules: a per-frame rate must appear with that frame's integer pair
+  *and* that frame's label, and a rate computed across both frames must not appear at all —
+  there is no denominator that makes it mean anything. The combined rule stands down while the
+  union equals one frame's own rate, which is the state the guard was committed in.
+
+  The sweep is whole-document rather than per-region, because the region check compares only
+  the generated block and prose around it is a person's by design — so a rate loose in the
+  prose is exactly what nothing was watching. **17 controls in both directions**, including one
+  that asserts the region check *alone* passes the document the guard rejects: a guard whose
+  positive case is already caught by the check beside it has not been shown to do anything.
+
+### Fixed
+
+- **Three `doc-figures.py` controls were defending a figure no document renders.** The
+  three-state family counts moved into the per-frame blocks, and the drift controls still
+  drifted `family_detection`, whose three-state cells nothing quotes any more. They passed
+  while blind. Repointed at the block the documents render.
+
+- **The reachability ceiling was standing on prose, and is re-derived.** *428 of 531 reachable,
+  103 not* came from a scratch script lost to a crash. Re-run over all 95 clusters and all 531
+  rows it reproduces exactly — 378 rows in 38 clusters with a distinctive shared literal, 50 of
+  53 singletons, 87 in three clusters whose only cluster-wide literal is carried by roughly a
+  fifth of the pool, 13 in one cluster sharing nothing — and it is stable for any rarity
+  threshold between 93 and 193 rows, a two-to-one range on the only free parameter. It is a
+  **floor, not a ceiling**: the pilot labelled **16 of those 103** by splitting a cluster on a
+  literal a minority of its members carry. **87 rows remain out of reach** and stay counted in
+  `malicious_family_population`, which still partitions the reviewed malicious set exactly.
+
+### Added
+
 - **A local cluster-review tool for the 531 unfamilied rows, and the finding that labelling
   them raises the family-weighted rate mechanically.** `corpus/review-app.py` (a loopback
   server), `corpus/assign-family.py` (the tracked writer) and `corpus/family_evidence.py` (the
@@ -56,8 +126,9 @@ are correct as of the round that recorded them and are deliberately never regene
   the 531 unfamilied rows carry an expected rule (99.8%); 105 of the 707 already-labelled rows
   do (14.9%).** So any family drawn from the unfamilied population is fully detected before
   anybody looks at it, and a family-weighted figure computed after labelling them measures the
-  labelling backlog. Nothing was written to either index this round; the session is validated
-  and held.
+  labelling backlog. The session was validated and held for one round; **it is applied in the
+  round above**, with the frame it was drawn under recorded on every row and the published rate
+  split by frame so that applying it could not move one.
 
 - **`ruleset_determined()` — the refusal `family_bucket_suspects` structurally cannot make.**
   The 531 collapse into 95 clusters keyed on `expect.must_detect`, which is the scanner's
