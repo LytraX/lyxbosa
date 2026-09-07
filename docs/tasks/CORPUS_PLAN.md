@@ -1023,11 +1023,22 @@ the rows, delegated to `verify-content-mask.py` rather than reimplemented.
 means the index is self-consistent. It has never meant the shards are safe to publish.
 
 **The masking-survival bullet needs the scanner and is a census, not a sample.** `verify.py`
-unpacks the shards and runs `check` per sample: 140 malicious members, 98 executed and
-98 rule-exact, 42 recorded `known_miss` still missed, 0 regressions; 6 benign members
-(2 samples, 4 carriers) clean with 0 false positives. 146 of 146 executed, so a discrepancy on
-any single member is detected with certainty rather than with a sampling power that would have
-to be quoted.
+unpacks the shards and runs `check` per member. Measured on 2026-09-07 against the shards of
+`corpus-2026.09.1`: **144 members — 138 malicious and 6 benign (2 samples plus 4 generated
+carriers)**; of the malicious, 97 carry an expected rule and all 97 were executed and
+rule-exact, 41 are recorded `known_miss` and still missed, 0 regressions; the 6 benign are
+clean with 0 false positives. 144 of 144 executed, so a discrepancy on any single member is
+detected with certainty rather than with a sampling power that would have to be quoted.
+
+*These six figures previously read 140 malicious members, 98 executed, 98 rule-exact, 42
+known misses and 146 of 146. Every one of them is the document being stale, not the corpus
+moving: round 15 dropped two adjudicated-unpublishable members out of two shards and
+recorded the moves (`published_shipped_as_bytes` 142 → 140, `malicious_detected_runnable`
+98 → 97), and the shipped `known_miss` count went 42 → 41 with it — the row that left is
+`hex-digest-wrapper-outside-webroot-a`, which is still a known miss in the published index
+and no longer one a stranger can run. The published index and the shipped archives are
+different denominators; this paragraph is about the archives. 42 is the index's answer to
+the same question and is also correct.*
 
 ### 7.4 Distribution: the shard is the tar, and the tar is reproducible
 

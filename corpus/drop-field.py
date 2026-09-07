@@ -30,7 +30,7 @@ WHAT IT WRITES
 --------------
 Only the removal. It does NOT record a tombstone on the rows: a per-row note that a field
 used to exist is the same volume of dead weight the removal is clearing. The record of the
-deletion belongs in CHANGELOG.md and in `field-provenance.KNOWN`, where a reader looks.
+deletion belongs in corpus/CHANGELOG.md and in `field-provenance.KNOWN`, where a reader looks.
 
     corpus/drop-field.py --index corpus/local/index-local.jsonl --field origin.incident
     corpus/drop-field.py --index ... --field origin.incident --by cl --apply
@@ -182,7 +182,7 @@ def main():
             write_jsonl_atomic(idx, after)
             print("%-44s removed from %d row(s)" % (os.path.basename(idx), removed))
     print()
-    print("removed by %s. Record it in CHANGELOG.md and in field-provenance.KNOWN, which is"
+    print("removed by %s. Record it in corpus/CHANGELOG.md and field-provenance.KNOWN, which is"
           % a.by)
     print("where the next census looks. Then re-run corpus/make-summary.py.")
     return 0

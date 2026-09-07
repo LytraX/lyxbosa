@@ -18,9 +18,10 @@ python3 corpus/pre-push-check.py
 ```
 
 It exits non-zero and prints `REFUSE TO PUSH` if any tracked file, **any commit message
-about to be pushed**, or the published index carries a customer identifier. Takes about 3
-seconds over ~160 files. If it refuses, fix the finding — do not push and do not reason your
-way past it.
+about to be pushed**, or the published index carries a customer identifier — and now also if
+a shipped figure disagrees with the index summary, for the reason its docstring gives under
+*why a figure check belongs in a leak gate*. It takes a few seconds over every tracked file.
+If it refuses, fix the finding — do not push and do not reason your way past it.
 
 **A commit message counts, and it is the harder half.** The first version of this script
 checked only files, reported SAFE TO PUSH, and a message naming three accounts was already on
@@ -94,13 +95,22 @@ remarkably easy mistake to make; assume you will make it, and let the tool tell 
 
 ## Before you report a round green
 
-Three commands, all three, every time. Two of them were already habit; the third is here
-because a round was reported green while it was failing.
+Four commands, all four, every time. Two of them were already habit; the third is here
+because a round was reported green while it was failing, and the fourth because a published
+`README.md` spent several rounds asserting a detection rate less than half the real one.
 
 ```
 python3 corpus/shard-gate.py corpus/index.jsonl              # published half
 python3 corpus/shard-gate.py corpus/local/index-local.jsonl  # local half
 python3 corpus/make-summary.py --check                       # the summary vs the index
+python3 corpus/doc-figures.py --check                        # the documents vs the summary
+```
+
+They are a chain, and each link is only worth running because the next one exists:
+
+```
+index.jsonl + local/index-local.jsonl  --(make-summary.py --check)-->  index-summary.json
+index-summary.json                     --(doc-figures.py --check)  -->  README.md, SOURCES.md
 ```
 
 `make-summary.py --check` is the authority on whether `index-summary.json` still describes
@@ -109,6 +119,14 @@ rows and does not regenerate it leaves a published file asserting counts that no
 exist — and the gate runs cannot see that, because they read the index and not the summary.
 Regenerate it in the commit where the counts settle, and say in that commit that `--check`
 was failing until you did.
+
+`doc-figures.py --check` is the same argument one level out. `make-summary.py --check` can
+pass while `README.md` — the first thing a stranger reads — quotes figures from three rounds
+ago, because nothing compared them. It reads **only** the summary and never the index, so
+that a document cannot agree with the index while disagreeing with the denominator: two
+denominators nobody compares is the defect, not the fix. **Never hand-correct a figure inside
+a generated region.** Hand-correction is how every one of these went stale; edit the tool, run
+it, and leave the prose around the markers alone — it survives regeneration by design.
 
 ## Measurement conventions
 

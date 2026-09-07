@@ -96,6 +96,15 @@ def build():
     # is not in a public shard, and counting it as shipped bytes asserts a file a stranger
     # cannot fetch. 142 -> 140, and the two are the two that were dropped.
     shipped = sum(1 for r in pub if ships_as_bytes(r))
+    # The same predicate, kept by reason code. `published_reason_codes` cannot answer this:
+    # it counts every published row under its reason, so its shipping codes sum to 142 and
+    # include the two rows whose files were dropped out of the archives. A document that
+    # wants to say WHICH samples ship - and `SOURCES.md` does - was left computing the
+    # breakdown by hand, and did: it named four reason codes at their pre-drop counts and
+    # omitted `undetected-pool-review` entirely, which is the stale-set defect above
+    # reproduced one level out, in prose, where no --check could see it. It can see it now.
+    shipped_by_reason = dict(sorted(collections.Counter(
+        r["reason"] for r in pub if ships_as_bytes(r)).items()))
 
     # The one mechanism that can turn a recorded gate FAIL into a publishable row. It is
     # counted here so it is never invisible: a human override that only shows up when
@@ -125,6 +134,7 @@ def build():
         "published": len(pub),
         "local_only": len(loc),
         "published_shipped_as_bytes": shipped,
+        "published_shipped_by_reason": shipped_by_reason,
         "published_fetched_not_shipped": len(pub) - shipped,
         "published_reason_codes": dict(collections.Counter(
             r.get("reason", "<no basis recorded>") for r in pub)),

@@ -3,7 +3,9 @@
 Defects that are understood, reproduced, and deliberately not fixed yet — with the reason,
 so nobody has to rediscover them and nobody "fixes" one without knowing what it costs.
 
-Fixing any of these means removing its entry here and adding a `CHANGELOG.md` line.
+Fixing any of these means removing its entry here and adding a changelog line — to
+`CHANGELOG.md` for a rule, CLI or output change, or to `corpus/CHANGELOG.md` if what moved
+was the corpus.
 
 ---
 
@@ -176,11 +178,17 @@ is recorded here rather than fixed in passing.
 **Until then:** do not describe a webroot scan's result as a host being clean, and when a
 host is known-compromised, sweep the staging directories by hand.
 
-**The two samples are now in the corpus, and they are measured misses.** Both are staged in
-`corpus/shards/malicious-outside-webroot-001` - a local build artefact; no shard has been
-distributed - masked and gated, carrying
-`expect.known_miss` — checked per sample with `check`, which reads the file it is given, so
-this is a rule gap and not a walker skip. Reading them settles what the sweep could only
+**The two samples are now in the corpus, and they are measured misses.** Both are masked,
+gated and carry `expect.known_miss` — checked per sample with `check`, which reads the file it
+is given, so this is a rule gap and not a walker skip. **One of the two ships and one does
+not**, which is worth stating because an earlier version of this paragraph said both were
+staged in `corpus/shards/malicious-outside-webroot-001` while no shard had been distributed,
+and neither half of that is true now. The `-b` sibling ships in that shard, distributed with
+`corpus-2026.09.1` on 2026-09-07. The `-a` sibling was adjudicated unpublishable and its file
+dropped from the archive; its index row keeps the `outside-webroot-sweep` reason code, because
+that records how it was *found* and not whether it was published. So this issue's evidence is
+half reproducible by a stranger and half not, and the count of known misses a stranger can
+re-run is one lower than the count the published index carries. Reading them settles what the sweep could only
 suggest: each is a wrapper that rewrites a plugin *inside* the webroot (`$TR`) while keeping
 three state files *outside* it, in the owning account's `~/tmp`, named with the same hex
 digest and an incrementing final character. The two are polymorphic siblings — identical

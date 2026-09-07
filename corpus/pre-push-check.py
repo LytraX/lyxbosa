@@ -35,6 +35,33 @@ WHAT IT CHECKS, and why each one is here rather than assumed:
                   rule is now enforced by the same script that enforces the other three.
                   A stale summary is not a leak; it is a false denominator, and every
                   measurement in a round report is quoted against it.
+  doc figures     Delegated to doc-figures.py --check: the generated regions in README.md
+                  and SOURCES.md must agree with that denominator. See below for why this
+                  one belongs in a leak gate and the derived database does not.
+
+WHY A FIGURE CHECK BELONGS IN A LEAK GATE, WHEN THE DERIVED DATABASE DELIBERATELY DOES NOT:
+
+The test is not "is it a leak". It is "does pushing make it public, under this project's
+name, in a form a stranger will act on". Push is the irreversible step this file guards, and
+what makes it irreversible is publication, not secrecy.
+
+  corpus/local/index.db is gitignored, derived and never pushed. A stale one cannot reach
+  anybody, so a `--check` for it here would gate an event that cannot happen; it is guarded
+  instead by `derived_db.open_ro()` refusing to open a stale file, which is a guarantee at
+  the moment of use rather than at the moment of push. Adding it here would have diluted
+  this file with a question that push does not ask.
+
+  README.md ships. It is the first thing a stranger reads, it is quoted in the release
+  notes, and it carried a detection figure of 22.2% against a real 53.6% - published, under
+  this project's name, in a repository whose every other document is obsessive about
+  denominators. An outside reviewer found it before anybody here did. That is not a leak and
+  it is not a secret; it is a false public claim, which is the other thing a push makes
+  permanent, and it is exactly the shape the make-summary delegation above was added for.
+
+So the rule this file follows: a check earns a place here when the thing it defends becomes
+public on push and wrong is worse than absent. `index-summary.json` and the generated regions
+both qualify. The database does not, and saying so is what keeps the list from growing into
+"every check we have", which is how a gate stops being read.
 
 WHAT IT DOES NOT DO: it does not sweep for substrings. Four such sweeps were written during
 that incident and all four manufactured hits. A two-letter account name matched 52,103 rows
@@ -180,6 +207,91 @@ def summary_check(corpus_dir):
     return r.returncode == 0, (r.stdout or "") + (r.stderr or "")
 
 
+def docfigures_check(root):
+    """(ok, output) from `doc-figures.py --check` run against `root`.
+
+    Parameterised on the repository root for the same reason `summary_check` is
+    parameterised on the corpus directory: a delegation only ever run against the real,
+    currently-passing tree is a delegation nobody has seen say no.
+
+    `doc-figures.py` takes its root from its own `__file__` and `abspath` does not resolve
+    symlinks, so a temp tree holding a symlink to the tool and copies of the documents is
+    enough to run the real script over substituted files.
+    """
+    r = subprocess.run([sys.executable, os.path.join(root, "corpus", "doc-figures.py"),
+                        "--check"], capture_output=True, text=True)
+    return r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+
+
+def inject_docfigures():
+    """Both directions, over a temp tree. Nothing in the repository is written.
+
+    The stale case perturbs the SUMMARY rather than the document, because that is the real
+    sequence: a round moves rows, `make-summary.py` regenerates, and the documents quoting it
+    are left behind. The control asserts the refusal names the figure, not just the file.
+    """
+    import shutil, tempfile
+    spec = importlib.util.spec_from_file_location(
+        "df_", os.path.join(HERE, "doc-figures.py"))
+    df = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(df)
+
+    ok_all = True
+    tmp = tempfile.mkdtemp(prefix="pre-push-docfigures-")
+    try:
+        os.makedirs(os.path.join(tmp, "corpus"))
+        os.symlink(os.path.join(HERE, "doc-figures.py"),
+                   os.path.join(tmp, "corpus", "doc-figures.py"))
+        for rel, _name, _r in df.REGIONS:
+            dst = os.path.join(tmp, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if not os.path.exists(dst):
+                shutil.copy2(os.path.join(ROOT, rel), dst)
+        sp = os.path.join(tmp, "corpus", "index-summary.json")
+        shutil.copy2(os.path.join(HERE, "index-summary.json"), sp)
+
+        fresh_ok, _out = docfigures_check(tmp)
+        if fresh_ok:
+            print("  documents that agree with the summary         accepted")
+        else:
+            print("  FAIL: agreeing documents were refused"); ok_all = False
+
+        cur = json.load(open(sp))
+        cur["malicious_detected"] = cur["malicious_detected"] + 1
+        json.dump(cur, open(sp, "w"), indent=1, sort_keys=True)
+        stale_ok, out = docfigures_check(tmp)
+        if stale_ok:
+            print("  FAIL: a stale README was accepted"); ok_all = False
+        else:
+            print("  a README stale by one detection sample        refused")
+            if "detection_pct" not in out and "detection_ratio" not in out:
+                print("  FAIL: the refusal did not name the figure that drifted")
+                ok_all = False
+            if "README.md" not in out:
+                print("  FAIL: the refusal did not name the file")
+                ok_all = False
+
+        # A region that is simply gone must fail, not pass quietly over a document nothing
+        # is defending any more. This is the merge failure mode.
+        shutil.copy2(os.path.join(HERE, "index-summary.json"), sp)
+        rel, name, _r = df.REGIONS[0]
+        p = os.path.join(tmp, rel)
+        import re as _re
+        whole = open(p, encoding="utf-8").read()
+        open(p, "w", encoding="utf-8").write(
+            _re.sub(df._BEGIN_RE % _re.escape(name), "",
+                    _re.sub(df._END_RE % _re.escape(name), "", whole)))
+        gone_ok, out = docfigures_check(tmp)
+        if gone_ok:
+            print("  FAIL: a document with no generated region was accepted"); ok_all = False
+        else:
+            print("  a document whose generated region is gone     refused")
+    finally:
+        import shutil as _sh
+        _sh.rmtree(tmp, ignore_errors=True)
+    return 0 if ok_all else 1
+
+
 def _summary_sandbox(tmp):
     """A corpus directory of symlinks with its own copy of index-summary.json.
 
@@ -267,6 +379,10 @@ def inject(paths):
     print("=== the make-summary delegation, in both directions ===")
     if inject_summary():
         ok = False
+    print()
+    print("=== the doc-figures delegation, in both directions ===")
+    if inject_docfigures():
+        ok = False
     return 0 if ok else 1
 
 
@@ -324,12 +440,19 @@ def main():
         for line in out.strip().split("\n")[:8]:
             print("      %s" % line)
     bad += (not ok)
+    ok, out = docfigures_check(ROOT)
+    print("  doc-figures --check on the shipped figures   %s" % ("PASS" if ok else "FAIL"))
+    if not ok:
+        for line in out.strip().split("\n")[:8]:
+            print("      %s" % line)
+    bad += (not ok)
 
     print()
     if bad:
         print("REFUSE TO PUSH: %d problem(s). Do not push until every line reads PASS." % bad)
     else:
-        print("SAFE TO PUSH: no customer identifier in any tracked file or the published index.")
+        print("SAFE TO PUSH: no customer identifier in any tracked file or the published\n"
+              "              index, and every shipped figure agrees with the index summary.")
     return 1 if bad else 0
 
 
