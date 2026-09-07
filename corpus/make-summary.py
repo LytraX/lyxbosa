@@ -75,6 +75,209 @@ def ships_as_bytes(r):
     """
     return r.get("reason") in SHIPPED and r.get("publishable") is True
 
+# ------------------------------------------------------------- family-weighted detection
+#
+# A sample-weighted detection figure is a statement about the collection as much as about the
+# scanner: it moves when one campaign is collected heavily. This corpus has that in an extreme
+# form. A single 2017 doorway campaign supplies 495 of the 1,299 reviewed malicious rows, so
+# the headline can fall by a third because one family was swept thoroughly and would rise the
+# same way if one rule landed. Family-weighted detection asks the other question - how many
+# distinct campaigns does the scanner catch at all - and the two answers differ by design.
+# Neither is the true one, which is why they are generated side by side rather than one being
+# chosen: sample weighting says the scanner misses a great deal, family weighting says it
+# misses one thing prolifically, and a reader needs both to know which.
+#
+# THE DENOMINATOR IS THE WEAK PART, AND IT IS SECTION 11 IN A NEW PLACE
+# ---------------------------------------------------------------------
+# A family figure is computed over families that exist, and a family exists because somebody
+# assigned one, so the metric is bounded by the labelling effort rather than by the corpus.
+# 531 of the 1,299 reviewed malicious rows carry no family at all - and they are not a random
+# 531: 530 of them are detected, so they hold 530 of the 696 recorded detections. Drop them
+# silently and sample-weighted detection over what remains reads 21.6% instead of 53.6%. A
+# family metric that quietly excluded them would be reporting who did the labelling.
+#
+# So the three populations are counted and published beside the rates, and they PARTITION the
+# reviewed malicious set: `malicious_family_population` sums to `malicious_reviewed`, and
+# `--inject` asserts that it does. The unfamilied rows cannot vanish out of a total; they can
+# only be reported as what they are.
+#
+# A LABEL WHOSE MEMBERSHIP IS CONDITIONED ON DETECTION IS NOT A FAMILY
+# --------------------------------------------------------------------
+# `import-infected-tree.py` assigns one label under `if hit`: a sample is in it BECAUSE the
+# scanner flagged it, and the row records that as `reason: detected-and-read`. Counting it as
+# a family makes it fully detected by construction and moves family coverage in the flattering
+# direction - section 11 again, this time in the numerator's own selection rule rather than in
+# a denominator.
+#
+# Three independent properties agree that it is a provenance bucket rather than a campaign,
+# and the sweep that established it was a census over all 39 labelled families, not a sample:
+#
+#   * its 61 members carry 39 distinct expected rule-sets with NO rule shared by all of them,
+#     spanning eight unrelated rule prefixes; every other multi-member family either shares a
+#     rule across all its detected members or fires one rule-set
+#   * its single technique is the most generic one in the vocabulary and no other family
+#     carries it, so excluding the bucket costs technique coverage exactly one technique
+#   * its verdict_reason is a five-way disjunction of unrelated malware classes, which is the
+#     shape of a label written for a pile rather than for a campaign
+#
+# Its rows are NOT dropped. They move into their own population, counted and named, because a
+# sample that was reviewed does not stop having been reviewed.
+DETECTION_CONDITIONED_REASONS = {"detected-and-read"}
+# Adding a review pass whose selection rule reads the scanner's own output, and not adding its
+# reason code here, silently readmits the defect - the way `SHIPPED` above went stale and
+# reclassified 58 rows. `family_bucket_suspects` is the control that does not depend on this
+# set being maintained: it recomputes rule-set dispersion from the rows every run and names any
+# family carrying the shape, whatever reason code it arrived under.
+
+
+def family_population(r):
+    """Which of the three reviewed-malicious populations a row is in.
+
+    Exhaustive by construction, and that is the whole point: every reviewed malicious row is in
+    exactly one, so the three counts sum to `malicious_reviewed` and the unfamilied half cannot
+    be lost by a metric that simply does not mention it.
+    """
+    if r.get("reason") in DETECTION_CONDITIONED_REASONS:
+        return "provenance_bucketed"
+    if r.get("family"):
+        return "campaign_familied"
+    return "unfamilied"
+
+
+def is_detected(r):
+    """The one detection predicate, shared with `malicious_detected` above.
+
+    A row is detected when it carries an expected rule; a known miss and a row with no
+    expectation recorded at all are both not-detected. Written once and called from both the
+    sample-weighted and the family-weighted counts, because two predicates that are meant to be
+    the same predicate are exactly how a family figure comes to disagree with the headline it is
+    printed beside.
+    """
+    return bool((r.get("expect") or {}).get("must_detect"))
+
+
+def family_state(rows):
+    """'fully_detected' | 'partially_detected' | 'completely_missed'. Three states, never two.
+
+    Collapsing partial into either neighbour discards the same information as collapsing a
+    row's several publish blockers into one reason. Five of the 38 campaign families are
+    partial; a reader told only "9 detected, 29 not" cannot see that four of those 29 are
+    families the scanner catches most of.
+    """
+    d = sum(1 for r in rows if is_detected(r))
+    if d == len(rows):
+        return "fully_detected"
+    if d == 0:
+        return "completely_missed"
+    return "partially_detected"
+
+
+def family_metrics(rows):
+    """The family block over an arbitrary row set, so the excl-predates variant is the same code.
+
+    `macro_rate` weights every family equally; `micro_rate` weights every sample equally over
+    the same rows. Both are reported because they answer different questions, and because a
+    macro average that tracked the micro average on every input would not be measuring what it
+    claims: over the same 707 rows these read 29.9% and 14.9%.
+    """
+    fams = collections.defaultdict(list)
+    for r in rows:
+        if family_population(r) == "campaign_familied":
+            fams[r["family"]].append(r)
+    by_state = collections.Counter(), collections.Counter()
+    for g in fams.values():
+        st = family_state(g)
+        by_state[0][st] += 1
+        by_state[1][st] += len(g)
+    n_rows = sum(len(g) for g in fams.values())
+    n_det = sum(1 for g in fams.values() for r in g if is_detected(r))
+    rates = [sum(1 for r in g if is_detected(r)) / float(len(g)) for g in fams.values()]
+    return {
+        "families": len(fams),
+        "rows": n_rows,
+        "detected_rows": n_det,
+        "fully_detected": by_state[0]["fully_detected"],
+        "partially_detected": by_state[0]["partially_detected"],
+        "completely_missed": by_state[0]["completely_missed"],
+        "rows_fully_detected": by_state[1]["fully_detected"],
+        "rows_partially_detected": by_state[1]["partially_detected"],
+        "rows_completely_missed": by_state[1]["completely_missed"],
+        # SIX DECIMAL PLACES, NOT FOUR, AND THE REASON IS A FIGURE THAT WAS ALREADY WRONG.
+        # `micro_rate` was stored rounded to 4dp and `doc-figures.py` rendered it as a
+        # percentage by rounding again: 105/707 is 14.8515%, which reads 14.9% from the pair
+        # and 14.8% from the pre-rounded 0.1485. The published table said 14.8% while the
+        # prose beside it said 14.9% and both were derived from this one key. Double rounding
+        # is a silent one-digit lie, so the stored rate keeps enough precision that a second
+        # rounding cannot move it - and `doc-figures.py` renders micro from the published
+        # integer pair anyway, with a control asserting the two agree.
+        "macro_rate": round(sum(rates) / len(rates), 6) if rates else None,
+        "micro_rate": round(n_det / float(n_rows), 6) if n_rows else None,
+    }
+
+
+def family_bucket_suspects(rows):
+    """Labelled families whose detected members share no expected rule: the shape of a pile.
+
+    Deliberately independent of `DETECTION_CONDITIONED_REASONS`. That set is maintained by
+    hand and will go stale; this recomputes from the rows every run, so a bucket arriving under
+    a new reason code is named rather than silently counted as a campaign. It reports and does
+    not exclude - "these members share no rule" is evidence for a person to rule on, not a
+    verdict a summary generator should reach by itself.
+
+    Three detected members is the floor. Two members firing two rule-sets is an ordinary
+    campaign whose payloads differ, and flagging that would make this fire on real families and
+    stop being read.
+    """
+    out, fams = {}, collections.defaultdict(list)
+    for r in rows:
+        if r.get("family"):
+            fams[r["family"]].append(r)
+    for f, g in sorted(fams.items()):
+        sets = [set((r.get("expect") or {}).get("must_detect") or []) for r in g]
+        sets = [s for s in sets if s]
+        if len(sets) < 3 or set.intersection(*sets):
+            continue
+        out[f] = {"members": len(g), "detected": len(sets),
+                  "distinct_rule_sets": len({frozenset(s) for s in sets}),
+                  "rules_shared_by_all": 0}
+    return out
+
+
+def family_rerun_power(pub_rows, campaign_rows):
+    """How much of each family verdict a stranger can actually re-execute.
+
+    A family's three-state verdict is read off `expect.must_detect`, which is a RECORDED result
+    from an earlier rescan. `verify.py` re-runs only the rows whose bytes ship in a public
+    shard, and the largest families are not among them. Publishing the family split without
+    this is publishing a census whose biggest cells nothing re-executed - and §11's habit is
+    that the cell nobody checked is the one that is wrong.
+    """
+    runnable = {r["sha256"] for r in pub_rows if ships_as_bytes(r)}
+    fams = collections.defaultdict(list)
+    for r in campaign_rows:
+        fams[r["family"]].append(r)
+    # Rows as well as families, for each of the three states. The family counts alone read
+    # "23 of 38 fully re-runnable" and invite the conclusion that most of the census is
+    # reproducible; the row counts say 77 of 707, because the re-runnable families are the
+    # small ones. A results document quoting either should be able to derive both from here
+    # rather than recomputing - the first draft of this round's write-up recomputed it by
+    # hand and reported 146.
+    st, rows = collections.Counter(), collections.Counter()
+    for g in fams.values():
+        c = sum(1 for r in g if r["sha256"] in runnable)
+        k = ("every_member_rerun" if c == len(g)
+             else "no_member_rerun" if c == 0 else "some_members_rerun")
+        st[k] += 1
+        rows[k] += len(g)
+    return {"families": len(fams),
+            "every_member_rerun": st["every_member_rerun"],
+            "some_members_rerun": st["some_members_rerun"],
+            "no_member_rerun": st["no_member_rerun"],
+            "rows_every_member_rerun": rows["every_member_rerun"],
+            "rows_some_members_rerun": rows["some_members_rerun"],
+            "rows_in_families_with_no_member_rerun": rows["no_member_rerun"]}
+
+
 
 def build():
     pub = [json.loads(l) for l in open(os.path.join(HERE, "index.jsonl"))]
@@ -128,6 +331,21 @@ def build():
 
     cl_rows, cl_findings, cl_by_gate = cleared(allr)
     pub_cl_rows, _pf, _pg = cleared(pub)
+
+    # The reviewed malicious set, split into the three populations a family figure has to
+    # keep apart. Built once and passed around, so the family block and the population
+    # counts cannot be computed over two different row sets.
+    mal = [r for r in allr if r.get("verdict") == "malicious"]
+    fam_pop = {k: 0 for k in ("campaign_familied", "provenance_bucketed", "unfamilied")}
+    fam_pop_det = dict.fromkeys(fam_pop, 0)
+    for r in mal:
+        fam_pop[family_population(r)] += 1
+        if is_detected(r):
+            fam_pop_det[family_population(r)] += 1
+    campaign = [r for r in mal if family_population(r) == "campaign_familied"]
+    det_conditioned = dict(sorted(collections.Counter(
+        r.get("family") or "<unfamilied>" for r in mal
+        if family_population(r) == "provenance_bucketed").items()))
 
     s = {
         "total_blobs": len(allr),
@@ -211,6 +429,53 @@ def build():
         "techniques_published": dict(collections.Counter(
             t for r in pub if r.get("verdict") == "malicious"
             for t in (r.get("technique") or []))),
+        # ---- family-weighted detection, generated beside the sample-weighted figure ----
+        # Why both, why the populations are counted rather than the unfamilied rows quietly
+        # dropped, and why one labelled group is not allowed to be a family: see the long
+        # block above `family_population`.
+        "malicious_family_population": fam_pop,
+        "malicious_family_population_detected": fam_pop_det,
+        "families_detection_conditioned": det_conditioned,
+        "family_detection": family_metrics(mal),
+        "family_detection_excl_predates_ruleset": family_metrics(
+            [r for r in mal if not r.get("predates_ruleset")]),
+        "family_bucket_suspects": family_bucket_suspects(mal),
+        "family_rerun_power": family_rerun_power(pub, campaign),
+        # Technique coverage is the same question asked a third way, and it is silent about
+        # EXACTLY the same rows: the set carrying no technique and the set carrying no family
+        # are the same 531 rows, not merely the same size. Counted here so a reader can see
+        # that the two coverage figures share one blind spot rather than corroborating each
+        # other.
+        "malicious_rows_without_technique": sum(1 for r in mal if not r.get("technique")),
+        "malicious_family_population_note": (
+            "the three populations partition the reviewed malicious set and sum to "
+            "malicious_reviewed. campaign_familied carries an attacker-campaign label; "
+            "provenance_bucketed carries a label whose membership is conditioned on the "
+            "scanner having flagged the sample, so it is fully detected by construction and "
+            "is kept out of every family rate; unfamilied carries no label at all. The "
+            "unfamilied rows hold most of the recorded detections, so a family figure is "
+            "silent about the part of the corpus that is doing best - which is why this key "
+            "is published beside the rates and never folded into them"),
+        "family_detection_note": (
+            "macro_rate weights every family equally, micro_rate weights every sample "
+            "equally, over the identical rows; they differ by a factor of two here and that "
+            "gap is the result, not a discrepancy. A family is fully_detected only if every "
+            "member carries an expected rule, completely_missed only if none does, and "
+            "partially_detected otherwise - three states, because collapsing partial into "
+            "either neighbour loses which families the scanner catches most of. Detection "
+            "uses the same predicate as malicious_detected, so the family figures and the "
+            "headline cannot drift apart"),
+        "family_bucket_suspects_note": (
+            "labelled families whose three or more detected members share no expected rule. "
+            "Evidence that a label groups a pile rather than a campaign, recomputed from the "
+            "rows every run so a bucket arriving under a new reason code is named rather "
+            "than counted as a family. Reported, never auto-excluded: reclassifying a label "
+            "is a human judgement"),
+        "family_rerun_power_note": (
+            "a family's three-state verdict is read from a recorded rescan; verify.py "
+            "re-executes only the members whose bytes ship in a public shard. These counts "
+            "say how much of the family census a stranger can reproduce, and the families "
+            "nothing re-runs are the largest ones"),
         "note": ("index.jsonl carries published samples only; the rest live in the gitignored "
                  "local/index-local.jsonl. This file is the denominator, so the suite can say "
                  "how much it is NOT testing. A suite that cannot say that overstates itself."),
@@ -306,6 +571,105 @@ def inject():
         print("  %-52s %-6s %s" % (label, got, "ok" if ok else "WRONG (wanted %s)" % want))
         if not ok:
             fails.append(label)
+
+    print()
+    print("=== the family verdict, on constructed rows ===")
+
+    def case(label, ok):
+        cases.append((label, None, None))
+        print("  %-64s %s" % (label, "ok" if ok else "WRONG"))
+        if not ok:
+            fails.append(label)
+
+    def row(fam, detected, reason=None, predates=False, n=[0]):
+        n[0] += 1
+        r = {"verdict": "malicious", "sha256": "%040d" % n[0],
+             "expect": ({"must_detect": ["RULE001"]} if detected else {"known_miss": True})}
+        if fam:
+            r["family"] = fam
+        if reason:
+            r["reason"] = reason
+        if predates:
+            r["predates_ruleset"] = True
+        return r
+
+    # The three states, each asserted to be reachable AND asserted not to be one of the
+    # others. "reads fully_detected" alone would pass on an implementation that always says
+    # fully_detected, which is the shape of every check this project has caught being blind.
+    case("a family whose every sample is detected    reads fully_detected",
+         family_state([row("a", True), row("a", True), row("a", True)]) == "fully_detected")
+    st = family_state([row("b", True), row("b", True), row("b", False)])
+    case("a family with a single miss                reads partially_detected",
+         st == "partially_detected")
+    case("  ...and specifically NOT fully_detected", st != "fully_detected")
+    case("a family with no detections                reads completely_missed",
+         family_state([row("c", False), row("c", False)]) == "completely_missed")
+    case("one detected member out of many            reads partially_detected, not missed",
+         family_state([row("d", True)] + [row("d", False) for _ in range(9)])
+         == "partially_detected")
+
+    # A MACRO AVERAGE THAT TRACKS THE MICRO AVERAGE ON EVERY INPUT IS NOT MEASURING WHAT IT
+    # CLAIMS. Both directions: it must diverge when family sizes are lopsided, and it must
+    # agree when they are not. Only the pair proves the divergence is the data rather than
+    # the arithmetic.
+    lopsided = ([row("big", False) for _ in range(100)]
+                + [row("s1", True), row("s2", True), row("s3", True)])
+    fm = family_metrics(lopsided)
+    case("lopsided families: macro and micro disagree",
+         fm["macro_rate"] != fm["micro_rate"])
+    case("  ...macro 0.75 (3 of 4 families) vs micro 0.029126 (3 of 103 rows)",
+         fm["macro_rate"] == 0.75 and fm["micro_rate"] == round(3 / 103.0, 6))
+    even = [row("e1", True), row("e1", False), row("e2", True), row("e2", False)]
+    fe = family_metrics(even)
+    case("equal-sized families at equal rates: macro == micro",
+         fe["macro_rate"] == fe["micro_rate"] == 0.5)
+
+    # THE POPULATION THE METRIC IS SILENT ABOUT CANNOT VANISH FROM A TOTAL.
+    # This is the one the credibility of the whole figure rests on: the unfamilied rows are
+    # where most of the detections are, so a partition that leaked them would flatter or
+    # damn the scanner depending only on which way the leak went.
+    mixed = ([row("f", True), row("f", False)]
+             + [row(None, True) for _ in range(7)]
+             + [row("bucketlabel", True, reason="detected-and-read") for _ in range(4)])
+    pop = {k: 0 for k in ("campaign_familied", "provenance_bucketed", "unfamilied")}
+    for r in mixed:
+        pop[family_population(r)] += 1
+    case("the three populations partition the constructed set",
+         sum(pop.values()) == len(mixed) == 13)
+    case("  ...7 unfamilied rows are counted, not dropped", pop["unfamilied"] == 7)
+    fmx = family_metrics(mixed)
+    case("  ...and none of them reach the family rate", fmx["rows"] == 2)
+    case("  ...so rows outside the family metric are 11, and named",
+         len(mixed) - fmx["rows"] == 11)
+
+    # A label whose membership is conditioned on detection leaves the family census and stays
+    # in the total. Both halves asserted: excluding it without counting it elsewhere is the
+    # same defect wearing the opposite sign.
+    case("a detection-conditioned label is not a family",
+         "bucketlabel" not in {r["family"] for r in mixed
+                               if family_population(r) == "campaign_familied"})
+    case("  ...its rows are still in the partition total", pop["provenance_bucketed"] == 4)
+    case("  ...and it cannot inflate the family counts",
+         fmx["families"] == 1 and fmx["fully_detected"] == 0)
+
+    # The dispersion detector, which must not depend on the reason-code set being maintained.
+    pile = [row("pile", True) for _ in range(3)]
+    for i, r in enumerate(pile):
+        r["expect"] = {"must_detect": ["RULE%03d" % i]}
+    camp = [row("camp", True) for _ in range(3)]
+    for i, r in enumerate(camp):
+        r["expect"] = {"must_detect": ["SHARED1", "RULE%03d" % i]}
+    two = [row("two", True) for _ in range(2)]
+    for i, r in enumerate(two):
+        r["expect"] = {"must_detect": ["RULE%03d" % i]}
+    case("members sharing no expected rule            flagged as a bucket suspect",
+         "pile" in family_bucket_suspects(pile))
+    case("members sharing one expected rule           NOT flagged",
+         "camp" not in family_bucket_suspects(camp))
+    case("two members, two rule-sets                  NOT flagged (below the floor)",
+         "two" not in family_bucket_suspects(two))
+    case("the detector needs no reason code to fire",
+         family_bucket_suspects(pile)["pile"]["distinct_rule_sets"] == 3)
 
     print()
     print("cases: %d · passed: %d · failed: %d"

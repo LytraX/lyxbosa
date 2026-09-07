@@ -38,6 +38,61 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Added
 
+- **Family-weighted detection, published beside the sample-weighted figure, with the
+  population it is silent about named in the same table.** The sample figure is dominated by
+  whichever campaign was collected most heavily: one 2017 doorway campaign supplies **495 of
+  the 1,299** reviewed malicious samples, so it is one missed family and 495 missed samples at
+  once. Sample weighting says the scanner misses a great deal; family weighting says it misses
+  one thing prolifically. Both are now generated from `index-summary.json`.
+
+  Over **38 campaign families: 9 fully detected, 5 partially, 24 completely missed.** Three
+  states, never two — collapsing partial into either neighbour discards which campaigns the
+  scanner catches most of. **Macro average 29.9%** (every family weighted equally) against
+  **micro 14.9%** (every sample, over the identical 707 rows); the gap is the measurement, and
+  a macro average that tracked the micro average on every input would not be one.
+
+  Detection uses the **same predicate as `malicious_detected`** — a row carries an expected
+  rule — written once and called from both, so the family figures and the headline cannot drift
+  apart. The three populations sum to `malicious_reviewed` and `--inject` asserts they do.
+
+- **`legacy-infected-tree-sample` is not counted as a family, and its 61 rows are not dropped.**
+  `import-infected-tree.py` assigns that label under `if hit`: a sample is in it *because the
+  scanner flagged it*, recorded on the row as `reason: detected-and-read`. It reads 61 of 61
+  detected and could not read anything else. Counted as a family it made coverage read **10 of
+  39** rather than **9 of 38**, in the flattering direction, with a tautology in the numerator.
+  Its rows move to a named third population, `provenance_bucketed`, and stay in every total.
+
+  A census over **all 39** labelled families — not a sample — found it is the only one, on
+  three independent properties: its 61 members carry **39 distinct expected rule-sets with no
+  rule shared by all of them** across eight rule prefixes, where every other multi-member
+  family shares a rule or fires one set; its single technique is the most generic in the
+  vocabulary; its `verdict_reason` is a five-way disjunction of unrelated malware classes.
+  `family_bucket_suspects` recomputes that dispersion every run, independently of the reason
+  code, so a second bucket arriving later is named rather than counted.
+
+- **The denominator gap is stated wherever the figure appears.** **531 of the 1,299** reviewed
+  malicious rows carry no family at all, so a family figure describes 768 rows and is bounded
+  by who did the labelling. They are not a random 531: **530 are detected**, so excluding them
+  silently takes sample-weighted detection over what remains from **53.6% to 21.6%**. The
+  **same 531 rows** — the identical set, not merely the same count — carry no `technique`, so
+  technique coverage (**90 of 123**) is silent about exactly the same population. The two
+  coverage figures do not corroborate each other.
+
+- **`family_rerun_power`, because the family census is mostly recorded rather than re-run.**
+  Of the 38 campaign families, **23** have every member re-executable by `verify.py`, 4 some,
+  and **11 none — and those 11 hold 561 of the 707 rows**, because the largest families are
+  among them.
+
+### Fixed
+
+- **A published percentage was rounded twice and read 14.8% where the ratio is 14.9%.**
+  `micro_rate` was stored to 4 decimal places and rendered as a percentage by rounding again:
+  105/707 is 14.8515%, which reads **14.9%** from the integer pair and **14.8%** from the
+  stored `0.1485`. The generated table said 14.8% while the prose beside it said 14.9%, both
+  derived from the one key. Rates are now stored to 6 places, the rendered micro average is
+  taken from the published integer pair, and a control asserts the two agree to the printed
+  decimal. Caught by the region's first regeneration, before the round was reported.
+
 - **`corpus/doc-figures.py` — the figures a document quotes are written from
   `index-summary.json`, and `--check` fails naming the figure that drifted.** `README.md` said
   detection was **22.2%, 172 of 774, with 602 recorded misses** and that the corpus held

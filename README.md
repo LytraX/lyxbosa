@@ -298,6 +298,73 @@ reviewed set is held locally — most of it carries customer content that cannot
 and its results come from a recorded scan rather than from a run you can repeat. That count is
 a regression denominator, not recall, and is never quoted as one.
 
+### Family-weighted detection
+
+Detection above weights every *sample* equally. That figure is dominated by whichever campaign
+happened to be collected most heavily, and here one 2017 doorway campaign supplies 495 of the
+1,299 reviewed malicious samples — so the headline can move by tens of points because of how
+much of one thing was swept up. Family-weighted detection asks the other question: of the
+distinct attacker campaigns this corpus has seen, how many does the scanner catch at all?
+
+**The two answers are very different and both are true.** That one missed campaign is 495
+missed samples and one missed family. Sample weighting says the scanner misses a great deal;
+family weighting says it misses one thing prolifically. A reader needs both to know which,
+so both are generated here, from the same rows and the same detection predicate.
+
+*The family names below and elsewhere in this file are attacker-campaign labels — the names
+given to malware families and kits during review. They are not customer or site identifiers,
+and no customer identifier appears in this corpus's published index.*
+
+<!-- BEGIN GENERATED family-detection — corpus/doc-figures.py writes this block; edit the tool, not the block -->
+| figure | value | denominator |
+|---|---|---|
+| **Families fully detected** | **9** | of 38 campaign families |
+| **Families partially detected** | **5** | of 38 campaign families |
+| **Families completely missed** | **24** | of 38 campaign families |
+| Macro average — every family weighted equally | 29.9% | mean per-family detection over 38 families |
+| Micro average — every sample weighted equally | 14.9% | 105 of 707 samples carrying a campaign family |
+| Sample-weighted detection, whole reviewed set | 53.6% | 696 of 1,299 reviewed malicious samples |
+| Reviewed malicious rows carrying no family | 531 | 530 of them detected — outside every family figure above |
+| Rows under a provenance label rather than a campaign | 61 | `legacy-infected-tree-sample` — membership conditioned on detection, so excluded |
+| Technique coverage | 90 of 123 | distinct techniques; the same 531 rows carry none |
+| Families a stranger can re-run in full | 23 | of 38; 11 have no re-runnable member, holding 561 rows |
+<!-- END GENERATED family-detection -->
+
+**The last four rows are the honest part of this table.** A family figure can only be computed
+over families that exist, and a family exists because somebody assigned one. 531 reviewed
+malicious rows carry no family at all, and they are not a random 531 — 530 of them are
+detected, so they hold most of the recorded detections while appearing in none of the family
+percentages. Sample-weighted detection over only the rows that *do* carry a campaign family is
+14.9%, against 53.6% over the whole reviewed set; the difference is almost entirely those 531.
+The metric is bounded by the labelling effort, not by the corpus, and it is published with
+that named rather than quietly.
+
+**Macro and micro are both reported because they disagree.** The macro average weights every
+family equally and reads 29.9%; the micro average over the identical rows weights every sample
+equally and reads 14.9%. A macro average that tracked the micro average on every input would
+not be measuring anything the micro average does not; the gap is the measurement.
+
+**Three states, never two.** A family counts as fully detected only if every member carries an
+expected rule and as completely missed only if none does; the five in between are reported as
+their own count. Collapsing partial into either neighbour discards exactly which campaigns the
+scanner catches most of, which is the information a rule author needs first.
+
+**One label is excluded from the family counts, and its rows are not.**
+`legacy-infected-tree-sample` groups 61 samples that entered the corpus *because the scanner
+flagged them* — the import pass assigns that label under a detection test, and the rows record
+it as `reason: detected-and-read`. It would read fully detected however good or bad the rules
+were, so counting it as a family inflates coverage by construction and in the flattering
+direction. A census over all 39 labelled families found it is the only one: its 61 members
+carry 39 different expected rule-sets with no rule shared by all of them, while every other
+multi-member family either shares a rule or fires a single set. `make-summary.py` recomputes
+that dispersion every run, so a second bucket arriving later is named rather than counted.
+
+**Technique coverage is the same question a third way, and it shares the same blind spot.**
+The 90-of-123 figure counts techniques with a runnable published sample. The rows carrying no
+technique are not merely as numerous as the rows carrying no family — they are the same 531
+rows. The two coverage figures do not corroborate each other; they are silent about the same
+part of the corpus.
+
 **Technique coverage** should be read as a staleness signal rather than as completion: the
 denominator is enumerated from what has been reviewed, so it cannot see a technique sitting in
 the blobs that have not been. A coverage number going *down* is the healthy outcome of

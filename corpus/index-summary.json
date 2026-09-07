@@ -11,6 +11,9 @@
   "manual-sweep": 61456,
   "operator-report": 5
  },
+ "families_detection_conditioned": {
+  "legacy-infected-tree-sample": 61
+ },
  "families_published": {
   "failed-fetch-404-artefact": 1,
   "fake-plugin-image-payload-loader": 52,
@@ -43,6 +46,52 @@
   "uploads-dir-docroot-uploader": 1,
   "woocommerce-card-skimmer": 6
  },
+ "family_bucket_suspects": {
+  "legacy-infected-tree-sample": {
+   "detected": 61,
+   "distinct_rule_sets": 39,
+   "members": 61,
+   "rules_shared_by_all": 0
+  }
+ },
+ "family_bucket_suspects_note": "labelled families whose three or more detected members share no expected rule. Evidence that a label groups a pile rather than a campaign, recomputed from the rows every run so a bucket arriving under a new reason code is named rather than counted as a family. Reported, never auto-excluded: reclassifying a label is a human judgement",
+ "family_detection": {
+  "completely_missed": 24,
+  "detected_rows": 105,
+  "families": 38,
+  "fully_detected": 9,
+  "macro_rate": 0.29919,
+  "micro_rate": 0.148515,
+  "partially_detected": 5,
+  "rows": 707,
+  "rows_completely_missed": 576,
+  "rows_fully_detected": 57,
+  "rows_partially_detected": 74
+ },
+ "family_detection_excl_predates_ruleset": {
+  "completely_missed": 18,
+  "detected_rows": 101,
+  "families": 30,
+  "fully_detected": 8,
+  "macro_rate": 0.338974,
+  "micro_rate": 0.587209,
+  "partially_detected": 4,
+  "rows": 172,
+  "rows_completely_missed": 49,
+  "rows_fully_detected": 54,
+  "rows_partially_detected": 69
+ },
+ "family_detection_note": "macro_rate weights every family equally, micro_rate weights every sample equally, over the identical rows; they differ by a factor of two here and that gap is the result, not a discrepancy. A family is fully_detected only if every member carries an expected rule, completely_missed only if none does, and partially_detected otherwise - three states, because collapsing partial into either neighbour loses which families the scanner catches most of. Detection uses the same predicate as malicious_detected, so the family figures and the headline cannot drift apart",
+ "family_rerun_power": {
+  "every_member_rerun": 23,
+  "families": 38,
+  "no_member_rerun": 11,
+  "rows_every_member_rerun": 77,
+  "rows_in_families_with_no_member_rerun": 561,
+  "rows_some_members_rerun": 69,
+  "some_members_rerun": 4
+ },
+ "family_rerun_power_note": "a family's three-state verdict is read from a recorded rescan; verify.py re-executes only the members whose bytes ship in a public shard. These counts say how much of the family census a stranger can reproduce, and the families nothing re-runs are the largest ones",
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
  "known_miss": 603,
  "local_only": 48256,
@@ -83,6 +132,17 @@
  "malicious_detected": 696,
  "malicious_detected_excl_predates_ruleset": 631,
  "malicious_detected_runnable": 97,
+ "malicious_family_population": {
+  "campaign_familied": 707,
+  "provenance_bucketed": 61,
+  "unfamilied": 531
+ },
+ "malicious_family_population_detected": {
+  "campaign_familied": 105,
+  "provenance_bucketed": 61,
+  "unfamilied": 530
+ },
+ "malicious_family_population_note": "the three populations partition the reviewed malicious set and sum to malicious_reviewed. campaign_familied carries an attacker-campaign label; provenance_bucketed carries a label whose membership is conditioned on the scanner having flagged the sample, so it is fully detected by construction and is kept out of every family rate; unfamilied carries no label at all. The unfamilied rows hold most of the recorded detections, so a family figure is silent about the part of the corpus that is doing best - which is why this key is published beside the rates and never folded into them",
  "malicious_known_miss": 603,
  "malicious_known_miss_by_family": {
   "<unfamilied>": 1,
@@ -120,6 +180,7 @@
  "malicious_no_expectation": 0,
  "malicious_reviewed": 1299,
  "malicious_reviewed_excl_predates_ruleset": 703,
+ "malicious_rows_without_technique": 531,
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
  "predates_ruleset_blobs": 1131,
  "published": 44544,
