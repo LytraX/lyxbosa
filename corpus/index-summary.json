@@ -122,7 +122,7 @@
  "predates_ruleset_blobs": 1131,
  "published": 44544,
  "published_cleared_by_human_rows": 0,
- "published_fetched_not_shipped": 44460,
+ "published_fetched_not_shipped": 44402,
  "published_reason_codes": {
   "doorway-kit-review": 8,
   "media-polyglot": 7,
@@ -133,7 +133,7 @@
   "stock-cms-hash-resolved-prior": 609,
   "undetected-pool-review": 58
  },
- "published_shipped_as_bytes": 84,
+ "published_shipped_as_bytes": 142,
  "sensitivity_tags": {
   "c2": 791,
   "clean": 45237,
