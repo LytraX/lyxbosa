@@ -11,11 +11,18 @@ holds material that must never leave the machine: `trail-data/`, `corpus/local/`
 it is a default that a single `git add -f`, a new directory, or a name written into a source
 comment gets around.
 
-**Before you push, or before you suggest a push, run:**
+**Gate the push on it. Not before it — on it:**
 
 ```
-python3 corpus/pre-push-check.py
+python3 corpus/pre-push-check.py && git push origin <branch>
 ```
+
+The `&&` is the instruction. Running the check and then pushing on the next line is not the
+same thing, and the difference has already been paid for: on 2026-09-07 the check printed
+`REFUSE TO PUSH` and the push went out anyway, because the two were separate statements. The
+finding that time was a stale figure rather than an identifier, and no pull request had been
+opened yet, so deleting the remote branch was enough — a leak would not have been recoverable
+that way, because `refs/pull/*` is server-side and the whole reason this file exists.
 
 It exits non-zero and prints `REFUSE TO PUSH` if any tracked file, **any commit message
 about to be pushed**, or the published index carries a customer identifier — and now also if
@@ -50,6 +57,18 @@ after the rewrite and the force-push. **The repository had to be deleted and rec
 Seven pull requests and the CI history went with it.
 
 Three minutes of checking would have prevented all of it.
+
+## Uncommitted work in the tree is the only copy of it
+
+An agent finishes a round by reporting and handing over a working tree: *nothing committed,
+nothing pushed*. That tree is the sole copy. `git checkout -- <file>`, `git reset --hard` and a
+mishandled `git stash` destroy it with no way back — it was never staged, so it is not in the
+object database and `git fsck` will not find it.
+
+This has cost real work. Reverting one file to undo an experiment of one's own also discarded
+that round's changes to the same file — a generator repair and fifteen control cases — which
+had to be written a second time. **Commit or stash before experimenting in a tree somebody else
+filled**, and revert your own hunks rather than the file.
 
 ## A check that has never been observed to fail is not yet a check
 
