@@ -22,6 +22,10 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [2.2.0] - 2026-09-07
+
+Ten new detection rules, and three candidates measured and declined.
+
 ### Fixed
 
 - **The next scanner release would have announced itself as "Since `corpus-2026.09.1`".**
@@ -58,8 +62,8 @@ commit list that CI generates per tag.
   one row, `BD011` on another. There is no discriminator here that is not simply "this is a
   WooCommerce payment plugin", so the honest outcome is six known misses left standing.
 
-- **The rule that would close 82% of the known misses will not be written.** 495 of the 602
-  samples this version misses are one 2017 SEO doorway campaign, and the candidate for them
+- **The rule that would close the largest single block of known misses will not be written.**
+  One 2017 SEO doorway campaign accounts for 495 missed samples, and the candidate for them
   was `title == meta[keywords] == meta[description]`, exactly. It scored **0 false positives
   over 207,311 files** — and was refused twice, because only 12 of those files carried both
   meta tags, so it had twelve chances to fail and a rule-of-three bound of 25%.
@@ -70,10 +74,12 @@ commit list that CI generates per tag.
   `meta[description]` and `meta[keywords]` verbatim on every page it generates, so the
   "discriminator" describes a documentation generator rather than a doorway page.
 
-  What that means for the headline: **detection will not rise much from 22.2% soon**, because
-  the largest single block of misses is now a family whose rule has been measured and
-  rejected rather than merely unwritten. A 495-sample jump was available at any point for the
-  price of shipping on twelve files' evidence.
+  What that means: **the largest single block of misses is now a family whose rule has been
+  measured and rejected rather than merely unwritten**, so corpus coverage will not rise much
+  from that direction. A 495-sample jump was available at any point for the price of shipping
+  on twelve files' evidence. The coverage figure itself lives in
+  [`corpus/CHANGELOG.md`](corpus/CHANGELOG.md) — it is the corpus's denominator and it moves
+  without any rule changing, which is why quoting it here went stale by 34 points.
 
 ### Added
 
@@ -170,8 +176,8 @@ commit list that CI generates per tag.
   campaign resolved every dangerous identifier at runtime through a table lookup, so nothing
   was written down for a pattern to match and the alphabet differed per file. It matches the
   decoder instead: the position `strpos` finds used as an index into a second alphabet that
-  the file assembles from short literals. Closes 46 known misses and takes corpus detection
-  from 10.0% to 45.4%.
+  the file assembles from short literals. Closes 46 known misses; what that did to corpus
+  coverage at the time is recorded in [`corpus/CHANGELOG.md`](corpus/CHANGELOG.md).
 
 ## [2.1.0] - 2026-09-03
 
@@ -320,5 +326,6 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/LytraX/lyxbosa/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/LytraX/lyxbosa/compare/v2.0.2...v2.1.0
