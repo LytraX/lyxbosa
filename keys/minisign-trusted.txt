@@ -77,3 +77,5 @@
 # carries one by shape, in a tracked file or in a commit message.
 
 # <role>  <public key>
+
+signing  RWQ3sDWqcTt8R0jVErMgIrRfrzCVlwuU4cFCUaEVGH2WqhYeiuL343eS          # generated 2026-09

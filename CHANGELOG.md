@@ -22,6 +22,10 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [2.2.1] - 2026-09-08
+
+Releases are verifiable: a checksum list and a signature over it.
+
 ### Added
 
 - **Releases publish `SHA256SUMS` and `SHA256SUMS.minisig`.** Until now a `v*` release was
@@ -364,6 +368,7 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/LytraX/lyxbosa/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/LytraX/lyxbosa/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/LytraX/lyxbosa/compare/v2.0.2...v2.1.0
