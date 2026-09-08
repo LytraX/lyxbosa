@@ -151,7 +151,8 @@ it, and leave the prose around the markers alone — it survives regeneration by
 
 ## Build directories: there are two, and you do not add a third
 
-`build/` is the debug build. `build-release/` is the release build. **Nothing else.**
+`build/` is the debug build. `build-release/` is the release build. `build-static/` exists to
+test static linking. **You do not add a fourth.**
 
 When you need a binary to measure with, build in `build/` and run
 `LYXBOSA_BIN=build/lyxbosa python3 corpus/verify.py`. Do not rebuild `build-release/` — another
@@ -175,12 +176,17 @@ Two reasons it is not merely tidiness. `.vscode/settings.json` points
 exclude `build/` from cpptools, because the generated headers live there; a third directory is
 outside that configuration and gets indexed by nothing or by everything.
 
-And `.gitignore` names build directories **individually**, not as a `build-*` pattern — measured:
-a new `build-scratch-probe/` shows up as `??` in `git status`. So a *fresh* name is visible, but
-every name already listed is invisible forever, and the list still carries `/build-rules/` after
-that directory was deleted along with `/build-release-portable/` and `/build-static/`. That is
-how the last one went unnoticed. **`build-static/` exists on disk today at 47 MB and appears in
-no preset in `RELEASING.md`** — it is the same kind of leftover, still ignored by name.
+And `.gitignore` names build directories **individually**, not as a `build-*` pattern —
+measured: a new `build-scratch-probe/` shows up as `??` in `git status`. So a *fresh* name is
+visible, but **every name already on the list is invisible forever**, which is why a leftover
+survives there rather than being noticed. `/build-rules/` sat ignored after the directory was
+deleted, alongside `/build-release-portable/` which never existed here; both entries are now
+removed, so recreating either would show up.
+
+What remains listed is what is used: `/build/`, `/build-release/`, `/build-static/` and
+`/build-win-release*/`. Note that only the first two appear in `RELEASING.md`'s preset table —
+`build-static/` is for testing static linking and `build-win-release*` for Windows packaging, so
+neither is reachable by `cmake --preset`, and neither is a precedent for adding your own.
 
 ## Index writes
 
