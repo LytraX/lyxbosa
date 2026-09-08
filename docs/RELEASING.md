@@ -258,9 +258,10 @@ defend are written:
 
 ### Provisioning the signing key
 
-**One-time, and it has not been done yet** - `keys/minisign-trusted.txt` ships with no signing
-key, so the next release will refuse until this is finished. Generate the keypair **on your own
-machine and never in CI**:
+**One-time, per signing key.** A release refuses to publish unless
+`keys/minisign-trusted.txt` names a signing key and the CI secret holding its private half
+exists, so this is done before the first release that uses a given key. Generate the keypair
+**on your own machine and never in CI**:
 
 ```bash
 minisign -G -W -p minisign.pub -s minisign.key

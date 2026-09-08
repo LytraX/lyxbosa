@@ -878,7 +878,7 @@ Practically, that means two shard classes:
 
 | shard | contents | where |
 |---|---|---|
-| public | benign, and masked malicious with `publishable: true` | zstd + password, *intended* as a release asset; none built so far has been distributed |
+| public | benign, and masked malicious with `publishable: true` | zstd + password, published as a release asset on the `corpus-YYYY.MM.N` tags |
 | local | anything `pii`/`content`, or malicious not yet masked | never leaves this machine |
 
 The index lists both, with `publishable` saying which is which, so the suite can report

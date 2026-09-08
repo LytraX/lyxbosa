@@ -101,6 +101,36 @@ This was found the hard way: a reader sweep over the whole tree returned nothing
 writer it was looking for was sitting in a directory the sweep never opened. Both counts
 differ — 5 hits against 8 — on a question as ordinary as which files define a function.
 
+## Reference documentation is not a development log
+
+`README.md`, `docs/RELEASING.md`, `corpus/SOURCES.md`, `docs/tasks/*.md` and every other
+tracked reference document describe **what the tool is and how a procedure runs**. They do not
+describe project state, and they do not narrate how the project arrived at its current shape.
+
+Never write, in a tracked reference document:
+
+- **what is not done yet** — "it has not been done yet", "there is no X yet", "none so far".
+  It is a fact that expires, nothing updates it, and it is wrong the day the thing ships. One
+  such line claimed no shard had been distributed while two releases were public.
+- **which round did what** — "this round", "the brief for this round", "found in round 14".
+  Round vocabulary is internal; a reader has no rounds.
+- **what a document used to say, or why it was automated** — "it went stale because it was
+  hand-maintained", "until 2026-09-08 this was one number". A reader wants what a number means
+  and what they may conclude from it, not when the mistake was found.
+
+Write the procedure and the current design instead. *"A release refuses to publish unless the
+signing key exists"* is a rule that stays true; *"the key has not been generated yet"* is a
+status line that rots.
+
+**Where state belongs.** `docs/local/` is gitignored and is where progress, decisions pending
+and working notes go. A changelog is history by definition and is exempt — that is its job.
+`docs/results/corpus-round-*.md` are dated round reports and their filenames say so; "this
+round" is correct vocabulary inside one.
+
+This has needed saying three times: the offending lines were removed from `README.md` and a
+fresh one was written into `docs/RELEASING.md` in the very next round, because the correction
+had been made in a pull-request description rather than here.
+
 ## Describe collisions; do not quote them
 
 When documenting a false positive, name the identifier by shape — "a six-letter label matched
