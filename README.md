@@ -249,12 +249,10 @@ corpus/fetch-benign.sh     # download and hash-verify the pinned benign corpus
 corpus/verify.py           # run the golden suite
 ```
 
-**The table below is generated.** Every number in it is written from
-`corpus/index-summary.json` by [`corpus/doc-figures.py`](corpus/doc-figures.py), and
-`corpus/doc-figures.py --check` fails if this file disagrees with the corpus. It is not
-hand-maintained, because it was, and it went stale by several rounds in both directions
-without anything noticing. The prose around it is written by a person and survives
-regeneration untouched.
+**The table below is generated** from `corpus/index-summary.json` by
+[`corpus/doc-figures.py`](corpus/doc-figures.py), so it cannot drift from the corpus by hand.
+`corpus/doc-figures.py --check` fails if it does. The prose around it is written by a person and
+survives regeneration.
 
 <!-- BEGIN GENERATED corpus-figures — corpus/doc-figures.py writes this block; edit the tool, not the block -->
 | figure | value | denominator |
@@ -279,19 +277,17 @@ same reviewing process that produced it, not a ceiling.
 
 The denominator is every reviewed malicious sample, so reviewing a family the scanner misses
 lowers this figure and shipping a rule for one raises it. Both directions are intended: it
-measures coverage, not progress. It has read 10.0%, 15.5%, 16.5%, 22.2% and 45.4% at various
-points, and the earlier high figures were over denominators a tenth the current size — which
-is why the sample count is quoted beside the percentage every time and never summarised as a
-trend. A jump is as likely to be a denominator moving as a rule landing: the largest single
-jump in this project's history, 22.2% to 53.6%, came from ruling 525 quarantined samples
-malicious in one round, 524 of which were already detected. No rule changed.
+measures coverage, not progress. **A jump is as likely to be a denominator moving as a rule
+landing** — ruling 525 already-detected samples malicious in one pass moved it by 31 points with
+no rule changing — which is why the sample count is quoted beside the percentage every time and
+the series is never summarised as a trend.
 
 The **numerator** moves the same way, for a second reason that is not detection either. A row
-can only assert a rule if a public shard carries its bytes, so a sample the scanner detects
-and nothing ships is counted as unasserted. Publishing 29 such samples on 2026-09-08 took this
-figure from 54.0% to 56.2% without a rule changing: the scanner detected all 29 before and
-after, and what changed is that a stranger can now check it. Read a movement here as a change
-in what is *provable* until the rule changelog says otherwise.
+can only assert a rule if a public shard carries its bytes, so a sample the scanner detects and
+nothing ships is counted as unasserted. Publishing 29 such samples moved this figure by 2.2
+points with no rule changing — the scanner detected all 29 either way, and what changed is that
+a stranger can check it. **Read a movement here as a change in what is *provable*** until
+[CHANGELOG.md](CHANGELOG.md) says a rule landed.
 
 **A known miss is recorded malware this version does not catch**, verified per file rather
 than inferred from a directory scan. The largest family in that count is one 2017 SEO doorway
@@ -308,9 +304,8 @@ nothing for the suite to run the assertion against, and
 [`corpus/promote-pending.py`](corpus/promote-pending.py) refuses to record an expectation it
 cannot evaluate. The third row is samples whose bytes are not on this machine, so nothing was
 measured about them — counted apart rather than folded into either, because an unreachable
-sample is no more evidence of a miss than it is of a catch. Until 2026-09-08 all three were
-published as a single number under the first row's heading, which reported files the scanner
-finds as files it fails on. The split is measured per file by
+sample is no more evidence of a miss than it is of a catch. Collapsing the three into one number
+would report files the scanner finds as files it fails on. The split is measured per file by
 [`corpus/classify-known-miss.py`](corpus/classify-known-miss.py), which records on every row
 the rules that fired and the binary they fired under, and
 [`corpus/verify.py`](corpus/verify.py) prints the same three counts from the same source.
@@ -364,7 +359,7 @@ and no customer identifier appears in this corpus's published index.*
 | Families a stranger can re-run in full | 24 | of 45; 17 have no re-runnable member, holding 712 rows |
 <!-- END GENERATED family-detection -->
 
-**Neither column is the headline, and refusing to pick one is the result of this round.**
+**Neither column is the headline, and that refusal is deliberate.**
 The right-hand families were defined by bytes — a literal shared across their members, re-read
 from each sample by the writer that recorded the label — so no rule change could move a single
 membership decision. But they were all drawn from one pool, the reviewed malicious rows
@@ -377,9 +372,8 @@ column is not a clean control either, and in the opposite direction: **597 of it
 carry `expect.known_miss`**, and 565 of those are samples no rule fires on, because a mass miss
 is what gets investigated and labelled, and one 2017 doorway campaign supplies 495 of them.
 Drop that single family and the same micro average reads **49.5%** instead of 14.9%. Promoting
-it to *the* family rate would publish a figure that can only ever deliver bad news. This corpus
-has already shipped a metric that could not deliver bad news — the provenance label described
-below, which read 61 of 61 — and the mirror image of that mistake is not a fix.
+it to *the* family rate would publish a figure that can only ever deliver bad news, which is no
+better than one that can only deliver good.
 
 So both columns, each under its own frame, and no number spanning them. A rate across the two
 would be a rate over a population nobody drew, and `corpus/doc-figures.py --check` refuses any
@@ -393,14 +387,12 @@ carrying no family are counted in the second table above rather than left out of
 are not a random selection — almost every one of them is detected, so they hold most of the
 recorded detections while appearing in neither column. That count *falls* as labelling
 proceeds, and a falling number here is not the gap closing. A census over all 95 rule-set
-clusters and all 531 rows, run on 2026-09-07 and re-derived on 2026-09-08, found **428
-reachable** by a literal shared distinctively across a cluster and **103 that are not**: 87 in
+clusters and all 531 rows found **428 reachable** by a literal shared distinctively across a cluster and **103 that are not**: 87 in
 three clusters whose only cluster-wide literal is carried by roughly a fifth of the pool, 13 in
 one cluster sharing no literal at all, and 3 singletons. Those need the sample's decoded
-payload rather than its stored bytes. The census is a floor rather than a ceiling — the first
-session labelled 16 of those 103 by splitting a cluster on a literal only a minority of its
-members carry — but **87 rows remain out of reach of this method** and stay counted where they
-are.
+payload rather than its stored bytes. The census is a floor rather than a ceiling — 16 of those
+103 have since been labelled by splitting a cluster on a literal only a minority of its members
+carry — but **87 rows remain out of reach of this method** and stay counted where they are.
 
 **Macro and micro are both reported because they disagree.** Within the left-hand frame the
 macro average weights every family equally and reads 29.9%; the micro average over the
@@ -435,25 +427,22 @@ carry 39 different expected rule-sets with no rule shared by all of them, while 
 multi-member family either shares a rule or fires a single set. `make-summary.py` recomputes
 that dispersion every run, so a second bucket arriving later is named rather than counted.
 
-**Technique coverage is the same question a third way, and it was silent about the same
-rows.** The 90-of-123 figure counts techniques with a runnable published sample. Until this
-round the rows carrying no technique were not merely as numerous as the rows carrying no
-family — they were the identical 531 rows, so the two coverage figures could not corroborate
-each other. Assigning families moved one of the two and not the other: 180 rows now carry a
-campaign label and still carry no technique, so the sets have come apart and the technique
-count has not moved at all. That is worth watching rather than celebrating — the overlap
-shrinking is a labelling artefact in exactly the way the family rate would have been.
+**Technique coverage is the same question a third way, and it cannot corroborate the other
+two.** It counts techniques with a runnable published sample, and the rows carrying no technique
+began as the identical set to the rows carrying no family — two coverage figures blind to the
+same rows. Labelling has since moved one and not the other: 180 rows now carry a campaign label
+and still no technique. The sets coming apart is a labelling artefact, not the coverage
+improving.
 
 **Technique coverage** should be read as a staleness signal rather than as completion: the
 denominator is enumerated from what has been reviewed, so it cannot see a technique sitting in
 the blobs that have not been. A coverage number going *down* is the healthy outcome of
 reviewing something new.
 
-**False-positive rate: 0.0223% — 44 of 197,559 files**, measured on 2026-09-07 with the
-scanner build `4c3e0af08988`. This one is dated rather than generated, and deliberately so: it
-is a measurement over a binary and a fetched tree, not a count the corpus index can produce,
-so the honest form is a figure tied to the build that produced it. A stale date is visible; a
-stale number is not.
+**False-positive rate: 0.0223% — 44 of 197,559 files**, measured with **v2.2.0**. This one
+names its build rather than being generated: it is a measurement over a binary and a fetched
+tree, not a count the corpus index can produce, so the honest form ties the figure to the
+release that produced it. A stale version is visible; a stale number is not.
 
 The benign corpus is 136 sources pinned by version and sha256 in
 `corpus/benign/sources.jsonl` — 87 WordPress plugins, 22 themes, 24 core versions and 3 trees
