@@ -501,6 +501,38 @@ def build():
         "malicious_known_miss_excl_predates_ruleset": sum(
             1 for r in allr if r.get("verdict") == "malicious" and not r.get("predates_ruleset")
             and (r.get("expect") or {}).get("known_miss")),
+        # ---- what the known_miss marker actually says, split ----------------------------
+        # `expect.known_miss` marks a row the published suite asserts no rule for. Two
+        # different facts put a row in that state, and the two keys above cannot tell them
+        # apart: the scanner is given the bytes and nothing fires (a miss), or the scanner is
+        # given the bytes, rules DO fire, and no shard carries them, so there is nothing for
+        # the suite to run the assertion against. Published as one number the second is
+        # reported as the first - 32 of the 598, 29 of the 67, were files the scanner
+        # detects. `classify-known-miss.py` records which on the row; these keys are what
+        # make the record usable, and `known_miss` above is deliberately left in place as
+        # the union so nothing that reads it silently loses rows.
+        #
+        # `unverified` is its own count and is not folded into either. Those rows' bytes are
+        # not on this machine, so nothing was measured about them; letting them join the
+        # miss count would publish bad news with no evidence, and letting them join the
+        # detected count would publish good news with none. See section 11.
+        "malicious_known_miss_by_kind": dict(collections.Counter(
+            (r.get("expect") or {}).get("known_miss_kind") or "<unclassified>"
+            for r in allr if r.get("verdict") == "malicious"
+            and (r.get("expect") or {}).get("known_miss"))),
+        "malicious_known_miss_by_kind_excl_predates_ruleset": dict(collections.Counter(
+            (r.get("expect") or {}).get("known_miss_kind") or "<unclassified>"
+            for r in allr if r.get("verdict") == "malicious"
+            and not r.get("predates_ruleset")
+            and (r.get("expect") or {}).get("known_miss"))),
+        "malicious_known_miss_kind_note": (
+            "rule-gap is the only one of the three that is a miss: bytes read, no rule "
+            "fires. detected-not-shippable is bytes read, rules fire, and no shard carries "
+            "them - a shipping gap, which promote-pending.py correctly refuses to promote "
+            "because must_detect is compared to check's output over the shipped bytes. "
+            "unverified is bytes that are not on this machine and were not re-measured. "
+            "<unclassified> is a row classify-known-miss.py has not visited and is a defect: "
+            "doc-figures.py refuses to render the split while any exists."),
         # Known misses by family, because one campaign can dominate the count and a bare
         # total cannot show that. 495 of them are a single 2017 doorway campaign; without
         # this key a reader has no way to see that from the summary alone.
@@ -867,6 +899,53 @@ def inject():
          "two" not in family_bucket_suspects(two))
     case("the detector needs no reason code to fire",
          family_bucket_suspects(pile)["pile"]["distinct_rule_sets"] == 3)
+
+    print()
+    print("=== the known_miss split: one marker, three states, and only one is a miss ===")
+    # Both directions on every case, because the flattering direction is the dangerous one
+    # here: this split is what makes the published miss count fall, so a partition that
+    # over-claimed `detected-not-shippable` would quietly improve the headline. Every case
+    # asserts what a row IS counted as and what it is NOT.
+    def km(kind, predates=False, n=[0]):
+        n[0] += 1
+        r = {"verdict": "malicious", "sha256": "%064d" % (900000 + n[0]),
+             "expect": {"must_detect": [], "known_miss": True}}
+        if kind is not None:
+            r["expect"]["known_miss_kind"] = kind
+        if predates:
+            r["predates_ruleset"] = True
+        return r
+
+    split = ([km("rule-gap") for _ in range(5)]
+             + [km("detected-not-shippable") for _ in range(3)]
+             + [km("unverified") for _ in range(2)]
+             + [km("rule-gap", predates=True) for _ in range(4)])
+    counts = collections.Counter(
+        (r.get("expect") or {}).get("known_miss_kind") or "<unclassified>" for r in split)
+    total = sum(1 for r in split if (r.get("expect") or {}).get("known_miss"))
+    case("the kinds partition the known_miss rows", sum(counts.values()) == total == 14)
+    case("a row with no rule firing counts as a miss", counts["rule-gap"] == 9)
+    case("  ...and a detected-but-unshippable row does NOT",
+         counts["detected-not-shippable"] == 3 and counts["rule-gap"] != total)
+    case("  ...and an unverified row counts as neither",
+         counts["unverified"] == 2
+         and counts["rule-gap"] + counts["detected-not-shippable"] != total)
+    in_scope = collections.Counter(
+        (r.get("expect") or {}).get("known_miss_kind") or "<unclassified>"
+        for r in split if not r.get("predates_ruleset"))
+    case("the in-scope split excludes the rules' own source material",
+         in_scope["rule-gap"] == 5 and sum(in_scope.values()) == 10)
+    # The union key must keep counting all three. A split that also shrank `known_miss`
+    # would silently drop rows out of every consumer that reads it - which is the reason the
+    # marker was left in place rather than replaced.
+    case("the union key still counts every state",
+         sum(1 for r in split if (r.get("expect") or {}).get("known_miss")) == 14)
+    # An unclassified row is visible as its own bucket rather than defaulting into one of
+    # the three. Defaulting is how an unmeasured row becomes a published figure.
+    case("a row carrying no kind is <unclassified>, not a miss",
+         collections.Counter(
+             (r.get("expect") or {}).get("known_miss_kind") or "<unclassified>"
+             for r in [km(None)])["<unclassified>"] == 1)
 
     print()
     print("cases: %d · passed: %d · failed: %d"

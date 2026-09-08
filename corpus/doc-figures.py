@@ -126,6 +126,29 @@ def _get(s, key):
     return s[key]
 
 
+# The three states `expect.known_miss` can be in, named here so the renderer cannot invent a
+# fourth and a missing one cannot read as zero.
+KNOWN_MISS_KINDS = ("rule-gap", "detected-not-shippable", "unverified")
+
+
+def _kinds(block, where):
+    """{kind: count} over KNOWN_MISS_KINDS, refusing anything unclassified.
+
+    A `.get(kind, 0)` here would render a document in which an unmeasured row is silently a
+    zero. The rows exist either way; what a default would hide is that nobody has measured
+    them, which is exactly the failure the split was added to end.
+    """
+    if not isinstance(block, dict):
+        raise Missing("%s is not a mapping of kind to count" % where)
+    unknown = sorted(k for k in block if k not in KNOWN_MISS_KINDS)
+    if unknown:
+        raise Missing("%s carries %s, which is not a known_miss kind. `<unclassified>` means "
+                      "classify-known-miss.py has not visited those rows; run it with --apply "
+                      "before publishing a split that leaves them out"
+                      % (where, ", ".join(repr(u) for u in unknown)))
+    return {k: block.get(k, 0) for k in KNOWN_MISS_KINDS}
+
+
 def figures(s):
     """Every figure any region may quote: name -> preformatted string.
 
@@ -138,6 +161,16 @@ def figures(s):
     rex = _get(s, "malicious_reviewed_excl_predates_ruleset")
     km_by_fam = _get(s, "malicious_known_miss_by_family")
     top_fam, top_n = max(km_by_fam.items(), key=lambda kv: (kv[1], kv[0]))
+    km_kind = _kinds(_get(s, "malicious_known_miss_by_kind"), "malicious_known_miss_by_kind")
+    km_kind_scope = _kinds(_get(s, "malicious_known_miss_by_kind_excl_predates_ruleset"),
+                           "malicious_known_miss_by_kind_excl_predates_ruleset")
+    # The split has to add up to the union, or one of the three lines the README publishes is
+    # over a population that is not the one the heading names. Checked here rather than in the
+    # renderer so a document is never written from a partition that does not close.
+    if sum(km_kind.values()) != _get(s, "known_miss"):
+        raise Missing("malicious_known_miss_by_kind sums to %d but known_miss is %d - the "
+                      "split does not partition the marker; rerun classify-known-miss.py"
+                      % (sum(km_kind.values()), _get(s, "known_miss")))
     tech_pub, tech_known = len(_get(s, "techniques_published")), len(_get(s, "techniques_known"))
     classified = v["benign"] + v["malicious"]
     fam = _get(s, "family_detection")
@@ -176,8 +209,21 @@ def figures(s):
         "detection_in_scope_pct": _pct(dex, rex),
         "detection_in_scope_ratio": "%s of %s" % (_n(dex), _n(rex)),
         "predates_ruleset": _n(_get(s, "predates_ruleset_blobs")),
-        "known_miss": _n(_get(s, "known_miss")),
-        "known_miss_in_scope": _n(_get(s, "malicious_known_miss_excl_predates_ruleset")),
+        # --- the known_miss split ----------------------------------------------------------
+        # `known_miss_mixed_total` and `known_miss_mixed_in_scope` are computed and rendered
+        # NOWHERE. They are the two numbers this round exists to stop publishing: the union of
+        # rows the scanner misses and rows the scanner detects but nothing ships, quoted under
+        # a heading that says the first. `miss_violations` refuses a document that puts either
+        # beside the words "known miss", the same way COMBINED_RATES refuses a family rate
+        # over a population nobody drew.
+        "known_miss_mixed_total": _n(_get(s, "known_miss")),
+        "known_miss_mixed_in_scope": _n(_get(s, "malicious_known_miss_excl_predates_ruleset")),
+        "known_miss_rule_gap": _n(km_kind["rule-gap"]),
+        "known_miss_rule_gap_in_scope": _n(km_kind_scope["rule-gap"]),
+        "known_miss_detected": _n(km_kind["detected-not-shippable"]),
+        "known_miss_detected_in_scope": _n(km_kind_scope["detected-not-shippable"]),
+        "known_miss_unverified": _n(km_kind["unverified"]),
+        "known_miss_unverified_in_scope": _n(km_kind_scope["unverified"]),
         "largest_known_miss_family": "`%s`" % top_fam,
         "largest_known_miss_count": _n(top_n),
         "re_runnable": _n(_get(s, "malicious_detected_runnable")),
@@ -254,9 +300,22 @@ def render_readme_figures(f):
         ("detection_in_scope_pct",
          "| **Detection, excluding the rules' own source material** | **%s** | %s samples |"
          % (f["detection_in_scope_pct"], f["detection_in_scope_ratio"])),
-        ("known_miss",
+        # Three lines, not one. The single line these replace read "Recorded known misses |
+        # 598 | 67 of them outside that source material", and 32 of that 598 - 29 of the 67 -
+        # are files the scanner detects and no shard carries, which the prose below the table
+        # glossed as "malware this version does not catch". The states are rendered apart so
+        # no reader has to be told which one a number means.
+        ("known_miss_rule_gap",
          "| Recorded known misses | %s | %s of them outside that source material |"
-         % (f["known_miss"], f["known_miss_in_scope"])),
+         % (f["known_miss_rule_gap"], f["known_miss_rule_gap_in_scope"])),
+        ("known_miss_detected",
+         "| Recorded, but detected: no shard carries the bytes | %s | %s outside it; the "
+         "suite has nothing to run the assertion against |"
+         % (f["known_miss_detected"], f["known_miss_detected_in_scope"])),
+        ("known_miss_unverified",
+         "| Recorded, and not re-measurable here | %s | %s outside it; the bytes are not on "
+         "this machine |"
+         % (f["known_miss_unverified"], f["known_miss_unverified_in_scope"])),
         ("largest_known_miss_count",
          "| Largest single known-miss family | %s | %s |"
          % (f["largest_known_miss_count"], f["largest_known_miss_family"])),
@@ -286,9 +345,10 @@ def render_readme_family(f):
 
     NEITHER COLUMN IS THE HEADLINE, and that is a decision rather than a hedge. The obvious
     repair - exclude the contaminated families and keep 14.9% - promotes a figure whose own
-    frame is contaminated the other way: 602 of those 707 rows are recorded known misses,
-    because a mass miss is what gets investigated and labelled, and one 2017 doorway campaign
-    supplies 495 of them. Drop that single family and the same rate reads 49.5%. This project
+    frame is contaminated the other way: 597 of those 707 rows carry `expect.known_miss` and 565
+    of those are samples no rule fires on, because a mass miss is what gets investigated and
+    labelled, and one 2017 doorway campaign supplies 495 of them. Drop that single family and
+    the same rate reads 49.5%. This project
     has already shipped a metric that could not deliver bad news; one that cannot deliver good
     news is the same defect with the sign flipped. So both, each under its own frame.
 
@@ -462,6 +522,61 @@ RATE_COMPANIONS = {
 
 COMBINED_RATES = ("family_combined_macro_pct", "family_combined_micro_pct")
 
+# ------------------------------------------------- the guard on a mixed known-miss total
+#
+# Same argument as COMBINED_RATES, one field over. `expect.known_miss` marks a row the
+# published suite asserts no rule for, and two unrelated facts put a row there: no rule fires
+# (a miss), or rules fire and no shard carries the bytes (a shipping gap). The union is a real
+# count of a real marker and a fine thing to state as such; what it is not is a count of what
+# the scanner fails to catch, which is how the README published it.
+#
+# So these two are computed, rendered nowhere, and refused when they appear in a paragraph
+# that is talking about known misses. Paragraph-scoped rather than whole-document because
+# these are small integers: `598` and `67` occur in this repository as byte counts and line
+# numbers, and a guard that reported those is a guard nobody finishes. Scoped to the
+# documents in REGIONS, for the reason the family guard gives - CHANGELOG.md and the files
+# under docs/ are history, and a round is entitled to record what a figure used to read.
+MIXED_MISS_TOTALS = ("known_miss_mixed_total", "known_miss_mixed_in_scope")
+
+# The words that turn a bare integer into a claim about detection. Hyphen or space, because
+# the table writes "known-miss family" and the prose writes "known misses".
+#
+# `known_miss` with the underscore is deliberately NOT matched, and that is the line between a
+# true statement and a false one rather than an oversight. `expect.known_miss` is a field, 598
+# rows carry it, and "598 rows are `known_miss`" is correct - the marker really does cover all
+# three states. What is wrong is "598 known misses", which says the scanner fails on 598 files.
+# So the guard fires on the English claim and leaves the field name alone. It is what keeps
+# SOURCES.md's "Twenty-three of the 67 are `known_miss`" - where 67 is a shard's sample count
+# and nothing to do with this figure - from being reported: measured, that paragraph is clean.
+MISS_PHRASE = re.compile(r"known[- ]miss", re.I)
+
+
+def miss_violations(text, f):
+    """[(figure, why)] for every paragraph that quotes a mixed total as a miss count.
+
+    The split figures are exempt from being *called* mixed, and so is a mixed total that
+    happens to equal one of them: when nothing is detected-but-unshippable the union IS the
+    miss count, and a guard that refused the correct document in that state would be turned
+    off rather than fixed. That is the same stand-down COMBINED_RATES has.
+    """
+    split = {f[k] for k in ("known_miss_rule_gap", "known_miss_rule_gap_in_scope",
+                            "known_miss_detected", "known_miss_detected_in_scope",
+                            "known_miss_unverified", "known_miss_unverified_in_scope")}
+    out = []
+    for para in re.split(r"\n\s*\n", text):
+        if not MISS_PHRASE.search(para):
+            continue
+        for name in MIXED_MISS_TOTALS:
+            value = f[name]
+            if value in split:
+                continue
+            # Not a substring match: `67` must not fire on `1,678` or `5.67%`.
+            if re.search(r"(?<![\d,.])%s(?![\d,.%%])" % re.escape(value), para):
+                out.append((name, "appears in a paragraph about known misses, but it counts "
+                                  "the rows the scanner misses TOGETHER with the rows it "
+                                  "detects and no shard ships; quote the split instead"))
+    return out
+
 
 def rate_violations(text, f):
     """[(figure, what is missing)] for every family rate `text` publishes without its population.
@@ -584,10 +699,21 @@ def run(root, mode, out=sys.stdout, guard=True):
             label = "%s [family-rate guard]" % rel
             if not bad_rates:
                 print("  %-44s no unaccompanied family rate" % label, file=out)
+            else:
+                bad += len(bad_rates)
+                print("  %-44s PUBLISHES A FAMILY RATE WITHOUT ITS POPULATION" % label,
+                      file=out)
+                for fig, why in bad_rates:
+                    print("      %s (%s): %s" % (fig, f[fig], why), file=out)
+
+            bad_miss = miss_violations(text, f)
+            label = "%s [known-miss guard]" % rel
+            if not bad_miss:
+                print("  %-44s no mixed known-miss total" % label, file=out)
                 continue
-            bad += len(bad_rates)
-            print("  %-44s PUBLISHES A FAMILY RATE WITHOUT ITS POPULATION" % label, file=out)
-            for fig, why in bad_rates:
+            bad += len(bad_miss)
+            print("  %-44s PUBLISHES A MIXED KNOWN-MISS TOTAL" % label, file=out)
+            for fig, why in bad_miss:
                 print("      %s (%s): %s" % (fig, f[fig], why), file=out)
     return bad
 
@@ -897,6 +1023,104 @@ def inject():
         case("  ...which the region check alone also passes",
              run(tmp, "check", out=buf, guard=False) == 0)
         open(ps, "w", encoding="utf-8").write(clean_sources)
+
+        # 11. THE KNOWN-MISS SPLIT. Three states share one marker and only one is a miss, so
+        #     each is drifted separately: a check watching only the miss count would let a
+        #     detected row silently become one, which is the direction that FLATTERS the
+        #     scanner and is therefore the one to nail down.
+        for kind, figname in (("rule-gap", "known_miss_rule_gap"),
+                              ("detected-not-shippable", "known_miss_detected"),
+                              ("unverified", "known_miss_unverified")):
+            s11 = json.loads(original)
+            s11["malicious_known_miss_by_kind"][kind] = \
+                s11["malicious_known_miss_by_kind"].get(kind, 0) + 1
+            s11["known_miss"] += 1
+            s11["malicious_known_miss"] += 1
+            json.dump(s11, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
+            n, out = check()
+            case("known_miss %-24s drifted by one   refused and named" % kind,
+                 n > 0 and figname in out)
+        open(sp, "w", encoding="utf-8").write(original)
+
+        #     The split must PARTITION the marker. A kind count that no longer adds up to
+        #     `known_miss` means one of the three published lines is over a population that is
+        #     not the one its heading names, and rendering it would be worse than refusing.
+        s11 = json.loads(original)
+        s11["known_miss"] += 5
+        json.dump(s11, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
+        n, out = check()
+        case("a split that does not add up to the marker       refused",
+             n > 0 and "does not partition" in out)
+        open(sp, "w", encoding="utf-8").write(original)
+
+        #     An unmeasured row must not render as a zero. `<unclassified>` is what
+        #     make-summary emits for a row classify-known-miss.py has not visited, and the
+        #     figures must refuse rather than quietly leave it out of all three lines.
+        s11 = json.loads(original)
+        s11["malicious_known_miss_by_kind"]["<unclassified>"] = 3
+        s11["known_miss"] += 3
+        s11["malicious_known_miss"] += 3
+        json.dump(s11, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
+        n, out = check()
+        case("an unclassified known_miss row                   refused",
+             n > 0 and "<unclassified>" in out)
+        case("  ...and nothing was rendered from the partial split", "None" not in out)
+        open(sp, "w", encoding="utf-8").write(original)
+
+        # 12. THE GUARD ON A MIXED KNOWN-MISS TOTAL, both directions, on text.
+        f12 = figures(json.loads(original))
+        case("the mixed total quoted as a miss count              refused",
+             [v for v in miss_violations(
+                 "There are %s recorded known misses." % f12["known_miss_mixed_total"], f12)
+              if v[0] == "known_miss_mixed_total"] != [])
+        case("  ...and the mixed in-scope total likewise",
+             [v for v in miss_violations(
+                 "%s known misses fall outside the source material."
+                 % f12["known_miss_mixed_in_scope"], f12)
+              if v[0] == "known_miss_mixed_in_scope"] != [])
+        case("  ...the split figures in the same sentence          accepted",
+             miss_violations("%s known misses, %s outside that source material."
+                             % (f12["known_miss_rule_gap"],
+                                f12["known_miss_rule_gap_in_scope"]), f12) == [])
+        case("  ...the same integers away from the phrase          accepted",
+             miss_violations("The archive is %s bytes and %s files."
+                             % (f12["known_miss_mixed_total"],
+                                f12["known_miss_mixed_in_scope"]), f12) == [])
+        # A small integer must not fire on a longer number that contains it. `67` inside
+        # `1,678` or `5.67%` would make this guard noise, and a noisy guard gets removed.
+        case("  ...and it does not fire on a number containing it",
+             miss_violations("known misses: 1,%s8 files at 5.%s%% of the tree."
+                             % (f12["known_miss_mixed_in_scope"],
+                                f12["known_miss_mixed_in_scope"]), f12) == [])
+        # The stand-down, which is the state this guard would otherwise refuse the day the
+        # detected-and-unverified counts reach zero: the union then IS the miss count.
+        s12 = json.loads(original)
+        s12["malicious_known_miss_by_kind"] = {
+            "rule-gap": s12["known_miss"], "detected-not-shippable": 0, "unverified": 0}
+        s12["malicious_known_miss_by_kind_excl_predates_ruleset"] = {
+            "rule-gap": s12["malicious_known_miss_excl_predates_ruleset"],
+            "detected-not-shippable": 0, "unverified": 0}
+        f_eq = figures(s12)
+        case("  ...and it stands down when the union IS the miss count",
+             miss_violations("There are %s recorded known misses."
+                             % f_eq["known_miss_mixed_total"], f_eq) == [])
+        case("  ...while the same text IS refused when the two differ",
+             miss_violations("There are %s recorded known misses."
+                             % f12["known_miss_mixed_total"], f12) != [])
+
+        #     End to end, and not redundant: a mixed total loose in the prose is invisible to
+        #     the region check, exactly as a family rate is.
+        open(pr, "w", encoding="utf-8").write(
+            clean_readme.rstrip("\n")
+            + "\n\nThe corpus records %s known misses in total.\n"
+              % f12["known_miss_mixed_total"])
+        n, out = check()
+        case("a mixed known-miss total loose in the prose         refused",
+             n > 0 and "known_miss_mixed_total" in out)
+        buf = io.StringIO()
+        case("  ...which the region check alone passes",
+             run(tmp, "check", out=buf, guard=False) == 0)
+        open(pr, "w", encoding="utf-8").write(clean_readme)
 
         open(sp, "w", encoding="utf-8").write(original)
         run(tmp, "write", out=io.StringIO())

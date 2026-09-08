@@ -254,7 +254,17 @@
   "webmail-phish-harvester": 6,
   "woocommerce-card-skimmer": 6
  },
+ "malicious_known_miss_by_kind": {
+  "detected-not-shippable": 32,
+  "rule-gap": 558,
+  "unverified": 8
+ },
+ "malicious_known_miss_by_kind_excl_predates_ruleset": {
+  "detected-not-shippable": 29,
+  "rule-gap": 38
+ },
  "malicious_known_miss_excl_predates_ruleset": 67,
+ "malicious_known_miss_kind_note": "rule-gap is the only one of the three that is a miss: bytes read, no rule fires. detected-not-shippable is bytes read, rules fire, and no shard carries them - a shipping gap, which promote-pending.py correctly refuses to promote because must_detect is compared to check's output over the shipped bytes. unverified is bytes that are not on this machine and were not re-measured. <unclassified> is a row classify-known-miss.py has not visited and is a defect: doc-figures.py refuses to render the split while any exists.",
  "malicious_no_expectation": 0,
  "malicious_reviewed": 1299,
  "malicious_reviewed_excl_predates_ruleset": 703,

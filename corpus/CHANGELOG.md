@@ -38,6 +38,129 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Added
 
+- **`expect.known_miss` carried two claims and the published figure reported only one of
+  them.** The marker means *the published suite asserts no rule for this row*. Two unrelated
+  facts put a row there: the scanner reads the bytes and nothing fires — a miss — or the
+  scanner reads the bytes, rules **do** fire, and no shard carries them, so there is nothing
+  for the suite to run an assertion against. Published as a single number under the heading
+  "Recorded known misses", glossed in `README.md` as *recorded malware this version does not
+  catch*, the second population was reported to a stranger as the first.
+
+  `corpus/classify-known-miss.py` measures which, per file, and records
+  `expect.known_miss_kind` plus `expect.known_miss_kind_measured` — the rules that fired, the
+  binary they fired under by `sha256_12`, and whether any shard ships the bytes. Applied to
+  all 598 rows through `indexio.py` with the lock held across the whole read-modify-write.
+
+  | figure | before | after | cause |
+  |---|---|---|---|
+  | Recorded known misses | 598 | **558** | 32 rows re-measured as detected, 8 as unmeasurable |
+  | ...of them in scope | 67 | **38** | 29 of those 32 are in scope |
+  | Recorded, detected, nothing ships the bytes | — | **32** | new state, measured per file |
+  | ...of them in scope | — | **29** | all 29 are `leaf-php-mailer-2.8` |
+  | Recorded, bytes not on this machine | — | **8** | new state; 0 in scope |
+
+  **No detection figure moves, and that is also attributed.** Detection stays 701 of 1,299
+  and 90.5% (636 of 703); `malicious_detected_runnable` stays 102; technique coverage stays
+  90 of 123. Reclassifying why a row is unasserted touches neither `must_detect` nor
+  `verdict`, so it cannot move a figure computed from them. Measured rather than assumed:
+  regenerating the summary added three keys — `malicious_known_miss_by_kind`, its in-scope
+  twin and the note — and **changed no existing key**. `known_miss` itself is deliberately
+  still 598: it is the union, and every consumer that reads it keeps seeing every row.
+
+  The count falls in the flattering direction, so the rows are named rather than inferred
+  from the handoff file. All 32 are local-half, none ships as bytes — checked against every
+  unpacked shard manifest, not against `publishable` — and each was run individually through
+  `check` with a locally built binary: 29 `leaf-php-mailer-2.8` returning `PHI009,WS011`, 2
+  `webmail-phish-harvester` and 1 `phish-kit-verified-by-visa-2012` returning `PHI009`.
+
+- **`corpus/verify.py` prints the same three counts, from the same source.** The suite's
+  *Known misses* line read the union under the word "misses". It now reads `rule-gap` on that
+  line and prints the other two states beneath it, **every run, including at zero** — a line
+  that appeared only when non-zero would let the suite and the README drift apart in the one
+  state nobody would look at. All three are read from `index-summary.json` rather than
+  recomputed, so the two cannot disagree without `doc-figures.py --check` saying so.
+
+- **Controls, in both directions, in the same commit.** A split whose effect is to lower a
+  published miss count needs its controls pointed at the flattering direction, so every case
+  asserts both what a row counts as and what it does not.
+  `classify-known-miss.py --inject` (16 cases) asserts that a row with no rule firing is a
+  miss and specifically not `detected-not-shippable`; that a detected unshipped row is
+  specifically **not** a miss; that an unreachable row is **neither**, because an empty rule
+  list and absent bytes are the same input to a naive check and different facts; that the
+  kind vocabulary is closed and every value in it reachable; and that a detected row whose
+  bytes **do** ship is refused rather than classified — that is a promotion for
+  `promote-pending.py`, and calling it `detected-not-shippable` would assert that nothing
+  ships a file that ships. No row is in that state today, which is exactly why the control
+  is there. `make-summary.py --inject` gains 7 cases on the partition (52 total, all pass),
+  and `doc-figures.py --inject` gains 15 (drifting each of the three states separately,
+  refusing a split that does not add up, refusing an `<unclassified>` row rather than
+  rendering it as a zero, and both directions on the new guard).
+
+- **A guard on the mixed total, modelled on the one that refuses a family rate over a
+  population nobody drew.** `known_miss_mixed_total` and `known_miss_mixed_in_scope` are
+  computed and rendered nowhere; `doc-figures.py --check` refuses any generated-region
+  document that prints either in a paragraph talking about known *misses*. It stands down
+  when the union genuinely equals the miss count, matches `known miss`/`known-miss` but not
+  the field name `known_miss` — "598 rows are `known_miss`" is true, "598 known misses" is
+  not — and will not fire on a small integer inside a longer number. Measured against the
+  documents as they stood: it refused the old `README.md` table on both figures and reported
+  nothing in `corpus/SOURCES.md`, whose unrelated "Twenty-three of the 67" is a shard's
+  sample count.
+
+### Fixed
+
+- **The previous round reported 531 known misses as unreachable. 523 of them are on this
+  machine.** That round wrote, in this file and in its commit message, that every
+  `predates_ruleset` row's bytes are absent "exactly as `family_evidence.SampleStore`'s
+  docstring says of all 531", and made no claim about whether any rule now reaches the
+  doorway campaign.
+
+  `SampleStore` resolves through one collection blobmap. Measured: that blobmap contains **0
+  of those 531** and **67 of the 67** others, so it returns the docstring's number and would
+  do so however many of the files were on disk. A fresh hash over the trees — 511,554 files
+  examined, 19,821 hashed on a size match, every hit verified against the row's own `sha256`
+  — resolves **590 of the 598**, the missing 523 sitting in `trail-data/Infected/`, the tree
+  those rows were collected from and one the blobmap never indexed. **The resolver's index
+  bounded the answer and the answer was read as the world**: CORPUS_PLAN §11 in a new place,
+  and the fourteenth instance it tells you to assume.
+
+  So the campaign *was* measurable. Measured: all 495 doorway rows are `rule-gap`, no rule
+  fires on any of them. The previous round's conclusion was right and its stated reason was
+  not, which is the worse of the two ways to be right.
+
+  `classify-known-miss.py` therefore enumerates by hashing rather than by reading any
+  pre-written map, and reports what it genuinely could not reach — 8 rows, all
+  `predates_ruleset`, 0 in scope — as `unverified` rather than as undetected.
+
+- **The new resolver had the same shape of blind spot, found before it mattered.** It walked
+  `corpus/shards`, where the bytes live *inside* `.tar.zst` archives, so it saw the archives
+  and never their members: a row shipping only from a shard would have been recorded "not on
+  this machine" while the corpus was handing it to strangers. The shards are now unpacked
+  before the scan and their members hashed with everything else. **It changes no number
+  today** — files examined 511,402 → 511,554, resolved 590 → 590 — because all 36 known-miss
+  rows that ship are also loose in the collection trees. A blind spot that is currently empty
+  is still a blind spot, and this one was one reordering away from repeating the defect in
+  the bullet above. `--inject` asserts a file reachable only under an extra root is found by
+  content, and that a decoy of exactly the right size is not mistaken for it.
+
+- **`pending-promotions.jsonl` was not the population.** The handoff holds 31 rows and is
+  written by the rules side for the corpus side to apply, so it contains what a round
+  remembered to write. Measured against it: 30 agree exactly, including the rule sets; **2
+  `webmail-phish-harvester` rows are detected and absent from it**; and **1
+  `phish-kit-verified-by-visa-2012` row it lists as detected could not be re-measured**,
+  because its bytes are not on this machine. That last row is recorded `unverified` and is
+  **not** counted as detected — a handoff file is a claim, and this round's rule was that the
+  falling number has to be defended row by row from a measurement taken here.
+
+- **Two hand-written figures in prose had gone stale, and nothing compares them.**
+  `README.md` said 602 of the 707 rows in the unrecorded sampling frame are recorded known
+  misses; measured now, 597 carry the marker and 565 are misses no rule fires on. Cause of
+  the 602 → 597: the five `OBF042` promotions in the round above. `corpus/SOURCES.md` said
+  495 of "the 638 known misses" are the doorway campaign; 638 has not been the total for
+  several rounds. Its denominator is now removed rather than corrected — a figure written by
+  hand into prose that nothing checks will go stale again, and `README.md`'s generated table
+  already carries the current numbers.
+
 - **`OBF042` closes 5 known misses, and every published detection figure moves — the first
   round in twelve where that is a result rather than a defect.** Five second-stage files in
   `fake-plugin-image-payload-loader` were promoted from `expect.known_miss` to
