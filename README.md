@@ -261,7 +261,9 @@ regeneration untouched.
 |---|---|---|
 | **Detection** | **54.0%** | 701 of 1,299 reviewed malicious samples |
 | **Detection, excluding the rules' own source material** | **90.5%** | 636 of 703 samples |
-| Recorded known misses | 598 | 67 of them outside that source material |
+| Recorded known misses | 558 | 38 of them outside that source material |
+| Recorded, but detected: no shard carries the bytes | 32 | 29 outside it; the suite has nothing to run the assertion against |
+| Recorded, and not re-measurable here | 8 | 0 outside it; the bytes are not on this machine |
 | Largest single known-miss family | 495 | `seo-doorway-madxtube-2017` |
 | Samples a stranger can re-run | 102 | ship as bytes carrying a recorded expected rule |
 | Technique coverage | 90 of 123 | distinct techniques in the reviewed set |
@@ -291,6 +293,20 @@ campaign, and the rule that would close it is deliberately not written — see
 documentation and took 494 false positives in 506 at-risk files. The remainder includes a
 fake-plugin family whose payloads are named `.png` (§2) and the webshells staged outside the
 web root that [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) issue 3 rests on.
+
+**Those three rows are one field, and only the first is a miss.** `expect.known_miss` marks a
+sample the published suite asserts no rule for, and three different facts put a sample there.
+The second row is malware the scanner *does* detect: no shard carries its bytes, so there is
+nothing for the suite to run the assertion against, and
+[`corpus/promote-pending.py`](corpus/promote-pending.py) refuses to record an expectation it
+cannot evaluate. The third row is samples whose bytes are not on this machine, so nothing was
+measured about them — counted apart rather than folded into either, because an unreachable
+sample is no more evidence of a miss than it is of a catch. Until 2026-09-08 all three were
+published as a single number under the first row's heading, which reported files the scanner
+finds as files it fails on. The split is measured per file by
+[`corpus/classify-known-miss.py`](corpus/classify-known-miss.py), which records on every row
+the rules that fired and the binary they fired under, and
+[`corpus/verify.py`](corpus/verify.py) prints the same three counts from the same source.
 
 **Samples a stranger can re-run** are the ones whose bytes ship in a public shard *and* whose
 expected rule is recorded, so the claim can be checked rather than believed. The rest of the
@@ -350,13 +366,13 @@ carrying no family, and when they were assigned that pool held **530 detected ro
 have scored below 100%. Their rate was settled before anybody opened a file.
 
 The tempting repair is to exclude them and keep the left-hand column as the real number. That
-column is not a clean control either, and in the opposite direction: **602 of its 707 rows are
-recorded known misses**, because a mass miss is what gets investigated and labelled, and one
-2017 doorway campaign supplies 495 of them. Drop that single family and the same micro average
-reads **49.5%** instead of 14.9%. Promoting it to *the* family rate would publish a figure that
-can only ever deliver bad news. This corpus has already shipped a metric that could not deliver
-bad news — the provenance label described below, which read 61 of 61 — and the mirror image of
-that mistake is not a fix.
+column is not a clean control either, and in the opposite direction: **597 of its 707 rows
+carry `expect.known_miss`**, and 565 of those are samples no rule fires on, because a mass miss
+is what gets investigated and labelled, and one 2017 doorway campaign supplies 495 of them.
+Drop that single family and the same micro average reads **49.5%** instead of 14.9%. Promoting
+it to *the* family rate would publish a figure that can only ever deliver bad news. This corpus
+has already shipped a metric that could not deliver bad news — the provenance label described
+below, which read 61 of 61 — and the mirror image of that mistake is not a fix.
 
 So both columns, each under its own frame, and no number spanning them. A rate across the two
 would be a rate over a population nobody drew, and `corpus/doc-figures.py --check` refuses any

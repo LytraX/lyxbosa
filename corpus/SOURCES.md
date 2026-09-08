@@ -170,9 +170,21 @@ Both figures are true and they answer different questions. The field costs nothi
 now and cannot be reconstructed once the rows are indistinguishable, which is the whole
 argument for writing it at import rather than later.
 
-`malicious_known_miss_by_family` is there for the adjacent reason: 495 of the 638 known
+`malicious_known_miss_by_family` is there for the adjacent reason: 495 of the recorded known
 misses are a single 2017 doorway campaign, and a per-sample rate lets one family with many
-files dominate a figure that reads as capability. A bare total cannot show that.
+files dominate a figure that reads as capability. A bare total cannot show that. The
+denominator is deliberately not written here: it read 638 for several rounds after the count
+had moved, because nothing compares a hand-written figure in this file against the summary.
+`README.md`'s generated table carries the current numbers.
+
+`malicious_known_miss_by_kind` splits that marker three ways, because it does not mean one
+thing on its own. `rule-gap` is a sample whose bytes were read and no rule fired — a miss.
+`detected-not-shippable` is a sample the scanner detects that no shard carries, so the suite
+has nothing to run an assertion against; `promote-pending.py` refuses these, correctly, and
+they were being published as misses until 2026-09-08. `unverified` is a sample whose bytes
+are not on this machine, counted apart so an unmeasured row cannot drift into either answer.
+`corpus/classify-known-miss.py` measures the split per file and records the rules and the
+binary on the row.
 
 Three tools support the import, and the split between them is deliberate:
 

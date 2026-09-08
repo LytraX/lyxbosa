@@ -28,6 +28,14 @@ Three things this deliberately does differently from a naive suite:
     is still missed is the expected result; one that starts being detected is a *result*
     worth surfacing, not a broken test. Only a detected-then-missed sample is red.
 
+    That marker covers **three** states and the column prints them apart, because only one of
+    them is a miss: `rule-gap` is bytes read with no rule firing; `detected-not-shippable` is
+    bytes read, rules firing, and no shard carrying them, so the suite has nothing to run the
+    assertion against; `unverified` is bytes that are not on this machine. The line used to
+    print the union under the word "misses" and reported 32 rows the scanner detects as rows
+    it does not. The counts are read from `index-summary.json` so this line and the README
+    cannot disagree - which they did, until `doc-figures.py` compared them.
+
 Usage:
   corpus/verify.py [--json] [--baseline FILE] [--update-baseline] [--skip-benign]
 """
@@ -291,10 +299,20 @@ def main():
     # which is correct, and it rises only when rules improve. It cannot be gamed by review
     # order either, because every reviewed malicious sample is in the denominator whether or
     # not it is detected.
+    # The known_miss split, read from the summary rather than recomputed, because the summary
+    # is the denominator the documents quote and two tools counting the same marker their own
+    # way is how the suite and the README came to disagree before doc-figures existed. The
+    # marker covers three states and only `rule-gap` is a miss; printing the union under the
+    # word "misses" reported 32 rows the scanner detects as rows it does not.
+    km_kind = summary.get("malicious_known_miss_by_kind") or {}
     res["detection"] = {
         "detected": summary.get("malicious_detected", 0),
         "reviewed": summary.get("malicious_reviewed", 0),
         "known_miss": summary.get("malicious_known_miss", 0),
+        "known_miss_rule_gap": km_kind.get("rule-gap", 0),
+        "known_miss_detected_not_shippable": km_kind.get("detected-not-shippable", 0),
+        "known_miss_unverified": km_kind.get("unverified", 0),
+        "known_miss_unclassified": km_kind.get("<unclassified>", 0),
         "verified_by_rerun": summary.get("malicious_detected_runnable", 0),
         "recorded_only": (summary.get("malicious_detected", 0)
                           - summary.get("malicious_detected_runnable", 0)),
@@ -453,9 +471,21 @@ def main():
                   % (f["known_still_firing"], f["newly_fixed"]))
             if f["regressed"]:
                 print("  FP REGRESSIONS   %d fixed false positives have returned" % f["regressed"])
-        print("  Known misses   %4d recorded · %d of them re-run here · %d newly detected"
-              % (res["detection"]["known_miss"], res["known_miss"]["expected"],
+        d = res["detection"]
+        print("  Known misses   %4d no rule fires · %d of them re-run here · %d newly detected"
+              % (d["known_miss_rule_gap"], res["known_miss"]["expected"],
                  res["known_miss"]["newly_detected"]))
+        # Printed every run, including at zero. These are the rows that carry the same marker
+        # and are not misses; a line that appeared only when the count was non-zero would let
+        # the number the README publishes and the number the suite prints drift apart in the
+        # one state nobody would notice.
+        print("                 %4d detected, but no shard carries the bytes, so the suite "
+              "cannot assert a rule" % d["known_miss_detected_not_shippable"])
+        print("                 %4d not re-measurable here: the bytes are not on this machine"
+              % d["known_miss_unverified"])
+        if d["known_miss_unclassified"]:
+            print("                 %4d carry no measured kind - run "
+                  "corpus/classify-known-miss.py --apply" % d["known_miss_unclassified"])
         t = res["techniques"]
         print("  Techniques       %d of %d known techniques covered by a tested sample"
               % (t["covered_by_tested_samples"], t["known"]))
