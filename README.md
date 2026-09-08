@@ -631,6 +631,13 @@ lyxbosa init-config > lyxbosa.yaml
 lyxbosa validate-config lyxbosa.yaml
 ```
 
+## Updating
+
+There is no self-update yet. Releases are downloaded from
+[the releases page](https://github.com/LytraX/lyxbosa/releases); the plan for an
+`lyxbosa update` command, and the release-signing it depends on, is in
+[docs/tasks/UPDATE_PLAN.md](docs/tasks/UPDATE_PLAN.md).
+
 ## Building
 
 See [docs/BUILDING.md](docs/BUILDING.md).
