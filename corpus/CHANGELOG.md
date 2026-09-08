@@ -38,6 +38,120 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Added
 
+- **29 samples that the scanner already detected can now be re-run by a stranger, and the
+  headline moves because of that and not because of a rule.** `leaf-php-mailer-2.8` — Leaf
+  PHP Mailer 2.8, a public bulk-spam mailer with an embedded PHPMailer — was 29 rows held in
+  the local half. The scanner returned `PHI009,WS011` on every one of them at the previous
+  tag and returns the same today; nothing about the rules changed in this round. What they
+  lacked was a shard: `expect.must_detect` is compared to `check`'s output over the **shipped**
+  bytes, so a row nothing ships cannot carry an assertion, and all 29 sat under
+  `expect.known_miss` beside genuine rule gaps. Publishing the bytes lets the corpus assert
+  what the scanner was already doing.
+
+  | figure | before | after | cause |
+  |---|---|---|---|
+  | `published_shipped_as_bytes` | 140 | **169** | the 29, in one new shard |
+  | `malicious_detected` | 701 | **730** | the same 29, now assertable |
+  | sample-weighted detection | 54.0% | **56.2%** | arithmetic on the line above; no rule changed |
+  | `malicious_detected_runnable` | 102 | **131** | 29 from this round, 5 from an earlier `OBF042` promotion whose manifest was stale |
+  | `known_miss` | 598 | **569** | the 29 promoted out of the marker |
+  | known misses of kind `detected-not-shippable` | 32 | **3** | the same 29 |
+  | ...of them in scope | 29 | **0** | all 29 were the in-scope ones |
+  | `published` / `local_only` | 44,544 / 48,256 | **44,573 / 48,227** | 29 rows moved between halves; `total_blobs` unchanged at 92,800 |
+  | false-positive rate | 0.0223% | **0.0223%** | unchanged, and it could not have moved: no scanner source, no `corpus/benign/sources.jsonl` entry and no recorded false positive was touched. Re-measured anyway — 44 of 197,559, the same 44 rules |
+
+  Every promotion was re-measured with `check` against the bytes in the stage that became the
+  shard, one file at a time, never from the handoff's record: a census over all 29, not a
+  sample, returning `PHI009,WS011` on 29 of 29 with `build/lyxbosa` at `eb611749bd80`.
+
+  **They are 29 rows and close to one file, and the corpus should say so.** 28 of the 29 are
+  the same length and differ from one another in nine to eleven byte positions — the embedded
+  password literal — and the twenty-ninth differs only in line endings. Published as 29 rows
+  because per-deployment literal substitution is the technique under test
+  (`polymorphic-literal`), but the 4.9 MB of samples compress to a 44 KB shard, which is the
+  measurement of how much new material this actually is. A reader counting *distinct
+  artefacts* gained one.
+
+- **A new shard, not an extension of an existing one, and the reason is the consumer's.**
+  Appending to `malicious-db-dropin-001` would change that shard's bytes and therefore its
+  sha256, so anyone holding `corpus-2026.09.1` would find a file of the same name hashing
+  differently under the next tag with nothing in the name to say so.
+  `malicious-bulk-mailer-001` leaves the other eight untouched by the addition — verified by
+  `sha256sum -c` against the list as it stood, all eight OK. Seven of them are still
+  byte-identical in the finished release, checked against the `SHA256SUMS` that
+  `corpus-2026.09.1` actually published rather than against the local copy. The eighth,
+  `malicious-staging-001`, changed for an unrelated reason recorded under *Fixed*, and its
+  66 sample files did not.
+
+- **`corpus/publish-rows.py`, because publication had no tool.** Every previous round that
+  moved rows from the local half to the published half wrote a script for that round and threw
+  it away, which is how four published rows came to carry `origin` — a path on a customer
+  host. `shard-gate.py` catches that after the fact; this refuses it before. It drops the
+  fields the published half may not carry, re-asks the published-half form rules over the row
+  **as it will land**, takes both index locks for the whole read-modify-write and writes the
+  published half first, so the only reachable interruption leaves a row in both halves rather
+  than in neither.
+
+  It refuses rather than performing anybody else's act: a row carrying `local_only` is
+  refused rather than released, a row tagged `pii`/`content` is refused, and publishability is
+  taken from `shard-gate.evaluate()` **today** rather than from the row's stored flag.
+  `--inject` (19 cases) asserts every refusal is reachable and that a clean row still moves —
+  a mover whose checks all passed vacuously would publish everything and report success.
+
+### Fixed
+
+- **A promotion wrote "no rule fired" onto 29 rows the scanner detects.**
+  `promote-pending.closed_expect()` recorded `closed_known_miss.was` from the row's prose
+  `known_miss_reason`, falling back to the literal string `"no rule fired"` when there was
+  none. The 29 rows published this round carried no prose reason — they carried
+  `known_miss_kind: detected-not-shippable`, which means the opposite: rules fired and nothing
+  shipped the bytes. The first run of the promotion put that sentence on all 29 and the
+  published index would have asserted it. `KIND_WAS` now maps each kind
+  `classify-known-miss.py` can assign to what it actually means, prose still wins where a row
+  has it, and an unrecognised kind falls back rather than raising.
+
+  The same promotion left `known_miss_kind` and `known_miss_kind_measured` on the closed row,
+  including `ships_as_bytes: false` — which the promotion had just made false. Both are now
+  dropped with the marker they describe. Seven `--inject` cases, including the one that failed
+  in anger: a `detected-not-shippable` row must not close as "no rule fired".
+
+- **`malicious-staging-001` was shipping a manifest that contradicted the index, and no
+  pre-report command could see it.** Five of its members were promoted to
+  `must_detect: ["OBF042"]` in an earlier round; the shipped `MANIFEST.json` and the tracked
+  `corpus/expect/malicious-staging-001.json` still said `known_miss: true`. `shard-census.py`
+  reported all ten disagreements and `REFUSE TO PUBLISH`, correctly — it is the only check
+  that opens the archives — while both `shard-gate` runs, `make-summary --check` and
+  `doc-figures --check` passed, because none of them is asked about a shard. Regenerated from
+  the index. **All 66 sample files are byte-for-byte unchanged**, measured before and after:
+  only `MANIFEST.json` moved, so the shard's sha256 changed and its contents did not.
+
+  This is not this round's defect and it is this round's to report: the repair was found by
+  running the census the publication path requires, and the gap is that the five pre-report
+  commands do not include it. A round that publishes nothing never opens a shard.
+
+- **`doc-figures.py --inject` was reading the day's data instead of the rule.** One case
+  asserted that quoting `known_miss_mixed_in_scope` beside "known misses" is refused. It was
+  built from the live summary, and publishing the 29 took the in-scope
+  `detected-not-shippable` count to zero — at which point the in-scope union *equals* the
+  in-scope rule-gap figure and `miss_violations` stands down, exactly as its own docstring
+  says it should. The tool was right and the case was wrong. It now builds a summary that
+  genuinely mixes, and a second case asserts the stand-down in the other direction: a union
+  that is not mixed must be **accepted**, because a guard that refuses a correct document gets
+  switched off rather than fixed. This is the same shape as the four family-rate cases
+  `AGENTS.md` records as red for six rounds. 60 cases, all pass.
+
+- **The rules/corpus handoff kept asserting a state the corpus had left.**
+  `corpus/pending-promotions.jsonl` records each row's `half` and `publish_blockers` as the
+  rules side saw them at measurement time, and `promote-pending.py` defers on that snapshot.
+  After publication the 29 rows still read `half: local` and "no shard carries these bytes",
+  so the applier would have deferred work that was finished. `--refresh` re-derives both
+  fields **from the index** and prints every change. It is a separate run and never a side
+  effect of `--apply`, because having `adjudicate()` read the index directly would delete the
+  gate rather than refresh it — the handoff disagreeing with the index is itself a finding.
+  It cannot invent a clearance: five `--inject` cases, including one asserting that a blocker
+  the index still records survives the refresh, and one that a sha in neither half keeps
+  exactly what it recorded.
+
 - **`expect.known_miss` carried two claims and the published figure reported only one of
   them.** The marker means *the published suite asserts no rule for this row*. Two unrelated
   facts put a row there: the scanner reads the bytes and nothing fires — a miss — or the

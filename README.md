@@ -259,14 +259,14 @@ regeneration untouched.
 <!-- BEGIN GENERATED corpus-figures — corpus/doc-figures.py writes this block; edit the tool, not the block -->
 | figure | value | denominator |
 |---|---|---|
-| **Detection** | **54.0%** | 701 of 1,299 reviewed malicious samples |
-| **Detection, excluding the rules' own source material** | **90.5%** | 636 of 703 samples |
+| **Detection** | **56.2%** | 730 of 1,299 reviewed malicious samples |
+| **Detection, excluding the rules' own source material** | **94.6%** | 665 of 703 samples |
 | Recorded known misses | 558 | 38 of them outside that source material |
-| Recorded, but detected: no shard carries the bytes | 32 | 29 outside it; the suite has nothing to run the assertion against |
+| Recorded, but detected: no shard carries the bytes | 3 | 0 outside it; the suite has nothing to run the assertion against |
 | Recorded, and not re-measurable here | 8 | 0 outside it; the bytes are not on this machine |
 | Largest single known-miss family | 495 | `seo-doorway-madxtube-2017` |
-| Samples a stranger can re-run | 102 | ship as bytes carrying a recorded expected rule |
-| Technique coverage | 90 of 123 | distinct techniques in the reviewed set |
+| Samples a stranger can re-run | 131 | ship as bytes carrying a recorded expected rule |
+| Technique coverage | 95 of 123 | distinct techniques in the reviewed set |
 | Corpus | 92,800 blobs | 46,016 classified, 46,784 unreviewed |
 | Of those, the tree the rules were written against | 1,131 blobs | excluded from the second detection figure |
 <!-- END GENERATED corpus-figures -->
@@ -285,6 +285,13 @@ is why the sample count is quoted beside the percentage every time and never sum
 trend. A jump is as likely to be a denominator moving as a rule landing: the largest single
 jump in this project's history, 22.2% to 53.6%, came from ruling 525 quarantined samples
 malicious in one round, 524 of which were already detected. No rule changed.
+
+The **numerator** moves the same way, for a second reason that is not detection either. A row
+can only assert a rule if a public shard carries its bytes, so a sample the scanner detects
+and nothing ships is counted as unasserted. Publishing 29 such samples on 2026-09-08 took this
+figure from 54.0% to 56.2% without a rule changing: the scanner detected all 29 before and
+after, and what changed is that a stranger can now check it. Read a movement here as a change
+in what is *provable* until the rule changelog says otherwise.
 
 **A known miss is recorded malware this version does not catch**, verified per file rather
 than inferred from a directory scan. The largest family in that count is one 2017 SEO doorway
@@ -342,19 +349,19 @@ and no customer identifier appears in this corpus's published index.*
 | **Sampling frame** | **sampling frame not recorded** | **detection-conditioned — 530 of 531 rows in the pool carry an expected rule** |
 | Campaign families | 38 | 7 |
 | Rows carrying the label | 707 | 180 |
-| Families fully detected | 9 | 7 |
+| Families fully detected | 10 | 7 |
 | Families partially detected | 5 | 0 |
-| Families completely missed | 24 | 0 |
-| Macro average — every family weighted equally | 30.2% | 100.0% |
-| Micro average — every sample weighted equally | 15.6% (110 of 707) | 100.0% (180 of 180) |
+| Families completely missed | 23 | 0 |
+| Macro average — every family weighted equally | 32.8% | 100.0% |
+| Micro average — every sample weighted equally | 19.7% (139 of 707) | 100.0% (180 of 180) |
 
 | figure | value | denominator |
 |---|---|---|
-| **Sample-weighted detection, whole reviewed set** | **54.0%** | 701 of 1,299 reviewed malicious samples — unchanged by any labelling |
+| **Sample-weighted detection, whole reviewed set** | **56.2%** | 730 of 1,299 reviewed malicious samples — unchanged by any labelling |
 | Reviewed malicious rows carrying no family | 351 | 350 of them detected — outside both columns above |
 | Rows under a provenance label rather than a campaign | 61 | `legacy-infected-tree-sample` — membership conditioned on detection, so excluded |
-| Technique coverage | 90 of 123 | distinct techniques; 531 reviewed malicious rows carry none |
-| Families a stranger can re-run in full | 23 | of 45; 18 have no re-runnable member, holding 741 rows |
+| Technique coverage | 95 of 123 | distinct techniques; 531 reviewed malicious rows carry none |
+| Families a stranger can re-run in full | 24 | of 45; 17 have no re-runnable member, holding 712 rows |
 <!-- END GENERATED family-detection -->
 
 **Neither column is the headline, and refusing to pick one is the result of this round.**

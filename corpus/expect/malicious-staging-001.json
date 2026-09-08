@@ -14,7 +14,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -44,7 +52,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -71,10 +87,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF042"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rule": "OBF042",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -384,7 +405,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -411,10 +440,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF042"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rule": "OBF042",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -689,7 +723,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -716,10 +758,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF042"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rule": "OBF042",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1029,7 +1076,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1056,10 +1111,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF042"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rule": "OBF042",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1369,7 +1429,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1399,7 +1467,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1426,10 +1502,15 @@
    "clean"
   ],
   "expect": {
-   "must_detect": [],
+   "must_detect": [
+    "OBF042"
+   ],
    "must_not_detect": [],
-   "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rule": "OBF042",
+    "was": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -1801,7 +1882,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "forged-plugin-header",
@@ -1827,7 +1916,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "forged-plugin-header",
@@ -1885,7 +1982,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "checkout-hook-removal",
@@ -1912,7 +2017,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "checkout-hook-removal",
@@ -1939,7 +2052,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "checkout-hook-removal",
@@ -1966,7 +2087,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "checkout-hook-removal",
@@ -1993,7 +2122,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "checkout-hook-removal",
@@ -2020,7 +2157,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -2047,7 +2192,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -2074,7 +2227,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "fake-plugin-header",
@@ -2101,7 +2262,15 @@
    "must_detect": [],
    "must_not_detect": [],
    "known_miss": true,
-   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip."
+   "known_miss_reason": "confirmed attacker staging, no rule fires. Measured per sample with `check`, which reads the file it is given, so this is a rule gap and not a walker or extension skip.",
+   "known_miss_kind": "rule-gap",
+   "known_miss_kind_measured": {
+    "binary": "build/lyxbosa",
+    "binary_sha256_12": "eb611749bd80",
+    "date": "2026-09-08",
+    "rules": [],
+    "ships_as_bytes": true
+   }
   },
   "technique": [
    "raw-zlib-stream",

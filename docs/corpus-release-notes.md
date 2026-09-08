@@ -1,6 +1,6 @@
-# LyxBoSa malware corpus — `corpus-2026.09.1`
+# LyxBoSa malware corpus — `corpus-2026.09.2`
 
-A set of eight archives of real web-server malware, collected from live incident response,
+A set of nine archives of real web-server malware, collected from live incident response,
 masked, and published so that a scanner's detection and false-positive figures can be checked
 by somebody who did not produce them.
 
@@ -10,16 +10,32 @@ by somebody who did not produce them.
 
 ## What this is
 
-Eight `.tar.zst` shards, each wrapped in a password-protected `.zip`, plus a checksum file.
-Together they carry **140 samples and 4 generated carrier files**, with one JSON manifest per
-shard describing every member and what a scanner is expected to do with it. 138 of the samples
+Nine `.tar.zst` shards, each wrapped in a password-protected `.zip`, plus a checksum file.
+Together they carry **169 samples and 4 generated carrier files**, with one JSON manifest per
+shard describing every member and what a scanner is expected to do with it. 167 of the samples
 are malicious; 2 are benign and carry `must_not_detect: ["*"]`, so a scanner that fires on
 them fails the suite.
+
+**Seven of the nine shards are byte-identical to `corpus-2026.09.1`** — checked against that
+release's own published `SHA256SUMS`, not against a local copy. The new samples are in a new
+shard rather than appended to an existing one, so a consumer who already holds the previous
+release keeps seven files and their checksums unchanged.
+
+Two differ. `malicious-bulk-mailer-001` is new. `malicious-staging-001` changed and **none of
+its 66 sample files did**: only its `MANIFEST.json` moved, to carry an expectation the index
+had already recorded — see *What changed since `corpus-2026.09.1`* below.
+
+| | `corpus-2026.09.1` | `corpus-2026.09.2` |
+|---|---|---|
+| `malicious-staging-001.tar.zst` | `af01239ec59e…` | `e2ddf4fb2239…` |
+| `malicious-bulk-mailer-001.tar.zst` | — | `18d35782439c…` |
+| the other seven | unchanged | unchanged |
 
 | shard | samples | carriers | what is in it |
 |---|---:|---:|---|
 | `malicious-staging-001` | 66 | — | an attacker staging directory: fake plugins whose payload hides in files named as images, card skimmers, auto-login backdoors |
 | `malicious-db-dropin-001` | 46 | — | database drop-ins and related webshells from an undetected-sample review |
+| `malicious-bulk-mailer-001` | 29 | — | Leaf PHP Mailer 2.8, a public bulk-spam mailer with an embedded PHPMailer, dropped into random deep directories across six accounts |
 | `malicious-uploaders-001` | 11 | — | file uploaders and session-stub droppers; one of the eleven is an inert orphaned stub, published as a must-not-detect case |
 | `malicious-doorway-kit-001` | 8 | — | an SEO doorway-page generator kit |
 | `malicious-polyglots-001` | 6 | 3 | files that are simultaneously a valid image or PDF and executable PHP |
@@ -122,41 +138,80 @@ publishing a customer identifier is not.
 
 ---
 
+## What changed since `corpus-2026.09.1`
+
+**29 samples were added, and the scanner did not change.** The 29 are one family —
+Leaf PHP Mailer 2.8 — and this scanner already detected every one of them at the previous
+tag. What they were missing was not a rule but a shard: their bytes were held locally, so the
+suite had nothing to run its assertion against and the index recorded them under
+`expect.known_miss` alongside genuine rule gaps. Publishing the bytes lets the corpus assert
+what the scanner was already doing. **Read the detection figures below as a change in what is
+provable, not as an improvement in detection.**
+
+**They are 29 distinct files and close to one file.** Every one is the same source with a
+different embedded password: 28 of the 29 are the same length and differ from each other in
+nine to eleven byte positions, and the twenty-ninth differs only in line endings. They are
+published as 29 rows because per-deployment literal substitution is the technique under test
+(`polymorphic-literal`) — but a reader counting distinct artefacts should count one, not 29,
+and the shard compresses 4.9 MB to 44 KB for exactly that reason.
+
+**`malicious-staging-001` changed and none of its samples did.** Five of its members were
+promoted from `known_miss` to `must_detect: ["OBF042"]` in an earlier round, and that
+promotion never reached the shipped `MANIFEST.json`: the archive was still telling a consumer
+those five were expected misses. All 66 sample files are byte-for-byte what they were; only
+the manifest moved, so the shard's sha256 changed and its contents did not.
+
+**The false-positive rate did not move, and could not have.** It is a function of the rule set
+and the benign population, and neither changed in this round: no scanner source, no
+`corpus/benign/sources.jsonl` entry and no recorded false-positive was touched.
+
+---
+
 ## What the figures mean
 
-Measured with the scanner build `4c3e0af08988`, on 2026-09-07, over the corpus **as it stood
-at this tag**. These are release figures and are deliberately frozen: they describe the eight
+Measured with the scanner build `eb611749bd80`, on 2026-09-08, over the corpus **as it stood
+at this tag**. These are release figures and are deliberately frozen: they describe the nine
 shards you just downloaded, not the corpus as it is today. For the current figures, read the
 generated table in the repository's `README.md`, which is written from `index-summary.json`
 and moves when the corpus does.
 
 | | |
 |---|---|
-| samples the suite executed | **97 of 97 detected**, all matching the exact expected rule |
-| detection over all reviewed malicious samples | **696 of 1,299 — 53.6%** |
-| detection excluding the rules' own source material | **631 of 703 — 89.8%** |
-| false-positive rate | **0.0223%** — 44 files of 197,559 benign |
-| recorded known misses | 603 |
-| technique coverage | 90 of 123 known techniques have a tested sample |
+| samples the suite executed | **131 of 131 detected**, all matching the exact expected rule |
+| detection over all reviewed malicious samples | **730 of 1,299 — 56.2%** |
+| detection excluding the rules' own source material | **665 of 703 — 94.6%** |
+| false-positive rate | **0.0223%** — 44 files of 197,559 benign, unchanged from `corpus-2026.09.1` |
+| recorded rule gaps | 558 — bytes read, no rule fired |
+| recorded as detected but unshippable | 3 — rules fired, no shard carries the bytes |
+| recorded as unverified | 8 — the bytes are not on the machine that measured |
+| technique coverage | 95 of 123 known techniques have a tested sample |
 
-**Read the two detection figures together, and prefer the second.** The 53.6% denominator
+The three known-miss lines are given apart and never as their union. 569 is their sum and it
+is not a miss count: it adds rows the scanner misses to rows it detects and nothing ships.
+Publishing the union under a heading that says "misses" is the mistake the previous release
+made with 603, and 29 of that 603 are in this release's new shard precisely because the
+scanner was detecting them all along.
+
+**Read the two detection figures together, and prefer the second.** The 56.2% denominator
 includes 1,131 samples from the tree the first version of these rules was *written against*.
 Measuring a rule set against its own source material tells you how well it memorised that
-tree, not how well it generalises. The 89.8% figure excludes that tree; it is the honest one,
+tree, not how well it generalises. The 94.6% figure excludes that tree; it is the honest one,
 and it is lower-bounded by the same reviewing process that produced it.
 
-**The 97-of-97 is not a recall figure.** It is a regression check: those are the samples whose
+**The 131-of-131 is not a recall figure.** It is a regression check: those are the samples whose
 bytes ship here and whose expected rule is recorded, so a stranger can re-run them. The other
 599 reviewed malicious samples are held locally — most carry customer content that cannot be
 masked — and their results come from a recorded scan rather than from a run you can repeat.
 
-**A "known miss" is not a failure.** 603 samples are recorded as *not detected by this
+**A "known miss" is not a failure.** 558 samples are recorded as *not detected by this
 scanner at this version*, verified per file rather than inferred from a directory scan. They
-are in the corpus precisely so that a future rule change is measured against them.
+are in the corpus precisely so that a future rule change is measured against them. A further
+8 are recorded as unverified — their bytes were not on the machine that measured, and that is
+reported as its own state rather than folded in as "not detected".
 
 ### What a consumer may conclude, and what they may not
 
-**You may** re-run the 97 shipped, expectation-carrying samples against any scanner and compare
+**You may** re-run the 131 shipped, expectation-carrying samples against any scanner and compare
 rule-for-rule; check the false-positive rate against the pinned benign sources; use the
 manifests' technique lists to see which classes of attack are represented; and audit the
 masking, because the gates' predicates are in the repository and the published index records

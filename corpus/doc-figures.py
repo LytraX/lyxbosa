@@ -1244,11 +1244,35 @@ def inject():
              [v for v in miss_violations(
                  "There are %s recorded known misses." % f12["known_miss_mixed_total"], f12)
               if v[0] == "known_miss_mixed_total"] != [])
+        #     The in-scope mixed total is tested against a summary that MIXES, built here
+        #     rather than read from the live one. On 2026-09-08 the last in-scope
+        #     detected-not-shippable rows were published, the in-scope union became equal to
+        #     the in-scope rule-gap figure, and `miss_violations` correctly stood down - the
+        #     exemption its own docstring documents. The case asserted a refusal and failed,
+        #     which is a control reading the day's data instead of the rule: exactly what
+        #     AGENTS.md records about the four family-rate cases that were red for six rounds.
+        s12 = json.loads(original)
+        s12["malicious_known_miss_by_kind_excl_predates_ruleset"] = {
+            "rule-gap": 38, "detected-not-shippable": 4}
+        s12["malicious_known_miss_excl_predates_ruleset"] = 42
+        f12b = figures(s12)
         case("  ...and the mixed in-scope total likewise",
              [v for v in miss_violations(
                  "%s known misses fall outside the source material."
-                 % f12["known_miss_mixed_in_scope"], f12)
+                 % f12b["known_miss_mixed_in_scope"], f12b)
               if v[0] == "known_miss_mixed_in_scope"] != [])
+        #     And the other direction, which is what actually changed: when nothing is
+        #     detected-but-unshippable in scope, the union IS the miss count and quoting it
+        #     must be ACCEPTED. A guard that refused a correct document gets switched off.
+        s12b = json.loads(original)
+        s12b["malicious_known_miss_by_kind_excl_predates_ruleset"] = {"rule-gap": 38}
+        s12b["malicious_known_miss_excl_predates_ruleset"] = 38
+        f12c = figures(s12b)
+        case("  ...an in-scope union that is not mixed             accepted",
+             [v for v in miss_violations(
+                 "%s known misses fall outside the source material."
+                 % f12c["known_miss_mixed_in_scope"], f12c)
+              if v[0] == "known_miss_mixed_in_scope"] == [])
         case("  ...the split figures in the same sentence          accepted",
              miss_violations("%s known misses, %s outside that source material."
                              % (f12["known_miss_rule_gap"],
