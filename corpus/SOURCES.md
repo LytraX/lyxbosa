@@ -79,8 +79,8 @@ The index is **split in two, and both halves matter**:
 <!-- BEGIN GENERATED index-halves — corpus/doc-figures.py writes this block; edit the tool, not the block -->
 | file | rows | tracked? | what it is |
 |---|---|---|---|
-| `index.jsonl` | 44,544 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 48,256 | no | everything held back, with each row's blockers |
+| `index.jsonl` | 44,573 | yes | published samples — the ones a public suite can verify |
+| `local/index-local.jsonl` | 48,227 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 <!-- END GENERATED index-halves -->
 
@@ -1688,10 +1688,10 @@ tags dropped is caught, and a faithful one reconciles clean.
 ## The benign half is fetched, not shipped
 
 <!-- BEGIN GENERATED shipped-vs-fetched — corpus/doc-figures.py writes this block; edit the tool, not the block -->
-Of the 44,544 published rows, **44,404 are reproducible from a pinned source or from the
+Of the 44,573 published rows, **44,404 are reproducible from a pinned source or from the
 stock CMS tree** and are therefore *not* shipped as blobs — they are an index row
-plus a lockfile entry. **140** ship as bytes in a public shard:
-66 staging-directory-review, 58 undetected-pool-review, 8 doorway-kit-review, 7 media-polyglot, 1 outside-webroot-sweep.
+plus a lockfile entry. **169** ship as bytes in a public shard:
+87 undetected-pool-review, 66 staging-directory-review, 8 doorway-kit-review, 7 media-polyglot, 1 outside-webroot-sweep.
 <!-- END GENERATED shipped-vs-fetched -->
 
 That is the point of §6: the benign half is a lockfile and a script, so anyone can
@@ -1774,18 +1774,25 @@ What it will and will not do:
 `shards/malicious-polyglots-001.tar.zst` — 6 masked polyglot samples and 3 clean-carrier
 precision fixtures, 128 KB. Expectations in `expect/malicious-polyglots-001.json`.
 
-`shards/malicious-staging-001.tar.zst` — 67 samples from 14 confirmed attacker-staging
-directories, 3.0 MB, in 7 families: a fake-plugin loader that keeps its payload in files
+`shards/malicious-staging-001.tar.zst` — 66 samples from 14 confirmed attacker-staging
+directories, 2.9 MB, in 7 families: a fake-plugin loader that keeps its payload in files
 named as images, a WooCommerce card skimmer, a self-hiding fake core plugin, a forged
 update-header request gate, a forged-plugin auto-login backdoor, a fake theme of raw zlib
 blobs, and a timestamp-named theme stager. Expectations in
 `expect/malicious-staging-001.json`.
 
-**Twenty-three of the 67 are `known_miss`** — real malware this scanner does not detect at
+**Eighteen of the 66 are `known_miss`** — real malware this scanner does not detect at
 the recorded version. It was 64 of 67 when the shard was built, which is the point of
 shipping them: the corpus previously measured recall over six samples it already found.
-`OBF041` closed 40 of them and `CRED007` one, all promoted in one batch on 2026-09-05 and
-recorded per row as `expect.closed_known_miss`. See `docs/RULE_CANDIDATES.md` §2.
+`OBF041` closed 39 of them, `OBF042` five and `CRED007` one, recorded per row as
+`expect.closed_known_miss`; two further samples were dropped from the shard rather than
+published, which is where 67 became 66. See `docs/RULE_CANDIDATES.md` §2.
+
+Every figure in this paragraph is hand-maintained and nothing checks it — `doc-figures.py`
+covers only the marked regions above. It was stale in two independent ways at once (the two
+dropped samples, then the `OBF042` promotion) while all five pre-report commands passed, and
+what caught the shipped manifest underneath it was `shard-census.py`, which is not one of the
+five.
 
 `shards/malicious-outside-webroot-001.tar.zst` — the two hex-digest wrappers from `/var/tmp`
 that `docs/KNOWN_ISSUES.md` issue 3 rests on. Polymorphic siblings in two different accounts;
@@ -1809,6 +1816,31 @@ is the corpus's first published material from the legacy tree, so every row carr
 `predates_ruleset: true` — detection over them is partly a test of the rules against their
 own source material, and the summary reports the figure both ways for exactly that reason.
 Expectations in `expect/malicious-doorway-kit-001.json`.
+
+`shards/malicious-bulk-mailer-001.tar.zst` — 29 samples of Leaf PHP Mailer 2.8
+(`leafmailer.pw`), a public bulk-spam mailer with an embedded PHPMailer, a built-in DNSBL
+blacklist checker and a spam-score probe, 44 KB. Gated on `$_REQUEST['pass']` against an
+11-character literal held in the file and kept in `$_SESSION[md5(__FILE__)]`. Placement is
+half the signature, and it was measured per path rather than described: 28 of the 29 are named
+`index.php` and sit exactly three random 7-character directories deep — 27 of those under a
+hex-suffixed core directory (`Text`, `sitemaps`, `rest-api`, `html-api`, `theme-compat`) and
+one under a hex-suffixed uploads-style directory. The twenty-ninth drops the directory chain
+and randomises the filename instead. Six accounts, most heavily one. Nothing in the file is
+obfuscated — it is readable PHP — which is why an obfuscation-shaped rule set does not see
+it, and `PHI009,WS011` do. Expectations in `expect/malicious-bulk-mailer-001.json`.
+
+**All 29 carry `must_detect` and none is a `known_miss`, and that is the reason the shard
+exists.** The scanner detected every one of them before this shard was built; what was
+missing was bytes a stranger could run the assertion against, so the rows sat under
+`expect.known_miss` beside genuine rule gaps and were reported to a reader as undetected.
+`classify-known-miss.py` named that state `detected-not-shippable`; this shard removes it.
+
+**29 rows, one file.** 28 of the 29 are the same length and differ from one another in nine
+to eleven byte positions — the password literal — and the twenty-ninth differs only in line
+endings (LF rather than CRLF). They are 29 rows because per-deployment literal substitution
+is the technique under test, and the 4.9 MB of samples compressing to a 44 KB shard is the
+honest measure of how much distinct material that is. Masked length-preservingly; all four
+gates PASS and detection parity was verified per sample, `PHI009,WS011` before and after.
 
 `shards/malicious-polyglots-002.tar.zst` — one fixture plus one clean carrier. A 510-byte
 "Priv8 Uploader" PHP block injected straight after a real image's JFIF header and terminated

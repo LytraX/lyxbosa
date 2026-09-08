@@ -1,0 +1,1191 @@
+[
+ {
+  "name": "leaf-php-mailer-2.8-00a278fa",
+  "file": "samples/leaf-php-mailer-2.8-00a278fa.php",
+  "sha256": "5c817650a656c5109e48cf8a10a8552a3ab1c2fb415570562e3bc7416be0579e",
+  "source_sha256": "00a278fa21c361db511ffefef4902f227cad28f9071ed3d7da7e9e34175ee74b",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-11662d23",
+  "file": "samples/leaf-php-mailer-2.8-11662d23.php",
+  "sha256": "44262e58bdfa636220d69e0b5b52ccf66aa7aea0f489d2d4a8a76e6e984d1665",
+  "source_sha256": "11662d2341672795825bbd44504ab3dc98348067efd9fb7764e2afe0af43ebd1",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-198fcfd7",
+  "file": "samples/leaf-php-mailer-2.8-198fcfd7.php",
+  "sha256": "4536e1809013a5a7314ff930e62da85295abca1cd6a4aa179bd420bed11a3243",
+  "source_sha256": "198fcfd7e43183c876acc1e51c8fb2aae1f69caa87fbd1b95d7a17fa6189b037",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-32a05b63",
+  "file": "samples/leaf-php-mailer-2.8-32a05b63.php",
+  "sha256": "2ce2636b5ca420c3cf8dd2efc1e1725f8b2b873004823a2aa5631857bff806cf",
+  "source_sha256": "32a05b63143975740dc086b2fe5b8218f6cf1d57bb5af5cec021caeb687558c4",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-37e3cdde",
+  "file": "samples/leaf-php-mailer-2.8-37e3cdde.php",
+  "sha256": "2c449005afc53c547a27b57c5d59643165a8684c67707920f220f78dc683f1a7",
+  "source_sha256": "37e3cddebcef8dc5aea7260e18ff00efb44f32d8fbdec2d40852bb24d3efbf59",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-3f9adc9c",
+  "file": "samples/leaf-php-mailer-2.8-3f9adc9c.php",
+  "sha256": "37cf703ee3db3fec2c4f4a581c2e5608cf1fdf85a13a885e1482f7a20e753252",
+  "source_sha256": "3f9adc9c68329387acdc037d5b3a8c9a6d56715056e7e765108f70ca791550ca",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-42cd7596",
+  "file": "samples/leaf-php-mailer-2.8-42cd7596.php",
+  "sha256": "16431eccd430e12ba78c5d191ba394449f02c1c3d95006658141ee85c4bcf473",
+  "source_sha256": "42cd75966e096c1ce97c1e202c0d4d3a95787d3d501360cd7adbbfdbe4bc9b44",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-4392547d",
+  "file": "samples/leaf-php-mailer-2.8-4392547d.php",
+  "sha256": "1d5355c8b5e9460a4fbf58c69e08a7003c43e48a6d7f74adb19940a71886e73d",
+  "source_sha256": "4392547da1ac119ed80ed891643c0709a0ddec00f5bfbf73ce5e37eefc8be61f",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-4e72f4b6",
+  "file": "samples/leaf-php-mailer-2.8-4e72f4b6.php",
+  "sha256": "b362a4f997c62728cecbe5293fa1cfbcd3fd5626969beeffefd6754791477498",
+  "source_sha256": "4e72f4b6f7db9ca0f960625024b764c4c9c6d20ee4a3cd687699c4d2db2513c0",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-56cc38d2",
+  "file": "samples/leaf-php-mailer-2.8-56cc38d2.php",
+  "sha256": "2a27476a37f8afa492f58551f345ecc739a54ac28298c854d4331ff0b0cf4721",
+  "source_sha256": "56cc38d2036f958f6c865a2a9ffeee93b4352d61479d4a8499208f98ccd4238a",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-7043b5b6",
+  "file": "samples/leaf-php-mailer-2.8-7043b5b6.php",
+  "sha256": "693a0164ca995ee8d6d0c2fe9179e87d8e9e6f1786eeba6f809262fa6d822ea5",
+  "source_sha256": "7043b5b62a5b9f35b94be9b5b505a06416ee92e5a133435835b043205093c9c4",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-7a954cc4",
+  "file": "samples/leaf-php-mailer-2.8-7a954cc4.php",
+  "sha256": "68072b9e5e9d734a446f2acab980ca800091a7bdccc13ecd83bddde2cacf003f",
+  "source_sha256": "7a954cc447d155a6e5b41ecb9d6c7947df15e43f8e7d141bd663cc458ff709d9",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-81181aa1",
+  "file": "samples/leaf-php-mailer-2.8-81181aa1.php",
+  "sha256": "abc41644475f991bee0e148301290626b7a9ade530177bc2a31fb162af52735d",
+  "source_sha256": "81181aa1a18d5643001e7e89f3e7b03259286ae6935666c3c22c626d8838236d",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-8c8ee538",
+  "file": "samples/leaf-php-mailer-2.8-8c8ee538.php",
+  "sha256": "566ecf6a728e1e296fa8a9ad83a057b3b0e1ad834541a0283bac723d92f33a65",
+  "source_sha256": "8c8ee538cc8f9187a3d708b7f8d1ccdc0fac5cd71c84518b7f8cee586bcc8927",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-8c98b585",
+  "file": "samples/leaf-php-mailer-2.8-8c98b585.php",
+  "sha256": "06a7a1d969b76325b1f16f76822a3cdf8af8221d9831cba413914eb9b0a7cc0a",
+  "source_sha256": "8c98b585e077546f2517cd9e5c5043a55d902875d0f998811ca2b5085124005e",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-a11720b1",
+  "file": "samples/leaf-php-mailer-2.8-a11720b1.php",
+  "sha256": "2823866980a6a472e760af4f24d959f4b161c9c0b94b4f151cf5c7ed33e78213",
+  "source_sha256": "a11720b1b624a4e3f717d9aa4dc109503c5b5f8e6751db9ec0e77cabe673b5ef",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-a32b14a8",
+  "file": "samples/leaf-php-mailer-2.8-a32b14a8.php",
+  "sha256": "455915f100e588d3c3bf4a76c966a14fd971c203dd7bcd04329e94a9803b0d9c",
+  "source_sha256": "a32b14a855de41c03b8ff4f5f9a106693c75cfb487b40769a44d352a31aa91f2",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-ad06d06c",
+  "file": "samples/leaf-php-mailer-2.8-ad06d06c.php",
+  "sha256": "613ecf7b2374c13bc1d1426735639978c6cb76c73961834f16eebf989a83384c",
+  "source_sha256": "ad06d06c900f82f0de91cbc7b8a9b79d6473bda75d25a3a9c9877299a59b8674",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-bab7987f",
+  "file": "samples/leaf-php-mailer-2.8-bab7987f.php",
+  "sha256": "0b5a49853afff8cd32807a4f493b1af0f1d847cd720c741ad56750288ef0a8ce",
+  "source_sha256": "bab7987f4d7709c23e0e966978f9f1bb5fee9b972b39b98941cff6e82bbbf420",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-bf636295",
+  "file": "samples/leaf-php-mailer-2.8-bf636295.php",
+  "sha256": "0f2566c22ed93a712a74d44269043928b50b91fe7810763e80d7c333fab940ff",
+  "source_sha256": "bf636295ca678edb5b4d7c37b603cb175e68fbf843956ab8a6b250740d775b41",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-c6ed51d1",
+  "file": "samples/leaf-php-mailer-2.8-c6ed51d1.php",
+  "sha256": "3e5d4d0aba79b74e2db96ca20b9cc3330a99ab0db151307bafd748ad95ffff71",
+  "source_sha256": "c6ed51d10419b853a033d20e01878f0499e3917733c2a94eb4c8c42074f6a23e",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-c707492f",
+  "file": "samples/leaf-php-mailer-2.8-c707492f.php",
+  "sha256": "209d91ba08b79dfb11900f1e0479b9b3a5264cde8f5b057a5cdc01e075656393",
+  "source_sha256": "c707492f68709dc01fc11eded380c663992bd78e26d77829e59e9289fb955ca9",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-da551a80",
+  "file": "samples/leaf-php-mailer-2.8-da551a80.php",
+  "sha256": "6da58c83ca70fca3320a2eba03c2fd8d0ee00c902a1aeb1e394fa51746904fb5",
+  "source_sha256": "da551a8025f0e0ca87fcd9fdcce4e423689f6274a19f0659087e19e86dadb845",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-e31ecd26",
+  "file": "samples/leaf-php-mailer-2.8-e31ecd26.php",
+  "sha256": "c5245f50098e24383eb1ae4adfc61854696feadfc113235f612e1dc94d8effd4",
+  "source_sha256": "e31ecd2680f64caa2b86c51967dba0f074fd6a13c6173dfe074794d07b368e75",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-e4943a43",
+  "file": "samples/leaf-php-mailer-2.8-e4943a43.php",
+  "sha256": "ece429dda2c783321e1804d80a9082857836c04d0a52125d227607a29f889ac6",
+  "source_sha256": "e4943a430df58d3a17badb946bfff5f321fda59e43dcfc384830cd8f557b99a2",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-ea0f116b",
+  "file": "samples/leaf-php-mailer-2.8-ea0f116b.php",
+  "sha256": "d545e370d7a0bc76b0ccf4849b00720ec9bbb9415acb2f163d5ab567d14e28cb",
+  "source_sha256": "ea0f116bd375535ed3cee8af4ba6b4915a02bd14229e8b1e84ae609e63a4f1d5",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-f4003772",
+  "file": "samples/leaf-php-mailer-2.8-f4003772.php",
+  "sha256": "f299d3d77c4c4eb106d09bbbf4c4e1c56a6164e4f5a1686b2ce11f6b87dd976b",
+  "source_sha256": "f40037728581917a3befb0ae71b7c781e2cbcbcf7f82fa0eda515f5263cc43a2",
+  "size": 165629,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-f5b43938",
+  "file": "samples/leaf-php-mailer-2.8-f5b43938.php",
+  "sha256": "3a94a7ae8f149f17deb2cd75dd28ebf6f01dbfffc19811ddb10e2125b68bfc1d",
+  "source_sha256": "f5b4393808f53c7b681f5c57ecf6664adc22ac6609fab96e6c1f3ac003219472",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ },
+ {
+  "name": "leaf-php-mailer-2.8-fc4fd33e",
+  "file": "samples/leaf-php-mailer-2.8-fc4fd33e.php",
+  "sha256": "ab33fde197baa11bfd5135f81c38ae6e097e50f8cdefbbdb3af5c0a89a413d07",
+  "source_sha256": "fc4fd33e7de4fae5bf94eeade1436fc8789ef1d3142c5bd40571f5deeef47009",
+  "size": 170139,
+  "verdict": "malicious",
+  "family": "leaf-php-mailer-2.8",
+  "sensitivity": [
+   "c2",
+   "identity",
+   "secret"
+  ],
+  "expect": {
+   "must_detect": [
+    "PHI009",
+    "WS011"
+   ],
+   "closed_known_miss": {
+    "date": "2026-09-08",
+    "rules": [
+     "PHI009",
+     "WS011"
+    ],
+    "was": "rules fired and no shard carried the bytes, so the suite had nothing to run the assertion against (known_miss_kind: detected-not-shippable)"
+   },
+   "must_not_detect": []
+  },
+  "technique": [
+   "bulk-mailer",
+   "embedded-phpmailer",
+   "request-gate",
+   "password-gate",
+   "dnsbl-self-check",
+   "random-nested-directory",
+   "polymorphic-literal",
+   "public-webshell-reuse",
+   "campaign-marker"
+  ],
+  "masked": true
+ }
+]
