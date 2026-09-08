@@ -63,10 +63,18 @@ _WORK=""
 _cleanup() { [ -n "${_WORK:-}" ] && rm -rf "$_WORK"; return 0; }
 trap _cleanup EXIT INT TERM
 
+# The binary is overridable so that "minisign is absent" can be SIMULATED rather than
+# depended on. The control for this used to clear PATH down to /usr/bin:/bin, which works on
+# a laptop with no minisign and fails on a runner where `apt-get install minisign` puts it at
+# /usr/bin/minisign - inside the very PATH meant to exclude it. The check then passed and the
+# script died later, at key loading, with a message about the secret key. A control that can
+# only observe absence on a machine that happens to lack the tool is not a control.
+MINISIGN="${MINISIGN:-minisign}"
+
 need_minisign() {
-  command -v minisign >/dev/null \
-    || die "minisign is not on PATH. In CI it is installed by the step before this one;
-   locally, 'sudo apt-get install minisign' or 'brew install minisign'."
+  command -v "$MINISIGN" >/dev/null \
+    || die "minisign is not on PATH ($MINISIGN). In CI it is installed by the step before
+   this one; locally, 'sudo apt-get install minisign' or 'brew install minisign'."
 }
 
 # ---------------------------------------------------------------------------------------
@@ -207,7 +215,7 @@ cmd_sign() {
   # verifier can rely on therefore goes in -t, and `minisign -V` prints it back.
   local tag="${GITHUB_REF_NAME:-local}"
   printf '%s\n' "${MINISIGN_KEY_PASSWORD:-}" \
-    | minisign -S -s "$_WORK/sk" -m "$sums" -x "$sig" \
+    | "$MINISIGN" -S -s "$_WORK/sk" -m "$sums" -x "$sig" \
         -t "LyxBoSa ${tag} ${SUMS} (${GITHUB_REPOSITORY:-LytraX/LyxBoSa})" \
         -c "verify with: minisign -Vm ${SUMS} -P <key from keys/minisign-trusted.txt>" \
     || die "minisign failed to sign $sums. If the key is password-protected, the password
@@ -222,7 +230,7 @@ cmd_sign() {
   # Positive: it verifies under the key that ships in the repository, which is the only key
   # a consumer will have. Not under the secret it was just signed with - that would only
   # prove the secret agrees with itself.
-  minisign -V -q -m "$sums" -x "$sig" -P "$key" >/dev/null \
+  "$MINISIGN" -V -q -m "$sums" -x "$sig" -P "$key" >/dev/null \
     || { rm -f "$sig"
          die "the signature does not verify under the 'signing' key in $KEYRING. The secret
    in MINISIGN_SECRET_KEY is not the private half of the public key this repository ships,
@@ -233,7 +241,7 @@ cmd_sign() {
   mkdir -p "$_WORK/neg"
   cp "$sums" "$_WORK/neg/$SUMS"; cp "$sig" "$_WORK/neg/$SIG"
   mutate_one_byte "$_WORK/neg/$SUMS"
-  if minisign -V -q -m "$_WORK/neg/$SUMS" -x "$_WORK/neg/$SIG" -P "$key" >/dev/null 2>&1; then
+  if "$MINISIGN" -V -q -m "$_WORK/neg/$SUMS" -x "$_WORK/neg/$SIG" -P "$key" >/dev/null 2>&1; then
     rm -f "$sig"
     die "verification ACCEPTED a $SUMS with one byte changed. Whatever ran as minisign is
    not checking anything, so the signature it produced is worth nothing. The signature has
@@ -399,7 +407,13 @@ selftest() {
   # the check deleted, and the operator would get "minisign failed to sign" for a missing
   # package. The PATH keeps /usr/bin so that mktemp still works and minisign is the only
   # thing missing.
-  out="$( KEYRING="$kr" MINISIGN_SECRET_KEY="$SK" PATH="$work/empty-bin:/usr/bin:/bin" \
+  # The stub is on PATH here ON PURPOSE, so this case observes what it claims on every
+  # machine. Pointing MINISIGN at nothing while a usable `minisign` is one PATH lookup away
+  # is the only arrangement under which "absent" is being simulated rather than inherited:
+  # on a host with no minisign the case would otherwise pass for the wrong reason, and on a
+  # runner where apt puts it in /usr/bin the previous arrangement passed for none at all.
+  out="$( KEYRING="$kr" MINISIGN_SECRET_KEY="$SK" MINISIGN="$work/no-such-minisign" \
+          PATH="$work/bin:$PATH" \
           cmd_sign "$d" 2>&1 )" && fail "minisign missing is refused, and the message says so" || {
     case "$out" in
       *"minisign is not on PATH"*) pass "minisign missing is refused, and the message says so" ;;
@@ -464,7 +478,7 @@ selftest() {
   echo
   echo "=== a real minisign, if there is one here ==="
   if command -v minisign >/dev/null; then
-    minisign -G -W -p "$work/real.pub" -s "$work/real.key" >/dev/null 2>&1 \
+    "$MINISIGN" -G -W -p "$work/real.pub" -s "$work/real.key" >/dev/null 2>&1 \
       || { fail "minisign -G generates a keypair"; }
     printf 'signing %s\n' "$(sed -n '2p' "$work/real.pub")" > "$kr"
     if ( KEYRING="$kr" MINISIGN_SECRET_KEY="$(cat "$work/real.key")" cmd_sign "$d" >/dev/null 2>&1 ); then
@@ -472,7 +486,7 @@ selftest() {
     else fail "a real key signs, and the signature verifies under the tracked public key"; fi
     if [ -f "$d/$SIG" ]; then
       mutate_one_byte "$d/$SUMS"
-      if minisign -V -q -m "$d/$SUMS" -x "$d/$SIG" -P "$(sed -n '2p' "$work/real.pub")" >/dev/null 2>&1; then
+      if "$MINISIGN" -V -q -m "$d/$SUMS" -x "$d/$SIG" -P "$(sed -n '2p' "$work/real.pub")" >/dev/null 2>&1; then
         fail "...and real verification refuses a SHA256SUMS with one byte changed"
       else pass "...and real verification refuses a SHA256SUMS with one byte changed"; fi
     else
