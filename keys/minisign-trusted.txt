@@ -64,12 +64,13 @@
 # no longer verify. Refusing to update beats updating against a key somebody else holds.
 #
 #
-# THERE IS NO SIGNING KEY IN THIS FILE YET
-# -----------------------------------------
-# The keypair is generated on a person's machine and never in CI, so this file cannot be
-# filled in by the change that introduced it. Until it is, the release job REFUSES rather
-# than publishing an unsigned release - see "Provisioning the signing key" in
-# docs/RELEASING.md, which is one command and one repository secret.
+# A RELEASE REFUSES WITHOUT A SIGNING KEY HERE
+# -------------------------------------------
+# The keypair is generated on a person's machine and never in CI, so this file is filled in
+# by hand rather than by the change that needs it. With no `signing` line below, the release
+# job refuses rather than publishing an unsigned release - it never degrades to no
+# signature. See "Provisioning the signing key" in docs/RELEASING.md: one command, one line
+# here, one repository secret.
 #
 # Adding the key here is a commit like any other. Adding the SECRET key here is the one
 # thing this repository must never do, and corpus/pre-push-check.py refuses a push that

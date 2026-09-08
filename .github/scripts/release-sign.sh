@@ -367,7 +367,7 @@ selftest() {
   elif ( signing_key "$ROOT/keys/minisign-trusted.txt" >/dev/null 2>&1 ); then
     say "the shipped keyring has a signing key - releases can be signed" "provisioned"
   else
-    say "the shipped keyring has no signing key yet, so a release would refuse" "as designed"
+    say "a keyring with no signing key makes a release refuse" "as designed"
   fi
 
   rm -f "$work/gone.txt"
