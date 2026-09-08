@@ -633,9 +633,12 @@ lyxbosa validate-config lyxbosa.yaml
 
 ## Updating
 
-There is no self-update yet. Releases are downloaded from
-[the releases page](https://github.com/LytraX/lyxbosa/releases); the plan for an
-`lyxbosa update` command, and the release-signing it depends on, is in
+Download the binary for your platform from
+[the releases page](https://github.com/LytraX/lyxbosa/releases) and replace the one you have.
+Each release publishes `SHA256SUMS` and a `minisign` signature over it; verifying both is
+described in [docs/RELEASING.md](docs/RELEASING.md#release-integrity-checksums-and-signatures).
+
+The design for an `lyxbosa update` command is in
 [docs/tasks/UPDATE_PLAN.md](docs/tasks/UPDATE_PLAN.md).
 
 ## Building
