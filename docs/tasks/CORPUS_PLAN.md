@@ -1387,9 +1387,9 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, twelve appearances: a measurement that cannot deliver bad news
+## 11. One property, thirteen appearances: a measurement that cannot deliver bad news
 
-Twelve separate cautions in this plan share one diagnostic tell. Five of them are the same
+Thirteen separate cautions in this plan share one diagnostic tell. Five of them are the same
 statement in different clothes; two reach the same place by a different mechanism and
 need a different repair, which is exactly why they are worth listing together:
 
@@ -1556,7 +1556,61 @@ is silent about exactly the same population and the two coverage figures do not 
 each other. Both are published beside the rates rather than folded into them, and the three
 populations are asserted to sum to `malicious_reviewed`.
 
-**Assume a thirteenth exists in whatever you measure next** — and note that the first nine were
+**A thirteenth, found 2026-09-08, and it is the first where the definition is clean and the
+*pool* is not.** The twelfth above is found by reading the code that assigns the label: `if
+hit`, so membership is conditioned on detection and the family could not name an undetected
+sample. `corpus/assign-family.py` has none of that shape. A family it records is defined by a
+literal shared across its members, every marker is re-read from the sample bytes in the
+writer's own process, a member carrying none of them is refused, and a session in which every
+family is a function of the recorded rule-set is refused outright. Read that code for a week
+and nothing in it consults the scanner.
+
+It draws from one pool: the reviewed malicious rows carrying no family. **That pool held 530
+detected rows out of 531** against 696 of 1,299 across the reviewed set — and *exactly one*
+undetected row in the whole pool, so at most one family drawn from it could ever score below
+100%. The first session labelled 180 rows as seven families and all seven came out fully
+detected. Applying them would have taken the published family rate from **micro 14.9% to 32.1%
+and macro 29.9% to 40.8%** with no verdict changing and no expectation moving, and a reader
+would have seen the scanner improve by seventeen points because somebody got around to
+labelling a queue.
+
+**A definition can be clean while its sampling frame is contaminated, and the second is the
+harder one to see** — every individual label is defensible, every refusal is real and two of
+them fired on real input during that session, and the census that checks the labels checks the
+labels. Nothing in the family says where the family came from. So the frame is now *measured at
+write time and recorded on the row* (`family_evidence.sampling_frame`), because by the time
+anybody re-derives it the pool has shrunk by everything labelled since and the answer would be
+about a population those rows were never drawn from.
+
+**The repair that was refused is as instructive as the one taken.** The obvious move —
+exclude the contaminated families and keep 14.9% as the headline — promotes a figure whose own
+frame is contaminated in the opposite direction. **602 of those 707 rows are recorded known
+misses**, because a mass miss is what gets investigated and labelled, and a single 2017 doorway
+campaign supplies 495 of them; drop that one family and the same micro average reads **49.5%**.
+Neither population is a fair draw and no measurement in this corpus establishes that either is.
+A metric that cannot deliver bad news is §11's property; a metric that cannot deliver good news
+is the same property with the sign flipped, and choosing between them is choosing which
+direction to be wrong in. So the rate is published **once per sampling frame with neither called
+the headline**, `corpus/doc-figures.py --check` refuses a tracked document that quotes a rate
+across both, and refuses a per-frame rate that appears without its own denominator and frame
+beside it. Both refusals ship with controls in both directions, including one asserting that
+the region check alone passes the document the guard rejects.
+
+**And the ceiling on the method was re-derived rather than inherited.** The census that
+produced *428 of 531 reachable, 103 not* was run in a scratch script lost to a crash, so the
+number was standing on prose. Re-run over all 95 clusters and all 531 rows it reproduces
+exactly — 378 rows in 38 clusters with a distinctive shared literal, 50 of 53 singletons
+reachable from a literal some other row carries, 87 in three clusters whose only cluster-wide
+literal is carried by roughly a fifth of the pool, 13 in one cluster sharing nothing — and it
+is stable for any rarity threshold between 93 and 193 rows, a two-to-one range on the only free
+parameter. It is a **floor, not a ceiling**: 16 of those 103 were labelled by the first session
+by splitting a cluster on a literal a minority of its members carry. The number that survives
+is 87 rows still out of reach, and they stay counted in `malicious_family_population` rather
+than leaving the denominator.
+
+**Assume a fourteenth exists in whatever you measure next.**
+
+**Assume a fourteenth exists in whatever you measure next** — and note that the first nine were
 found by somebody reading, while three of the ninth's parts and all of the tenth were found by
 asking a tool to state the size of a limit it had already written down. Writing the bound down
 is cheap and it is not the check. Sizing it is the check. The tenth is the sharper lesson:

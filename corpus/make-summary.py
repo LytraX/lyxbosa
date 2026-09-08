@@ -144,6 +144,86 @@ def family_population(r):
     return "unfamilied"
 
 
+# THE SECOND FAILURE: A CLEAN DEFINITION DRAWN OUT OF A CONTAMINATED POOL
+# ------------------------------------------------------------------------
+# `DETECTION_CONDITIONED_REASONS` above catches a label whose MEMBERSHIP rule reads the
+# scanner's output. It is found by reading the assigning code: `if hit`, and the row records
+# `reason: detected-and-read`. Every family it names is fully detected because it could not
+# have been anything else.
+#
+# There is a second, subtler way to reach the same flattering number, and no amount of reading
+# the assigning code finds it. `corpus/assign-family.py` defines a family by BYTES - a shared
+# literal, re-read from the sample in the writer's own process, with the family refused if any
+# member does not carry one. Nothing about that definition consults the scanner, and every one
+# of its labels would survive any rule change. But it draws from ONE POOL: the reviewed
+# malicious rows carrying no family. That pool is 530-of-531 detected against 696-of-1,299 over
+# the reviewed set, so a family drawn from it is fully detected before anybody opens a file.
+# There is exactly one undetected row in the whole pool, so at most ONE family drawn from it
+# can ever score below 100%.
+#
+# Membership and sampling frame are two failures, and this key is deliberately not the other
+# one. Folding them together would discard the distinction: the first is visible in the code
+# that assigns the label, the second is invisible there and appears only when the pool is
+# counted. `corpus/family_evidence.frame_detail()` measures it at write time and the writer
+# records it on the row, so this file READS the frame rather than re-deriving it - by the time
+# anything re-derives it the pool has shrunk by everything labelled since, and the answer would
+# be about a population these rows were never drawn from.
+FRAME_EVIDENCE_FIELD = "family_evidence"
+
+
+def family_frame(r):
+    """'detection_conditioned' | 'not_recorded' - the sampling frame this row's label was
+    drawn under, read from the writer's record.
+
+    `not_recorded` is not `clean`, and the name is chosen to stop it being read as one. The 38
+    families that predate this writer carry no frame record at all; nothing established that
+    their frame was a fair draw, and the measurements in `docs/results/` say it was not - 602
+    of their 707 rows are recorded known misses, because a mass miss is what gets investigated
+    and labelled. An unrecorded frame is an unknown one.
+    """
+    ev = r.get(FRAME_EVIDENCE_FIELD)
+    fr = ev.get("sampling_frame") if isinstance(ev, dict) else None
+    if isinstance(fr, dict) and fr.get("detection_conditioned"):
+        return "detection_conditioned"
+    return "not_recorded"
+
+
+def family_frames(rows):
+    """{family: frame}, over campaign-familied rows.
+
+    A family is detection-conditioned if ANY of its members records that frame. Partly drawn
+    from a contaminated pool is drawn from a contaminated pool; requiring every member would
+    let one row assigned by some other route launder a family back into the unmarked column.
+    """
+    out = {}
+    for r in rows:
+        if family_population(r) != "campaign_familied":
+            continue
+        if family_frame(r) == "detection_conditioned":
+            out[r["family"]] = "detection_conditioned"
+        else:
+            out.setdefault(r["family"], "not_recorded")
+    return out
+
+
+def recorded_frame(rows):
+    """The one sampling frame these rows record, or None when they do not agree on one.
+
+    None rather than the first: two frames rendered as one is precisely the failure that puts a
+    figure in a document over a population it was not measured on.
+    """
+    seen, out = set(), []
+    for r in rows:
+        ev = r.get(FRAME_EVIDENCE_FIELD)
+        fr = ev.get("sampling_frame") if isinstance(ev, dict) else None
+        if isinstance(fr, dict):
+            k = json.dumps(fr, sort_keys=True)
+            if k not in seen:
+                seen.add(k)
+                out.append(fr)
+    return out[0] if len(out) == 1 else None
+
+
 def is_detected(r):
     """The one detection predicate, shared with `malicious_detected` above.
 
@@ -343,6 +423,18 @@ def build():
         if is_detected(r):
             fam_pop_det[family_population(r)] += 1
     campaign = [r for r in mal if family_population(r) == "campaign_familied"]
+    # The frame split. Computed over `campaign` only: the provenance bucket is already out of
+    # every family rate under the OTHER condition, and putting it in a frame column as well
+    # would count one exclusion twice.
+    frames = family_frames(campaign)
+    by_frame = {}
+    for tag, key in (("detection_conditioned", "sampling_frame_detection_conditioned"),
+                     ("not_recorded", "sampling_frame_not_recorded")):
+        g = [r for r in campaign if frames.get(r["family"]) == tag]
+        by_frame[key] = {"frame": recorded_frame(g), "metrics": family_metrics(g)}
+    frame_conditioned = dict(sorted(collections.Counter(
+        r["family"] for r in campaign
+        if frames.get(r["family"]) == "detection_conditioned").items()))
     det_conditioned = dict(sorted(collections.Counter(
         r.get("family") or "<unfamilied>" for r in mal
         if family_population(r) == "provenance_bucketed").items()))
@@ -436,6 +528,8 @@ def build():
         "malicious_family_population": fam_pop,
         "malicious_family_population_detected": fam_pop_det,
         "families_detection_conditioned": det_conditioned,
+        "families_sampling_frame_conditioned": frame_conditioned,
+        "family_detection_by_frame": by_frame,
         "family_detection": family_metrics(mal),
         "family_detection_excl_predates_ruleset": family_metrics(
             [r for r in mal if not r.get("predates_ruleset")]),
@@ -455,8 +549,45 @@ def build():
             "is kept out of every family rate; unfamilied carries no label at all. The "
             "unfamilied rows hold most of the recorded detections, so a family figure is "
             "silent about the part of the corpus that is doing best - which is why this key "
-            "is published beside the rates and never folded into them"),
+            "is published beside the rates and never folded into them. The unfamilied count "
+            "FALLS as rows are labelled and that is not the gap closing: a census over all 95 "
+            "rule-set clusters and all 531 rows on 2026-09-07 found 428 reachable by a shared "
+            "distinctive literal and 103 that are not - 87 in three clusters whose only "
+            "cluster-wide literal is carried by a fifth of the pool, 13 in one cluster sharing "
+            "no literal at all, and 3 singletons - and those need the decoded payload rather "
+            "than the stored bytes. They stay counted here rather than being moved out of the "
+            "denominator, so this key keeps partitioning the reviewed malicious set exactly"),
+        "families_sampling_frame_conditioned_note": (
+            "families whose DEFINITION is clean - byte-defined, every marker re-read from the "
+            "sample - but whose SAMPLING FRAME is conditioned on detection: they were drawn "
+            "from the pool of reviewed malicious rows carrying no family, and 530 of those 531 "
+            "rows carry an expected rule against 696 of 1,299 across the reviewed set. Exactly "
+            "one row in that pool is undetected, so at most one family drawn from it can score "
+            "below 100%. THIS IS NOT families_detection_conditioned, which is the other "
+            "failure: there the membership rule itself reads the scanner's output (`if hit`), "
+            "so the label could not name an undetected sample. Here any rule change would "
+            "leave every membership decision standing and move only the rate. Two keys because "
+            "they are found by different means - the first by reading the code that assigns "
+            "the label, the second only by counting the pool - and a reader who has seen one "
+            "will not look for the other"),
+        "family_detection_by_frame_note": (
+            "the same family metrics computed separately over each sampling frame, because a "
+            "rate across both is a rate over a population nobody drew. NEITHER IS A HEADLINE. "
+            "sampling_frame_detection_conditioned is fully detected by its pool rather than by "
+            "the scanner. sampling_frame_not_recorded is NOT a clean control and must not be "
+            "read as one: nothing recorded how those families were selected, and 602 of their "
+            "707 rows are known misses because a mass miss is what gets investigated and "
+            "labelled - one 2017 doorway campaign supplies 495 of them, and dropping that one "
+            "family alone takes the same micro rate from 14.9% to 49.5%. Both frames are "
+            "contaminated, in opposite directions, and the honest form is both figures beside "
+            "their frames rather than one of them promoted. `frame` carries the pool the "
+            "writer measured at assignment time, or null when the rows do not agree on one"),
         "family_detection_note": (
+            "the union across BOTH sampling frames, and NOT a figure to quote on its own - see "
+            "family_detection_by_frame, which is what the documents render. Adding the first "
+            "180 byte-defined labels moves micro_rate here from 14.9% to 32.1% and macro_rate "
+            "from 29.9% to 40.8% while every one of the seven new families is fully detected "
+            "by its pool, so the movement measures the labelling backlog and not the scanner. "
             "macro_rate weights every family equally, micro_rate weights every sample "
             "equally, over the identical rows; they differ by a factor of two here and that "
             "gap is the result, not a discrepancy. A family is fully_detected only if every "
@@ -651,6 +782,72 @@ def inject():
     case("  ...its rows are still in the partition total", pop["provenance_bucketed"] == 4)
     case("  ...and it cannot inflate the family counts",
          fmx["families"] == 1 and fmx["fully_detected"] == 0)
+
+    # THE SAMPLING FRAME: A SECOND EXCLUSION THAT MUST NOT BECOME THE FIRST ONE.
+    # Both directions on every case. A frame test that called everything conditioned would
+    # satisfy the positive half and measure nothing, which is this repository's standing
+    # failure mode; a frame test that called nothing conditioned would silently restore the
+    # union rate the split exists to prevent.
+    def framed(fam, detected, cond, n=[0]):
+        r = row(fam, detected)
+        r[FRAME_EVIDENCE_FIELD] = {"session": "control",
+                                   "sampling_frame": {"kind": "sampling-frame",
+                                                      "detection_conditioned": cond,
+                                                      "pool_rows": 531, "pool_detected": 530}}
+        return r
+
+    hot = [framed("hot", True, True) for _ in range(3)]
+    cold = [row("cold", True), row("cold", False)]
+    both = hot + cold
+    fr = family_frames(both)
+    case("a family whose rows record a conditioned frame is named",
+         fr.get("hot") == "detection_conditioned")
+    case("  ...and one carrying no frame record reads not_recorded, never clean",
+         fr.get("cold") == "not_recorded")
+    # A row whose frame was MEASURED and found unconditioned must land with the unmarked half:
+    # otherwise the writer recording a frame at all would be enough to be excluded.
+    fair = [framed("fair", True, False), framed("fair", False, False)]
+    case("  ...a frame measured and found NOT conditioned reads not_recorded",
+         family_frames(fair).get("fair") == "not_recorded")
+    # One conditioned member is enough. A family half-drawn from a contaminated pool is drawn
+    # from a contaminated pool, and requiring unanimity is how one row laundering it back would
+    # work.
+    mixedfam = [framed("mix", True, True), row("mix", True)]
+    case("  ...one conditioned member is enough to name the family",
+         family_frames(mixedfam).get("mix") == "detection_conditioned")
+
+    # The split must PARTITION: same families and same rows as the union, no more and no less.
+    # Without this the two columns can quietly disagree with the total they came from, which is
+    # the two-denominators defect the whole doc-figures chain exists to end.
+    union = family_metrics(both)
+    parts = [family_metrics([r for r in both if fr.get(r.get("family")) == t])
+             for t in ("detection_conditioned", "not_recorded")]
+    case("the two frames partition the campaign families",
+         sum(p["families"] for p in parts) == union["families"] == 2)
+    case("  ...and the campaign rows",
+         sum(p["rows"] for p in parts) == union["rows"] == 5)
+    case("  ...and the detected rows",
+         sum(p["detected_rows"] for p in parts) == union["detected_rows"] == 4)
+    # The rate the split exists to keep out of a document: the union reads better than the
+    # unmarked half alone, purely because the conditioned families are 3-of-3.
+    case("  ...and the union rate is NOT either frame's rate",
+         union["micro_rate"] == 0.8 and parts[0]["micro_rate"] == 1.0
+         and parts[1]["micro_rate"] == 0.5)
+
+    # `recorded_frame` reports one frame as one and two as none.
+    case("one recorded frame across the rows is reported",
+         (recorded_frame(hot) or {}).get("pool_rows") == 531)
+    other = framed("hot", True, True)
+    other[FRAME_EVIDENCE_FIELD]["sampling_frame"]["pool_rows"] = 351
+    case("  ...two disagreeing frames report none rather than the first",
+         recorded_frame(hot + [other]) is None)
+    case("  ...and rows carrying no frame at all report none", recorded_frame(cold) is None)
+
+    # The two conditions are different keys, and a row can carry one without the other.
+    case("a detection-conditioned MEMBERSHIP row is not a frame-conditioned one",
+         family_frame(row("b", True, reason="detected-and-read")) == "not_recorded")
+    case("  ...and a frame-conditioned row is not in the membership bucket",
+         family_population(hot[0]) == "campaign_familied")
 
     # The dispersion detector, which must not depend on the reason-code set being maintained.
     pile = [row("pile", True) for _ in range(3)]

@@ -46,48 +46,120 @@
   "uploads-dir-docroot-uploader": 1,
   "woocommerce-card-skimmer": 6
  },
+ "families_sampling_frame_conditioned": {
+  "aes-cbc-cache-loader": 26,
+  "browser-file-manager-shell": 17,
+  "goto-flattened-metaphone-curl-fetcher": 59,
+  "search-engine-cloaking-doorway": 13,
+  "self-append-gzip-dropper-common-payload": 16,
+  "seo-doorway-casino-content-template": 26,
+  "tiny-upload-rename-write-shell": 23
+ },
+ "families_sampling_frame_conditioned_note": "families whose DEFINITION is clean - byte-defined, every marker re-read from the sample - but whose SAMPLING FRAME is conditioned on detection: they were drawn from the pool of reviewed malicious rows carrying no family, and 530 of those 531 rows carry an expected rule against 696 of 1,299 across the reviewed set. Exactly one row in that pool is undetected, so at most one family drawn from it can score below 100%. THIS IS NOT families_detection_conditioned, which is the other failure: there the membership rule itself reads the scanner's output (`if hit`), so the label could not name an undetected sample. Here any rule change would leave every membership decision standing and move only the rate. Two keys because they are found by different means - the first by reading the code that assigns the label, the second only by counting the pool - and a reader who has seen one will not look for the other",
  "family_bucket_suspects": {
+  "browser-file-manager-shell": {
+   "detected": 17,
+   "distinct_rule_sets": 6,
+   "members": 17,
+   "rules_shared_by_all": 0
+  },
   "legacy-infected-tree-sample": {
    "detected": 61,
    "distinct_rule_sets": 39,
    "members": 61,
+   "rules_shared_by_all": 0
+  },
+  "seo-doorway-casino-content-template": {
+   "detected": 26,
+   "distinct_rule_sets": 3,
+   "members": 26,
    "rules_shared_by_all": 0
   }
  },
  "family_bucket_suspects_note": "labelled families whose three or more detected members share no expected rule. Evidence that a label groups a pile rather than a campaign, recomputed from the rows every run so a bucket arriving under a new reason code is named rather than counted as a family. Reported, never auto-excluded: reclassifying a label is a human judgement",
  "family_detection": {
   "completely_missed": 24,
-  "detected_rows": 105,
-  "families": 38,
-  "fully_detected": 9,
-  "macro_rate": 0.29919,
-  "micro_rate": 0.148515,
+  "detected_rows": 285,
+  "families": 45,
+  "fully_detected": 16,
+  "macro_rate": 0.408205,
+  "micro_rate": 0.321308,
   "partially_detected": 5,
-  "rows": 707,
+  "rows": 887,
   "rows_completely_missed": 576,
-  "rows_fully_detected": 57,
+  "rows_fully_detected": 237,
   "rows_partially_detected": 74
  },
+ "family_detection_by_frame": {
+  "sampling_frame_detection_conditioned": {
+   "frame": {
+    "detection_conditioned": true,
+    "gap": 0.46232,
+    "kind": "sampling-frame",
+    "margin": 0.1,
+    "membership_conditioned_on_detection": false,
+    "note": "the family's definition is byte-defined and marker-verified and is not conditioned on detection; the POOL it was drawn from is. 530 of the 531 rows in the pool carry an expected rule, so at most 1 family drawn from it can score below 100%. A rate over this family measures the pool, not the scanner",
+    "pool": "reviewed malicious rows carrying no family, bucket 'quarantine/evidence'",
+    "pool_detected": 530,
+    "pool_detected_share": 0.998117,
+    "pool_rows": 531,
+    "pool_undetected": 1,
+    "reviewed_detected": 696,
+    "reviewed_detected_share": 0.535797,
+    "reviewed_rows": 1299
+   },
+   "metrics": {
+    "completely_missed": 0,
+    "detected_rows": 180,
+    "families": 7,
+    "fully_detected": 7,
+    "macro_rate": 1.0,
+    "micro_rate": 1.0,
+    "partially_detected": 0,
+    "rows": 180,
+    "rows_completely_missed": 0,
+    "rows_fully_detected": 180,
+    "rows_partially_detected": 0
+   }
+  },
+  "sampling_frame_not_recorded": {
+   "frame": null,
+   "metrics": {
+    "completely_missed": 24,
+    "detected_rows": 105,
+    "families": 38,
+    "fully_detected": 9,
+    "macro_rate": 0.29919,
+    "micro_rate": 0.148515,
+    "partially_detected": 5,
+    "rows": 707,
+    "rows_completely_missed": 576,
+    "rows_fully_detected": 57,
+    "rows_partially_detected": 74
+   }
+  }
+ },
+ "family_detection_by_frame_note": "the same family metrics computed separately over each sampling frame, because a rate across both is a rate over a population nobody drew. NEITHER IS A HEADLINE. sampling_frame_detection_conditioned is fully detected by its pool rather than by the scanner. sampling_frame_not_recorded is NOT a clean control and must not be read as one: nothing recorded how those families were selected, and 602 of their 707 rows are known misses because a mass miss is what gets investigated and labelled - one 2017 doorway campaign supplies 495 of them, and dropping that one family alone takes the same micro rate from 14.9% to 49.5%. Both frames are contaminated, in opposite directions, and the honest form is both figures beside their frames rather than one of them promoted. `frame` carries the pool the writer measured at assignment time, or null when the rows do not agree on one",
  "family_detection_excl_predates_ruleset": {
   "completely_missed": 18,
-  "detected_rows": 101,
-  "families": 30,
-  "fully_detected": 8,
-  "macro_rate": 0.338974,
-  "micro_rate": 0.587209,
+  "detected_rows": 281,
+  "families": 37,
+  "fully_detected": 15,
+  "macro_rate": 0.464033,
+  "micro_rate": 0.798295,
   "partially_detected": 4,
-  "rows": 172,
+  "rows": 352,
   "rows_completely_missed": 49,
-  "rows_fully_detected": 54,
+  "rows_fully_detected": 234,
   "rows_partially_detected": 69
  },
- "family_detection_note": "macro_rate weights every family equally, micro_rate weights every sample equally, over the identical rows; they differ by a factor of two here and that gap is the result, not a discrepancy. A family is fully_detected only if every member carries an expected rule, completely_missed only if none does, and partially_detected otherwise - three states, because collapsing partial into either neighbour loses which families the scanner catches most of. Detection uses the same predicate as malicious_detected, so the family figures and the headline cannot drift apart",
+ "family_detection_note": "the union across BOTH sampling frames, and NOT a figure to quote on its own - see family_detection_by_frame, which is what the documents render. Adding the first 180 byte-defined labels moves micro_rate here from 14.9% to 32.1% and macro_rate from 29.9% to 40.8% while every one of the seven new families is fully detected by its pool, so the movement measures the labelling backlog and not the scanner. macro_rate weights every family equally, micro_rate weights every sample equally, over the identical rows; they differ by a factor of two here and that gap is the result, not a discrepancy. A family is fully_detected only if every member carries an expected rule, completely_missed only if none does, and partially_detected otherwise - three states, because collapsing partial into either neighbour loses which families the scanner catches most of. Detection uses the same predicate as malicious_detected, so the family figures and the headline cannot drift apart",
  "family_rerun_power": {
   "every_member_rerun": 23,
-  "families": 38,
-  "no_member_rerun": 11,
+  "families": 45,
+  "no_member_rerun": 18,
   "rows_every_member_rerun": 77,
-  "rows_in_families_with_no_member_rerun": 561,
+  "rows_in_families_with_no_member_rerun": 741,
   "rows_some_members_rerun": 69,
   "some_members_rerun": 4
  },
@@ -133,16 +205,16 @@
  "malicious_detected_excl_predates_ruleset": 631,
  "malicious_detected_runnable": 97,
  "malicious_family_population": {
-  "campaign_familied": 707,
+  "campaign_familied": 887,
   "provenance_bucketed": 61,
-  "unfamilied": 531
+  "unfamilied": 351
  },
  "malicious_family_population_detected": {
-  "campaign_familied": 105,
+  "campaign_familied": 285,
   "provenance_bucketed": 61,
-  "unfamilied": 530
+  "unfamilied": 350
  },
- "malicious_family_population_note": "the three populations partition the reviewed malicious set and sum to malicious_reviewed. campaign_familied carries an attacker-campaign label; provenance_bucketed carries a label whose membership is conditioned on the scanner having flagged the sample, so it is fully detected by construction and is kept out of every family rate; unfamilied carries no label at all. The unfamilied rows hold most of the recorded detections, so a family figure is silent about the part of the corpus that is doing best - which is why this key is published beside the rates and never folded into them",
+ "malicious_family_population_note": "the three populations partition the reviewed malicious set and sum to malicious_reviewed. campaign_familied carries an attacker-campaign label; provenance_bucketed carries a label whose membership is conditioned on the scanner having flagged the sample, so it is fully detected by construction and is kept out of every family rate; unfamilied carries no label at all. The unfamilied rows hold most of the recorded detections, so a family figure is silent about the part of the corpus that is doing best - which is why this key is published beside the rates and never folded into them. The unfamilied count FALLS as rows are labelled and that is not the gap closing: a census over all 95 rule-set clusters and all 531 rows on 2026-09-07 found 428 reachable by a shared distinctive literal and 103 that are not - 87 in three clusters whose only cluster-wide literal is carried by a fifth of the pool, 13 in one cluster sharing no literal at all, and 3 singletons - and those need the decoded payload rather than the stored bytes. They stay counted here rather than being moved out of the denominator, so this key keeps partitioning the reviewed malicious set exactly",
  "malicious_known_miss": 603,
  "malicious_known_miss_by_family": {
   "<unfamilied>": 1,

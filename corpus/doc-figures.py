@@ -96,6 +96,29 @@ def _rate(v):
     return "%.1f%%" % round(100.0 * v, 1)
 
 
+# A rate over an empty population. NOT the same thing as a figure the summary does not carry:
+# the key is there, the population is genuinely zero, and rendering `0.0%` would assert a
+# measured rate over nothing. MISSING_IS_AN_ERROR still applies to the key itself - `_sub`
+# below raises exactly as `_get` does - and this only covers the arithmetic.
+DASH = "\u2014"
+
+
+def _opt_rate(v):
+    return DASH if v is None else _rate(v)
+
+
+def _opt_pct(num, den):
+    return DASH if not den else _pct(num, den)
+
+
+def _sub(block, key, where):
+    """A nested figure, with the same refusal `_get` makes one level up."""
+    if not isinstance(block, dict) or key not in block:
+        raise Missing("index-summary.json has no %s.%s - regenerate it with make-summary.py, "
+                      "or stop quoting the figure" % (where, key))
+    return block[key]
+
+
 def _get(s, key):
     if key not in s:
         raise Missing("index-summary.json has no key %r - regenerate it with "
@@ -122,6 +145,26 @@ def figures(s):
     popd = _get(s, "malicious_family_population_detected")
     rerun = _get(s, "family_rerun_power")
     cond = _get(s, "families_detection_conditioned")
+    # The frame split. `family_detection` itself is deliberately NOT rendered as a rate
+    # anywhere: it is the union across both sampling frames, which is a population nobody
+    # drew. It is still read here, because the guard below has to know what that number is in
+    # order to refuse a document that quotes it.
+    bf = _get(s, "family_detection_by_frame")
+    cond_b = _sub(bf, "sampling_frame_detection_conditioned", "family_detection_by_frame")
+    unrec_b = _sub(bf, "sampling_frame_not_recorded", "family_detection_by_frame")
+    cond_m = _sub(cond_b, "metrics", "family_detection_by_frame.sampling_frame_detection_conditioned")
+    unrec_m = _sub(unrec_b, "metrics", "family_detection_by_frame.sampling_frame_not_recorded")
+
+    def frame_label(block, metrics):
+        """What the column header has to carry for the rate under it to mean anything."""
+        if not metrics["families"]:
+            return "no families carry this frame yet"
+        fr = block.get("frame")
+        if not isinstance(fr, dict):
+            return "the rows under this frame do not record one shared pool"
+        return ("detection-conditioned — %s of %s rows in the pool carry an expected rule"
+                % (_n(fr["pool_detected"]), _n(fr["pool_rows"])))
+
     # The bucket is named in the table because "61 rows under a provenance label" with no
     # label is a figure a reader cannot check. If a second one is ever ruled a bucket, this
     # renders both rather than silently naming the first: a table that quietly stopped
@@ -152,15 +195,36 @@ def figures(s):
         # derived itself could agree with the index while disagreeing with the denominator,
         # which is the two-denominators defect one level further out.
         "family_count": _n(fam["families"]),
-        "family_fully_detected": _n(fam["fully_detected"]),
-        "family_partially_detected": _n(fam["partially_detected"]),
-        "family_completely_missed": _n(fam["completely_missed"]),
-        "family_macro_pct": _rate(fam["macro_rate"]),
+        # --- one column per sampling frame, and no rate across the two -------------------
+        # Every rate below is over ONE frame and is rendered beside that frame's label and its
+        # own integer pair. `rate_violations` refuses a document that separates them.
+        "frame_conditioned_label": frame_label(cond_b, cond_m),
+        "frame_conditioned_families": _n(cond_m["families"]),
+        "frame_conditioned_rows": _n(cond_m["rows"]),
+        "frame_conditioned_fully": _n(cond_m["fully_detected"]),
+        "frame_conditioned_partially": _n(cond_m["partially_detected"]),
+        "frame_conditioned_missed": _n(cond_m["completely_missed"]),
+        "frame_conditioned_macro_pct": _opt_rate(cond_m["macro_rate"]),
         # From the integer pair, never from the stored rate: both are published, so there is
         # no reason to round a rounded number. The stored `micro_rate` is kept for anything
         # reading the summary directly, and `--inject` asserts the two agree to a decimal.
-        "family_micro_pct": _pct(fam["detected_rows"], fam["rows"]),
-        "family_micro_ratio": "%s of %s" % (_n(fam["detected_rows"]), _n(fam["rows"])),
+        "frame_conditioned_micro_pct": _opt_pct(cond_m["detected_rows"], cond_m["rows"]),
+        "frame_conditioned_micro_ratio": "%s of %s" % (_n(cond_m["detected_rows"]),
+                                                       _n(cond_m["rows"])),
+        "frame_unrecorded_label": "sampling frame not recorded",
+        "frame_unrecorded_families": _n(unrec_m["families"]),
+        "frame_unrecorded_rows": _n(unrec_m["rows"]),
+        "frame_unrecorded_fully": _n(unrec_m["fully_detected"]),
+        "frame_unrecorded_partially": _n(unrec_m["partially_detected"]),
+        "frame_unrecorded_missed": _n(unrec_m["completely_missed"]),
+        "frame_unrecorded_macro_pct": _opt_rate(unrec_m["macro_rate"]),
+        "frame_unrecorded_micro_pct": _opt_pct(unrec_m["detected_rows"], unrec_m["rows"]),
+        "frame_unrecorded_micro_ratio": "%s of %s" % (_n(unrec_m["detected_rows"]),
+                                                      _n(unrec_m["rows"])),
+        # Computed and NEVER rendered. These exist so the guard can name them in a document
+        # that quotes one; see COMBINED_RATES.
+        "family_combined_macro_pct": _opt_rate(fam["macro_rate"]),
+        "family_combined_micro_pct": _opt_pct(fam["detected_rows"], fam["rows"]),
         "unfamilied_rows": _n(pop["unfamilied"]),
         "unfamilied_detected": _n(popd["unfamilied"]),
         "bucketed_rows": _n(pop["provenance_bucketed"]),
@@ -212,46 +276,72 @@ def render_readme_figures(f):
 
 
 def render_readme_family(f):
-    """The family split, the macro/micro gap, and the populations the gap is silent about.
+    """One column per sampling frame, and no rate across the two.
 
-    The last three rows are not decoration. A reader who sees only the first six learns that
-    the scanner catches 9 campaigns of 38 and misses 24, and would reasonably conclude the
-    corpus says so about the whole reviewed set. It does not: 531 reviewed malicious rows
-    carry no family, 530 of them are detected, and no figure above them counts one. The rows
-    naming that, the provenance bucket and the re-run power are what stop the table being a
-    more precise version of the same overstatement.
+    The previous version of this table published a single family rate. That rate was 14.9%, and
+    applying 180 byte-defined labels would have taken it to 32.1% without a single verdict
+    changing - because all 180 came out of a pool that is 530-of-531 detected. A reader would
+    have seen the scanner improve by 17 points overnight, and the only thing that changed was
+    who had got around to labelling what.
+
+    NEITHER COLUMN IS THE HEADLINE, and that is a decision rather than a hedge. The obvious
+    repair - exclude the contaminated families and keep 14.9% - promotes a figure whose own
+    frame is contaminated the other way: 602 of those 707 rows are recorded known misses,
+    because a mass miss is what gets investigated and labelled, and one 2017 doorway campaign
+    supplies 495 of them. Drop that single family and the same rate reads 49.5%. This project
+    has already shipped a metric that could not deliver bad news; one that cannot deliver good
+    news is the same defect with the sign flipped. So both, each under its own frame.
+
+    The sample-weighted figure below the split is the whole reviewed set with its denominator
+    stated, and it does not move when a label is assigned - assigning a family changes no
+    verdict and no expectation.
     """
     return [
+        (None, "| figure | families labelled before this writer | families labelled from the "
+               "unfamilied pool |"),
+        (None, "|---|---|---|"),
+        ("frame_unrecorded_label",
+         "| **Sampling frame** | **%s** | **%s** |"
+         % (f["frame_unrecorded_label"], f["frame_conditioned_label"])),
+        ("frame_unrecorded_families",
+         "| Campaign families | %s | %s |"
+         % (f["frame_unrecorded_families"], f["frame_conditioned_families"])),
+        ("frame_unrecorded_rows",
+         "| Rows carrying the label | %s | %s |"
+         % (f["frame_unrecorded_rows"], f["frame_conditioned_rows"])),
+        ("frame_unrecorded_fully",
+         "| Families fully detected | %s | %s |"
+         % (f["frame_unrecorded_fully"], f["frame_conditioned_fully"])),
+        ("frame_unrecorded_partially",
+         "| Families partially detected | %s | %s |"
+         % (f["frame_unrecorded_partially"], f["frame_conditioned_partially"])),
+        ("frame_unrecorded_missed",
+         "| Families completely missed | %s | %s |"
+         % (f["frame_unrecorded_missed"], f["frame_conditioned_missed"])),
+        ("frame_unrecorded_macro_pct",
+         "| Macro average — every family weighted equally | %s | %s |"
+         % (f["frame_unrecorded_macro_pct"], f["frame_conditioned_macro_pct"])),
+        ("frame_unrecorded_micro_pct",
+         "| Micro average — every sample weighted equally | %s (%s) | %s (%s) |"
+         % (f["frame_unrecorded_micro_pct"], f["frame_unrecorded_micro_ratio"],
+            f["frame_conditioned_micro_pct"], f["frame_conditioned_micro_ratio"])),
+        (None, ""),
         (None, "| figure | value | denominator |"),
         (None, "|---|---|---|"),
-        ("family_fully_detected",
-         "| **Families fully detected** | **%s** | of %s campaign families |"
-         % (f["family_fully_detected"], f["family_count"])),
-        ("family_partially_detected",
-         "| **Families partially detected** | **%s** | of %s campaign families |"
-         % (f["family_partially_detected"], f["family_count"])),
-        ("family_completely_missed",
-         "| **Families completely missed** | **%s** | of %s campaign families |"
-         % (f["family_completely_missed"], f["family_count"])),
-        ("family_macro_pct",
-         "| Macro average — every family weighted equally | %s | mean per-family detection "
-         "over %s families |" % (f["family_macro_pct"], f["family_count"])),
-        ("family_micro_pct",
-         "| Micro average — every sample weighted equally | %s | %s samples carrying a "
-         "campaign family |" % (f["family_micro_pct"], f["family_micro_ratio"])),
         ("detection_pct",
-         "| Sample-weighted detection, whole reviewed set | %s | %s reviewed malicious "
-         "samples |" % (f["detection_pct"], f["detection_ratio"])),
+         "| **Sample-weighted detection, whole reviewed set** | **%s** | %s reviewed malicious "
+         "samples — unchanged by any labelling |"
+         % (f["detection_pct"], f["detection_ratio"])),
         ("unfamilied_rows",
          "| Reviewed malicious rows carrying no family | %s | %s of them detected — outside "
-         "every family figure above |" % (f["unfamilied_rows"], f["unfamilied_detected"])),
+         "both columns above |" % (f["unfamilied_rows"], f["unfamilied_detected"])),
         ("bucketed_rows",
          "| Rows under a provenance label rather than a campaign | %s | %s — membership "
          "conditioned on detection, so excluded |"
          % (f["bucketed_rows"], f["bucketed_label"])),
         ("techniques",
-         "| Technique coverage | %s | distinct techniques; the same %s rows carry none |"
-         % (f["techniques"], f["rows_without_technique"])),
+         "| Technique coverage | %s | distinct techniques; %s reviewed malicious rows carry "
+         "none |" % (f["techniques"], f["rows_without_technique"])),
         ("family_rerun_full",
          "| Families a stranger can re-run in full | %s | of %s; %s have no re-runnable "
          "member, holding %s rows |"
@@ -333,6 +423,71 @@ def replace_body(text, name, lines):
     return text[:a] + "\n" + "\n".join(lines) + "\n" + text[b:]
 
 
+# ------------------------------------------------------- the guard on a family rate
+#
+# THE REGION CHECK ABOVE CANNOT SEE THIS, AND THAT IS WHY THIS EXISTS.
+# `drift()` compares a generated block against what the generator would write. It says nothing
+# about the prose around the block, which is by design - prose is a person's and survives
+# regeneration. But a family rate quoted in that prose is a published figure with no denominator
+# beside it, and the region check will report `agrees` over a document that carries one.
+#
+# Two rules, and they are different failures:
+#
+#   companions   a rate rendered for ONE sampling frame must appear with that frame's integer
+#                pair and that frame's label. `14.9%` alone is not a claim anybody can check;
+#                `14.9% (105 of 707), sampling frame not recorded` is.
+#   combined     a rate computed across BOTH frames must not appear at all. It is not merely
+#                unaccompanied - there is no population to accompany it with. 32.1% is over the
+#                union of a pool that is 530-of-531 detected and a pool that is 602-of-707
+#                missed; no denominator makes that number mean anything, so the repair is not
+#                to caption it but to refuse it.
+#
+# The combined rule stands down when the union rate EQUALS a rendered per-frame rate, which is
+# exactly the state before any frame-conditioned family exists: the union is then one frame's
+# population and carries that frame's denominator. Without that exemption this guard would
+# refuse the correct document it was committed alongside.
+#
+# SCOPE: the documents in `REGIONS`, and deliberately not every tracked file. `CHANGELOG.md`,
+# `CORPUS_PLAN.md` and everything under `docs/results/` are history - the corpus changelog says
+# so in its own header - and a round is entitled to record "this figure would have read 32.1%
+# and here is why we did not publish it". Sweeping those would forbid the sentence that
+# explains the rule. What is defended is the set of documents that carry a generated region,
+# which is the set a stranger reads as current.
+RATE_COMPANIONS = {
+    "frame_conditioned_macro_pct": ("frame_conditioned_micro_ratio", "frame_conditioned_label"),
+    "frame_conditioned_micro_pct": ("frame_conditioned_micro_ratio", "frame_conditioned_label"),
+    "frame_unrecorded_macro_pct": ("frame_unrecorded_micro_ratio", "frame_unrecorded_label"),
+    "frame_unrecorded_micro_pct": ("frame_unrecorded_micro_ratio", "frame_unrecorded_label"),
+}
+
+COMBINED_RATES = ("family_combined_macro_pct", "family_combined_micro_pct")
+
+
+def rate_violations(text, f):
+    """[(figure, what is missing)] for every family rate `text` publishes without its population.
+
+    Whole-document rather than per-region on purpose: the region is already defended line by
+    line, and the failure this catches is a number that escaped INTO the prose, where nothing
+    was looking.
+    """
+    out = []
+    per_frame = {f[k] for k in RATE_COMPANIONS if f.get(k) not in (None, DASH)}
+    for rate in sorted(RATE_COMPANIONS):
+        if f[rate] == DASH or f[rate] not in text:
+            continue
+        for c in RATE_COMPANIONS[rate]:
+            if f[c] not in text:
+                out.append((rate, "its %s is not stated beside it (%r)" % (c, f[c])))
+    for name in COMBINED_RATES:
+        v = f[name]
+        if v == DASH or v in per_frame:
+            continue
+        if v in text:
+            out.append((name, "a rate across BOTH sampling frames, over a population nobody "
+                              "drew; quote the two frames separately"))
+    return out
+
+
 def drift(on_disk, rendered):
     """(named_figures_that_differ, structural_lines_that_differ).
 
@@ -351,8 +506,14 @@ def drift(on_disk, rendered):
 
 # --------------------------------------------------------------------------- modes
 
-def run(root, mode, out=sys.stdout):
-    """mode is 'write' or 'check'. Returns the number of problems."""
+def run(root, mode, out=sys.stdout, guard=True):
+    """mode is 'write' or 'check'. Returns the number of problems.
+
+    `guard=False` exists for one control and for nothing else: it turns off `rate_violations`
+    so the suite can assert that the region check ALONE passes a document the guard refuses.
+    A guard whose positive case is also caught by the check it was added beside has not been
+    shown to do anything.
+    """
     try:
         s = json.load(open(os.path.join(root, "corpus", "index-summary.json"),
                           encoding="utf-8"))
@@ -408,6 +569,26 @@ def run(root, mode, out=sys.stdout):
                       % ("%s [%s]" % (rel, name),
                          ", ".join(named + ["structure"] * bool(structural)) or "reflowed"),
                       file=out)
+
+    # The guard, over each tracked document once and AFTER any rewrite: writing a region can
+    # only add the companions, never remove them, so sweeping the pre-write text would report a
+    # violation the file on disk no longer has.
+    if guard:
+        for rel in sorted({r for r, _n_, _r_ in REGIONS}):
+            path = os.path.join(root, rel)
+            try:
+                text = open(path, encoding="utf-8").read()
+            except OSError:
+                continue                      # already reported as CANNOT READ by the loop above
+            bad_rates = rate_violations(text, f)
+            label = "%s [family-rate guard]" % rel
+            if not bad_rates:
+                print("  %-44s no unaccompanied family rate" % label, file=out)
+                continue
+            bad += len(bad_rates)
+            print("  %-44s PUBLISHES A FAMILY RATE WITHOUT ITS POPULATION" % label, file=out)
+            for fig, why in bad_rates:
+                print("      %s (%s): %s" % (fig, f[fig], why), file=out)
     return bad
 
 
@@ -542,11 +723,11 @@ def inject():
         #    separately, because a check that only ever watched "fully detected" would let a
         #    partial silently become a miss - which is the collapse the three-state split
         #    exists to prevent.
-        for key, figname in (("fully_detected", "family_fully_detected"),
-                             ("partially_detected", "family_partially_detected"),
-                             ("completely_missed", "family_completely_missed")):
+        for key, figname in (("fully_detected", "frame_unrecorded_fully"),
+                             ("partially_detected", "frame_unrecorded_partially"),
+                             ("completely_missed", "frame_unrecorded_missed")):
             s2 = json.loads(original)
-            s2["family_detection"][key] += 1
+            s2["family_detection_by_frame"]["sampling_frame_not_recorded"]["metrics"][key] += 1
             json.dump(s2, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
             n, out = check()
             case("family %-22s drifted by one       refused and named" % key,
@@ -585,6 +766,12 @@ def inject():
              _pct(fam3["detected_rows"], fam3["rows"]) == _rate(fam3["micro_rate"]))
         case("  ...and the macro rate survives being rendered",
              _rate(fam3["macro_rate"]) == "%.1f%%" % round(100.0 * fam3["macro_rate"], 1))
+        # The same property on the block that is actually RENDERED. The pair above is over
+        # `family_detection`, which no document quotes any more; a double-rounding defect could
+        # be reintroduced in the frame blocks with that case still green.
+        r3 = s3["family_detection_by_frame"]["sampling_frame_not_recorded"]["metrics"]
+        case("  ...and on the frame block the documents actually render",
+             _pct(r3["detected_rows"], r3["rows"]) == _rate(r3["micro_rate"]))
 
         # 9. The family region must be defended by the same MISSING_IS_AN_ERROR rule as the
         #    first one. It is a different entry in REGIONS and could have been added without
@@ -598,6 +785,121 @@ def inject():
         case("the family region with no BEGIN marker           refused",
              n > 0 and "MISSING REGION" in out)
         open(pf, "w", encoding="utf-8").write(wholef)
+
+        # 10. THE GUARD ON A FAMILY RATE, in both directions and shown not to be redundant.
+        #     Every case below runs against a summary this function BUILDS, carrying both
+        #     sampling frames populated, so the controls behave identically whether or not any
+        #     frame-conditioned family exists in the real index yet. A control that only worked
+        #     after a particular write would be a control nobody could run first.
+        s10 = json.loads(original)
+        s10["family_detection_by_frame"]["sampling_frame_detection_conditioned"] = {
+            "frame": {"pool_rows": 531, "pool_detected": 530},
+            "metrics": {"families": 7, "rows": 180, "detected_rows": 180,
+                        "fully_detected": 7, "partially_detected": 0, "completely_missed": 0,
+                        "rows_fully_detected": 180, "rows_partially_detected": 0,
+                        "rows_completely_missed": 0, "macro_rate": 1.0, "micro_rate": 1.0}}
+        s10["family_detection"] = dict(s10["family_detection"],
+                                       families=45, rows=887, detected_rows=285,
+                                       macro_rate=0.408205, micro_rate=0.321308)
+        json.dump(s10, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
+        run(tmp, "write", out=io.StringIO())
+        f10 = figures(s10)
+        case("the two frames render different rates",
+             (f10["frame_unrecorded_micro_pct"], f10["frame_conditioned_micro_pct"])
+             == ("14.9%", "100.0%"))
+        case("  ...and the union of them is a third number nobody drew",
+             f10["family_combined_micro_pct"] == "32.1%")
+
+        #     (a) the companion rule, on text, both ways.
+        case("a frame rate quoted with nothing beside it          refused",
+             [v for v in rate_violations("detection by family is 14.9%.", f10)
+              if v[0] == "frame_unrecorded_micro_pct"] != [])
+        with_pop = ("detection by family is 14.9% (105 of 707), sampling frame not recorded.")
+        case("  ...the same rate with its pair and its frame      accepted",
+             rate_violations(with_pop, f10) == [])
+        case("  ...the rate with the pair but NO frame            refused",
+             any("frame_unrecorded_label" in why
+                 for _fig, why in rate_violations("14.9% (105 of 707)", f10)))
+        case("  ...and text quoting no rate at all                accepted",
+             rate_violations("this document quotes no family rate.", f10) == [])
+
+        #     (b) the combined rule: a number over the union of two frames, which no
+        #         denominator can rescue.
+        case("the union rate quoted anywhere                      refused",
+             [v for v in rate_violations("family detection is 32.1%", f10)
+              if v[0] == "family_combined_micro_pct"] != [])
+        case("  ...even with a denominator written beside it",
+             [v for v in rate_violations("family detection is 32.1% of 285 of 887 rows", f10)
+              if v[0] == "family_combined_micro_pct"] != [])
+        case("  ...and the macro union too, not only the micro",
+             [v for v in rate_violations("the macro figure is 40.8%", f10)
+              if v[0] == "family_combined_macro_pct"] != [])
+
+        #     (c) the exemption, which is the state this guard was committed in: with no
+        #         frame-conditioned family the union IS the unmarked frame's population, and
+        #         refusing it would refuse the correct document.
+        #
+        #         BUILT rather than read off the live summary. The first version of this case
+        #         asked `if the real index has no conditioned family yet`, and the moment 180
+        #         rows were applied it stopped running - the suite went from 39 cases to 38
+        #         with nothing failing. A control that disappears when the data changes is a
+        #         control that was never defending the code.
+        s10c = json.loads(original)
+        s10c["family_detection_by_frame"]["sampling_frame_detection_conditioned"] = {
+            "frame": None,
+            "metrics": {"families": 0, "rows": 0, "detected_rows": 0, "fully_detected": 0,
+                        "partially_detected": 0, "completely_missed": 0,
+                        "rows_fully_detected": 0, "rows_partially_detected": 0,
+                        "rows_completely_missed": 0, "macro_rate": None, "micro_rate": None}}
+        unrec = s10c["family_detection_by_frame"]["sampling_frame_not_recorded"]["metrics"]
+        s10c["family_detection"] = dict(s10c["family_detection"], **{
+            k: unrec[k] for k in ("families", "rows", "detected_rows", "macro_rate",
+                                  "micro_rate")})
+        f_none = figures(s10c)
+        case("  ...an empty frame renders as a dash, not as 0.0%",
+             (f_none["frame_conditioned_macro_pct"], f_none["frame_conditioned_micro_pct"])
+             == (DASH, DASH))
+        case("  ...and the union is NOT refused while it equals one frame's own rate",
+             [v for v in rate_violations("family detection is %s"
+                                         % f_none["family_combined_micro_pct"], f_none)
+              if v[0] == "family_combined_micro_pct"] == [])
+        case("  ...while that same text IS refused once both frames are populated",
+             [v for v in rate_violations("family detection is %s"
+                                         % f10["family_combined_micro_pct"], f10)
+              if v[0] == "family_combined_micro_pct"] != [])
+
+        #     (d) END TO END, and NOT REDUNDANT. A rate in prose is invisible to the region
+        #         check by design - prose is a person's and survives regeneration - so the
+        #         guard is asserted to catch what the region check passes.
+        pr = os.path.join(tmp, "README.md")
+        clean_readme = open(pr, encoding="utf-8").read()
+        open(pr, "w", encoding="utf-8").write(
+            clean_readme.rstrip("\n") + "\n\nFamily-weighted detection is 32.1%.\n")
+        n, out = check()
+        case("a union rate loose in the prose                     refused",
+             n > 0 and "family_combined_micro_pct" in out)
+        buf = io.StringIO()
+        n_noguard = run(tmp, "check", out=buf, guard=False)
+        case("  ...and the region check ALONE passes that file (so the guard is not redundant)",
+             n_noguard == 0)
+        open(pr, "w", encoding="utf-8").write(clean_readme)
+
+        #     ...and the companion rule end to end, in the document that carries no family
+        #     table at all, so nothing else in the file can satisfy it by accident.
+        ps = os.path.join(tmp, "corpus", "SOURCES.md")
+        clean_sources = open(ps, encoding="utf-8").read()
+        open(ps, "w", encoding="utf-8").write(
+            clean_sources.rstrip("\n") + "\n\nFamilies are detected at 14.9%.\n")
+        n, out = check()
+        case("a frame rate in a document with no population       refused",
+             n > 0 and "SOURCES.md [family-rate guard]" in out)
+        buf = io.StringIO()
+        case("  ...which the region check alone also passes",
+             run(tmp, "check", out=buf, guard=False) == 0)
+        open(ps, "w", encoding="utf-8").write(clean_sources)
+
+        open(sp, "w", encoding="utf-8").write(original)
+        run(tmp, "write", out=io.StringIO())
 
         n, _out = check()
         case("the tree restored                                accepted", n == 0)
@@ -630,9 +932,18 @@ def main():
     bad = run(ROOT, mode)
     print()
     if bad:
-        print("%d region(s) disagree with the index summary. Run corpus/doc-figures.py to "
-              "regenerate,\nand read WHY THIS EXISTS in this file before hand-editing one."
-              % bad)
+        # Two failures reach this line and they have opposite repairs, so it must not name
+        # only one. A drifted region is fixed by regenerating; a family rate published without
+        # its population is in PROSE, which this tool never rewrites, and telling its reader to
+        # regenerate would send them to run a command that cannot touch the problem.
+        print("%d problem(s).\n"
+              "  a region that DISAGREES is fixed by running corpus/doc-figures.py\n"
+              "  a region that is MISSING is fixed by restoring its markers\n"
+              "  a family rate PUBLISHED WITHOUT ITS POPULATION is in prose this tool does "
+              "not write:\n    state the frame and the denominator beside it, or take the "
+              "number out\n"
+              "Read WHY THIS EXISTS and the guard's comment in this file before hand-editing "
+              "anything." % bad)
         return 1
     print("every generated region agrees with corpus/index-summary.json"
           if mode == "check" else "every generated region is up to date")

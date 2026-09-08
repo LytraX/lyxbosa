@@ -136,10 +136,15 @@ it, and leave the prose around the markers alone — it survives regeneration by
   detect a 1%-of-files discrepancy 7.7% of the time; reporting "verified" from that is
   reporting nothing. §11.
 - **A denominator enumerated by the same process that produced the numerator bounds the
-  result, not reality.** Twelve instances are recorded in §11. Assume a thirteenth exists in
+  result, not reality.** Thirteen instances are recorded in §11. Assume a fourteenth exists in
   whatever you measure next — and note that a *tool* can carry the property as readily as a
-  measurement: four of the twelve are the orphan census bounding its own answer, in four
-  different ways, each one found only after the previous repair was called done.
+  measurement: four of the thirteen are the orphan census bounding its own answer, in four
+  different ways, each one found only after the previous repair was called done. The
+  thirteenth is the one to read first if you are about to label anything: a family definition
+  can be **clean** — byte-defined, marker-verified, refusing anything the rule-set determines —
+  while the **pool it was drawn from** is detection-conditioned. Membership and sampling frame
+  are two failures, the second is invisible in the assigning code, and the repair is to measure
+  the frame at write time and record it on the row.
 - **Never report a detection figure taken across a changing binary or a changing index.**
   `corpus/verify.py` reads `$LYXBOSA_BIN`, defaulting to `build-release/lyxbosa`; point it at
   your own build rather than rebuilding the one another session is measuring with.
