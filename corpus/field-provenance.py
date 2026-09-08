@@ -52,7 +52,7 @@ TWO DENOMINATORS, BOTH BOUNDED BY THE PROCESS THAT PRODUCED THEM (§11)
     corpus/field-provenance.py --json
     corpus/field-provenance.py --inject
 """
-import argparse, ast, collections, json, os, sys, tempfile
+import argparse, ast, collections, json, os, re, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -77,6 +77,17 @@ KNOWN = {
                    "count (or the older copies_on_disk)"),
     "copies_on_disk": ("the older name for `count` on two published rows; read by the same "
                        "shard-gate invariant as `placements`"),
+    # --- triaged 2026-09-08 (cl), the round the control-only rule became a call-graph
+    # question. Both of these read `written` until then, on the strength of one fixture.
+    "account_hash": ("`account_hash` on 67,985 rows and `origin.account_hash` on 47,133, both "
+                     "written by trail-data/incoming/2026-09-04/merge-context.py, untracked - "
+                     "the same untracked writer as `placements` and the removed "
+                     "`origin.incident`. It reported `written` until 2026-09-08 and the sole "
+                     "claimed writer was `derive-index-db._loc()`, a fixture row builder "
+                     "called only from `cmd_inject`. Genuinely READ by derived_db._extract, "
+                     "quarantine-queue and regen-tiers, so read-only is the true state, not "
+                     "orphan. The verdict rests on a leaf the two fields share; sharing can "
+                     "only ADD matches, so it cannot be hiding a missing reader"),
     # --- triaged 2026-09-07 (cl). Searched with `command grep` over the 276 python files
     # under corpus/, trail-data/, docs/ and tests/ found by `find`, because the shell's
     # `grep` respects .gitignore and cannot see trail-data at all - which is where every
@@ -186,24 +197,177 @@ MOVED = {
 # `KNOWN` and `REMOVED` are dict literals keyed by field name, so the census was the sole
 # claimed writer of six real index fields until it stopped parsing itself. Control fixtures
 # are the same shape one level along, and the count is not small: measured over both halves,
-# NINE fields carried by rows have no write position anywhere in `corpus/` outside a control
-# suite - including `account_hash` on 67,985 rows and `origin.account_hash` on 47,133, whose
-# only mention in this repository is a fixture in `regen-tiers.py --inject`. Every one of
-# them was being reported as covered.
-CONTROL_SUITES = ("inject", "_selftest")
+# NINE fields carried by rows had no write position anywhere in `corpus/` outside a control
+# suite - `account_hash` on 67,985 rows and `origin.account_hash` on 47,133 among them. Every
+# one of them was being reported as covered.
+#
+# THE UNIT IS REACHABILITY, NOT THE NAME OF THE FUNCTION THE LITERAL SITS IN
+# ---------------------------------------------------------------------------
+# That rule was `n.name in ("inject", "_selftest")`, applied to the function a write position
+# is lexically inside, and both halves of it were wrong. The control that should have said so
+# is the one that failed - `account_hash has no real write position in corpus/` has been red
+# since round 14, and went unlooked-at for six rounds because nothing runs the control suites.
+#
+#   * THE NAMES WERE INCOMPLETE. Four control suites in this directory are not called either
+#     of those things: `derive-index-db.cmd_inject` (argparse dispatch), `content_mask._inject`
+#     and `pre-push-check.inject_docfigures` / `inject_summary`. So the rule is a token match
+#     now - `inject` or `selftest` as an underscore-delimited word - which covers all six
+#     names in use and is checked in `--inject` against the directory rather than asserted.
+#
+#   * LEXICAL WAS THE WRONG UNIT, AND THIS IS THE HALF THE CONTROL CAUGHT.
+#     `derive-index-db._loc()` is a fixture row builder defined at MODULE level and called
+#     only from `cmd_inject`. Its dict literal carries `account_hash`, and that one fixture
+#     was the entire basis on which the census called `account_hash` (67,985 rows) and
+#     `origin.account_hash` (47,133) covered. `_pub()` beside it is the same shape.
+#
+# So a write position is discounted when the function holding it can be reached from a control
+# entry point AND FROM NOTHING ELSE.
+#
+# `NOTHING ELSE` IS DELIBERATELY GENEROUS, BECAUSE THE BLINDNESS HAS TO FALL THE SAFE WAY
+# -----------------------------------------------------------------------------------------
+# A rule that excluded whatever a control can reach would start excluding real writers the
+# moment a control exercised one, and measured, that is not hypothetical - it is the first
+# thing that happens. With intra-module calls alone, `indexio.write_jsonl_atomic` and
+# `index_lock` come out control-only, because `_selftest` is the only caller inside
+# `indexio.py` and every other caller is in another file. Those two are what AGENTS.md
+# requires every index write to go through. `clearance.evidence_for`, `finding_digest` and
+# `applies` go the same way, and so does the whole of `gate_evidence`'s declared API.
+#
+# A function is therefore spared by ANY of four independent clauses. Each can only ever move a
+# function from `control-only` back to `writer`, so a clause that is blind leaves the census
+# exactly where it was before this rule existed - an over-count of `written`, an under-count of
+# `ORPHAN`, which is the direction this file's docstring argues for and the one where a miss
+# costs a reader nothing:
+#
+#   1. anything named outside every function definition - a dispatch table, `__main__`
+#   2. anything no other name in the file mentions at all: an entry point, reached from outside
+#   3. anything named in any other `corpus/*.py`, as a call, a bare name or a STRING
+#   4. `__all__`, which clause 3 covers because it counts strings: `gate_evidence.compare_gate`
+#      is called nowhere in `corpus/` outside that module's own `_selftest` - every other
+#      mention is prose in a docstring - so a call graph alone makes a module's own declaration
+#      of what it is for look like a fixture.
+#
+# Clause 3 is scoped to `corpus/*.py`, the same enumeration this census already declares for
+# itself, rather than to every python file on the machine, so the answer does not change with
+# whether a gitignored tree is present. Measured 2026-09-08: widening it to all 286 files
+# `find` reports gives the identical result, and a name it cannot see stays a writer.
+#
+# MEASURED BEFORE IT WAS APPLIED, over both halves. Twelve module-level functions become
+# control-only. They carry 7 key literals nothing else in `corpus/` writes, and only 3 of the
+# 7 are fields the index actually carries: `account_hash` (67,985 rows), `origin.account_hash`
+# (47,133) and `placements` (33,555). The other four - `nested`, `an_unmodelled_field` and two
+# masking fixture labels - name nothing any row holds, so they never reach the census.
+#
+#   written 298 -> 295, read-only 22 -> 25, ORPHAN 49 -> 49, fields 369 -> 369
+#
+# All three land on READ-ONLY and not one new orphan appears, which is the outcome to check
+# rather than the one to hope for: this rule can only remove writers, so it is exactly the
+# shape that manufactures false orphans, and §11 records four instances of this census
+# bounding its own answer. It does not here, because all three have real tracked readers -
+# `derived_db._extract` calls `row.get("account_hash")`, and `placements` is read by
+# shard-gate, make-shard-manifest and derived_db. What changes is the claim, from "a tracked
+# tool writes this" to "tracked tools only read it", and the second one is true. Both writers
+# are named in `KNOWN` below and both are untracked.
+#
+# The `account_hash` verdict rests on a leaf shared with `origin.account_hash`, and `classify`
+# says so on the row. That is the eleventh instance and it is unchanged by this round.
+# See `--inject`, which asserts both directions on the real directory.
+CONTROL_SUITE = re.compile(r"(?:^|_)(?:inject|selftest)(?:_|$)")
 
 
-def _control_nodes(tree):
-    """Every node inside a control-suite function, by identity."""
+def _toplevel_defs(tree):
+    return {n.name: n for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def _mentions(node, names):
+    """Which of `names` this subtree names - as a call, a bare reference, or a string.
+
+    Strings count, and that is clause 4 above: `__all__` is a list of them and is a module's
+    own statement of its public surface.
+    """
+    out = set()
+    for c in ast.walk(node):
+        if isinstance(c, ast.Name) and c.id in names:
+            out.add(c.id)
+        elif isinstance(c, ast.Attribute) and c.attr in names:
+            out.add(c.attr)
+        elif isinstance(c, ast.Constant) and isinstance(c.value, str) and c.value in names:
+            out.add(c.value)
+    return out
+
+
+def module_names(path):
+    """Every identifier and string constant `path` names. Clause 3's raw material."""
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read())
+    except (SyntaxError, ValueError):                                # pragma: no cover
+        return set()
+    out = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name):
+            out.add(n.id)
+        elif isinstance(n, ast.Attribute):
+            out.add(n.attr)
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+            out.add(n.value)
+        elif isinstance(n, ast.alias):
+            out.add(n.name.split(".")[-1])
+            if n.asname:
+                out.add(n.asname)
+    return out
+
+
+def control_only(tree, named_elsewhere=()):
+    """({control entry points}, {module-level functions only they reach}) for one AST."""
+    D = _toplevel_defs(tree)
+    names = set(D)
+    roots = {n for n in names if CONTROL_SUITE.search(n)}
+    if not roots:
+        return set(), set()
+    edges = {n: _mentions(D[n], names) - {n} for n in names}
+    def_ids = {id(d) for d in D.values()}
+    module_level = set()
+    for stmt in tree.body:
+        if id(stmt) not in def_ids:
+            module_level |= _mentions(stmt, names)
+    referenced = set(module_level)
+    for n in names:
+        referenced |= edges[n]
+
+    def walk(seeds, blocked):
+        seen, stack = set(), [s for s in seeds if s not in blocked]
+        while stack:
+            n = stack.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            stack.extend(m for m in edges.get(n, ()) if m not in blocked)
+        return seen
+
+    spared = walk((module_level                       # clause 1
+                   | (names - referenced)             # clause 2
+                   | (names & set(named_elsewhere)))  # clauses 3 and 4
+                  - roots, roots)
+    return roots, walk(roots, set()) - spared - roots
+
+
+def _control_nodes(tree, named_elsewhere=()):
+    """Every node inside a control suite or a function only a control suite reaches."""
     inside = set()
     for n in ast.walk(tree):
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in CONTROL_SUITES:
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and CONTROL_SUITE.search(n.name):
             for c in ast.walk(n):
                 inside.add(id(c))
+    D = _toplevel_defs(tree)
+    for name in control_only(tree, named_elsewhere)[1]:
+        for c in ast.walk(D[name]):
+            inside.add(id(c))
     return inside
 
 
-def key_positions(path):
+def key_positions(path, named_elsewhere=()):
     """({written}, {read}) - the string constants this module writes and reads as keys.
 
     A module-level `NAME = "literal"` is resolved, because the tools here write through
@@ -211,15 +375,19 @@ def key_positions(path):
     Without it `adopt-decoded-tags.py` and `tag-sensitivity.py` both report their own record
     field as an orphan, which is a false finding in the direction that wastes a round.
 
-    Write positions inside `inject()` and `_selftest()` do NOT count - see `CONTROL_SUITES`.
-    Read positions still do: a control that reads a field is a tracked reader of it in the
-    only sense this census measures, and the asymmetry is deliberate, because `written` is
-    the state that hides a field from the report.
+    Write positions in a control suite, or in a module-level function only a control suite
+    reaches, do NOT count - see `CONTROL_SUITE`. Read positions still do: a control that reads
+    a field is a tracked reader of it in the only sense this census measures, and the asymmetry
+    is deliberate, because `written` is the state that hides a field from the report.
+
+    `named_elsewhere` is what the other modules in `corpus/` name, and it can only ever SPARE
+    a function from that exclusion. Called without it - as `--inject` does on purpose, to show
+    what the clause is holding up - `indexio.write_jsonl_atomic` becomes control-only.
     """
     with open(path, encoding="utf-8") as fh:
         tree = ast.parse(fh.read())
     written, read = set(), set()
-    control = _control_nodes(tree)
+    control = _control_nodes(tree, named_elsewhere)
 
     consts = {}
     for node in tree.body:
@@ -342,14 +510,25 @@ def named_field_tables(path, names):
 
 
 def scan_modules(root=HERE):
-    """(writes, reads) over every tracked python module in `corpus/`, except this one."""
+    """(writes, reads) over every tracked python module in `corpus/`, except this one.
+
+    Two passes, because clause 3 of the control-only rule is cross-module: what every OTHER
+    module in the directory names is what spares a function from being read as a fixture. This
+    file is excluded from the first pass for the same reason it is excluded from the second -
+    `KNOWN` and `REMOVED` are tables of field names, and letting them vouch for anything is the
+    census claiming to be its own evidence.
+    """
     writes, reads = collections.defaultdict(set), collections.defaultdict(set)
     del PARSED[:]
-    for fn in sorted(os.listdir(root)):
-        if not fn.endswith(".py") or fn == SELF:
-            continue
+    files = [fn for fn in sorted(os.listdir(root)) if fn.endswith(".py") and fn != SELF]
+    mentioned = {fn: module_names(os.path.join(root, fn)) for fn in files}
+    for fn in files:
+        elsewhere = set()
+        for other, names in mentioned.items():
+            if other != fn:
+                elsewhere |= names
         try:
-            w, r = key_positions(os.path.join(root, fn))
+            w, r = key_positions(os.path.join(root, fn), elsewhere)
         except SyntaxError:                                          # pragma: no cover
             continue
         PARSED.append(fn)
@@ -736,12 +915,167 @@ def inject():
              wc.get("written_only_in_a_selftest"), None)
         case("but a field READ inside a control is still read",
              sorted(rc.get("read_only_in_a_fixture", ())), ["controlled.py"])
-        # And on the real tree, which is where the nine were found.
+
+        print()
+        print("=== a fixture HELPER is not a writer either, and that is a call-graph question ===")
+        # The half the lexical rule could not see, and the half that kept this case red from
+        # round 14 to round 20. `helper()` is defined at MODULE level, so no rule about the
+        # name of the enclosing function reaches it; it is a fixture because the only thing
+        # that calls it is a control.
+        with open(os.path.join(tmp, "reached.py"), "w", encoding="utf-8") as fh:
+            fh.write("def helper(i):\n"
+                     "    return {'written_only_in_a_fixture_helper': i}\n"
+                     "def shared(r):\n"
+                     "    r['written_by_a_helper_a_control_also_uses'] = 1\n"
+                     "def real(r):\n"
+                     "    shared(r)\n"
+                     "def cmd_inject(a):\n"
+                     "    shared({})\n"
+                     "    return [helper(i) for i in range(3)]\n")
+        wh, _rh = scan_modules(tmp)
+        case("a field written only in a control-only helper is NOT",
+             wh.get("written_only_in_a_fixture_helper"), None)
+        # THE OTHER DIRECTION, WHICH IS THE ONE THAT MAKES THIS RULE SAFE TO HAVE. A helper a
+        # control exercises is still a writer as long as anything else reaches it. Without
+        # this, the rule would delete a real writer the first time a control ran one - and
+        # measured on the real directory, the first time is immediately.
+        case("  ...but one a control AND real code reach still is",
+             sorted(wh.get("written_by_a_helper_a_control_also_uses", ())), ["reached.py"])
+        # And a control entry point is recognised by its name being `inject` or `selftest` as
+        # a word, not by being spelled exactly one of two ways. `cmd_inject` above is a real
+        # name in this directory and the old tuple did not match it.
+        case("  ...and `cmd_inject` counts as a control entry point",
+             bool(CONTROL_SUITE.search("cmd_inject")), True)
+        for nm in ("inject", "_selftest", "_inject", "inject_docfigures", "inject_summary"):
+            case("  ...so does `%s`" % nm, bool(CONTROL_SUITE.search(nm)), True)
+        # And it does not fire on an ordinary name that merely contains the letters.
+        for nm in ("injection_sites", "reinject", "selftested"):
+            case("  ...and `%s` is not one" % nm, bool(CONTROL_SUITE.search(nm)), False)
+        # Every control entry point in corpus/ is matched, asked of the directory rather than
+        # asserted from a list: a name this rule cannot see is a fixture counted as a writer,
+        # which is the state this round found.
+        unmatched = sorted(
+            fn for fn in os.listdir(HERE)
+            if fn.endswith(".py") and any(
+                isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and ("inject" in n.name or "selftest" in n.name)
+                and not CONTROL_SUITE.search(n.name)
+                for n in ast.walk(ast.parse(open(os.path.join(HERE, fn),
+                                                 encoding="utf-8").read()))))
+        case("no control suite in corpus/ has a name this rule misses", unmatched, [])
+
+        print()
+        print("=== the cross-module clause, and what it is holding up ===")
+        # Each clause is asserted on the module that actually needs it, and each is asserted
+        # to be LOAD-BEARING: taken away, the answer has to change. A spare that nothing
+        # depends on is a spare nobody would notice going wrong. Measured over the directory,
+        # clause 1 is what holds up gate_evidence, clause 3 is what holds up
+        # gate_provenance.verify, and clause 2 currently spares nothing at all - which is
+        # asserted below rather than left as an assumption, because a clause silently doing
+        # nothing is how a safeguard rots.
+        others = set()
+        for fn in sorted(os.listdir(HERE)):
+            if fn.endswith(".py") and fn not in (SELF, "indexio.py"):
+                others |= module_names(os.path.join(HERE, fn))
+
+        def without_all(tree):
+            return ast.Module(body=[n for n in tree.body
+                                    if not (isinstance(n, ast.Assign)
+                                            and any(isinstance(t, ast.Name)
+                                                    and t.id == "__all__"
+                                                    for t in n.targets))],
+                              type_ignores=[])
+
+        # The headline negative: the two functions AGENTS.md requires every index write to go
+        # through. `indexio._selftest` is their only caller inside indexio.py - every other
+        # caller is in a different file - so nothing in that module's own CALL graph reaches
+        # them. Two clauses hold them up independently, `__all__` at module level and fifteen
+        # callers elsewhere, and with both removed the census reads the index writer as a
+        # fixture. That is what a rule saying "exclude whatever a control can reach" does on
+        # its first contact with this directory.
+        ix = ast.parse(open(os.path.join(HERE, "indexio.py"), encoding="utf-8").read())
+        case("indexio's index writer is not a fixture",
+             sorted(control_only(ix, others)[1] & {"write_jsonl_atomic", "index_lock"}), [])
+        case("  ...and with neither clause it would be read as one",
+             sorted(control_only(without_all(ix))[1] & {"write_jsonl_atomic", "index_lock"}),
+             ["index_lock", "write_jsonl_atomic"])
+
+        # CLAUSE 1, on the module where it is decisive on its own. `gate_evidence` declares
+        # `__all__` and three of the names in it are called nowhere in `corpus/` outside that
+        # module's own `_selftest` - every other mention is prose in a docstring, which is not
+        # a call and must not be read as one. A module's `__all__` is a list of STRINGS, so it
+        # is invisible to a call graph; `_mentions` counts string constants for this reason and
+        # this is the case that says so.
+        ge = ast.parse(open(os.path.join(HERE, "gate_evidence.py"), encoding="utf-8").read())
+        ge_others = set()
+        for fn in sorted(os.listdir(HERE)):
+            if fn.endswith(".py") and fn not in (SELF, "gate_evidence.py"):
+                ge_others |= module_names(os.path.join(HERE, fn))
+        three = {"same_finding", "forked_secret_rows", "_forked_in"}
+        case("gate_evidence's declared API is not a fixture",
+             sorted(control_only(ge, ge_others)[1] & three), [])
+        case("  ...and it is __all__ that says so, not the call graph",
+             sorted(control_only(without_all(ge), ge_others)[1] & three),
+             ["_forked_in", "forked_secret_rows", "same_finding"])
+
+        # CLAUSE 3, the cross-module one. Measured over the directory it is decisive for
+        # exactly one function today - `gate_provenance.verify`, which `clear-finding.py`
+        # calls on line 131, and which nothing inside gate_provenance.py names outside
+        # `inject`. One is a small number, and saying so is the point of measuring instead of
+        # asserting the clause is obviously needed.
+        gp = ast.parse(open(os.path.join(HERE, "gate_provenance.py"), encoding="utf-8").read())
+        gp_others = set()
+        for fn in sorted(os.listdir(HERE)):
+            if fn.endswith(".py") and fn not in (SELF, "gate_provenance.py"):
+                gp_others |= module_names(os.path.join(HERE, fn))
+        case("gate_provenance.verify is spared by another module naming it",
+             "verify" in control_only(gp, gp_others)[1], False)
+        case("  ...and without that clause it would read as a fixture",
+             "verify" in control_only(gp)[1], True)
+
+        # CLAUSE 2 - a function nothing in its own file names is an entry point, reached from
+        # outside, and what it spares is everything DOWNSTREAM of it. It cannot spare itself:
+        # a def nothing names is a def no control reaches either, so it was never a candidate.
+        # `api` below is that entry point, `helper` is what it holds up, and a control happens
+        # to call `helper` too.
+        #
+        # Measured over corpus/ on 2026-09-08, this clause is decisive for nothing: disabling
+        # it excludes not one additional function. It is kept anyway, and the reason is the
+        # direction of the mistake - the clause can only ever spare, so an unused one costs a
+        # census that is already an over-count of `written` exactly nothing, while its absence
+        # costs a false orphan the first time a library here grows an entry point its own
+        # control also exercises. That has already happened twice in this directory under the
+        # other two clauses.
+        with open(os.path.join(tmp, "entrypoint.py"), "w", encoding="utf-8") as fh:
+            fh.write("def helper(r):\n"
+                     "    r['written_by_a_helper_an_entry_point_reaches'] = 1\n"
+                     "def api(r):\n"
+                     "    helper(r)\n"
+                     "def inject():\n"
+                     "    helper({})\n")
+        we, _re_ = scan_modules(tmp)
+        case("a helper an unreferenced entry point reaches is a writer",
+             sorted(we.get("written_by_a_helper_an_entry_point_reaches", ())),
+             ["entrypoint.py"])
+
+        print()
+        print("=== and on the real directory, where the fixture was found ===")
         rw0, _rr0 = scan_modules(HERE)
+        # The claim this case has always made, and could not make truthfully until the rule
+        # became a call-graph question. `derive-index-db._loc()` is a module-level fixture row
+        # builder called only from `cmd_inject`; its dict literal was the whole basis for
+        # calling `account_hash` (67,985 rows) and `origin.account_hash` (47,133) covered.
         case("account_hash has no real write position in corpus/",
              rw0.get("account_hash"), None)
         case("deobfuscation.status's leaf has none either",
              rw0.get("status"), None)
+        # `placements` moves with it, and lands on `read-only` rather than ORPHAN, because
+        # shard-gate really does read it. A rule that had sent it to ORPHAN would have
+        # manufactured a false orphan out of a field with a named tracked reader.
+        _rr_all = scan_modules(HERE)[1]
+        case("placements loses its fixture writer", rw0.get("placements"), None)
+        case("  ...and is read-only, not a manufactured orphan",
+             classify(collections.Counter({"placements": 1}), rw0, _rr_all)[0][2], "read-only")
 
         print()
         print("=== the case this tool exists for: the real not_applicable_reason ===")
