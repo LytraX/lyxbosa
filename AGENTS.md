@@ -146,8 +146,41 @@ it, and leave the prose around the markers alone — it survives regeneration by
   are two failures, the second is invisible in the assigning code, and the repair is to measure
   the frame at write time and record it on the row.
 - **Never report a detection figure taken across a changing binary or a changing index.**
-  `corpus/verify.py` reads `$LYXBOSA_BIN`, defaulting to `build-release/lyxbosa`; point it at
-  your own build rather than rebuilding the one another session is measuring with.
+  `corpus/verify.py` reads `$LYXBOSA_BIN`, defaulting to `build-release/lyxbosa`. Build in
+  `build/` and point it there — see *Build directories* below for why that is not a free choice.
+
+## Build directories: there are two, and you do not add a third
+
+`build/` is the debug build. `build-release/` is the release build. **Nothing else.**
+
+When you need a binary to measure with, build in `build/` and run
+`LYXBOSA_BIN=build/lyxbosa python3 corpus/verify.py`. Do not rebuild `build-release/` — another
+session measures with it, and a detection figure taken across a changing binary is not a
+figure. The measurement convention above says "your own build" and it means `build/`.
+
+**A third directory was created once and it was the wrong repair.** `verify.py` had
+`build-release/lyxbosa` hardcoded, so a round that needed its own binary made `build-rules/`
+to avoid disturbing it. The workaround was at the wrong layer: the defect was a hardcoded path
+in the tool, the fix was `$LYXBOSA_BIN`, and the directory was deleted. If two builds are not
+enough for what you are doing, the thing to change is the tool that cannot be pointed at a
+binary — not the number of directories.
+
+This is not a new rule. `docs/RELEASING.md` already defines exactly two CMake presets —
+`debug` to `build/` and `release` to `build-release/` — and says to release the binary you are
+about to tag from `build-release/`. It simply was not written where an agent reads its
+conventions.
+
+Two reasons it is not merely tidiness. `.vscode/settings.json` points
+`C_Cpp.default.compileCommands` at `build/compile_commands.json` and deliberately does **not**
+exclude `build/` from cpptools, because the generated headers live there; a third directory is
+outside that configuration and gets indexed by nothing or by everything.
+
+And `.gitignore` names build directories **individually**, not as a `build-*` pattern — measured:
+a new `build-scratch-probe/` shows up as `??` in `git status`. So a *fresh* name is visible, but
+every name already listed is invisible forever, and the list still carries `/build-rules/` after
+that directory was deleted along with `/build-release-portable/` and `/build-static/`. That is
+how the last one went unnoticed. **`build-static/` exists on disk today at 47 MB and appears in
+no preset in `RELEASING.md`** — it is the same kind of leftover, still ignored by name.
 
 ## Index writes
 
