@@ -114,15 +114,17 @@ remarkably easy mistake to make; assume you will make it, and let the tool tell 
 
 ## Before you report a round green
 
-Four commands, all four, every time. Two of them were already habit; the third is here
-because a round was reported green while it was failing, and the fourth because a published
-`README.md` spent several rounds asserting a detection rate less than half the real one.
+Five commands, all five, every time. Two of them were already habit; the third is here
+because a round was reported green while it was failing, the fourth because a published
+`README.md` spent several rounds asserting a detection rate less than half the real one, and
+the fifth because the checks that defend the other four were themselves failing unwatched.
 
 ```
 python3 corpus/shard-gate.py corpus/index.jsonl              # published half
 python3 corpus/shard-gate.py corpus/local/index-local.jsonl  # local half
 python3 corpus/make-summary.py --check                       # the summary vs the index
 python3 corpus/doc-figures.py --check                        # the documents vs the summary
+python3 corpus/control-suites.py                             # every --inject in corpus/
 ```
 
 They are a chain, and each link is only worth running because the next one exists:
@@ -138,6 +140,31 @@ rows and does not regenerate it leaves a published file asserting counts that no
 exist — and the gate runs cannot see that, because they read the index and not the summary.
 Regenerate it in the commit where the counts settle, and say in that commit that `--check`
 was failing until you did.
+
+`control-suites.py` is the fifth because the first four are only worth running if the
+controls under them still work, and on 2026-09-08 two of them did not. `doc-figures.py
+--inject` had been failing 4 of 56 since round 18 and `field-provenance.py --inject` 1 of 57
+since round 14; three more suites - `shard-gate.py`, `mask-samples.py`,
+`verify-infected-mask.py` - could not be **invoked** at all without arguments nobody passed,
+and all three passed the moment they were given them. Six of forty were not green and nothing
+said so, because nothing ran them.
+
+**The fix is one command and not five more lines here, and that is the whole design.** Adding
+`doc-figures.py --inject` and `field-provenance.py --inject` to this list would repair the two
+suites that broke this month and leave the other thirty-eight exactly as unwatched — the next
+instance of that round already scheduled. Five commands is a list somebody runs; twenty is a
+list that gets skipped and then quoted as green. So the list grows by one, the runner
+**discovers** the suites by parsing every `corpus/*.py` rather than holding a list of its own,
+and coverage stops depending on anybody's memory. It takes 27 seconds warm (46 on the first
+run after a reboot — page cache over the 62 MB index, not the tools), of which 7.8 seconds is
+`classify-known-miss.py` and 5.6 is `field-provenance.py`.
+
+It reports three ways to be not-ok and they are different problems: `FAILED` (ran, cases
+disagree), `CANNOT INVOKE` (needs arguments — worse, it has never run, and the repair is a row
+in that file's `INVOCATION`) and `CRASHED` (raised before its cases, usually a stale derived
+database). None of them is a skip. And it refuses rather than reporting a result if discovery
+finds fewer than 25 suites, because a discovery that finds nothing reports zero failures and
+zero failures reads as green — the same shape as the status check that read a 404 as success.
 
 `doc-figures.py --check` is the same argument one level out. `make-summary.py --check` can
 pass while `README.md` — the first thing a stranger reads — quotes figures from three rounds

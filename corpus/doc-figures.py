@@ -718,6 +718,106 @@ def run(root, mode, out=sys.stdout, guard=True):
     return bad
 
 
+# ------------------------------------------------------- the fixture the guard runs against
+#
+# The frame table exactly as it stood at d0062aa, the last revision at which all 56 controls
+# passed, together with the union across the two frames. `inject()` section 10 asserts the
+# literal strings `14.9%`, `105 of 707`, `100.0%`, `32.1%` and `40.8%`, and every one of them
+# is rendered from THIS - never from `corpus/index-summary.json`.
+#
+# WHY A CASE BUILDS THE FIGURE IT ASSERTS, WHICH IS THE RULE THIS ROUND SETTLED
+# -----------------------------------------------------------------------------
+# Section 10 already pinned two of these three blocks and left the third live, and the break
+# fell exactly on that boundary. `family_detection` and the conditioned frame were written out
+# by hand; `sampling_frame_not_recorded` was whatever the live summary said, and the cases
+# asserted the `14.9%` it happened to carry that day. The OBF042 round moved five rows into
+# detection, the frame became 110 of 707 - 15.6% - and four cases went red over a correct
+# document, a correct rule and a correct figure. `--check` passed throughout, because the
+# document and the summary agreed with each other and only the control was reading a third
+# thing.
+#
+# So the rule is not "isolate every case". Most of the 56 read the live summary and must:
+# perturbing the real `malicious_detected` by one and asserting the real README is refused is
+# the only thing tying this suite to the documents a stranger reads, and a fixture cannot do
+# it. The rule is narrower and is about what a case ASSERTS:
+#
+#     a case that asserts a LITERAL rendered value builds the state that produces it;
+#     a case that asserts a RELATION - drifted by one, refused and named - may read live.
+#
+# Every case outside section 10 is a relation. Section 10 is the only block asserting
+# literals, which is why it is the only block that broke.
+#
+# DERIVED FROM `original`, NOT WRITTEN OUT WHOLE. Only the three blocks the guard is about are
+# replaced; every other key still comes from the live summary, so a schema change reaches
+# these cases instead of being frozen out of them. What a pinned block CAN still do is go
+# stale against a summary that grows a metric, so it is not allowed to do that silently:
+# `--inject` asserts the pinned blocks carry exactly the key sets the live ones do and names
+# any difference. A fixture that quietly models a shape nothing produces any more is the same
+# defect as reading the live values, one level along.
+GUARD_FIXTURE = {
+    "family_detection_by_frame": {
+        "sampling_frame_detection_conditioned": {
+            "frame": {
+                "detection_conditioned": True, "gap": 0.46232, "kind": "sampling-frame",
+                "margin": 0.1, "membership_conditioned_on_detection": False,
+                "note": "the family's definition is byte-defined and marker-verified and is "
+                        "not conditioned on detection; the POOL it was drawn from is. 530 of "
+                        "the 531 rows in the pool carry an expected rule, so at most 1 family "
+                        "drawn from it can score below 100%. A rate over this family measures "
+                        "the pool, not the scanner",
+                "pool": "reviewed malicious rows carrying no family, bucket "
+                        "'quarantine/evidence'",
+                "pool_detected": 530, "pool_detected_share": 0.998117, "pool_rows": 531,
+                "pool_undetected": 1, "reviewed_detected": 696,
+                "reviewed_detected_share": 0.535797, "reviewed_rows": 1299,
+            },
+            "metrics": {
+                "completely_missed": 0, "detected_rows": 180, "families": 7,
+                "fully_detected": 7, "macro_rate": 1.0, "micro_rate": 1.0,
+                "partially_detected": 0, "rows": 180, "rows_completely_missed": 0,
+                "rows_fully_detected": 180, "rows_partially_detected": 0,
+            },
+        },
+        "sampling_frame_not_recorded": {
+            "frame": None,
+            "metrics": {
+                "completely_missed": 24, "detected_rows": 105, "families": 38,
+                "fully_detected": 9, "macro_rate": 0.29919, "micro_rate": 0.148515,
+                "partially_detected": 5, "rows": 707, "rows_completely_missed": 576,
+                "rows_fully_detected": 57, "rows_partially_detected": 74,
+            },
+        },
+    },
+    "family_detection": {
+        "completely_missed": 24, "detected_rows": 285, "families": 45, "fully_detected": 16,
+        "macro_rate": 0.408205, "micro_rate": 0.321308, "partially_detected": 5, "rows": 887,
+        "rows_completely_missed": 576, "rows_fully_detected": 237,
+        "rows_partially_detected": 74,
+    },
+}
+
+
+def key_shapes(fixture, live):
+    """[(where, missing_from_fixture, extra_in_fixture)] - every key set that has moved.
+
+    Reported by NAME rather than as a boolean, for the reason `drift` reports a figure by
+    name: "the fixture is stale" sends the reader to diff two nested dicts by eye.
+    """
+    out = []
+
+    def walk(where, fx, lv):
+        if not (isinstance(fx, dict) and isinstance(lv, dict)):
+            return
+        missing, extra = sorted(set(lv) - set(fx)), sorted(set(fx) - set(lv))
+        if missing or extra:
+            out.append((where, missing, extra))
+        for k in sorted(set(fx) & set(lv)):
+            walk("%s.%s" % (where, k), fx[k], lv[k])
+    for top in sorted(fixture):
+        walk(top, fixture[top], live.get(top))
+    return out
+
+
 # --------------------------------------------------------------------------- controls
 
 def inject():
@@ -738,14 +838,36 @@ def inject():
         if not ok:
             fails.append(label)
 
-    tmp = tempfile.mkdtemp(prefix="doc-figures-inject-")
-    try:
-        os.makedirs(os.path.join(tmp, "corpus"))
-        for rel, _n_, _r in REGIONS:
-            dst = os.path.join(tmp, rel)
+    trees = []
+
+    def new_tree(prefix):
+        """A temp copy of every document in REGIONS, with no summary written yet."""
+        root = tempfile.mkdtemp(prefix=prefix)
+        trees.append(root)
+        os.makedirs(os.path.join(root, "corpus"), exist_ok=True)
+        for rel_, _n2, _r2 in REGIONS:
+            dst = os.path.join(root, rel_)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             if not os.path.exists(dst):
-                shutil.copy2(os.path.join(ROOT, rel), dst)
+                shutil.copy2(os.path.join(ROOT, rel_), dst)
+        return root
+
+    def tree_for(summary, prefix):
+        """A tree of its own, holding `summary` and documents regenerated from it.
+
+        The unit of isolation is a TREE and not a summary. A case asserting a figure the live
+        summary does not carry has to regenerate the documents to match, and doing that in the
+        shared tree leaves every later block checking those documents against a summary they
+        no longer describe. See section 10.
+        """
+        root = new_tree(prefix)
+        json.dump(summary, open(os.path.join(root, "corpus", "index-summary.json"),
+                                "w", encoding="utf-8"), indent=1, sort_keys=True)
+        run(root, "write", out=io.StringIO())
+        return root
+
+    tmp = new_tree("doc-figures-inject-")
+    try:
         shutil.copy2(os.path.join(HERE, "index-summary.json"),
                      os.path.join(tmp, "corpus", "index-summary.json"))
 
@@ -913,22 +1035,46 @@ def inject():
         open(pf, "w", encoding="utf-8").write(wholef)
 
         # 10. THE GUARD ON A FAMILY RATE, in both directions and shown not to be redundant.
-        #     Every case below runs against a summary this function BUILDS, carrying both
-        #     sampling frames populated, so the controls behave identically whether or not any
-        #     frame-conditioned family exists in the real index yet. A control that only worked
-        #     after a particular write would be a control nobody could run first.
+        #
+        #     EVERY FIGURE ASSERTED BELOW IS BUILT, AND THE TREE IS BUILT TOO. See
+        #     `GUARD_FIXTURE` for why the rule is "a case that asserts a literal builds the
+        #     state that produces it" rather than "isolate everything", and for the four cases
+        #     that spent a round red because two of these three blocks were pinned and the
+        #     third was read live.
+        #
+        #     The isolation has to be a TREE and not only a summary, and that is the half a
+        #     first attempt at this got wrong. Writing `s10` into the shared temp summary and
+        #     regenerating from it worked only while `s10`'s overrides rendered identically to
+        #     the live summary - `family_detection` is quoted by no region, so nothing moved.
+        #     Pin the frame as well and the documents genuinely change; the shared tree is then
+        #     carrying a historical table, and section 12's end-to-end case - which captures a
+        #     README here and checks it against the LIVE summary - fails. Measured: pinning the
+        #     block alone fixes four cases and breaks a fifth. So a case that needs its own
+        #     figures gets its own tree, and the shared one is left exactly as section 9 left
+        #     it. The last case in this block asserts that.
         s10 = json.loads(original)
-        s10["family_detection_by_frame"]["sampling_frame_detection_conditioned"] = {
-            "frame": {"pool_rows": 531, "pool_detected": 530},
-            "metrics": {"families": 7, "rows": 180, "detected_rows": 180,
-                        "fully_detected": 7, "partially_detected": 0, "completely_missed": 0,
-                        "rows_fully_detected": 180, "rows_partially_detected": 0,
-                        "rows_completely_missed": 0, "macro_rate": 1.0, "micro_rate": 1.0}}
-        s10["family_detection"] = dict(s10["family_detection"],
-                                       families=45, rows=887, detected_rows=285,
-                                       macro_rate=0.408205, micro_rate=0.321308)
-        json.dump(s10, open(sp, "w", encoding="utf-8"), indent=1, sort_keys=True)
-        run(tmp, "write", out=io.StringIO())
+        s10["family_detection_by_frame"] = json.loads(
+            json.dumps(GUARD_FIXTURE["family_detection_by_frame"]))
+        s10["family_detection"] = dict(GUARD_FIXTURE["family_detection"])
+
+        #     The fixture is pinned, so it can go stale against a summary that grows a metric.
+        #     It is not allowed to do so silently: a green section 10 over a shape
+        #     `make-summary.py` no longer produces is the same defect as reading the live
+        #     values, one level along. Reported by key name, because "the fixture is stale"
+        #     sends the reader to diff two nested dicts by eye.
+        moved = key_shapes(GUARD_FIXTURE, json.loads(original))
+        case("the pinned fixture carries the live summary's key shapes",
+             not moved)
+        if moved:
+            for where, missing, extra in moved:
+                print("      %s: absent from the fixture %s; not in the summary %s"
+                      % (where, missing or "-", extra or "-"))
+
+        readme_before_10 = open(os.path.join(tmp, "README.md"), encoding="utf-8").read()
+        sources_before_10 = open(os.path.join(tmp, "corpus", "SOURCES.md"),
+                                 encoding="utf-8").read()
+        summary_before_10 = open(sp, encoding="utf-8").read()
+
         f10 = figures(s10)
         case("the two frames render different rates",
              (f10["frame_unrecorded_micro_pct"], f10["frame_conditioned_micro_pct"])
@@ -943,6 +1089,14 @@ def inject():
         with_pop = ("detection by family is 14.9% (105 of 707), sampling frame not recorded.")
         case("  ...the same rate with its pair and its frame      accepted",
              rate_violations(with_pop, f10) == [])
+        #     ...and that acceptance is not vacuous. While the frame was read live this case
+        #     passed for a year of rounds by quoting a rate `f10` no longer carried: the loop
+        #     in `rate_violations` skips a rate that is not in the text, so a stale literal
+        #     makes an "accepted" case assert nothing at all. The four that went red were the
+        #     visible half of the same defect; this was the invisible half.
+        case("    ...and that acceptance is not vacuous",
+             f10["frame_unrecorded_micro_pct"] in with_pop
+             and f10["frame_unrecorded_micro_ratio"] in with_pop)
         case("  ...the rate with the pair but NO frame            refused",
              any("frame_unrecorded_label" in why
                  for _fig, why in rate_violations("14.9% (105 of 707)", f10)))
@@ -969,8 +1123,11 @@ def inject():
         #         asked `if the real index has no conditioned family yet`, and the moment 180
         #         rows were applied it stopped running - the suite went from 39 cases to 38
         #         with nothing failing. A control that disappears when the data changes is a
-        #         control that was never defending the code.
+        #         control that was never defending the code. It is the argument the rest of
+        #         this block now follows; it was made here and applied only here.
         s10c = json.loads(original)
+        s10c["family_detection_by_frame"] = json.loads(
+            json.dumps(GUARD_FIXTURE["family_detection_by_frame"]))
         s10c["family_detection_by_frame"]["sampling_frame_detection_conditioned"] = {
             "frame": None,
             "metrics": {"families": 0, "rows": 0, "detected_rows": 0, "fully_detected": 0,
@@ -978,7 +1135,7 @@ def inject():
                         "rows_fully_detected": 0, "rows_partially_detected": 0,
                         "rows_completely_missed": 0, "macro_rate": None, "micro_rate": None}}
         unrec = s10c["family_detection_by_frame"]["sampling_frame_not_recorded"]["metrics"]
-        s10c["family_detection"] = dict(s10c["family_detection"], **{
+        s10c["family_detection"] = dict(GUARD_FIXTURE["family_detection"], **{
             k: unrec[k] for k in ("families", "rows", "detected_rows", "macro_rate",
                                   "micro_rate")})
         f_none = figures(s10c)
@@ -997,33 +1154,47 @@ def inject():
         #     (d) END TO END, and NOT REDUNDANT. A rate in prose is invisible to the region
         #         check by design - prose is a person's and survives regeneration - so the
         #         guard is asserted to catch what the region check passes.
-        pr = os.path.join(tmp, "README.md")
-        clean_readme = open(pr, encoding="utf-8").read()
-        open(pr, "w", encoding="utf-8").write(
-            clean_readme.rstrip("\n") + "\n\nFamily-weighted detection is 32.1%.\n")
-        n, out = check()
+        #
+        #         In a tree of its own, regenerated from `s10`, so the region check has a
+        #         document that agrees with the fixture and the only thing left to fire is the
+        #         guard. Nothing here touches the shared tree.
+        root10 = tree_for(s10, "doc-figures-inject-guard-")
+        pr10 = os.path.join(root10, "README.md")
+        clean_readme10 = open(pr10, encoding="utf-8").read()
+        open(pr10, "w", encoding="utf-8").write(
+            clean_readme10.rstrip("\n") + "\n\nFamily-weighted detection is 32.1%.\n")
+        n, out = check(root10)
         case("a union rate loose in the prose                     refused",
              n > 0 and "family_combined_micro_pct" in out)
         buf = io.StringIO()
-        n_noguard = run(tmp, "check", out=buf, guard=False)
+        n_noguard = run(root10, "check", out=buf, guard=False)
         case("  ...and the region check ALONE passes that file (so the guard is not redundant)",
              n_noguard == 0)
-        open(pr, "w", encoding="utf-8").write(clean_readme)
+        open(pr10, "w", encoding="utf-8").write(clean_readme10)
 
         #     ...and the companion rule end to end, in the document that carries no family
         #     table at all, so nothing else in the file can satisfy it by accident.
-        ps = os.path.join(tmp, "corpus", "SOURCES.md")
-        clean_sources = open(ps, encoding="utf-8").read()
-        open(ps, "w", encoding="utf-8").write(
-            clean_sources.rstrip("\n") + "\n\nFamilies are detected at 14.9%.\n")
-        n, out = check()
+        ps10 = os.path.join(root10, "corpus", "SOURCES.md")
+        clean_sources10 = open(ps10, encoding="utf-8").read()
+        open(ps10, "w", encoding="utf-8").write(
+            clean_sources10.rstrip("\n") + "\n\nFamilies are detected at 14.9%.\n")
+        n, out = check(root10)
         case("a frame rate in a document with no population       refused",
              n > 0 and "SOURCES.md [family-rate guard]" in out)
         buf = io.StringIO()
         case("  ...which the region check alone also passes",
-             run(tmp, "check", out=buf, guard=False) == 0)
-        open(ps, "w", encoding="utf-8").write(clean_sources)
+             run(root10, "check", out=buf, guard=False) == 0)
+        open(ps10, "w", encoding="utf-8").write(clean_sources10)
 
+        #     The isolation itself, asserted rather than assumed. This is the case that would
+        #     have caught the shape this block used to have: it wrote the fixture into the
+        #     shared summary and regenerated the shared documents from it, and everything after
+        #     it inherited that. Section 11 begins where section 9 ended.
+        case("  ...and section 10 left the shared tree untouched",
+             open(os.path.join(tmp, "README.md"), encoding="utf-8").read() == readme_before_10
+             and open(os.path.join(tmp, "corpus", "SOURCES.md"),
+                      encoding="utf-8").read() == sources_before_10
+             and open(sp, encoding="utf-8").read() == summary_before_10)
         # 11. THE KNOWN-MISS SPLIT. Three states share one marker and only one is a miss, so
         #     each is drifted separately: a check watching only the miss count would let a
         #     detected row silently become one, which is the direction that FLATTERS the
@@ -1110,6 +1281,15 @@ def inject():
 
         #     End to end, and not redundant: a mixed total loose in the prose is invisible to
         #     the region check, exactly as a family rate is.
+        #
+        #     The clean README is read HERE, out of the shared tree, rather than inherited from
+        #     section 10. It used to be section 10's capture, taken after that block had
+        #     regenerated the shared documents from its own fixture - so this case checked a
+        #     document written from one summary against a different one, and passed only
+        #     because the fixture happened to render identically. That coupling is what made
+        #     "pin the block" break a fifth case.
+        pr = os.path.join(tmp, "README.md")
+        clean_readme = open(pr, encoding="utf-8").read()
         open(pr, "w", encoding="utf-8").write(
             clean_readme.rstrip("\n")
             + "\n\nThe corpus records %s known misses in total.\n"
@@ -1128,7 +1308,8 @@ def inject():
         n, _out = check()
         case("the tree restored                                accepted", n == 0)
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        for root in trees:
+            shutil.rmtree(root, ignore_errors=True)
 
     print()
     print("cases: %d · passed: %d · failed: %d"
