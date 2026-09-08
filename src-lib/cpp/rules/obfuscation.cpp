@@ -1548,13 +1548,141 @@ const BuiltinRule OBF041 {
 };
 
 
+// OBF042: a base64 alphabet written down in the wrong order
+//
+// The second stage of a fake-plugin loader family carries two 65-character literals and
+// builds a strtr() table out of them character by character, then base64_decode()s the
+// result and eval()s it. Both literals hold each character of the base64 alphabet exactly
+// once and neither is in standard order, so the pair IS the substitution table: the file
+// decodes with its own alphabet and a stock base64 decoder produces nothing from it.
+//
+// WHY THIS IS NOT A WIDENING OF OBF039, which is the neighbouring rule and was checked
+// first. OBF039 detects a substitution cipher by its DECODE LOOP - a strpos() position used
+// as an index into a second, assembled alphabet, accumulated with `.=`. These five files
+// have no strpos and no assembled alphabet; they use strtr() over a table built from two
+// whole literals, so OBF039 runs on them and correctly declines. The two rules key on
+// different observables - a loop shape and a literal's contents - and a file can carry
+// either without the other, so folding them into one code would put two meanings behind one
+// finding and make its note false for half its hits. Different observable, different rule.
+//
+// WHAT THE RULE MUST NOT KEY ON, measured rather than argued:
+//
+//   * THE ALPHABET'S CHARACTER SET. Holding all 64 base64 characters is what a base64
+//     IMPLEMENTATION does, and the benign trees are full of them: 317 alphabet literals
+//     across trail-data/CMS, CMS-ext and Sites. Matching the set alone is 317 false
+//     positives to reach five files.
+//   * THE FILE'S EXTENSION. These arrive as `.txt`, but a rule that reads the extension is
+//     defeated by renaming, and `REJECTED:include-of-txt` in corpus/fp-population.py records
+//     what keying on that extension costs.
+//
+// The ORDER is the discriminator, and it is the only part an implementation cannot vary:
+// every one of those 317 benign literals is in standard order, because any other order does
+// not decode base64. A shuffled one is a substitution table someone chose.
+//
+// Both widths are read. The pad character is optional in an alphabet literal and both forms
+// occur, so a 64-character alphabet without `=` is matched on the same terms; the malware
+// here uses the 65-character form.
+//
+// Measured over trail-data/CMS, CMS-ext and Sites - 263,408 files, 218 of them at risk
+// (files carrying a 64- or 65-character base64 alphabet literal): 0 false positives, 95%
+// upper bound 1.4%. Recall 5 of 5. The at-risk population deliberately INCLUDES the
+// standard-order literals, so that figure is a discrimination against the hard case rather
+// than a filter that never met one.
+namespace detail_OBF042 {
+    constexpr std::string_view kStd64 =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    constexpr std::string_view kStd65 =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    constexpr size_t kMaxFindings = 4;
+
+    inline bool isAlphabetByte(unsigned char c) {
+        return std::isalnum(c) != 0 || c == '+' || c == '/' || c == '=';
+    }
+
+    // True when `lit` holds every character of the base64 alphabet exactly once. The pad is
+    // required at width 65 and forbidden at width 64, which is what keeps a 64-byte run that
+    // merely happens to be alphanumeric out: it must be a PERMUTATION, not a sample.
+    bool isAlphabet(std::string_view lit) {
+        if (lit.size() != 64 && lit.size() != 65) return false;
+        bool seen[256] = {false};
+        for (const char ch : lit) {
+            const auto u = static_cast<unsigned char>(ch);
+            if (seen[u]) return false;                      // a repeat is not a permutation
+            seen[u] = true;
+        }
+        const std::string_view want = (lit.size() == 65) ? kStd65 : kStd64;
+        for (const char ch : want) {
+            if (!seen[static_cast<unsigned char>(ch)]) return false;
+        }
+        return true;
+    }
+
+    std::vector<MatchResult> detectShuffledAlphabet(std::string_view content) {
+        std::vector<MatchResult> out;
+        // No literal gate is possible here - the signal is a literal's contents, not any
+        // fixed token - so the scan itself has to be the cheap part. A quoted alphabet is
+        // at least 66 bytes with its quotes.
+        if (content.size() < 66) return out;
+
+        for (size_t i = 0; i + 1 < content.size(); ++i) {
+            const char quote = content[i];
+            if (quote != '\'' && quote != '"') continue;
+
+            // Walk the alphabet-shaped run that follows. Anything else, and this quote
+            // cannot open an alphabet literal; resume from the next byte rather than
+            // skipping the run, so an alphabet opening inside it is still seen.
+            size_t j = i + 1;
+            while (j < content.size() && isAlphabetByte(static_cast<unsigned char>(content[j]))) ++j;
+            const size_t width = j - i - 1;
+            if (width < 64 || width > 65) continue;
+            if (j >= content.size() || content[j] != quote) continue;   // must close on it
+
+            const std::string_view lit = content.substr(i + 1, width);
+            if (!isAlphabet(lit)) continue;
+            if (lit == kStd64 || lit == kStd65) {
+                i = j;                       // a real implementation's alphabet; skip past it
+                continue;
+            }
+
+            auto [line, col] = positionToLineCol(content, i);
+            MatchResult r;
+            r.line = line;
+            r.column = col;
+            // Kept short deliberately - the alphabet IS the decryption key, and a finding
+            // does not need to carry one to be actionable. Note this is not sufficient on
+            // its own: the CLI reporter echoes the matched LINE rather than this field, so
+            // a one-line file still shows the alphabet. WS011 has the same property with a
+            // password and it is a property of the reporter, not of either rule.
+            r.matched = content.substr(i, std::min<size_t>(width + 2, 24));
+            r.note = "A " + std::to_string(width) +
+                     "-character literal here holds every base64 character exactly once but "
+                     "not in standard order, so it is a substitution table rather than a "
+                     "base64 implementation - this file decodes with an alphabet only it "
+                     "knows, and a stock decoder reads nothing out of its payload";
+            out.push_back(r);
+            if (out.size() >= kMaxFindings) return out;
+            i = j;
+        }
+        return out;
+    }
+}
+const BuiltinRule OBF042 {
+    .code = {Category::Obfuscation, 42},
+    .name = "Shuffled base64 alphabet",
+    .description = "Detects a literal holding every base64 character exactly once in a non-standard order, which is a private substitution table rather than a base64 implementation",
+    .severity = Severity::Critical,
+    .patterns = {},
+    .analyzer = &detail_OBF042::detectShuffledAlphabet,
+};
+
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &OBF001, &OBF002, &OBF003, &OBF004, &OBF005,
     &OBF006, &OBF007, &OBF008, &OBF009, &OBF010,
     &OBF011, &OBF012, &OBF013, &OBF014, &OBF015, &OBF016,
     &OBF017, &OBF018, &OBF019, &OBF020, &OBF021, &OBF022, &OBF023,
     &OBF024, &OBF025, &OBF029, &OBF036, &OBF037, &OBF038,
-    &OBF039, &OBF040, &OBF041
+    &OBF039, &OBF040, &OBF041, &OBF042
 };
 
 const BuiltinRule* const* getAllRules() {

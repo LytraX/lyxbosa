@@ -63,6 +63,12 @@
    "members": 17,
    "rules_shared_by_all": 0
   },
+  "fake-plugin-image-payload-loader": {
+   "detected": 45,
+   "distinct_rule_sets": 2,
+   "members": 52,
+   "rules_shared_by_all": 0
+  },
   "legacy-infected-tree-sample": {
    "detected": 61,
    "distinct_rule_sets": 39,
@@ -79,11 +85,11 @@
  "family_bucket_suspects_note": "labelled families whose three or more detected members share no expected rule. Evidence that a label groups a pile rather than a campaign, recomputed from the rows every run so a bucket arriving under a new reason code is named rather than counted as a family. Reported, never auto-excluded: reclassifying a label is a human judgement",
  "family_detection": {
   "completely_missed": 24,
-  "detected_rows": 285,
+  "detected_rows": 290,
   "families": 45,
   "fully_detected": 16,
-  "macro_rate": 0.408205,
-  "micro_rate": 0.321308,
+  "macro_rate": 0.410342,
+  "micro_rate": 0.326945,
   "partially_detected": 5,
   "rows": 887,
   "rows_completely_missed": 576,
@@ -126,11 +132,11 @@
    "frame": null,
    "metrics": {
     "completely_missed": 24,
-    "detected_rows": 105,
+    "detected_rows": 110,
     "families": 38,
     "fully_detected": 9,
-    "macro_rate": 0.29919,
-    "micro_rate": 0.148515,
+    "macro_rate": 0.301721,
+    "micro_rate": 0.155587,
     "partially_detected": 5,
     "rows": 707,
     "rows_completely_missed": 576,
@@ -142,11 +148,11 @@
  "family_detection_by_frame_note": "the same family metrics computed separately over each sampling frame, because a rate across both is a rate over a population nobody drew. NEITHER IS A HEADLINE. sampling_frame_detection_conditioned is fully detected by its pool rather than by the scanner. sampling_frame_not_recorded is NOT a clean control and must not be read as one: nothing recorded how those families were selected, and 602 of their 707 rows are known misses because a mass miss is what gets investigated and labelled - one 2017 doorway campaign supplies 495 of them, and dropping that one family alone takes the same micro rate from 14.9% to 49.5%. Both frames are contaminated, in opposite directions, and the honest form is both figures beside their frames rather than one of them promoted. `frame` carries the pool the writer measured at assignment time, or null when the rows do not agree on one",
  "family_detection_excl_predates_ruleset": {
   "completely_missed": 18,
-  "detected_rows": 281,
+  "detected_rows": 286,
   "families": 37,
   "fully_detected": 15,
-  "macro_rate": 0.464033,
-  "micro_rate": 0.798295,
+  "macro_rate": 0.466632,
+  "micro_rate": 0.8125,
   "partially_detected": 4,
   "rows": 352,
   "rows_completely_missed": 49,
@@ -165,7 +171,7 @@
  },
  "family_rerun_power_note": "a family's three-state verdict is read from a recorded rescan; verify.py re-executes only the members whose bytes ship in a public shard. These counts say how much of the family census a stranger can reproduce, and the families nothing re-runs are the largest ones",
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
- "known_miss": 603,
+ "known_miss": 598,
  "local_only": 48256,
  "local_only_blockers": {
   "carries content, which is not maskable and is never published": 4124,
@@ -201,26 +207,26 @@
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
  "local_only_publishable_no_blocker": 364,
  "local_only_publishable_no_blocker_note": "rows held local-only that the section 7.2 gate does not block. Held for a reason outside the gate's remit - no shard carries their bytes, or they lack the family/technique classification a published row needs - so they appear under no blocker and would otherwise be an unattributed count",
- "malicious_detected": 696,
- "malicious_detected_excl_predates_ruleset": 631,
- "malicious_detected_runnable": 97,
+ "malicious_detected": 701,
+ "malicious_detected_excl_predates_ruleset": 636,
+ "malicious_detected_runnable": 102,
  "malicious_family_population": {
   "campaign_familied": 887,
   "provenance_bucketed": 61,
   "unfamilied": 351
  },
  "malicious_family_population_detected": {
-  "campaign_familied": 285,
+  "campaign_familied": 290,
   "provenance_bucketed": 61,
   "unfamilied": 350
  },
  "malicious_family_population_note": "the three populations partition the reviewed malicious set and sum to malicious_reviewed. campaign_familied carries an attacker-campaign label; provenance_bucketed carries a label whose membership is conditioned on the scanner having flagged the sample, so it is fully detected by construction and is kept out of every family rate; unfamilied carries no label at all. The unfamilied rows hold most of the recorded detections, so a family figure is silent about the part of the corpus that is doing best - which is why this key is published beside the rates and never folded into them. The unfamilied count FALLS as rows are labelled and that is not the gap closing: a census over all 95 rule-set clusters and all 531 rows on 2026-09-07 found 428 reachable by a shared distinctive literal and 103 that are not - 87 in three clusters whose only cluster-wide literal is carried by a fifth of the pool, 13 in one cluster sharing no literal at all, and 3 singletons - and those need the decoded payload rather than the stored bytes. They stay counted here rather than being moved out of the denominator, so this key keeps partitioning the reviewed malicious set exactly",
- "malicious_known_miss": 603,
+ "malicious_known_miss": 598,
  "malicious_known_miss_by_family": {
   "<unfamilied>": 1,
   "ddos-flood-toolkit": 7,
   "domain-spray-shell-deployer": 1,
-  "fake-plugin-image-payload-loader": 12,
+  "fake-plugin-image-payload-loader": 7,
   "fake-theme-zlib-payload-blobs": 1,
   "forged-plugin-auto-login-backdoor": 2,
   "halmahera-rogue-admin-cloaker": 1,
@@ -248,7 +254,7 @@
   "webmail-phish-harvester": 6,
   "woocommerce-card-skimmer": 6
  },
- "malicious_known_miss_excl_predates_ruleset": 72,
+ "malicious_known_miss_excl_predates_ruleset": 67,
  "malicious_no_expectation": 0,
  "malicious_reviewed": 1299,
  "malicious_reviewed_excl_predates_ruleset": 703,

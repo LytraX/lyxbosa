@@ -38,6 +38,88 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Added
 
+- **`OBF042` closes 5 known misses, and every published detection figure moves — the first
+  round in twelve where that is a result rather than a defect.** Five second-stage files in
+  `fake-plugin-image-payload-loader` were promoted from `expect.known_miss` to
+  `expect.must_detect: ["OBF042"]` through `pending-promotions.jsonl` and
+  `promote-pending.py --apply`, which re-measured each one with `check` against the **shipped
+  shard bytes** rather than the source blob. The rule itself is in
+  [`../CHANGELOG.md`](../CHANGELOG.md); what is here is what it did to the denominators.
+
+  | figure | before | after | cause |
+  |---|---|---|---|
+  | Detection, whole reviewed set | 53.6% (696/1,299) | **54.0% (701/1,299)** | the 5 promotions |
+  | Detection excluding the rules' source material | 89.8% (631/703) | **90.5% (636/703)** | the same 5 |
+  | Recorded known misses | 603 | **598** | the same 5 |
+  | ...of them in scope | 72 | **67** | the same 5 |
+  | Samples a stranger can re-run | 97 | **102** | the same 5 |
+  | Family macro, frame unrecorded | 29.9% | **30.2%** | the same 5, in one family |
+  | Family micro, frame unrecorded | 14.9% (105/707) | **15.6% (110/707)** | the same 5 |
+
+  Every one of those seven differences is the same five rows. Nothing else moved: `detected`,
+  `rule_exact` and `missed` over the non-known-miss samples are **97 → 97, 97 → 97, 0 → 0**,
+  measured by running the suite against a binary built without the rule and then with it, so
+  the rule is additive and drifted nothing. **Technique coverage did not move — 90 of 123 —
+  and that is also attributed: `custom-alphabet-strtr` was already recorded on those rows, and
+  `verify.py` counts the techniques of every *tested* sample whether or not it is a known
+  miss, so a promotion cannot move that number.**
+
+### Measured, not changed
+
+- **The 29 `leaf-php-mailer-2.8` rows are not a rule gap, and `WS011` was never narrower than
+  its description.** The round opened on the question of why 29 rows sit as known misses when
+  `WS011` is already "a bundled mailer library behind a hardcoded password gate". Neither
+  available explanation was the answer. Re-measured with a locally built binary against **both**
+  the masked bytes and the pre-mask originals, all hash-verified against the digests the rows
+  record: **29 of 29 fire `PHI009,WS011`**, on both. It is the kit `WS011` was written for —
+  28 blobs at exactly 170,139 bytes and one at 165,629, matching the rule's own note.
+
+  They read as misses because `expect.known_miss` is a claim about the *published* suite and
+  these are local-half rows. Their detection was already recorded in `pending-promotions.jsonl`,
+  and `promote-pending.py` correctly refuses to promote a row with no shipped bytes. What was
+  actually wrong was the blocker those handoff rows carried: **"carries identity/secret but no
+  masking has been applied", which the masking pass resolved on 2026-09-07.** All 29 now read
+  `masking.applied: true` with four gates PASS and `publish_blockers` empty. The blocker string
+  is corrected to the real one — held under `local_only_publishable_no_blocker` because **no
+  shard carries their bytes**, verified against every unpacked shard manifest, with family and
+  technique present on all 29 so the other cause that category admits is excluded. Shipping
+  them is a corpus task and not a rules one; the handoff now says so.
+
+  **This makes the in-scope known-miss figure a conflation.** Of the 72, 29 were detected
+  already and 43 were genuinely undetected. A round aimed at "72 in-scope misses" would have
+  spent its effort on the largest of them for no gain.
+
+- **All 603 known misses were re-measured, and 531 of them cannot be measured here at all.**
+  Not just the in-scope 72: every `known_miss` row was resolved to bytes and run through
+  `check`. 29 detected, 43 missed, and **531 unreachable — every one of the
+  `predates_ruleset` rows, including all 495 of the doorway campaign.** Their `origin.path` is
+  the path the file had on the customer's machine and the collection blobmap does not carry
+  them, exactly as `family_evidence.SampleStore`'s docstring says of all 531. So no claim is
+  made here about whether any rule now reaches that campaign: the population that would answer
+  it is not on this machine, and reporting a zero from a set of files that were never opened
+  is the failure mode this repository keeps a control for.
+
+### Known, and left standing
+
+- **`fake-plugin-image-payload-loader` is now named by `family_bucket_suspects`, and it is a
+  false positive of that heuristic.** Before this round all 45 detected members of the family
+  expected `OBF041` alone, so the members shared a rule and the check passed over it. Now 40
+  expect `OBF041` and 5 expect `OBF042`, the intersection across detected members is empty, and
+  the family matches the shape the check looks for.
+
+  The heuristic is doing what it says — it reports and does not exclude, and its own docstring
+  calls the output "evidence for a person to rule on". Here the adjudication is that this is one
+  campaign, not a pile: five staged plugin directories, each holding a `.php` loader, a `.txt`
+  second stage and seven or eight payload blobs (39 in all, two of the five also carrying a
+  `README.txt`), and the tiers legitimately fire different rules because they *are* different
+  code. **The heuristic is deliberately not changed.** "Detected members
+  share no expected rule" cannot distinguish a pile of unrelated files given one label from a
+  real multi-stage kit, and the cheap repair — excluding families whose members split cleanly by
+  rule — would blind it to the pile it exists to find. Recorded here instead, which is what a
+  reporting check is for.
+
+### Added
+
 - **The 180 rows are applied, and the family rate is published once per sampling frame with
   neither called the headline.** The seven families from the pilot session are recorded on 180
   of the 531 unfamilied rows. **Sample-weighted detection does not move: 696 of 1,299, 53.6%,
