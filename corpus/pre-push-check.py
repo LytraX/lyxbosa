@@ -23,6 +23,14 @@ WHAT IT CHECKS, and why each one is here rather than assumed:
                   first version of this script omitted this check, said SAFE TO PUSH, and a
                   commit message naming three accounts had already reached the remote - in
                   the paragraph explaining the very lesson about not naming them.
+  release key     Every tracked file and every message about to be pushed, against the byte
+                  shape of a minisign SECRET key - the key that signs `SHA256SUMS` for a
+                  release, held as a repository secret and never anywhere else. This is the
+                  same question as a customer identifier and the same answer: push is what
+                  makes it permanent, and a private key in `refs/pull/*` cannot be taken back
+                  any more than a customer name can. It is asked BY SHAPE rather than by
+                  substring, for the reason the sweeps below record - see
+                  `minisign_secret_hits`.
   published index Delegated to verify-infected-mask.py, which owns that question.
   gate invariants Delegated to shard-gate.py: no `origin` on a published row, every
                   /home<digits>/<x>/ pseudonymous.
@@ -85,7 +93,7 @@ a 404 body as success and reported every object present when all ten were gone. 
 each of them was a positive control. A check that has never been observed to fail is not yet
 a check.
 """
-import json, os, subprocess, sys, argparse
+import base64, json, os, re, subprocess, sys, argparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -142,6 +150,66 @@ def sweep_messages(recs, ids, keep):
                 continue
             break
     return hits
+
+
+# A minisign secret key is base64 of 158 bytes, laid out
+#
+#     "Ed" | kdf alg (2) | "B2" | salt (32) | opslimit (8) | memlimit (8)
+#          | key id (8)  | secret key (64)  | checksum (32)
+#
+# so the key line is exactly 212 base64 characters and two of its fields are fixed strings.
+# That is why this is a SHAPE question and not a substring one. The four substring sweeps
+# written during the 2026-09-05 incident manufactured thousands of coincidences and found
+# nothing, and "looks like base64 and is long" would do the same to every hash, blob and
+# minified asset in the tree. Decoding to 158 bytes AND beginning "Ed" AND carrying "B2" at
+# offset 4 is a coincidence with a probability around 2^-32; a public key, which is 56
+# characters and belongs in the repository on purpose, matches none of it.
+_SECRET_B64 = re.compile(
+    r"(?<![A-Za-z0-9+/=])(?:[A-Za-z0-9+/]{212}|[A-Za-z0-9+/]{211}=)(?![A-Za-z0-9+/=])")
+
+# The line above the key in a minisign.key file. Kept as a second, independent signal because
+# the key line is the half a mangled copy-paste loses: a secret that arrived with its newlines
+# turned into spaces still carries this. It requires "secret key" so that a PUBLIC key file -
+# `untrusted comment: minisign public key ...` - is not refused, since committing that is the
+# whole point of keys/minisign-trusted.txt.
+_SECRET_COMMENT = re.compile(r"^untrusted comment:.*minisign.*secret key", re.I | re.M)
+
+
+def minisign_secret_hits(text):
+    """What in `text` has the byte shape of a minisign SECRET key.
+
+    Returns a list of short descriptions - never the match. A checker that quoted what it
+    found would print a private key into a terminal, a CI log and this repository's own
+    output, which is the mistake in AGENTS.md's "describe collisions; do not quote them"
+    with a worse blast radius. So the report says what and where and not one byte of it.
+    """
+    hits = []
+    if _SECRET_COMMENT.search(text):
+        hits.append("a minisign secret-key comment line")
+    for m in _SECRET_B64.finditer(text):
+        try:
+            dec = base64.b64decode(m.group(0), validate=True)
+        except Exception:
+            continue
+        if len(dec) == 158 and dec[0:2] == b"Ed" and dec[4:6] == b"B2":
+            hits.append("a 158-byte minisign secret key at offset %d" % m.start())
+    return hits
+
+
+def sweep_secrets(paths):
+    hits = []
+    for rel in paths:
+        try:
+            text = open(os.path.join(ROOT, rel), encoding="utf-8", errors="replace").read()
+        except (OSError, IsADirectoryError):
+            continue
+        for what in minisign_secret_hits(text):
+            hits.append((rel, what))
+    return hits
+
+
+def sweep_secrets_messages(recs):
+    return [(sha[:12], what) for sha, msg in recs for what in minisign_secret_hits(msg)]
 
 
 def tracked_files():
@@ -349,6 +417,73 @@ def inject_summary():
     return 0 if ok_all else 1
 
 
+def inject_minisign():
+    """Both directions, and the second direction is the one that matters here.
+
+    A checker that refuses anything long and base64 would refuse the public key this project
+    commits on purpose, every SHA-256 digest in the tree and the documentation that explains
+    the mechanism - and the way that failure ends is somebody switching it off. So the cases
+    below plant a key and also plant the four things that look like one and are not.
+
+    The planted key is fabricated: the marker bytes followed by zeros. It has the shape of a
+    minisign secret key and there is no key material in it, which is the only acceptable way
+    to hold one in a repository that had to be deleted once over a committed file.
+    """
+    ok = True
+    fake = base64.b64encode(b"Ed" + b"Sc" + b"B2" + bytes(152)).decode()
+    assert len(fake) == 212
+
+    def case(name, text, expect):
+        got = bool(minisign_secret_hits(text))
+        if got == expect:
+            print("  %-46s %s" % (name, "caught" if expect else "silent"))
+            return True
+        print("  FAIL: %-40s %s" % (name, "MISSED" if expect else "FALSE POSITIVE"))
+        return False
+
+    ok &= case("a secret key in a file body", "key: %s\n" % fake, True)
+    ok &= case("a secret key on its own line", "%s" % fake, True)
+    ok &= case("the secret-key comment line",
+               "untrusted comment: minisign encrypted secret key\n", True)
+    # 212 base64 characters that are not a key: same length, wrong markers. Length alone
+    # would have reported this, and length alone is what a lazy version of this check is.
+    ok &= case("212 base64 characters that decode to something else",
+               base64.b64encode(b"XX" + b"Sc" + b"YY" + bytes(152)).decode(), False)
+    # The public key this repository commits on purpose. If this ever fires, the round that
+    # provisions the signing key cannot push the key it just generated.
+    ok &= case("a minisign public key", "signing RW" + "A" * 54, False)
+    ok &= case("the shipped keys/minisign-trusted.txt",
+               open(os.path.join(ROOT, "keys", "minisign-trusted.txt"),
+                    encoding="utf-8").read(), False)
+    # Prose about the mechanism, which docs/RELEASING.md is now full of.
+    ok &= case("documentation that says 'minisign secret key'",
+               "Keep the minisign secret key offline; the secret key never enters CI.", False)
+    ok &= case("a sha256sum line and a git object id",
+               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  x\n"
+               "97ce54e0000000000000000000000000000000000\n", False)
+
+    # The message surface, which AGENTS.md calls the harder half: a message is as permanent
+    # as a blob and cannot be removed once a pull request has referenced the commit.
+    hits = sweep_secrets_messages([("f" * 40, "provision the key\n\n%s\n" % fake)])
+    if hits:
+        print("  %-46s %s" % ("a secret key in a commit message", "caught"))
+    else:
+        print("  FAIL: a secret key in a commit message           MISSED"); ok = False
+    if sweep_secrets_messages([("f" * 40, "docs: sign SHA256SUMS with minisign\n")]):
+        print("  FAIL: an ordinary commit message                 FALSE POSITIVE"); ok = False
+    else:
+        print("  %-46s %s" % ("an ordinary commit message about signing", "silent"))
+
+    # And the tree as it stands, which is the run that will happen for real.
+    live = sweep_secrets(tracked_files())
+    if live:
+        print("  FAIL: the working tree already carries a secret key: %s" % live[0][0])
+        ok = False
+    else:
+        print("  %-46s %s" % ("every tracked file in the tree today", "silent"))
+    return 0 if ok else 1
+
+
 def inject(paths):
     """Prove the sweep can fail. Writes nothing: a synthetic path list is enough."""
     m = json.load(open(MAPS[0]))
@@ -378,6 +513,10 @@ def inject(paths):
     print()
     print("=== the make-summary delegation, in both directions ===")
     if inject_summary():
+        ok = False
+    print()
+    print("=== the minisign secret-key check, in both directions ===")
+    if inject_minisign():
         ok = False
     print()
     print("=== the doc-figures delegation, in both directions ===")
@@ -418,6 +557,22 @@ def main():
         for sha, seg in hits[:10]:
             print("      %s  segment: %s" % (sha, seg))
         bad += len(hits)
+
+    print()
+    print("=== minisign release secret key, by shape ===")
+    fh = sweep_secrets(paths)
+    mh = sweep_secrets_messages(recs)
+    print("  %-26s %3d tracked files -> %s"
+          % ("tracked files", len(paths),
+             "PASS" if not fh else "%d FILE(S) CARRYING A SECRET KEY" % len(fh)))
+    for rel, what in fh[:10]:
+        print("      %-46s  %s" % (rel[:46], what))
+    print("  %-26s %d commit(s) -> %s"
+          % ("commit messages", len(recs),
+             "PASS" if not mh else "%d MESSAGE(S) CARRYING A SECRET KEY" % len(mh)))
+    for sha, what in mh[:10]:
+        print("      %s  %s" % (sha, what))
+    bad += len(fh) + len(mh)
 
     print()
     print("=== published index, delegated to the tools that own the question ===")

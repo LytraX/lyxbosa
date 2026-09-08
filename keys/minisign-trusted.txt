@@ -1,0 +1,78 @@
+# Trusted minisign public keys for LyxBoSa `v*` releases.
+#
+# Every `v*` release publishes SHA256SUMS over its binaries and SHA256SUMS.minisig, a
+# minisign signature over that list. The checksum file on its own only defends against a
+# corrupted or truncated download: it is published beside the files it describes, so anyone
+# who can write to the release can rewrite it too. The signature is what makes the list
+# worth reading, and this file is what says whose signature counts.
+#
+# To verify a download by hand, see the "After the release" section of docs/RELEASING.md.
+#
+#
+# WHY THIS IS A LIST WHEN THERE IS ONE KEY
+# -----------------------------------------
+# A verifier that accepts exactly one key cannot survive that key being compromised: every
+# binary already installed would trust whoever holds it, and there is no release both the
+# old and the new key can sign for. The list is the cheap half of the fix, and it costs
+# nothing to have from the first release rather than after it is needed - the shape of the
+# file is the part that is expensive to change later, because a verifier compiled against
+# "one key" has to be reissued to read anything else.
+#
+#
+# FORMAT
+# ------
+# One record per line. `#` starts a comment; blank lines are ignored.
+#
+#     <role>  <public key>          # free text
+#
+#   signing   the key CI signs with. There must be exactly ONE, and the release job refuses
+#             the release if there is not - "sign with whichever comes first" is how a
+#             release ends up signed by the key that was on its way out. A signing key is
+#             trusted for verification as well.
+#   trusted   accepted by a verifier, never used for signing. This is what a key looks like
+#             on its way in - shipped one release before it starts signing - and on its way
+#             out.
+#
+# The key is minisign's own 56-character form: `RW` followed by 54 more base64 characters,
+# which is the second line of a `minisign.pub` file with the comment line dropped.
+# `minisign -V -P <key> -m SHA256SUMS` takes it directly.
+#
+#
+# ROTATION, IN THREE RELEASES
+# ----------------------------
+#   N     add the new key as `trusted`; the old key keeps signing. Everyone who takes
+#         release N learns the new key without anything about verification changing.
+#   N+1   swap the roles: new key `signing`, old key `trusted`. Every consumer who took N
+#         or later verifies normally.
+#   N+2   delete the old key's line. It stops being accepted.
+#
+# Anything that verifies by READING this file - a person following RELEASING.md, a script
+# that fetches it - follows the list the moment it changes. A verifier with the list
+# compiled in does not, and phase 3's updater would be one, so the gap is worth stating
+# rather than discovering: a binary built at N-1 has never seen the new key and cannot
+# verify a release signed by it. It falls back to a manual download, which is the correct
+# outcome for a program that cannot check what it is about to run as root.
+#
+# minisign writes one signature per file. Publishing a second detached signature under a
+# second name - SHA256SUMS.<keyid>.minisig - would let one release be signed by both keys
+# and close that gap entirely. Phase 1 publishes exactly one signature and does not do this;
+# it is where to start if the gap ever matters.
+#
+# A COMPROMISED key gets none of that. There is no overlap to arrange: delete its line in
+# the next release rather than retiring it, announce the new key out of band (README,
+# release body, and anywhere the old one was published), and accept that older installs can
+# no longer verify. Refusing to update beats updating against a key somebody else holds.
+#
+#
+# THERE IS NO SIGNING KEY IN THIS FILE YET
+# -----------------------------------------
+# The keypair is generated on a person's machine and never in CI, so this file cannot be
+# filled in by the change that introduced it. Until it is, the release job REFUSES rather
+# than publishing an unsigned release - see "Provisioning the signing key" in
+# docs/RELEASING.md, which is one command and one repository secret.
+#
+# Adding the key here is a commit like any other. Adding the SECRET key here is the one
+# thing this repository must never do, and corpus/pre-push-check.py refuses a push that
+# carries one by shape, in a tracked file or in a commit message.
+
+# <role>  <public key>

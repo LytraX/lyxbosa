@@ -171,9 +171,52 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # minisign comes from the distribution rather than a downloaded binary: a release job
+      # that fetches an unverified executable to verify things with has an obvious hole in
+      # the middle of it.
+      - name: Install minisign
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends minisign
+          minisign -v
+
+      # The controls first, and on the runner rather than only on a laptop. Everything below
+      # runs exactly once per release, on a tag, against a real publish that cannot be
+      # rehearsed - see the header of either script. This step is what makes the checks in
+      # them checks: it plants each failure, asserts it is caught, and takes about a second.
+      - name: Prove the release-integrity checks can fail
+        run: |
+          .github/scripts/release-checksums.sh --selftest
+          .github/scripts/release-sign.sh --selftest --require-minisign
+
+      # --expect 4 is the four binaries the two build jobs publish: linux amd64 and arm64,
+      # windows amd64 and arm64. It is exact on purpose. A list that is missing one binary
+      # looks finished, and a release that gained an asset should stop here and be looked at
+      # rather than shipping a checksum file that quietly does not cover it.
+      - name: Checksum every asset
+        run: .github/scripts/release-checksums.sh write artifacts --expect 4
+
+      # A checksum file published beside the files it describes is only a defence against a
+      # corrupted download - whoever can write to the release can rewrite the list too. This
+      # is the step that makes it worth reading, and it FAILS rather than degrading to an
+      # unsigned release: the release step below never runs if this one exits non-zero, and
+      # that ordering is the guarantee. Do not move it, and do not add `continue-on-error`.
+      - name: Sign SHA256SUMS
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_KEY_PASSWORD: ${{ secrets.MINISIGN_KEY_PASSWORD }}
+        run: .github/scripts/release-sign.sh sign artifacts
+
+      # `files: artifacts/*` needs no change to pick the two new files up: measured against
+      # glob 13.0.6, the version softprops/action-gh-release@v3 pins, the pattern resolves to
+      # six paths including artifacts/SHA256SUMS and artifacts/SHA256SUMS.minisig.
+      #
+      # fail_on_unmatched_files is the same argument as --expect above, one level out: a
+      # release that attaches nothing is a release that looks published.
       - name: Create release
         uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
+          fail_on_unmatched_files: true
           body_path: NOTES.md
           generate_release_notes: true

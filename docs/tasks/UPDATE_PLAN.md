@@ -1,6 +1,9 @@
 # Updating the binary
 
-A plan, not an implementation. Nothing here is built yet.
+A plan, not an implementation. **Phases 0 and 1 are built**; phases 2 to 4 - the updater
+itself - are not, and nothing in the binary reads a signature yet. What shipped is in
+[`docs/RELEASING.md`](../RELEASING.md) under *Release integrity*, and the signing key still
+has to be provisioned once before the next release.
 
 ## 1. The problem, and what is not the problem
 
@@ -13,13 +16,14 @@ signing, it is a separate mechanism, and it is deliberately out of scope — see
 
 ## 2. Prerequisite: a release you can verify
 
-**Today the `v*` releases publish four bare binaries and nothing else.** No checksums, no
-signatures. There is nothing for an updater to check a download against, and an updater that
+**When this was written, the `v*` releases published four bare binaries and nothing else.**
+No checksums, no signatures. There is nothing for an updater to check a download against, and an updater that
 downloads and executes an unverified binary is worse than no updater at all: this scanner runs
 as root, on compromised hosts, during incident response. The update path would be the highest
 value target in the product.
 
-So the first change is not the updater.
+So the first change is not the updater. The rest of this section is the argument that put
+phases 0 and 1 first; both have since shipped, and what follows is left as it was written.
 
 **Phase 0 — checksums.** `.github/workflows/build.yml` already collects every artefact into
 `artifacts/` and hands `artifacts/*` to `softprops/action-gh-release`. Generating
@@ -164,13 +168,13 @@ than left to be discovered: a version check reveals an IP, a version and a times
 
 ## 9. Phasing
 
-| phase | ships | why in this order |
-|---|---|---|
-| 0 | `SHA256SUMS` in CI | nothing to verify against today |
-| 1 | minisign signature + embedded public key + rotation list | a checksum an attacker can rewrite is not integrity |
-| 2 | `update --check`, config, caching | most of the value, none of the replace risk |
-| 3 | `update` — download, verify, atomic replace | Linux and macOS |
-| 4 | Windows replace-on-restart | the one genuinely different platform |
+| phase | ships | why in this order | state |
+|---|---|---|---|
+| 0 | `SHA256SUMS` in CI | nothing to verify against today | **done** |
+| 1 | minisign signature + rotation list | a checksum an attacker can rewrite is not integrity | **done**, except the key itself: the list is `keys/minisign-trusted.txt`, it is not embedded in the binary because nothing in the binary verifies anything yet, and that happens in phase 3 |
+| 2 | `update --check`, config, caching | most of the value, none of the replace risk | |
+| 3 | `update` — download, verify, atomic replace | Linux and macOS | |
+| 4 | Windows replace-on-restart | the one genuinely different platform | |
 
 Each phase is useful alone, and phase 2 could be where this stops if nobody wants
 self-replacement.
