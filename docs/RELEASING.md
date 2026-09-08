@@ -90,6 +90,17 @@ set. Copy `CMakeUserPresets.example.json` if you do not have one yet.
 > and it leaves `build/` holding something other than what the `debug` preset
 > expects. Any timing measured from a Debug binary is meaningless.
 
+**And check that the release can be signed**, before you tag rather than after:
+
+```bash
+.github/scripts/release-sign.sh signing-key
+```
+
+It prints the key CI will sign with, or tells you what is missing. The release job runs the
+same code and **fails the release** if it cannot sign - there is no unsigned fallback - so a
+missing key found here costs a minute and found after tagging costs a re-tag. See
+[Release integrity](#release-integrity-checksums-and-signatures).
+
 If the change touches rules or the match engine, also confirm findings did not move
 against a known-good binary — see [Verifying detection did not
 change](#verifying-detection-did-not-change). Whatever it moved on purpose is what the
@@ -175,7 +186,12 @@ wrong](#if-a-release-goes-wrong).
 |---|---|
 | `lyxbosa-linux-amd64` | `ubuntu-latest`, built in the container in `docker/build/Linux/` |
 | `lyxbosa-linux-arm64` | `ubuntu-24.04-arm`, same container |
-| `lyxbosa-windows-*.exe` | `windows-latest`, static vcpkg triplet |
+| `lyxbosa-windows-*.exe` | `windows-latest`, static vcpkg triplet (amd64 and arm64) |
+| `SHA256SUMS` | the release job, over the four binaries |
+| `SHA256SUMS.minisig` | the release job, signing `SHA256SUMS` with the release key |
+
+The last two are [release integrity](#release-integrity-checksums-and-signatures) and they
+are not optional: the job fails rather than publishing a release without them.
 
 Release notes are the union of three things, in this order:
 
@@ -203,6 +219,83 @@ list. The checkout uses `fetch-depth: 0` so the full history and all tags are
 available.
 
 ---
+
+## Release integrity: checksums and signatures
+
+Every `v*` release publishes two files beside the binaries:
+
+| File | What it is |
+|---|---|
+| `SHA256SUMS` | one line per binary, `<hash>  <name>`, bare names in byte order |
+| `SHA256SUMS.minisig` | a [minisign](https://jedisct1.github.io/minisign/) signature over `SHA256SUMS` |
+
+The checksum file alone defends against a corrupted or truncated download. It does **not**
+defend against anyone who can write to the release, because they can rewrite it too - which
+is what the signature is for. This matters more here than for most tools: `lyxbosa` is run as
+root, on compromised hosts, during incident response, and a download nobody can verify is a
+bad thing to hand somebody in that position.
+
+What it does not do is make **Windows** trust the binary. That is Authenticode with an EV
+certificate, it is not owned here, and a browser download still shows an unknown-publisher
+warning exactly as it did before. The two answer different questions; see
+[`docs/tasks/UPDATE_PLAN.md`](tasks/UPDATE_PLAN.md) §3.
+
+### It fails rather than skipping
+
+The signing step runs **before** `softprops/action-gh-release`, so a failure to sign stops the
+job and nothing is published. That ordering is the guarantee, and a release job that quietly
+published without a signature when signing broke would have removed the whole defence at the
+moment it was needed while looking identical to one that worked. Do not add
+`continue-on-error`, and do not make the step conditional on the secret being present.
+
+Both scripts carry their own controls and CI runs them on every release, before the files they
+defend are written:
+
+```bash
+.github/scripts/release-checksums.sh --selftest
+.github/scripts/release-sign.sh --selftest
+```
+
+### Provisioning the signing key
+
+**One-time, and it has not been done yet** - `keys/minisign-trusted.txt` ships with no signing
+key, so the next release will refuse until this is finished. Generate the keypair **on your own
+machine and never in CI**:
+
+```bash
+minisign -G -W -p minisign.pub -s minisign.key
+```
+
+`-W` leaves the secret key unencrypted. A password would be stored in the same secret store as
+the key it protects, which buys nothing; if you use one anyway, put it in a second repository
+secret `MINISIGN_KEY_PASSWORD` and the signing step will use it.
+
+Then:
+
+1. Copy the **second** line of `minisign.pub` - `RW` followed by 54 base64 characters - into
+   `keys/minisign-trusted.txt` as `signing <key>`, and commit it.
+2. Put the **whole** of `minisign.key` into the repository secret `MINISIGN_SECRET_KEY`
+   (*Settings → Secrets and variables → Actions*), comment line and all.
+3. Keep `minisign.key` offline. It is the only copy; there is no recovery, and losing it means
+   a rotation rather than a re-issue.
+4. Delete it from anywhere it does not belong - and note that
+   `corpus/pre-push-check.py` refuses a push carrying a minisign secret key by shape, in a
+   tracked file or in a commit message, the same way it refuses a customer identifier.
+
+### Rotating the key
+
+`keys/minisign-trusted.txt` holds a **list** rather than one key, from the first release
+onwards, because a verifier that accepts exactly one key cannot survive that key being
+compromised. The file's own header carries the full reasoning; the procedure is:
+
+| Release | Change |
+|---|---|
+| N | add the new key as `trusted`; the old key keeps signing |
+| N+1 | swap the roles - new key `signing`, old key `trusted` |
+| N+2 | delete the old key's line |
+
+A **compromised** key gets no overlap: delete its line in the next release, announce the new
+key wherever the old one was published, and accept that older installs can no longer verify.
 
 ## Verifying detection did not change
 
@@ -240,7 +333,34 @@ malware corpus can be committed by accident.
 gh release view v1.2.0
 ```
 
-Download one binary per platform and check the version is the tag, not `0.0.0`:
+Six assets, not four: the four binaries, `SHA256SUMS` and `SHA256SUMS.minisig`.
+
+**Verify them the way a user would**, from a fresh download directory rather than from the
+build tree:
+
+```bash
+key="$(.github/scripts/release-sign.sh signing-key)"     # from the checkout, before leaving it
+gh release download v1.2.0 -D /tmp/v1.2.0 && cd /tmp/v1.2.0
+
+# 1. the signature FIRST. The checksums are only worth reading if this passes: they are
+#    published beside the files they describe, and anyone who can write to the release can
+#    rewrite them.
+minisign -Vm SHA256SUMS -P "$key"
+
+# 2. then the checksums, in the directory the assets were downloaded into.
+sha256sum -c SHA256SUMS
+```
+
+`minisign -Vm` prints the **trusted comment**, which is covered by the signature and names the
+tag: `LyxBoSa v1.2.0 SHA256SUMS (LytraX/LyxBoSa)`. Read it. A `SHA256SUMS` and
+`SHA256SUMS.minisig` pair lifted wholesale from an older release verifies perfectly well and
+describes the wrong binaries; the tag in that line is what says which release you are holding.
+
+Anyone without a checkout takes the key from
+[`keys/minisign-trusted.txt`](../keys/minisign-trusted.txt) on GitHub and passes it to `-P`
+directly.
+
+Then check the version is the tag, not `0.0.0`:
 
 ```bash
 ./lyxbosa-linux-amd64 --version

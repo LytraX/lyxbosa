@@ -22,6 +22,44 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Added
+
+- **Releases publish `SHA256SUMS` and `SHA256SUMS.minisig`.** Until now a `v*` release was
+  four bare binaries with nothing to check a download against. There are now six assets: the
+  four binaries, a checksum file, and a [minisign](https://jedisct1.github.io/minisign/)
+  signature over it. `docs/RELEASING.md` has the commands to verify both, and the order they
+  go in — signature first, because the checksum file is published beside the files it
+  describes and anyone who can write to the release can rewrite it.
+
+  This matters more here than for most tools: `lyxbosa` is run as root, on compromised hosts,
+  during incident response, and a download nobody can verify is a bad thing to hand somebody
+  in that position.
+
+  `SHA256SUMS` lists bare names in byte order and does not list itself, so
+  `sha256sum -c SHA256SUMS` works in the directory the assets were downloaded into, and two
+  releases of the same bytes produce the same file.
+
+- **The public keys a release may be signed with are tracked, in `keys/minisign-trusted.txt`.**
+  It is a list with one key in it rather than a single key, from the first release onwards: a
+  verifier that accepts exactly one key cannot survive that key being compromised, and the
+  shape of the file is the expensive part to change later. The file carries the rotation
+  procedure — a new key ships as `trusted` one release before it starts signing, and the old
+  one is dropped two releases after — along with what rotation cannot do for a binary that has
+  the list compiled in.
+
+### Compatibility
+
+- **Nothing changes for anyone who does not verify downloads**, and nothing in the binary reads
+  a signature yet: `lyxbosa` gained no flags, no configuration and no network access. The
+  updater that will use this is [planned](docs/tasks/UPDATE_PLAN.md) and not built.
+- **This does not make Windows trust the binary.** That is Authenticode with an EV certificate,
+  which is a different mechanism answering a different question; a browser download still shows
+  an unknown-publisher warning exactly as before.
+- **A release will not publish at all until the signing key is provisioned.** The keypair is
+  generated on a person's machine and never in CI, so it could not ship with this change. The
+  release job refuses rather than degrading to an unsigned release — see *Provisioning the
+  signing key* in `docs/RELEASING.md`. One command and one repository secret, once.
+
 ## [2.2.0] - 2026-09-07
 
 Ten new detection rules, and three candidates measured and declined.
