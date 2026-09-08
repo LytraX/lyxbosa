@@ -1896,6 +1896,57 @@ TEST(RoundElevenRuleTest, ForgedImageSignatureIsNotAnyExtensionMagicMismatch) {
     EXPECT_FALSE(ruleFires("OBF041", "GI"));
 }
 
+// OBF042: the alphabet's ORDER decides it, and the character set alone is ordinary.
+//
+// The trap here is the mirror of OBF041's. Holding all 64 base64 characters is what a
+// base64 IMPLEMENTATION does, and the benign trees are full of them: 317 alphabet literals
+// across trail-data/CMS, CMS-ext and Sites, and every one is in standard order. Matching
+// the character set would be 317 false positives to reach the five files that shuffle it.
+TEST(RoundThirteenRuleTest, ShuffledBase64AlphabetIsNotAnyBase64Alphabet) {
+    // The five second stages, which build a strtr() table out of two of these and then
+    // base64_decode() and eval() the result. Both widths are the malware's own.
+    EXPECT_TRUE(ruleFires("OBF042",
+        "<?php $a = \"ScsP2Yyn3fOWeZCrDQwJHmEuA4KiVhkBUa1tb9MX8pF/=GxRz6+qvoLlN0jg75ITd\";"));
+    EXPECT_TRUE(ruleFires("OBF042",
+        "<?php $a = '1klS/a=bfHhJyBTC056XADoxO7PwGgvIRZrWc24Knqsjud9tpmiQ8N+YU3eMLzVEF';"));
+    // The same permutation without the pad. The malware uses the 65-character form, but a
+    // 64-character alphabet is equally an alphabet and is read on the same terms.
+    EXPECT_TRUE(ruleFires("OBF042",
+        "<?php $a = \"ScsP2Yyn3fOWeZCrDQwJHmEuA4KiVhkBUa1tb9MX8pF/GxRz6+qvoLlN0jg75ITd\";"));
+
+    // The standard orderings, with and without the pad. This is the case the 317 collapse
+    // over, and it is the ONLY ordering that decodes base64 - which is why an
+    // implementation cannot vary it and a substitution table must.
+    EXPECT_FALSE(ruleFires("OBF042",
+        "<?php $a = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\";"));
+    EXPECT_FALSE(ruleFires("OBF042",
+        "<?php $a = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";"));
+
+    // A permutation is not a sample: 65 alphabet bytes with a repeat in them is not an
+    // alphabet, however base64-shaped the run looks.
+    EXPECT_FALSE(ruleFires("OBF042",
+        "<?php $a = \"AABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/\";"));
+
+    // Right length, wrong character set - a hex digest run and a URL-safe alphabet, which
+    // substitutes - and _ for + and /. Neither holds the base64 characters.
+    EXPECT_FALSE(ruleFires("OBF042",
+        "<?php $a = \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\";"));
+    EXPECT_FALSE(ruleFires("OBF042",
+        "<?php $a = \"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_\";"));
+
+    // The run has to be quoted, and has to close on the quote it opened with: a 65-byte
+    // alphabet sitting in a comment or spliced out of two literals is not one literal.
+    EXPECT_FALSE(ruleFires("OBF042",
+        "<?php // ScsP2Yyn3fOWeZCrDQwJHmEuA4KiVhkBUa1tb9MX8pF/=GxRz6+qvoLlN0jg75ITd"));
+    EXPECT_FALSE(ruleFires("OBF042",
+        "<?php $a = \"ScsP2Yyn3fOWeZCrDQwJHmEuA4KiVhkBUa1tb9MX8pF/=GxRz6+qvoLlN0jg75ITd';"));
+
+    // Length is exact on both sides: 63 and 66 alphabet bytes are neither width.
+    EXPECT_FALSE(ruleFires("OBF042",
+        "<?php $a = \"ScsP2Yyn3fOWeZCrDQwJHmEuA4KiVhkBUa1tb9MX8pF/=GxRz6+qvoLlN0jg75IT\";"));
+    EXPECT_FALSE(ruleFires("OBF042", ""));
+}
+
 // BD018: both ends of the rename decide it, and each end alone is ordinary.
 TEST(RoundElevenRuleTest, UnquarantineRenameNeedsTheSuffixAndTheTarget) {
     // The three deployers, and the `../` and bare spellings both occur.

@@ -35,6 +35,29 @@ commit list that CI generates per tag.
 
 ### Not added, and this is the round's main result
 
+- **A second candidate for the same family was measured and declined: the split include
+  path.** Five `.php` loaders in `fake-plugin-image-payload-loader` reach their second stage
+  with `include_once __DIR__ . "/tiguc" . "y.txt"` — a filename cut between two literals so
+  that searching the tree for it fails. Keying on the included file's *extension* had already
+  been rejected in an earlier round, so the argument was that the **split** is the honest
+  discriminator and the extension never was.
+
+  That argument was wrong, and only measuring it says so. Over the same three benign trees:
+  **422 false positives among 29,342 at-risk files (1.44%) to reach 5 samples** — three times
+  the cost of the extension-keyed candidate it was meant to improve on, which re-measures at
+  124 today. Splicing a path across literals is ordinary in Magento and in requirejs. Declined,
+  and kept reproducible as `REJECTED:split-literal-include` in `corpus/fp-population.py` so it
+  is not re-derived and re-argued next round. **Those 5 loaders are still known misses, and
+  the two `README.txt` payload blobs in the same family with them.**
+
+- **The `woocommerce-card-skimmer` misses were read, and no rule was proposed for them.** All
+  six are the trojanised plugin's *carrier* files rather than the skimmer: a gettext `.mo`, its
+  `.po` and `.pot` sources, a WordPress `index.asset.php` dependency manifest, an ordinary
+  WooCommerce block-integration class, and the built `index.js` whose card fields are the same
+  shape a genuine payment gateway has. The skimmer proper is already detected — `CRED007` on
+  one row, `BD011` on another. There is no discriminator here that is not simply "this is a
+  WooCommerce payment plugin", so the honest outcome is six known misses left standing.
+
 - **The rule that would close 82% of the known misses will not be written.** 495 of the 602
   samples this version misses are one 2017 SEO doorway campaign, and the candidate for them
   was `title == meta[keywords] == meta[description]`, exactly. It scored **0 false positives
@@ -53,6 +76,32 @@ commit list that CI generates per tag.
   price of shipping on twelve files' evidence.
 
 ### Added
+
+- **`OBF042` (critical)** — a literal holding every base64 character exactly once, in an
+  order that is not the standard one. The second stage of the fake-plugin loader family
+  carries two 65-character alphabets, builds a `strtr()` table out of them character by
+  character, then `base64_decode()`s and `eval()`s the result: the pair *is* the substitution
+  table, and a stock base64 decoder reads nothing out of the payload.
+
+  The character set is not the signal and could not be — holding all 64 base64 characters is
+  what a base64 *implementation* does. **317 alphabet literals occur across
+  `trail-data/CMS`, `CMS-ext` and `Sites`, and every one of them is in standard order**,
+  because no other order decodes base64. So the order is the only part an implementation
+  cannot vary, and a shuffled one is a table someone chose. Both widths are read: the pad is
+  optional in an alphabet literal, and a 64-character form is matched on the same terms.
+
+  Measured over those three trees — **263,408 files, 218 of them at risk** (files carrying a
+  64- or 65-character base64 alphabet literal): **0 false positives, 95% upper bound 1.4%.
+  Recall 5 of 5.** The at-risk population deliberately *includes* the standard-order
+  literals, so that zero is a discrimination against the hard case rather than a filter that
+  never met one.
+
+  **It is a new rule rather than a widening of `OBF039`, and that was checked first.**
+  `OBF039` detects a substitution cipher by its *decode loop* — a `strpos()` position used as
+  an index into a second, assembled alphabet. These five files have no `strpos` and no
+  assembled alphabet, so `OBF039` runs on them and correctly declines. The two rules key on
+  different observables — a loop shape and a literal's contents — and either can occur
+  without the other, so folding them into one code would put two meanings behind one finding.
 
 - **`OBF041` (high)** — a file that opens with the ASCII letters `PNG` or `GIF` where a
   real image signature belongs. A real PNG begins with the byte `0x89` precisely so it

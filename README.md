@@ -259,11 +259,11 @@ regeneration untouched.
 <!-- BEGIN GENERATED corpus-figures — corpus/doc-figures.py writes this block; edit the tool, not the block -->
 | figure | value | denominator |
 |---|---|---|
-| **Detection** | **53.6%** | 696 of 1,299 reviewed malicious samples |
-| **Detection, excluding the rules' own source material** | **89.8%** | 631 of 703 samples |
-| Recorded known misses | 603 | 72 of them outside that source material |
+| **Detection** | **54.0%** | 701 of 1,299 reviewed malicious samples |
+| **Detection, excluding the rules' own source material** | **90.5%** | 636 of 703 samples |
+| Recorded known misses | 598 | 67 of them outside that source material |
 | Largest single known-miss family | 495 | `seo-doorway-madxtube-2017` |
-| Samples a stranger can re-run | 97 | ship as bytes carrying a recorded expected rule |
+| Samples a stranger can re-run | 102 | ship as bytes carrying a recorded expected rule |
 | Technique coverage | 90 of 123 | distinct techniques in the reviewed set |
 | Corpus | 92,800 blobs | 46,016 classified, 46,784 unreviewed |
 | Of those, the tree the rules were written against | 1,131 blobs | excluded from the second detection figure |
@@ -329,12 +329,12 @@ and no customer identifier appears in this corpus's published index.*
 | Families fully detected | 9 | 7 |
 | Families partially detected | 5 | 0 |
 | Families completely missed | 24 | 0 |
-| Macro average — every family weighted equally | 29.9% | 100.0% |
-| Micro average — every sample weighted equally | 14.9% (105 of 707) | 100.0% (180 of 180) |
+| Macro average — every family weighted equally | 30.2% | 100.0% |
+| Micro average — every sample weighted equally | 15.6% (110 of 707) | 100.0% (180 of 180) |
 
 | figure | value | denominator |
 |---|---|---|
-| **Sample-weighted detection, whole reviewed set** | **53.6%** | 696 of 1,299 reviewed malicious samples — unchanged by any labelling |
+| **Sample-weighted detection, whole reviewed set** | **54.0%** | 701 of 1,299 reviewed malicious samples — unchanged by any labelling |
 | Reviewed malicious rows carrying no family | 351 | 350 of them detected — outside both columns above |
 | Rows under a provenance label rather than a campaign | 61 | `legacy-infected-tree-sample` — membership conditioned on detection, so excluded |
 | Technique coverage | 90 of 123 | distinct techniques; 531 reviewed malicious rows carry none |
