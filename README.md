@@ -49,7 +49,7 @@ LyxBoSa provides five subcommands:
 - **`check`** -- Check a single file for malicious content (interactive prompt if no file is specified).
 - **`validate-config`** -- Validate a YAML configuration file for correctness.
 - **`init-config`** -- Generate a default configuration file to stdout.
-- **`update --check`** -- Report whether a newer release exists. Exit code 0 when up to date, 2 when one is available. Downloading is not implemented; see [Updating](#updating).
+- **`update`** -- Download the newest release, verify its signature and checksum, and replace this binary with it. `--check` reports whether a newer release exists and downloads nothing: exit code 0 when up to date, 2 when one is available. See [Updating](#updating).
 
 ### Archives
 
@@ -570,16 +570,18 @@ Reports the rule, pattern and directory counts. Exit code 0 when valid, 1 when n
 lyxbosa init-config > lyxbosa.yaml
 ```
 
-### `update` — is there a newer release?
+### `update` — install the newest release
 
 ```
-lyxbosa update --check
+lyxbosa update            # asks first
+lyxbosa update --yes      # does not
+lyxbosa update --check    # reports only; downloads nothing
 ```
 
-Exit code 0 when up to date, 2 when a newer release exists, 1 on an error or a development
-build. `lyxbosa update` without `--check` reports that downloading is not implemented.
-The rules for when a scan checks on its own, and the privacy consequence, are under
-[Updating](#updating).
+`--check` exits 0 when up to date and 2 when a newer release exists. `update` itself exits
+0 when it updated or had nothing to do, and 1 on any error or refusal. What it verifies,
+and what it refuses to do, are under [Updating](#updating); the rules for when a scan checks
+on its own, and the privacy consequence, are there too.
 
 ### Exit codes
 
@@ -648,16 +650,64 @@ lyxbosa validate-config lyxbosa.yaml
 
 ## Updating
 
-Download the binary for your platform from
-[the releases page](https://github.com/LytraX/lyxbosa/releases) and replace the one you have.
-Each release publishes `SHA256SUMS` and a `minisign` signature over it; verifying both is
-described in [docs/RELEASING.md](docs/RELEASING.md#release-integrity-checksums-and-signatures).
+```bash
+lyxbosa update
+```
 
-Downloading and replacing the binary is not implemented. `lyxbosa update` says so rather
-than being absent, and the design for it is in
-[docs/tasks/UPDATE_PLAN.md](docs/tasks/UPDATE_PLAN.md).
+It downloads the newest release, checks it, and replaces the binary you are running. Or
+fetch it yourself from [the releases page](https://github.com/LytraX/lyxbosa/releases):
+every release publishes `SHA256SUMS` and a `minisign` signature over it, and verifying both
+by hand is described in
+[docs/RELEASING.md](docs/RELEASING.md#release-integrity-checksums-and-signatures).
 
-### `update --check` — is there a newer release?
+### What `update` checks, in this order
+
+1. The **signature** over the release's `SHA256SUMS` is verified against a list of keys
+   compiled into this binary.
+2. The **global signature** is verified too. That is what covers the *trusted comment* — the
+   line naming the release — so the tag printed at the end is signed rather than asserted.
+3. That comment must name **this** release. A `SHA256SUMS` and signature pair lifted from an
+   older release verifies perfectly well and describes the wrong binaries.
+4. Only then is the download hashed and compared to its line in that verified list.
+
+The order is the point. A hash checked against an unverified list defends against a
+corrupted transfer and nothing else, because whoever can rewrite the asset can rewrite the
+list published beside it.
+
+The new file is written **beside** the old one, given the old one's permissions, run once to
+confirm it starts on this host, flushed to disk, and only then renamed over the old binary.
+The rename is atomic, so a failure at any point leaves the binary you are running exactly
+where it was.
+
+### What it refuses to do
+
+| situation | what happens |
+|---|---|
+| the newest release is **older** than what you run | refused: a signed old release is still signed, and rolling you backwards into a known defect needs no forgery |
+| signed by a key this binary does not carry | refused, with instructions to download and verify by hand |
+| the binary sits under a path a package manager owns | declined: an updater fighting `apt` leaves its database describing a file that is not there |
+| you cannot write the install directory | refused, with the reason. It never re-runs itself under `sudo` |
+| the download will not start on this host | refused before anything is replaced |
+| Windows | refused: a running `.exe` is locked, and replace-on-restart is not built yet |
+| macOS and other platforms | refused: a release publishes Linux and Windows binaries only |
+
+There is no `--to VERSION`. It is the one option that would put a hole in the downgrade
+rule by construction, and it is not worth having in the same release that first taught this
+program to replace itself.
+
+**The keys are frozen at build time.** A binary from an earlier release has never seen a key
+introduced later and cannot verify a release signed by it. It refuses and tells you to
+download the release yourself rather than proceeding unverified —
+[`keys/minisign-trusted.txt`](keys/minisign-trusted.txt) describes the three-release rotation
+that keeps that gap from opening in normal operation.
+
+**The trust boundary.** A verified update proves the bytes were signed by whoever holds the
+release key. It defends against a tampered asset, a hostile mirror and a MITM on the
+download. It does not defend against a compromise of this repository or its CI, because the
+signing key lives there, and no self-updater can do better without a separate offline
+signing step.
+
+### `update --check` — ask without downloading
 
 ```bash
 lyxbosa update --check
@@ -710,7 +760,15 @@ updates:
 >
 > The check asks the GitHub releases API over HTTPS, with certificate verification against
 > your system trust store. It sends no path, no finding, no hostname and nothing about what
-> was scanned.
+> was scanned. `lyxbosa update` reaches the same API and then the release download; it makes
+> no request at all until you ask it to.
+
+**Certificates.** Verification is always on and there is no flag to turn it off. The system
+trust store is found at run time — a released binary is built on one distribution and run on
+others, and the path its TLS library was configured with often does not exist on the host.
+To point it somewhere else, set `SSL_CERT_FILE` (a bundle), `CURL_CA_BUNDLE` (the same), or
+`SSL_CERT_DIR` (a hashed directory); whichever you set is used in place of the probe for
+that kind.
 
 ## Building
 

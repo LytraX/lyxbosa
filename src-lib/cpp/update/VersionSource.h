@@ -43,8 +43,10 @@
 // THE TRANSPORT IS libcurl, LINKED
 // ---------------------------------
 // vcpkg.json asks for `curl` with `default-features: false` and the one feature
-// `ssl`. The reasoning, and what it actually costs, is in HttpVersionSource.cpp
-// beside the code it governs. The short version:
+// `ssl`. The reasoning, and what it actually costs, is in HttpTransport.cpp beside the
+// code it governs - which is shared with the download that replaces the binary, so
+// that the options which must not differ between the two are written once. The short
+// version:
 //
 //   Dropping `non-http` drops FTP, LDAP, SMTP, telnet, dict, gopher and the rest out
 //   of the build. This speaks HTTPS to one host; the rest is surface with no user.
@@ -75,6 +77,9 @@
 //
 // If "cannot delay output" is ever relaxed, cpr is the better code and the swap is
 // this one function.
+
+#include "update/HttpTransport.h"
+#include "update/ReleaseAssets.h"
 
 #include <atomic>
 #include <chrono>
@@ -112,42 +117,19 @@ public:
                                      const std::atomic<bool>& cancelled) = 0;
 };
 
-// The releases API for this repository.
-inline constexpr std::string_view kReleasesApiUrl =
-    "https://api.github.com/repos/LytraX/lyxbosa/releases/latest";
-
-// Where the system's certificate authorities live on this host.
-//
-// This exists because a released binary is built on one distribution and run on
-// another. curl bakes its CA bundle path in at configure time, so the AlmaLinux 8
-// release build carries /etc/pki/tls/certs/ca-bundle.crt and every Debian or Ubuntu
-// host it then runs on has no such file - measured, on the real release artefact:
-// "Problem with the SSL CA cert (path? access rights?)". Probing at run time is the
-// fix, and it is still the host's own trust store; nothing is shipped or embedded.
-//
-// Split out from the caller so it can be tested against directories that exist rather
-// than against whatever the machine running the tests happens to have in /etc.
-struct CaLocation {
-    std::string file;  // a bundle, for CURLOPT_CAINFO
-    std::string dir;   // a hashed directory, for CURLOPT_CAPATH
-    bool found() const { return !file.empty() || !dir.empty(); }
-};
-
-// The first candidate of each kind that exists, file preferred. Returns empty when
-// none does, which leaves the TLS backend's own default in place.
-CaLocation resolveCaLocation(const std::vector<std::string>& bundleFiles,
-                             const std::vector<std::string>& bundleDirs);
-
-// The candidates for this platform, in order.
-const std::vector<std::string>& systemCaBundleFiles();
-const std::vector<std::string>& systemCaBundleDirs();
-
-// What to tell someone whose request failed on certificates. Separated from the
-// request so the case an operator can actually act on - no trust store at all - has a
-// test rather than a socket behind it. Verification is never disabled to get past it:
-// a version check is not worth teaching anyone that this tool will talk to anybody.
-std::string certificateFailureDetail(bool trustStoreFound,
-                                     const std::string& underlying);
+// The transport, and the certificate probe it needs, are shared with the download in
+// phase 3 and live in HttpTransport.h. They are named here as well because the call
+// sites - and the tests that exercise the probe against directories that exist rather
+// than against whatever this machine has in /etc - were written against these names,
+// and because a reader of this header should not have to know that the request moved.
+using http::CaLocation;
+using http::caLocationFromEnvironment;
+using http::certificateFailureDetail;
+using http::chooseCaLocation;
+using http::resolveCaLocation;
+using http::TrustStoreEnvironment;
+using http::systemCaBundleDirs;
+using http::systemCaBundleFiles;
 
 // Pull `"tag_name": "v2.2.1"` out of a releases API response.
 //
@@ -159,8 +141,12 @@ std::optional<std::string> extractTagName(std::string_view body);
 // The real one. Uses libcurl; see the header comment.
 class HttpVersionSource : public VersionSource {
 public:
-    explicit HttpVersionSource(std::string url = std::string(kReleasesApiUrl))
-        : url_(std::move(url)) {}
+    // releasesLatestUrl() rather than a constant: it is the one place that knows where
+    // the releases API is, shared with the download so the two cannot end up pointed at
+    // different origins. A constant default here was exactly that bug - the check kept
+    // talking to github.com while the download did not.
+    HttpVersionSource() : url_(releasesLatestUrl()) {}
+    explicit HttpVersionSource(std::string url) : url_(std::move(url)) {}
 
     FetchOutcome fetchLatest(std::chrono::milliseconds timeout,
                              const std::atomic<bool>& cancelled) override;

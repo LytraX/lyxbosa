@@ -52,9 +52,67 @@ find_package(ZLIB REQUIRED)
 find_package(libzip CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 # HTTPS for `update --check`. vcpkg.json pins the feature set to `ssl` with
-# default-features off - see src-lib/cpp/update/HttpVersionSource.cpp for why that is
-# the whole of the dependency, and what it costs.
+# default-features off - see src-lib/cpp/update/HttpTransport.cpp for why that is the
+# whole of the dependency, and what it costs.
 find_package(CURL CONFIG REQUIRED)
+
+# Ed25519, BLAKE2b-512 and SHA-256 for `lyxbosa update`: the signature over SHA256SUMS,
+# and the hash of the asset that list describes.
+#
+# It is REQUIRED rather than optional wherever it exists at all, and the asymmetry is
+# deliberate. On Linux and macOS the `ssl` feature of curl above already builds OpenSSL,
+# so this finds a library that is in the build either way and a failure here means
+# something is genuinely wrong. On Windows curl uses Schannel and no OpenSSL is built at
+# all - docker/build/Linux/Dockerfile's own comment records it - so there is nothing to
+# find, `update` refuses on that platform with a reason, and phase 4 is where Windows
+# gets its own answer. Refusing is a legitimate outcome; a second crypto path nobody
+# exercises is not.
+#
+# A quiet find that silently disabled verification would be the worst of the three: it
+# would ship a binary whose updater refuses for a reason nobody chose, and nothing would
+# say so. So the only two states are "verification is compiled in" and "this platform is
+# known not to have it".
+if(WIN32)
+  set(LYXBOSA_UPDATE_VERIFY OFF)
+  message(STATUS "Update verification: off (Windows uses Schannel; no OpenSSL is built)")
+else()
+  find_package(OpenSSL REQUIRED)
+  set(LYXBOSA_UPDATE_VERIFY ON)
+  message(STATUS "Update verification: OpenSSL ${OPENSSL_VERSION} (Ed25519, BLAKE2b-512)")
+endif()
+
+# The keys a released binary trusts, compiled in from the one file that
+# keys/minisign-trusted.txt's header, docs/RELEASING.md and release-sign.sh all describe.
+# A verifier that read its keyring from disk at run time would be a verifier an attacker
+# with write access to that disk can edit.
+set(LYXBOSA_KEYRING_FILE "${CMAKE_SOURCE_DIR}/keys/minisign-trusted.txt"
+    CACHE FILEPATH "minisign keys compiled into the binary")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${LYXBOSA_KEYRING_FILE}")
+if(NOT EXISTS "${LYXBOSA_KEYRING_FILE}")
+  message(FATAL_ERROR "no keyring at ${LYXBOSA_KEYRING_FILE}")
+endif()
+file(READ "${LYXBOSA_KEYRING_FILE}" LYXBOSA_KEYRING_TEXT)
+# The text is embedded in a raw string literal; a file containing the closing delimiter
+# would end the literal early and compile as something else entirely.
+if(LYXBOSA_KEYRING_TEXT MATCHES "\\)LYXBOSAKEYS\"")
+  message(FATAL_ERROR "${LYXBOSA_KEYRING_FILE} contains the raw-string delimiter")
+endif()
+configure_file(
+  ${CMAKE_SOURCE_DIR}/cmake/EmbeddedKeyring.h.in
+  ${CMAKE_BINARY_DIR}/generated/update/EmbeddedKeyring.h
+  @ONLY
+)
+
+# Point both update origins at a server on this machine, so docs/local/demo-update.sh can
+# show a real download, a real verification and a real replacement without a release being
+# cut. OFF everywhere a release is built, and the code that reads the variable is not
+# compiled at all when it is off. It cannot make an unverified binary install - the
+# keyring is compiled in - and src-lib/cpp/update/ReleaseAssets.h says why at length.
+option(LYXBOSA_UPDATE_TEST_ORIGIN "Honour $LYXBOSA_UPDATE_ORIGIN (local demos only)" OFF)
+if(LYXBOSA_UPDATE_TEST_ORIGIN)
+  message(WARNING "LYXBOSA_UPDATE_TEST_ORIGIN is ON: this build reads "
+                  "$LYXBOSA_UPDATE_ORIGIN instead of github.com. Never release it.")
+endif()
 
 # The full-screen terminal UI. Off-switch for minimal/static builds (docker/,
 # dist/), which then fall back to the plain stderr progress line.
@@ -107,8 +165,28 @@ set(LIB_SOURCES
 set(UPDATE_SOURCES
     src-lib/cpp/update/UpdateState.cpp
     src-lib/cpp/update/UpdateCheck.cpp
+    src-lib/cpp/update/HttpTransport.cpp
     src-lib/cpp/update/HttpVersionSource.cpp
+    src-lib/cpp/update/Minisign.cpp
+    src-lib/cpp/update/Checksums.cpp
+    src-lib/cpp/update/InstallPath.cpp
+    src-lib/cpp/update/ReleaseAssets.cpp
+    src-lib/cpp/update/UpdateApply.cpp
 )
+
+# Everything the update sources need beyond the library's own dependencies, in one place
+# so the CLI and the test binary cannot drift apart on it.
+function(lyxbosa_configure_update target)
+  target_include_directories(${target} PRIVATE ${CMAKE_BINARY_DIR}/generated)
+  target_link_libraries(${target} PRIVATE CURL::libcurl)
+  if(LYXBOSA_UPDATE_VERIFY)
+    target_link_libraries(${target} PRIVATE OpenSSL::Crypto)
+    target_compile_definitions(${target} PRIVATE LYXBOSA_UPDATE_VERIFY)
+  endif()
+  if(LYXBOSA_UPDATE_TEST_ORIGIN)
+    target_compile_definitions(${target} PRIVATE LYXBOSA_UPDATE_TEST_ORIGIN)
+  endif()
+endfunction()
 
 # Windows version resource
 if(WIN32)
@@ -143,8 +221,8 @@ target_link_libraries(lyxbosa
     libzip::zip
     ZLIB::ZLIB
     Threads::Threads
-    CURL::libcurl
 )
+lyxbosa_configure_update(lyxbosa)
 
 if(LYXBOSA_TUI)
   target_link_libraries(lyxbosa PRIVATE ftxui::screen ftxui::dom ftxui::component)
@@ -190,6 +268,7 @@ if(BUILD_TESTS)
     tests/progress_model_test.cpp
     tests/archive_test.cpp
     tests/update_test.cpp
+    tests/update_apply_test.cpp
     ${LIB_SOURCES}
     ${UPDATE_SOURCES}
   )
@@ -211,8 +290,15 @@ if(BUILD_TESTS)
       Threads::Threads
       GTest::gtest
       GTest::gtest_main
-      CURL::libcurl
   )
+  lyxbosa_configure_update(lyxbosa_tests)
+
+  # The keyring is compiled into the binary from this file. The test that asserts the
+  # two are byte-identical needs to know where the file is, and it is given the path
+  # here rather than baked into the shipped binary - a released executable has no
+  # business carrying the absolute path of the machine that built it.
+  target_compile_definitions(lyxbosa_tests PRIVATE
+    LYXBOSA_KEYRING_FILE_PATH="${LYXBOSA_KEYRING_FILE}")
 
   include(GoogleTest)
   gtest_discover_tests(lyxbosa_tests)

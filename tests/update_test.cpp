@@ -912,3 +912,61 @@ TEST(DurationTest, ParsesTheDayUnit) {
     EXPECT_EQ(parseDurationSeconds(""), 0u);
     EXPECT_EQ(parseDurationSeconds("daily"), 0u);
 }
+
+
+// ---------------------------------------------------------------------------
+// A trust store the operator named. Added with phase 3, because the download
+// depends on the same configuration the check does.
+// ---------------------------------------------------------------------------
+
+TEST(CaLocationTest, AnOperatorsOwnBundleIsUsedRatherThanStoodAsideFor) {
+    // The three names had to become something this code acts on. libcurl reads none of
+    // them - CURL_CA_BUNDLE is a compile-time macro in libcurl and an environment
+    // variable only for the curl command-line tool - so skipping the probe when one was
+    // set left libcurl using the path from the machine it was BUILT on, which is the
+    // failure the probe exists to prevent.
+    const auto named = caLocationFromEnvironment(
+        TrustStoreEnvironment{"/tmp/mine.pem", "", ""});
+    EXPECT_EQ(named.file, "/tmp/mine.pem");
+    EXPECT_TRUE(named.dir.empty());
+
+    // SSL_CERT_FILE wins over CURL_CA_BUNDLE when both are set.
+    EXPECT_EQ(caLocationFromEnvironment(
+                  TrustStoreEnvironment{"/tmp/a.pem", "/tmp/b.pem", ""}).file,
+              "/tmp/a.pem");
+    EXPECT_EQ(caLocationFromEnvironment(TrustStoreEnvironment{"", "/tmp/b.pem", ""}).file,
+              "/tmp/b.pem");
+    EXPECT_EQ(caLocationFromEnvironment(TrustStoreEnvironment{"", "", "/tmp/certs"}).dir,
+              "/tmp/certs");
+}
+
+TEST(CaLocationTest, NothingNamedLeavesTheProbeInCharge) {
+    const auto named = caLocationFromEnvironment(TrustStoreEnvironment{});
+    EXPECT_FALSE(named.found());
+
+    CaLocation probed;
+    probed.file = "/etc/ssl/certs/ca-certificates.crt";
+    probed.dir = "/etc/ssl/certs";
+    const auto chosen = chooseCaLocation(named, probed);
+    EXPECT_EQ(chosen.file, probed.file);
+    EXPECT_EQ(chosen.dir, probed.dir);
+}
+
+TEST(CaLocationTest, NamingOneKindDoesNotThrowAwayTheOther) {
+    // Naming a bundle must not lose a probed directory, and the reverse. Collapsing the
+    // two into one "is anything set" question is what the previous shape did, and it
+    // took away both.
+    CaLocation probed;
+    probed.file = "/etc/ssl/certs/ca-certificates.crt";
+    probed.dir = "/etc/ssl/certs";
+
+    const auto fileOnly = chooseCaLocation(
+        caLocationFromEnvironment(TrustStoreEnvironment{"/tmp/mine.pem", "", ""}), probed);
+    EXPECT_EQ(fileOnly.file, "/tmp/mine.pem");
+    EXPECT_EQ(fileOnly.dir, "/etc/ssl/certs");
+
+    const auto dirOnly = chooseCaLocation(
+        caLocationFromEnvironment(TrustStoreEnvironment{"", "", "/tmp/certs"}), probed);
+    EXPECT_EQ(dirOnly.file, "/etc/ssl/certs/ca-certificates.crt");
+    EXPECT_EQ(dirOnly.dir, "/tmp/certs");
+}

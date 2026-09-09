@@ -52,6 +52,7 @@ struct CliArgs {
 
     // Update command options
     bool updateCheckOnly = false;  // --check: report only, never download
+    bool assumeYes = false;        // --yes: do not ask before replacing the binary
 
     // Global options
     bool noAnsi = false;              // Older spelling of --color=never
@@ -77,7 +78,7 @@ inline std::string CliArgs::getHelpText() {
         "  check              Check a single file for malicious content\n"
         "  validate-config    Validate a configuration file\n"
         "  init-config        Generate default configuration to stdout\n"
-        "  update             Report whether a newer release exists\n"
+        "  update             Download, verify and install a newer release\n"
         "\n"
         "Global options (before the command):\n"
         "  -h, --help         Show this help message and exit\n"
@@ -161,14 +162,29 @@ inline std::string CliArgs::getHelpText() {
         "  -h, --help         Show help for the validate-config command\n"
         "\n"
         "update [options]\n"
-        "  Ask whether a newer release exists. Downloading is not implemented.\n"
+        "  Download the newest release, verify it and replace this binary with it.\n"
+        "  Asks first unless --yes.\n"
         "\n"
-        "      --check        Report whether a newer release exists and exit. Exit 0\n"
-        "                     when up to date and 2 when an update is available, so a\n"
-        "                     monitoring script does not have to read the text.\n"
+        "      --check        Report whether a newer release exists and exit without\n"
+        "                     downloading anything. Exit 0 when up to date and 2 when\n"
+        "                     an update is available, so a monitoring script does not\n"
+        "                     have to read the text.\n"
+        "  -y, --yes          Do not ask before replacing the binary\n"
         "      --color WHEN   Colorize output: auto, always or never\n"
         "      --no-ansi      Alias for --color=never\n"
         "  -h, --help         Show help for the update command\n"
+        "\n"
+        "  What is checked, in this order: the signature over the release's\n"
+        "  SHA256SUMS is verified against keys compiled into this binary, then the\n"
+        "  downloaded file is hashed and compared to its line in that verified list.\n"
+        "  A hash checked against an unverified list would defend against a corrupted\n"
+        "  download and nothing else. The new file is written beside the old one and\n"
+        "  renamed over it, so a failure at any point leaves the old binary running.\n"
+        "\n"
+        "  It refuses rather than working around: a version older than this one, a\n"
+        "  release signed by a key this build does not carry, a binary a package\n"
+        "  manager owns, and a target this user cannot write. It never re-runs itself\n"
+        "  under sudo.\n"
         "\n"
         "  A scan may also check on its own, at most once a day, and only when stdout\n"
         "  is a terminal. It never happens from 'check', under --quiet, --silent or\n"
@@ -426,16 +442,30 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
 
     // Update subcommand
     argparse::ArgumentParser updateCmd("update", LYXBOSA_VERSION, subcommandArgs);
-    updateCmd.add_description("Report whether a newer release exists");
+    updateCmd.add_description("Download, verify and install a newer release");
     updateCmd.add_epilog(
-        "Exit codes: 0 = up to date, 1 = error or not a release build,\n"
-        "            2 = a newer release is available.\n"
+        "Exit codes: 0 = up to date or updated, 1 = error, refusal, or not a release\n"
+        "            build, 2 = --check only, a newer release is available.\n"
         "\n"
         "The exit code is the interface: a monitoring script should read it rather\n"
-        "than the text. Downloading and replacing the binary is not implemented.\n"
+        "than the text.\n"
         "\n"
-        "Example:\n"
-        "  lyxbosa update --check");
+        "The signature over the release's SHA256SUMS is verified against keys built\n"
+        "into this binary before the download is hashed against that list. The new\n"
+        "file is written beside the old one and renamed over it, so a failure at any\n"
+        "point leaves the old binary in place and running.\n"
+        "\n"
+        "It will not move to an older version, install over a binary a package manager\n"
+        "owns, or re-run itself under sudo.\n"
+        "\n"
+        "Examples:\n"
+        "  lyxbosa update --check\n"
+        "  lyxbosa update --yes");
+
+    updateCmd.add_argument("-y", "--yes")
+        .help("Do not ask before replacing the binary")
+        .default_value(false)
+        .implicit_value(true);
 
     updateCmd.add_argument("--check")
         .help("Report only; exit 0 up to date, 2 if an update is available")
@@ -604,6 +634,7 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
     } else if (program.is_subcommand_used("update")) {
         result.command = Command::Update;
         result.updateCheckOnly = updateCmd.get<bool>("--check");
+        result.assumeYes = updateCmd.get<bool>("--yes");
         result.noAnsi = globalNoAnsi || updateCmd.get<bool>("--no-ansi");
         if (!applyColor(updateCmd)) {
             return result;

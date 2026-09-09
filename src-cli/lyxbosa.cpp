@@ -168,7 +168,7 @@ int main(int argc, char* argv[]) {
             return InitConfigUseCase().execute();
 
         case Command::Update:
-            return UpdateUseCase(terminal).execute(args);
+            return UpdateUseCase(terminal, caps).execute(args);
 
         case Command::None:
         default:

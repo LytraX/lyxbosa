@@ -1,51 +1,65 @@
 #pragma once
 
-// The `update` command. Two exit codes and no output games:
+// The `update` command. Three exit codes and no output games:
 //
-//   0  up to date
-//   2  a newer release is available
-//   1  anything else - a failed request, a development build, or the download that
-//      is not implemented
+//   0  nothing needed doing, or the binary was replaced
+//   2  `--check` only: a newer release is available
+//   1  anything else - a failed request, a development build, and every refusal
 //
 // The exit code is the interface, so that a monitoring script can use this without
-// reading the text - the same discipline the scan exit codes already follow.
+// reading the text - the same discipline the scan exit codes already follow. A refusal
+// exits 1 rather than 0 on purpose: a script that asked for an update and did not get
+// one has to be able to tell.
 
 #include "infrastructure/Terminal.h"
+#include "infrastructure/TerminalCaps.h"
 #include "system/CliArgs.h"
+#include "update/ReleaseAssets.h"
+#include "update/UpdateApply.h"
 #include "update/UpdateCheck.h"
 #include "update/UpdateState.h"
 #include "update/VersionSource.h"
 
 #include <fmt/base.h>
+#include <iostream>
 #include <memory>
+#include <string>
 #include <utility>
 
 namespace lyxbosa {
 
 class UpdateUseCase {
 public:
-    // The source is injected so the command is testable without a socket; the
-    // default is the real one.
-    explicit UpdateUseCase(const Terminal& terminal,
-                           std::shared_ptr<VersionSource> source = nullptr)
+    // Both seams are injected so the command is testable without a socket; the
+    // defaults are the real ones.
+    UpdateUseCase(const Terminal& terminal, const TerminalCaps& caps,
+                  std::shared_ptr<VersionSource> source = nullptr,
+                  std::shared_ptr<AssetSource> assets = nullptr)
         : terminal_(terminal),
+          caps_(caps),
           source_(source ? std::move(source)
                          : std::static_pointer_cast<VersionSource>(
-                               std::make_shared<HttpVersionSource>())) {}
+                               std::make_shared<HttpVersionSource>())),
+          assets_(assets ? std::move(assets)
+                         : std::static_pointer_cast<AssetSource>(
+                               std::make_shared<HttpAssetSource>())) {}
 
     int execute(const CliArgs& args) {
-        // `lyxbosa update` refuses rather than being absent. A user who reads about
-        // the command and gets "unknown command" learns less than one who is told
-        // what does exist - and the README describes a command that is coming.
-        if (!args.updateCheckOnly) {
-            terminal_.printErr(Terminal::error(),
-                "Downloading and replacing the binary is not implemented yet.\n");
-            fmt::print(stderr,
-                "Use 'lyxbosa update --check' to find out whether a newer release\n"
-                "exists, and https://github.com/LytraX/lyxbosa/releases to fetch it.\n");
-            return 1;
+        if (usingTestOrigin()) {
+            // Loud, because a build that reads this variable must never be mistaken
+            // for one that talks to GitHub. It cannot install anything unsigned - the
+            // keyring is compiled in - but it can install something signed from
+            // somewhere else, and nobody should discover that from the outcome.
+            terminal_.printErr(Terminal::warning(),
+                "This build reads $LYXBOSA_UPDATE_ORIGIN instead of github.com.\n"
+                "It is a local demonstration build and must not be installed anywhere.\n\n");
         }
 
+        return args.updateCheckOnly ? runCheck() : runApply(args);
+    }
+
+private:
+    int runCheck() {
         const Version running = runningVersion();
 
         // 0.0.0 is what a build that did not come from a tag reports, and
@@ -53,11 +67,7 @@ public:
         // than it, so comparing would tell every developer that everything is an
         // update. Saying which build this is beats saying something false.
         if (!running.isRelease()) {
-            terminal_.printErr(Terminal::warning(),
-                "This is a development build ({}), not a release build.\n", LYXBOSA_VERSION);
-            fmt::print(stderr,
-                "There is no released version to compare it against. Release builds\n"
-                "carry the tag they were built from; see docs/RELEASING.md.\n");
+            printDevelopmentBuild();
             return 1;
         }
 
@@ -82,7 +92,8 @@ public:
             terminal_.print(Terminal::warning(),
                 "A newer release is available: {} (this is {}).\n",
                 toString(*result.latest), toString(running));
-            fmt::print("https://github.com/LytraX/lyxbosa/releases\n");
+            fmt::print("Run 'lyxbosa update' to install it, or fetch it from\n"
+                       "https://github.com/LytraX/lyxbosa/releases\n");
             return 2;
         }
 
@@ -95,9 +106,102 @@ public:
         return 0;
     }
 
-private:
+    int runApply(const CliArgs& args) {
+        ApplyOptions options;
+        options.assumeYes = args.assumeYes;
+        options.now = currentEpochSeconds;
+
+        options.onStep = [this](std::string_view what) {
+            terminal_.printErr(Terminal::muted(), "  {}...\n", what);
+        };
+
+        options.confirm = [this](const ApplyPlan& plan) { return confirm(plan); };
+
+        const ApplyResult result = applyUpdate(*source_, *assets_, options);
+
+        switch (result.outcome) {
+            case ApplyOutcome::Replaced:
+                terminal_.print(Terminal::success(), "Updated {} -> {}.\n",
+                                toString(result.plan->from), toString(result.plan->to));
+                fmt::print("{}\n", result.detail);
+                // The trusted comment is printed only because it verified, and it is
+                // worth printing because it is the line that names the release the
+                // checksums belong to.
+                if (!result.trustedComment.empty()) {
+                    fmt::print("Signed: {}\n", result.trustedComment);
+                }
+                return 0;
+
+            case ApplyOutcome::AlreadyCurrent:
+                terminal_.print(Terminal::success(), "Up to date ({}).\n", result.detail);
+                return 0;
+
+            case ApplyOutcome::Declined:
+                fmt::print(stderr, "Cancelled. {}\n", result.detail);
+                return 1;
+
+            case ApplyOutcome::DevelopmentBuild:
+                printDevelopmentBuild();
+                return 1;
+
+            default:
+                break;
+        }
+
+        terminal_.printErr(Terminal::error(), "Not updated: {}.\n",
+                           describeOutcome(result.outcome));
+        if (!result.detail.empty()) {
+            fmt::print(stderr, "{}\n", result.detail);
+        }
+
+        // Every refusal ends the same way, because every refusal has the same answer:
+        // the old binary is still there, and the release can be fetched and verified by
+        // hand. docs/RELEASING.md's "After the release" section is that procedure.
+        fmt::print(stderr,
+                   "\nThe binary you are running has not been changed.\n"
+                   "To install a release yourself: https://github.com/LytraX/lyxbosa/releases\n"
+                   "Verify it with the key in keys/minisign-trusted.txt before you run it.\n");
+        return 1;
+    }
+
+    bool confirm(const ApplyPlan& plan) {
+        // Without a terminal there is nobody to answer, and treating that as consent
+        // would let a cron job replace the binary it is running.
+        if (!caps_.stdinIsTty()) {
+            terminal_.printErr(Terminal::error(),
+                "Refusing to replace {} unconfirmed because stdin is not a terminal.\n"
+                "Re-run with --yes to update non-interactively.\n", plan.target.string());
+            return false;
+        }
+
+        fmt::print(stderr, "\n  {} -> {}\n  {}\n  from release {}, asset {}\n\n",
+                   toString(plan.from), toString(plan.to), plan.target.string(), plan.tag,
+                   plan.assetName);
+        fmt::print(stderr, "Replace it? [y/N] ");
+        std::fflush(stderr);
+
+        std::string input;
+        if (!std::getline(std::cin, input)) {
+            // EOF or a read error is not consent.
+            fmt::print(stderr, "\n");
+            return false;
+        }
+        // Default no, unlike the scan prompt: this one rewrites the program asking.
+        return !input.empty() && (input[0] == 'y' || input[0] == 'Y');
+    }
+
+    void printDevelopmentBuild() {
+        terminal_.printErr(Terminal::warning(),
+            "This is a development build ({}), not a release build.\n", LYXBOSA_VERSION);
+        fmt::print(stderr,
+            "There is no released version to compare it against. Release builds\n"
+            "carry the tag they were built from; see docs/RELEASING.md.\n");
+    }
+
     const Terminal& terminal_;
+    const TerminalCaps& caps_;
     std::shared_ptr<VersionSource> source_;
+    std::shared_ptr<AssetSource> assets_;
 };
 
 }  // namespace lyxbosa
