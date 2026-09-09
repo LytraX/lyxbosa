@@ -15,7 +15,8 @@ enum class Command {
     Scan,
     Check,
     ValidateConfig,
-    InitConfig
+    InitConfig,
+    Update
 };
 
 struct CliArgs {
@@ -49,6 +50,9 @@ struct CliArgs {
     // Validate-config command options
     std::optional<std::string> validateConfigFile;
 
+    // Update command options
+    bool updateCheckOnly = false;  // --check: report only, never download
+
     // Global options
     bool noAnsi = false;              // Older spelling of --color=never
     ColorWhen color = ColorWhen::Auto;
@@ -73,6 +77,7 @@ inline std::string CliArgs::getHelpText() {
         "  check              Check a single file for malicious content\n"
         "  validate-config    Validate a configuration file\n"
         "  init-config        Generate default configuration to stdout\n"
+        "  update             Report whether a newer release exists\n"
         "\n"
         "Global options (before the command):\n"
         "  -h, --help         Show this help message and exit\n"
@@ -155,6 +160,23 @@ inline std::string CliArgs::getHelpText() {
         "      --no-ansi      Alias for --color=never\n"
         "  -h, --help         Show help for the validate-config command\n"
         "\n"
+        "update [options]\n"
+        "  Ask whether a newer release exists. Downloading is not implemented.\n"
+        "\n"
+        "      --check        Report whether a newer release exists and exit. Exit 0\n"
+        "                     when up to date and 2 when an update is available, so a\n"
+        "                     monitoring script does not have to read the text.\n"
+        "      --color WHEN   Colorize output: auto, always or never\n"
+        "      --no-ansi      Alias for --color=never\n"
+        "  -h, --help         Show help for the update command\n"
+        "\n"
+        "  A scan may also check on its own, at most once a day, and only when stdout\n"
+        "  is a terminal. It never happens from 'check', under --quiet, --silent or\n"
+        "  --force, in CI, or on a development build, and it can neither fail a scan\n"
+        "  nor change its exit code. 'updates.check: off' in the configuration turns\n"
+        "  it off entirely; a version check tells whoever serves it your IP address,\n"
+        "  your version and the time.\n"
+        "\n"
         "init-config [options]\n"
         "  Print the default configuration to stdout.\n"
         "\n"
@@ -172,7 +194,7 @@ inline std::string CliArgs::getHelpText() {
         "Exit codes:\n"
         "  0    Success - no matches found, or the command was cancelled\n"
         "  1    Error - invalid arguments, missing file or invalid configuration\n"
-        "  2    Matches found\n"
+        "  2    Matches found; for 'update --check', an update is available\n"
         "  130  Interrupted with Ctrl+C\n"
         "\n"
         "Examples:\n"
@@ -183,7 +205,8 @@ inline std::string CliArgs::getHelpText() {
         "  lyxbosa scan -c lyxbosa.yaml --dry-run --verbose\n"
         "  lyxbosa check suspicious.php\n"
         "  lyxbosa init-config > lyxbosa.yaml\n"
-        "  lyxbosa validate-config lyxbosa.yaml\n";
+        "  lyxbosa validate-config lyxbosa.yaml\n"
+        "  lyxbosa update --check\n";
 }
 
 inline CliArgs CliArgs::parse(int argc, char* argv[]) {
@@ -401,11 +424,40 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .default_value(false)
         .implicit_value(true);
 
+    // Update subcommand
+    argparse::ArgumentParser updateCmd("update", LYXBOSA_VERSION, subcommandArgs);
+    updateCmd.add_description("Report whether a newer release exists");
+    updateCmd.add_epilog(
+        "Exit codes: 0 = up to date, 1 = error or not a release build,\n"
+        "            2 = a newer release is available.\n"
+        "\n"
+        "The exit code is the interface: a monitoring script should read it rather\n"
+        "than the text. Downloading and replacing the binary is not implemented.\n"
+        "\n"
+        "Example:\n"
+        "  lyxbosa update --check");
+
+    updateCmd.add_argument("--check")
+        .help("Report only; exit 0 up to date, 2 if an update is available")
+        .default_value(false)
+        .implicit_value(true);
+
+    updateCmd.add_argument("--color")
+        .help("Colorize output: auto, always or never")
+        .default_value(std::string("auto"))
+        .metavar("WHEN");
+
+    updateCmd.add_argument("--no-ansi")
+        .help("Alias for --color=never")
+        .default_value(false)
+        .implicit_value(true);
+
     // Add subcommands
     program.add_subparser(scanCmd);
     program.add_subparser(checkCmd);
     program.add_subparser(validateCmd);
     program.add_subparser(initCmd);
+    program.add_subparser(updateCmd);
 
     try {
         program.parse_args(argc, argv);
@@ -546,6 +598,14 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         result.validateConfigFile = validateCmd.get<std::string>("file");
         result.noAnsi = globalNoAnsi || validateCmd.get<bool>("--no-ansi");
         if (!applyColor(validateCmd)) {
+            return result;
+        }
+
+    } else if (program.is_subcommand_used("update")) {
+        result.command = Command::Update;
+        result.updateCheckOnly = updateCmd.get<bool>("--check");
+        result.noAnsi = globalNoAnsi || updateCmd.get<bool>("--no-ansi");
+        if (!applyColor(updateCmd)) {
             return result;
         }
 

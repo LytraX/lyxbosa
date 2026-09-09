@@ -43,12 +43,13 @@ Rules can be selectively enabled or disabled by category or individual rule code
 
 ### CLI Commands
 
-LyxBoSa provides four subcommands:
+LyxBoSa provides five subcommands:
 
 - **`scan`** -- Scan one or more directories for malicious files, with options for recursive traversal, quick mode, dry-run, verbose output, and configurable output format. See the [CLI Reference](#cli-reference) below.
 - **`check`** -- Check a single file for malicious content (interactive prompt if no file is specified).
 - **`validate-config`** -- Validate a YAML configuration file for correctness.
 - **`init-config`** -- Generate a default configuration file to stdout.
+- **`update --check`** -- Report whether a newer release exists. Exit code 0 when up to date, 2 when one is available. Downloading is not implemented; see [Updating](#updating).
 
 ### Archives
 
@@ -569,14 +570,28 @@ Reports the rule, pattern and directory counts. Exit code 0 when valid, 1 when n
 lyxbosa init-config > lyxbosa.yaml
 ```
 
+### `update` — is there a newer release?
+
+```
+lyxbosa update --check
+```
+
+Exit code 0 when up to date, 2 when a newer release exists, 1 on an error or a development
+build. `lyxbosa update` without `--check` reports that downloading is not implemented.
+The rules for when a scan checks on its own, and the privacy consequence, are under
+[Updating](#updating).
+
 ### Exit codes
 
 | Code | Meaning |
 |------|---------|
 | `0` | No matches found, or the command was cancelled |
 | `1` | Error: invalid arguments, missing file, invalid configuration, a file that could not be scanned, or a refused unsafe operation |
-| `2` | Matches found |
+| `2` | Matches found; for `update --check`, a newer release is available |
 | `130` | Interrupted with Ctrl+C (the partial report is still written) |
+
+An update check never contributes to any of these. A scan that could not reach the releases
+API, or reached it slowly, exits exactly as it would have without the check.
 
 ### Where output goes
 
@@ -638,8 +653,64 @@ Download the binary for your platform from
 Each release publishes `SHA256SUMS` and a `minisign` signature over it; verifying both is
 described in [docs/RELEASING.md](docs/RELEASING.md#release-integrity-checksums-and-signatures).
 
-The design for an `lyxbosa update` command is in
+Downloading and replacing the binary is not implemented. `lyxbosa update` says so rather
+than being absent, and the design for it is in
 [docs/tasks/UPDATE_PLAN.md](docs/tasks/UPDATE_PLAN.md).
+
+### `update --check` — is there a newer release?
+
+```bash
+lyxbosa update --check
+```
+
+Exits **0** when up to date and **2** when a newer release exists, so a monitoring script
+can use it without reading the text — the same discipline as the scan exit codes. Anything
+else is **1**: the request failed, or the binary is a development build, which reports
+version `0.0.0` and has no released version to compare against.
+
+### Checking during a scan
+
+A scan may also check on its own, and the rules are narrow on purpose:
+
+| when | checks? |
+|---|---|
+| `lyxbosa update --check`, typed | always |
+| `scan`, stdout is a terminal, no `--quiet`/`--silent`/`--force` | at most once per interval |
+| `check` | **never** |
+| `--quiet`, `--silent`, `--force`, redirected output, CI | **never** |
+| a development build (`0.0.0`) | **never** |
+| no writable state file | never, silently |
+
+`check` never checks because it is called from scripts — this repository's own harness runs
+it 167 times in one suite run — and a network call per invocation would break that.
+
+The check is asynchronous with a hard timeout of about two seconds, and **it cannot fail a
+scan, change an exit code, or delay output**: a result that has not arrived by the time the
+report is printed is discarded rather than waited for. The answer is cached, so one scan a
+day asks and the rest of that day's scans can repeat what it learned without asking again.
+
+Configure it beside `scan`, `archives`, `builtin_rules` and `actions`:
+
+```yaml
+updates:
+  check: periodic      # off | on-demand | periodic
+  interval: 24h        # 24h, 7d, 90m, or a bare number of seconds
+```
+
+- **`periodic`** (the default) — at most one check per `interval`, under the rules above.
+- **`on-demand`** — a scan never checks; only `lyxbosa update --check` does.
+- **`off`** — the same, spelled for an operator who wants the file to say it.
+
+> **Privacy.** A version check tells whoever serves it **your IP address, which version of
+> this scanner you are running, and when you ran it**. On an incident-response engagement
+> that is telemetry about the investigation, and on a scheduled fleet it is a pattern of when
+> your hosts are scanned. `off` and `on-demand` both mean the binary never opens a socket
+> unless `lyxbosa update --check` is typed. There is no other network access anywhere in this
+> tool.
+>
+> The check asks the GitHub releases API over HTTPS, with certificate verification against
+> your system trust store. It sends no path, no finding, no hostname and nothing about what
+> was scanned.
 
 ## Building
 

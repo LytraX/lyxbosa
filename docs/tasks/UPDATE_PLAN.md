@@ -1,7 +1,7 @@
 # Updating the binary
 
-A plan, not an implementation. **Phases 0 and 1 are built**; phases 2 to 4 - the updater
-itself - are not, and nothing in the binary reads a signature yet. What shipped is in
+A plan, not an implementation. **Phases 0, 1 and 2 are built**; phases 3 and 4 - downloading
+and replacing the binary - are not, and nothing in the binary reads a signature yet. What shipped is in
 [`docs/RELEASING.md`](../RELEASING.md) under *Release integrity*, and the signing key still
 has to be provisioned once before the next release.
 
@@ -103,6 +103,11 @@ states a modest guarantee accurately.
 | `check` subcommand | **never** |
 | `--quiet`, `--silent`, `--force`, non-interactive, CI detected | **never** |
 | no cached state file writable | never, silently |
+| a development build, reporting `0.0.0` | **never** |
+
+The last row was not in this table when it was written and is in the implementation: a build
+that is not from a tag is numerically older than every release, so without it the check tells
+every developer, on every scan, that everything is newer than what they are running.
 
 And the check itself: asynchronous, hard timeout of about two seconds, result cached in a state
 file with a timestamp, and **it can never fail a scan or change an exit code**. A scanner that
@@ -172,7 +177,7 @@ than left to be discovered: a version check reveals an IP, a version and a times
 |---|---|---|---|
 | 0 | `SHA256SUMS` in CI | nothing to verify against today | **done** |
 | 1 | minisign signature + rotation list | a checksum an attacker can rewrite is not integrity | **done**, except the key itself: the list is `keys/minisign-trusted.txt`, it is not embedded in the binary because nothing in the binary verifies anything yet, and that happens in phase 3 |
-| 2 | `update --check`, config, caching | most of the value, none of the replace risk | |
+| 2 | `update --check`, config, caching | most of the value, none of the replace risk | **done**; the version source is the releases API, settled in §10 |
 | 3 | `update` — download, verify, atomic replace | Linux and macOS | |
 | 4 | Windows replace-on-restart | the one genuinely different platform | |
 
@@ -181,10 +186,101 @@ self-replacement.
 
 ## 10. Open questions
 
-- Default for `updates.check`: `periodic` or `off`. §8 has the argument both ways.
-- Where the version manifest comes from: the GitHub releases API, or a small static JSON
-  published as a release asset. The API is one less thing to publish; the asset does not
-  break when an API changes shape and is cacheable.
+Two of these are settled. What settled them is written down rather than deleted, because the
+argument against a choice is what says when to revisit it.
+
+**Default for `updates.check`: settled as `periodic`.** The operator's call, made with the
+narrowing in §5 built rather than promised — never from `check`, never under
+`--quiet`/`--silent`/`--force`, never without a terminal, never in CI, never on a development
+build, and at most once a day otherwise. Without that narrowing `off` would have been the only
+honest default. It remains one line to flip: `kDefaultUpdateCheck` in
+`src-lib/cpp/config/Rules.h`, which the generated YAML prints rather than repeats, with a test
+asserting the two agree.
+
+**Where the version comes from: settled as the GitHub releases API**, not a published
+manifest. The manifest is the nicer shape in the abstract — bytes we define, served by the
+release CDN, no rate limit — and it lost on three specifics:
+
+- The release job cannot be rehearsed. It is gated on a `v*` tag, and
+  `.github/scripts/release-checksums.sh` says at length why that makes any change to it code
+  that ships without ever having run. Publishing a manifest means changing that job *and*
+  changing `--expect 4`, whose entire design is to stop when the asset set changes. The API
+  needs no release change at all.
+- A manifest exists for no release already published, so shipping one would leave the check
+  inert until the release after next — a feature that looks like it works and does nothing.
+- Both of the API's real drawbacks fail in the safe direction. The unauthenticated rate limit
+  is 60 requests an hour per address, and being refused means no notice today rather than a
+  failed scan; a change in the response shape means the field is not found, which is also no
+  notice today. Every other failure path in this design already degrades to silence, so
+  neither is new behaviour.
+
+The response is not parsed as JSON. One field is extracted, bounded, from a bounded body, and
+validated against a strict version grammar — a general parser over 20 KB of network-supplied
+text is a larger thing to have in a scanner that runs as root than the problem justifies.
+
+**Revisit it if a rate-limit refusal is ever actually observed.** It is then a release-job
+change with its own `--selftest`, rather than a guess about a limit nobody has hit.
+
+**The transport: settled as linked libcurl**, not a spawned `curl` binary and not a wrapper
+over one. The subprocess was tried first and was the wrong trade. It makes the feature depend on a program the host may not
+have, so it silently does nothing on some machines and nothing says which — the failure mode
+this repository has the least patience for — and it needs a hand-written `CreateProcess` path
+on Windows that no CI here compiles.
+
+The dependency is smaller than it sounds, and the parts of it that sounded expensive were
+checked rather than assumed:
+
+- `curl` is taken with `default-features: false` and the one feature `ssl`, which drops FTP,
+  FTPS, LDAP, SMTP, IMAP, POP3, telnet, dict, gopher, TFTP, RTSP and SMB out of the build.
+  `CURLOPT_PROTOCOLS_STR` restates HTTPS-only at runtime, on the first request and on
+  anything it redirects to.
+- `ssl` is **Schannel on Windows**, which is the OS TLS stack and the OS certificate store —
+  no library is built there at all. It is **OpenSSL on Linux and macOS**.
+- **No certificate bundle is shipped or embedded** — but the host's own store has to be
+  found at run time, and that is not free. curl bakes its CA bundle path in at *configure*
+  time, so the AlmaLinux 8 release build carries `/etc/pki/tls/certs/ca-bundle.crt`, and on
+  the Debian and Ubuntu hosts this project ships binaries to, that file does not exist.
+  Measured on the real release artefact, not reasoned about: `Problem with the SSL CA cert
+  (path? access rights?)`. `resolveCaLocation()` probes the standard distribution locations
+  at run time and points `CURLOPT_CAINFO`/`CAPATH` at whichever is really there, after
+  `SSL_CERT_FILE`, `SSL_CERT_DIR` and `CURL_CA_BUNDLE` get their say. Windows needs none of
+  it: Schannel uses the store the OS maintains.
+
+  **This was found only by building the release image and running the artefact.** A local
+  build works without the probe, because it is configured and run on the same machine — which
+  is exactly the shape of check that passes while being blind.
+- Cost, measured cold: OpenSSL 3.6.4 59s, curl 8.21.0 38s. The release triplets are
+  release-only, so CI pays half of that once and the binary cache carries it.
+- The one real surprise: OpenSSL builds with Perl, and the AlmaLinux 8 release image had
+  none. `docker/build/Linux/Dockerfile` now installs `perl` and `perl-IPC-Cmd`, which the
+  vcpkg port refuses to proceed without.
+
+`cpr` was raised, built and measured rather than argued about. Its own manifest calls it "a
+simple wrapper around libcurl" and its vcpkg dependencies are `curl`, `curl[ssl]` and `openssl`
+on Linux, so it changes nothing about the dependency, the TLS stack, the certificate problem
+below, or the Perl that OpenSSL builds with — the Dockerfile change is needed either way.
+
+Two things it does change, and both were measured:
+
+| | libcurl multi | cpr |
+|---|---|---|
+| scan wall time, `api.github.com` blackholed | **0.29s** | **2.04s** |
+| whole file, non-comment lines | 226 | 207 |
+
+The delay is the decisive one. cpr can only cancel through libcurl's progress callback, and
+that callback is not invoked at all while a connect is stalled, so the scan waits out the full
+timeout. `curl_multi_poll` notices the cancel flag in 50 ms because it is a poll loop rather
+than a blocking perform. Egress-filtered hosts are not the exceptional case for this tool, they
+are a stated target environment, and "it cannot delay output" was a requirement rather than a
+preference.
+
+The code saving turned out to be 19 lines, not the rewrite it looks like from the request
+function alone: the certificate probe, the version extraction and the error mapping are most of
+the file and cpr replaces none of them. **If "cannot delay output" is ever relaxed, cpr is the
+better code and the swap is one function.**
+
+Still open:
+
 - Whether `update` should verify the *installed* binary's own hash first, so a tampered local
   binary is noticed rather than silently replaced by a good one — which sounds attractive and
   may be out of scope for an updater.

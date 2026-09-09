@@ -2,6 +2,12 @@ FROM almalinux:8
 
 # Install build dependencies + GCC 12 for C++20 support
 # AlmaLinux 8 AppStream has cmake 3.20 (>=3.18 needed for vcpkg output passthrough)
+#
+# perl and perl-IPC-Cmd are OpenSSL's, not ours. vcpkg builds OpenSSL from source for
+# curl's `ssl` feature on Linux, its Configure is a Perl script, and the port fails
+# outright - "Perl cannot find IPC::Cmd" - if the module is missing. AlmaLinux 8 ships
+# a minimal perl that does not include it, so both are named. Windows needs neither:
+# curl there uses Schannel and no OpenSSL is built at all.
 RUN dnf install -y epel-release dnf-plugins-core \
     && dnf config-manager --set-enabled powertools \
     && dnf install -y \
@@ -16,6 +22,8 @@ RUN dnf install -y epel-release dnf-plugins-core \
     tar \
     make \
     pkgconfig \
+    perl \
+    perl-IPC-Cmd \
     && dnf clean all
 
 # Install vcpkg (system GCC 8 is fine for bootstrapping)

@@ -22,6 +22,109 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+The scanner can tell you a newer release exists. It still cannot fetch one.
+
+### Added
+
+- **`lyxbosa update --check` reports whether a newer release exists.** Exit code **0** when
+  up to date and **2** when one is available, so a monitoring script can use it without
+  reading the text - the same discipline the scan exit codes already follow. Anything else
+  is 1: a failed request, or a development build, which reports version `0.0.0` and has no
+  released version to compare against and says so rather than reporting that everything is
+  newer than it.
+
+  `lyxbosa update` without `--check` refuses and explains, rather than not existing. A user
+  who reads about the command and gets "unknown command" learns less than one who is told
+  what does work. There is no `--to` and no download path.
+
+- **A scan may check on its own, at most once a day, and only when someone is watching.**
+  Never from `check` - this repository's own harness runs it 167 times in one suite run, and
+  a network call per invocation would break that and the scripted use the command exists for.
+  Never under `--quiet`, `--silent` or `--force`, never with stdout redirected, never in CI,
+  never on a development build, and never twice inside the interval.
+
+  It **cannot fail a scan, change an exit code, or delay output**. The request is
+  asynchronous with a hard timeout of about two seconds, and a result that has not arrived
+  by the time the report is printed is discarded rather than waited for. Measured: a scan
+  with no route to the network at all takes the same wall time and exits with the same code
+  as one with a working connection, and prints nothing about the failure.
+
+  The answer is cached, so one scan a day asks and the rest of that day's scans repeat what
+  it learned without opening a socket. The attempt is recorded *before* the request, so an
+  unreachable network costs one attempt a day rather than one per run.
+
+- **A new top-level `updates:` configuration section**, beside `scan`, `archives`,
+  `builtin_rules` and `actions`:
+
+  ```yaml
+  updates:
+    check: periodic      # off | on-demand | periodic
+    interval: 24h
+  ```
+
+  `off` and `on-demand` both mean the binary never opens a socket unless
+  `lyxbosa update --check` is typed. Both settings **refuse rather than defaulting**: `check: of`
+  is an error, not a silent revert to the compiled-in default, because that default decides
+  whether the tool reaches the network at all. An `interval` that does not parse is an error
+  for the same reason - `0` and `daily` both mean "every run", which is the thing the design
+  exists to prevent.
+
+  **The privacy consequence is documented in `README.md` beside the setting**: a version
+  check tells whoever serves it your IP address, which version you are running, and when you
+  ran it. On an incident-response engagement that is telemetry about the investigation.
+
+- **`interval: 7d` means seven days.** `parseDurationSeconds` understood `s`, `m` and `h` and
+  silently read an unknown unit as seconds, so `7d` was seven *seconds* - a check firing on
+  every run, written by someone who asked for weekly, with nothing to say so. It now
+  understands `d`, which `archives.time_budget` gains too.
+
+### Fixed
+
+- **The generated configuration pointed at a repository that is not this one.**
+  `lyxbosa init-config` wrote `# https://github.com/Lyr-7D1h/LyxBoSa` into the header of every
+  configuration file anyone generated.
+
+### Compatibility
+
+- **This is a minor bump, not a patch.** A new subcommand and a new top-level configuration
+  section are both user-visible surface, and the default behaviour of `scan` changes: an
+  interactive scan on a terminal may now make one outbound request a day.
+- **Nothing that runs unattended changes.** `check`, `--quiet`, `--silent`, `--force`, a
+  redirected stdout and CI all behave exactly as before, byte for byte, and none of them
+  reaches the network. Every existing exit code is unchanged, and no scan can now fail for a
+  reason it could not fail for before.
+- **An existing configuration file keeps working and gets the compiled-in default**
+  (`periodic`), because the file has no `updates:` section to say otherwise. Add
+  `updates:\n  check: off` to opt out, or regenerate the file with `lyxbosa init-config`.
+- **Nothing in the binary reads a signature yet.** The check compares version strings and
+  needs no key; `keys/minisign-trusted.txt` is still a tracked file that nothing compiled
+  reads. Verifying a downloaded binary is phase 3 of
+  [docs/tasks/UPDATE_PLAN.md](docs/tasks/UPDATE_PLAN.md), and embedding the keyring belongs
+  with it rather than ahead of it.
+- **There is one new dependency: `libcurl`, HTTPS only.** `vcpkg.json` asks for `curl` with
+  `default-features: false` and the single feature `ssl`, which drops FTP, LDAP, SMTP,
+  telnet, dict, gopher and the rest of the protocols out of the build; `CURLOPT_PROTOCOLS_STR`
+  says the same thing again at runtime, so the guarantee does not rest on the port's feature
+  resolution staying as it is.
+
+  `ssl` is **Schannel on Windows** - the operating system's TLS stack and certificate store,
+  so no library is built there at all - and **OpenSSL on Linux and macOS**. **No certificate
+  bundle is shipped, embedded or vendored**; the host's own store is located at run time,
+  because curl bakes its CA path in at configure time and a binary built on AlmaLinux 8 does
+  not find `/etc/pki/tls/certs/ca-bundle.crt` on a Debian or Ubuntu host. That failure was
+  observed on the real release artefact and is what the probe exists for.
+  `SSL_CERT_FILE`, `SSL_CERT_DIR` and `CURL_CA_BUNDLE` still take precedence. Both libraries
+  are linked statically: `ldd` on the built binary shows no new shared library.
+
+  Measured cost of adding it, cold: OpenSSL 3.6.4 59s, curl 8.21.0 38s. The release triplets
+  are release-only, so CI builds half that, once, and the binary cache carries it afterwards.
+
+- **The Linux build image gains `perl` and `perl-IPC-Cmd`.** They are OpenSSL's build
+  requirement, not the scanner's: its `Configure` is a Perl script, and AlmaLinux 8 ships a
+  minimal `perl` without `IPC::Cmd`, which the vcpkg port refuses outright. Windows needs
+  neither. This changes the CI cache key, so the first release after it rebuilds every
+  dependency once.
+
 ## [2.2.1] - 2026-09-08
 
 Releases are verifiable: a checksum list and a signature over it.
