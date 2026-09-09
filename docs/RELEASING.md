@@ -256,6 +256,19 @@ defend are written:
 .github/scripts/release-sign.sh --selftest
 ```
 
+### The updater checks the same two files
+
+`lyxbosa update` verifies the signature over `SHA256SUMS` against the keys compiled into it,
+checks that the signature's trusted comment names the release being installed, and only then
+hashes the download against its line in that verified list. So the properties this section
+describes are not only for a person following the commands below: the release job writing a
+list that omits an asset, or a signature whose trusted comment does not carry the tag, makes
+every installed binary refuse to update. `README.md` under *Updating* is what a user reads.
+
+To watch the whole chain - a real download, a real verification, a real replacement, and each
+refusal - without cutting a release, run `docs/local/demo-update-apply.sh`. It builds against a
+throwaway key and a local HTTPS origin, and restores `build/` afterwards.
+
 ### Provisioning the signing key
 
 **One-time, per signing key.** A release refuses to publish unless
@@ -297,6 +310,13 @@ compromised. The file's own header carries the full reasoning; the procedure is:
 
 A **compromised** key gets no overlap: delete its line in the next release, announce the new
 key wherever the old one was published, and accept that older installs can no longer verify.
+
+**The rotation now has a consumer inside the binary.** `lyxbosa update` verifies a release
+against the keys compiled into it, and CMake generates that list from this file, so a binary
+built at release N carries the keys this file named at N. A release signed by a key added
+later is refused by every earlier binary, which is why the new key ships as `trusted` one
+release before it starts signing. Skipping that step does not break verification quietly - it
+sends everybody to a manual download.
 
 ## Verifying detection did not change
 

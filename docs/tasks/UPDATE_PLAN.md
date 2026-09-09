@@ -1,9 +1,12 @@
 # Updating the binary
 
-A plan, not an implementation. **Phases 0, 1 and 2 are built**; phases 3 and 4 - downloading
-and replacing the binary - are not, and nothing in the binary reads a signature yet. What shipped is in
-[`docs/RELEASING.md`](../RELEASING.md) under *Release integrity*, and the signing key still
-has to be provisioned once before the next release.
+A plan, and most of it is now built. **Phases 0 to 3 are built**: a release publishes
+`SHA256SUMS` and a signature over it, the binary carries the trusted keys and verifies both
+before it will install anything, and `lyxbosa update` downloads, verifies and replaces
+itself on Linux. Phase 4 - Windows, where a running `.exe` is locked and the replacement has
+to happen on the next start - is what remains. What shipped is described in
+[`docs/RELEASING.md`](../RELEASING.md) under *Release integrity* and in the README under
+*Updating*.
 
 ## 1. The problem, and what is not the problem
 
@@ -125,11 +128,12 @@ and how to get it. Downloading and swapping the binary happens only when a perso
 ```
 lyxbosa update            # download, verify, replace — asks first unless --yes
 lyxbosa update --check    # report only; exit 0 up to date, 2 update available
-lyxbosa update --to VER   # a specific version, including downgrade
 ```
 
 `--check`'s exit code matters: it makes the command usable from a monitoring script without
 parsing output, which is the same discipline the scan exit codes already follow.
+
+`--to VER` was in this list and is not in the command. §10 says why.
 
 ## 7. Replacing a running binary
 
@@ -178,7 +182,7 @@ than left to be discovered: a version check reveals an IP, a version and a times
 | 0 | `SHA256SUMS` in CI | nothing to verify against today | **done** |
 | 1 | minisign signature + rotation list | a checksum an attacker can rewrite is not integrity | **done**, except the key itself: the list is `keys/minisign-trusted.txt`, it is not embedded in the binary because nothing in the binary verifies anything yet, and that happens in phase 3 |
 | 2 | `update --check`, config, caching | most of the value, none of the replace risk | **done**; the version source is the releases API, settled in §10 |
-| 3 | `update` — download, verify, atomic replace | Linux and macOS | |
+| 3 | `update` — download, verify, atomic replace | Linux | **done**; the keyring is compiled in from `keys/minisign-trusted.txt`, and macOS refuses because a release publishes no asset for it |
 | 4 | Windows replace-on-restart | the one genuinely different platform | |
 
 Each phase is useful alone, and phase 2 could be where this stops if nobody wants
@@ -279,8 +283,41 @@ function alone: the certificate probe, the version extraction and the error mapp
 the file and cpr replaces none of them. **If "cannot delay output" is ever relaxed, cpr is the
 better code and the swap is one function.**
 
+**`--to VER`: settled as not shipping, at least not alongside the replace.** Three reasons,
+and the first is decisive:
+
+- It is the one option that puts a hole in the downgrade rule by construction. A signed old
+  release is still signed, so an attacker who can choose which release you fetch can roll you
+  backwards into a known defect without forging anything; refusing to move to an older
+  version is the whole defence, and `--to` is a flag that turns it off.
+- It needs a second API endpoint, `/releases/tags/<tag>`, that nothing else uses, and the tag
+  then comes from the command line rather than from a value this program validated.
+- It would ship in the same release that first taught this program to replace itself, which
+  is the wrong release in which to make the surface bigger.
+
+**Revisit it when there is a reason to install a specific version** - most likely a bad
+release that has to be backed out across a fleet. It is then worth having with output that
+says in plain words that it is going backwards and what that means, rather than as a
+convenience.
+
+**A correction to the transport section above.** It said the run-time probe applies "after
+`SSL_CERT_FILE`, `SSL_CERT_DIR` and `CURL_CA_BUNDLE` get their say", and the implementation
+stood aside whenever any of them was set. libcurl reads none of them: `CURL_CA_BUNDLE` is a
+compile-time macro inside libcurl and an environment variable only for the curl
+command-line tool, and `SSL_CERT_FILE` reaches OpenSSL only through a default-paths fallback
+that curl skips once it has a `CAINFO` of its own - which it always has, because it bakes one
+in at configure time. So setting one turned the probe OFF and left libcurl using a path from
+the machine it was BUILT on: worse than setting nothing at all. The values are now read and
+passed to `CURLOPT_CAINFO`/`CAPATH`, kind by kind, so the documented knob is the one that
+works. Found by running `docs/local/demo-update-apply.sh` against a local origin, which is
+what that script is for.
+
 Still open:
 
 - Whether `update` should verify the *installed* binary's own hash first, so a tampered local
   binary is noticed rather than silently replaced by a good one — which sounds attractive and
   may be out of scope for an updater.
+- Whether a release should publish a second detached signature per trusted key, so one
+  release can be signed by both keys during a rotation and the frozen-keyring gap closes
+  entirely. `keys/minisign-trusted.txt` describes it; phase 3 refuses inside that gap rather
+  than closing it.

@@ -1,0 +1,25 @@
+#pragma once
+
+// GENERATED FILE - do not edit, and do not commit. CMake writes it from
+// @LYXBOSA_KEYRING_FILE@ every time that file changes.
+//
+// The keys a released binary trusts have to be part of the binary. A verifier that
+// read its keyring from disk at run time would be a verifier an attacker with write
+// access to that disk can edit, and this program runs as root on compromised hosts.
+//
+// It is generated rather than hand-copied so that the source of truth stays the one
+// file that keys/minisign-trusted.txt's own header, docs/RELEASING.md and
+// .github/scripts/release-sign.sh all describe. A second copy maintained by hand is a
+// second copy that goes stale, and the release it goes stale for is the one nobody can
+// verify.
+//
+// The text is embedded verbatim, comments and all, so the bytes compiled in are the
+// bytes in the file - a property tests/update_apply_test.cpp asserts by reading the
+// file and comparing.
+
+namespace lyxbosa::minisign {
+
+inline constexpr const char* kEmbeddedKeyringText =
+    R"LYXBOSAKEYS(@LYXBOSA_KEYRING_TEXT@)LYXBOSAKEYS";
+
+}  // namespace lyxbosa::minisign
