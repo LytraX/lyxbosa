@@ -80,7 +80,7 @@ enum class ApplyOutcome {
     Declined,               // the person said no
 
     // Guards that fire before anything is fetched.
-    PlatformCannotReplace,  // Windows: a running .exe is locked; phase 4
+    PlatformCannotReplace,  // Windows: a running .exe is locked and cannot be overwritten
     NoVerifier,             // built without Ed25519, so nothing could be checked
     NoAssetForPlatform,     // no release asset exists for this platform at all
     DevelopmentBuild,       // 0.0.0 is not a release and has nothing to compare against

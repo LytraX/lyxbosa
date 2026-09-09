@@ -105,7 +105,7 @@ std::string_view describeOutcome(ApplyOutcome outcome) {
         case ApplyOutcome::Replaced:              return "the binary was replaced";
         case ApplyOutcome::AlreadyCurrent:        return "already up to date";
         case ApplyOutcome::Declined:              return "nothing was changed";
-        case ApplyOutcome::PlatformCannotReplace: return "this platform cannot replace a running binary yet";
+        case ApplyOutcome::PlatformCannotReplace: return "this platform cannot replace a running binary";
         case ApplyOutcome::NoVerifier:            return "this build cannot verify a download";
         case ApplyOutcome::NoAssetForPlatform:    return "a release publishes no binary for this platform";
         case ApplyOutcome::DevelopmentBuild:      return "this is a development build";
@@ -141,8 +141,8 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
     // ---------------------------------------------------------------------------
     if (!platformCanReplaceRunningBinary()) {
         return refuse(ApplyOutcome::PlatformCannotReplace,
-                      "a running executable is locked on Windows, so it has to be "
-                      "replaced on the next start - that is not built yet");
+                      "a running executable is locked on Windows, so it cannot be "
+                      "replaced in place");
     }
     if (!minisign::verifierAvailable()) {
         // Never degrade to "download it anyway". A program that runs as root on
