@@ -12,6 +12,13 @@
     {
       "name": "libzip",
       "default-features": false
+    },
+    {
+      "name": "curl",
+      "default-features": false,
+      "features": [
+        "ssl"
+      ]
     }
   ]
 }

@@ -130,6 +130,45 @@ struct ActionsConfig {
     AlertConfig alert;
 };
 
+// THE DEFAULT FOR updates.check, AND THE ONLY PLACE IT IS WRITTEN.
+//
+// It is one line because it is the operator's call and the argument runs both ways.
+// `periodic` nudges the majority who will otherwise run a year-old scanner, and a
+// stale security tool is a real harm: v2.1.0 is missing ten rules, one of which
+// closes 46 known misses. `off` is the most private, and this tool runs on hosts
+// where an outbound connection is itself information about an investigation.
+//
+// What makes `periodic` defensible rather than merely convenient is the narrowing in
+// docs/tasks/UPDATE_PLAN.md 5, which this round implements: never from `check`,
+// never under --quiet/--silent/--force, never without a terminal, never in CI, never
+// on a development build, and at most once a day otherwise. Without that narrowing
+// `off` would be the only honest default.
+//
+// Config::generateDefault() prints this value rather than repeating it, so flipping
+// it here changes the compiled-in default, the generated YAML and the README table
+// together. Nothing else names a default.
+inline constexpr UpdateCheckMode kDefaultUpdateCheck = UpdateCheckMode::Periodic;
+
+// How often a periodic check may run, when the configuration does not say.
+// A day rather than an hour: a rule set does not change hourly, and the point is to
+// catch a user months behind rather than minutes.
+inline constexpr uint64_t kDefaultUpdateInterval = 24 * 60 * 60;
+
+// Update-check settings. A version check reveals an IP, a version and a timestamp to
+// whoever serves it; that is documented in README.md beside the setting.
+struct UpdatesConfig {
+    UpdateCheckMode check = kDefaultUpdateCheck;
+    uint64_t intervalSeconds = kDefaultUpdateInterval;
+
+    // What the file said, kept only so Config::validate can quote it back. Both
+    // settings refuse rather than defaulting: a value that does not parse must not
+    // silently become whatever the compiled-in default happens to be, because for
+    // these two that decides whether the binary reaches the network and how often.
+    bool checkValid = true;
+    std::string checkRaw;
+    std::string intervalRaw;
+};
+
 // Built-in rules configuration
 struct BuiltinRulesConfig {
     bool enabled = true;                        // Load built-in rules by default
@@ -145,6 +184,7 @@ struct AppConfig {
     std::vector<RuleConfig> rules;              // Custom YAML rules
     BuiltinRulesConfig builtinRules;            // Built-in CTRE rules config
     ActionsConfig actions;
+    UpdatesConfig updates;                      // Whether and how often to look for a newer release
 };
 
 }  // namespace lyxbosa

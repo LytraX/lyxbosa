@@ -24,6 +24,7 @@
 #include "use-cases/CheckUseCase.h"
 #include "use-cases/ValidateConfigUseCase.h"
 #include "use-cases/InitConfigUseCase.h"
+#include "use-cases/UpdateUseCase.h"
 
 using namespace lyxbosa;
 
@@ -165,6 +166,9 @@ int main(int argc, char* argv[]) {
 
         case Command::InitConfig:
             return InitConfigUseCase().execute();
+
+        case Command::Update:
+            return UpdateUseCase(terminal).execute(args);
 
         case Command::None:
         default:

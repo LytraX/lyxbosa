@@ -51,6 +51,10 @@ find_package(re2 CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(libzip CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+# HTTPS for `update --check`. vcpkg.json pins the feature set to `ssl` with
+# default-features off - see src-lib/cpp/update/HttpVersionSource.cpp for why that is
+# the whole of the dependency, and what it costs.
+find_package(CURL CONFIG REQUIRED)
 
 # The full-screen terminal UI. Off-switch for minimal/static builds (docker/,
 # dist/), which then fall back to the plain stderr progress line.
@@ -98,6 +102,14 @@ set(LIB_SOURCES
     ${RULE_SOURCES}
 )
 
+# The update check. Deliberately not in LIB_SOURCES: the regex benchmark builds that
+# list and has no reason to link an HTTP client.
+set(UPDATE_SOURCES
+    src-lib/cpp/update/UpdateState.cpp
+    src-lib/cpp/update/UpdateCheck.cpp
+    src-lib/cpp/update/HttpVersionSource.cpp
+)
+
 # Windows version resource
 if(WIN32)
   configure_file(
@@ -112,6 +124,7 @@ endif()
 add_executable(lyxbosa
     src-cli/lyxbosa.cpp
     ${LIB_SOURCES}
+    ${UPDATE_SOURCES}
     ${WIN_RC_FILE}
 )
 
@@ -130,6 +143,7 @@ target_link_libraries(lyxbosa
     libzip::zip
     ZLIB::ZLIB
     Threads::Threads
+    CURL::libcurl
 )
 
 if(LYXBOSA_TUI)
@@ -175,7 +189,9 @@ if(BUILD_TESTS)
     tests/rules_test.cpp
     tests/progress_model_test.cpp
     tests/archive_test.cpp
+    tests/update_test.cpp
     ${LIB_SOURCES}
+    ${UPDATE_SOURCES}
   )
 
   target_include_directories(lyxbosa_tests PRIVATE
@@ -195,6 +211,7 @@ if(BUILD_TESTS)
       Threads::Threads
       GTest::gtest
       GTest::gtest_main
+      CURL::libcurl
   )
 
   include(GoogleTest)

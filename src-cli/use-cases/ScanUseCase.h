@@ -11,6 +11,9 @@
 #include "config/Config.h"
 #include "core/Scanner.h"
 #include "system/CliArgs.h"
+#include "update/UpdateCheck.h"
+#include "update/UpdateState.h"
+#include "update/VersionSource.h"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -120,6 +123,23 @@ public:
             }
         }
 
+        // Started here, and here specifically. Every run that is allowed to check is
+        // by definition a run that shows the prompt below - a --force run never
+        // checks - so the request gets the summary render and the human's answer to
+        // cover it. Without that head start a scan of one small directory finishes
+        // first, the reply is discarded, and the interval has been spent for nothing.
+        //
+        // It is also the last thing before the prompt rather than the first thing in
+        // this function, so a run that refuses for one of the reasons above has not
+        // spent its interval either.
+        //
+        // The request therefore goes out before the operator answers the prompt, and
+        // does not wait to find out whether they say yes. That is deliberate: the
+        // check is tied to having run the tool interactively, not to having completed
+        // a scan, and making it depend on the answer would mean a cancelled scan
+        // silently paying the same daily interval while learning nothing.
+        auto updateCheck = maybeStartUpdateCheck(config, args);
+
         // Show confirmation unless forced
         if (!args.force) {
             // Without a terminal there is nobody to answer, and treating that as
@@ -145,7 +165,7 @@ public:
         }
 
         // Run scan
-        return runScan(config, args, plan);
+        return runScan(config, args, plan, updateCheck);
     }
 
 private:
@@ -352,7 +372,8 @@ private:
                            TerminalCaps::kMinColumns, TerminalCaps::kMinRows);
     }
 
-    int runScan(const AppConfig& config, const CliArgs& args, const ReportPlan& plan) {
+    int runScan(const AppConfig& config, const CliArgs& args, const ReportPlan& plan,
+                const UpdateCheckHandle& updateCheck) {
         // --silent suppresses everything --quiet does, and the findings too.
         const bool quiet = args.quiet || args.silent;
 
@@ -488,11 +509,48 @@ private:
             std::cout.flush();
         }
 
+        // A newer release, if the check happened and finished and found one. It is
+        // read with a non-blocking poll: a check still in flight is a check that
+        // never happened, because the alternative is making a person wait for
+        // GitHub after their scan has already printed.
+        //
+        // Deliberately the last thing before the exit code, and deliberately without
+        // a `return` of its own: the four lines below decide the exit status of this
+        // command, and nothing about an update may reach them.
+        if (updateCheck.mayNotify && !quiet) {
+            const auto fresh = updateCheck.live ? updateCheck.live->resultIfReady()
+                                                : std::nullopt;
+            const std::string notice =
+                updateNotice(fresh, updateCheck.known, runningVersion());
+            if (!notice.empty()) {
+                terminal_.printErr(Terminal::warning(), "\nNote: {}", notice);
+            }
+        }
+
         // Return 130 on interrupt (standard convention), 2 if matches found, 0 otherwise
         if (interrupted) {
             return 130;
         }
         return result.filesWithMatches > 0 ? 2 : 0;
+    }
+
+    // Everything this command knows that the policy needs, and nothing else.
+    UpdateCheckHandle maybeStartUpdateCheck(const AppConfig& config,
+                                            const CliArgs& args) const {
+        UpdateCheckContext ctx;
+        ctx.callSite = UpdateCallSite::Scan;
+        ctx.mode = config.updates.check;
+        ctx.intervalSeconds = config.updates.intervalSeconds;
+        ctx.running = runningVersion();
+        ctx.stdoutIsTty = caps_.stdoutIsTty();
+        ctx.isCI = caps_.isCI();
+        ctx.quiet = args.quiet;
+        ctx.silent = args.silent;
+        ctx.force = args.force;
+        ctx.nowEpoch = currentEpochSeconds();
+
+        return startUpdateCheck(ctx, std::make_shared<HttpVersionSource>(),
+                                defaultUpdateStatePath());
     }
 
     const Terminal& terminal_;

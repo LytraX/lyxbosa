@@ -49,6 +49,17 @@ enum class ColorWhen {
     Never
 };
 
+// When the binary may ask whether a newer release exists.
+//
+// The narrowing that makes anything but Off defensible is in
+// docs/tasks/UPDATE_PLAN.md 5: never from `check`, never non-interactively, never
+// in CI, and at most once per interval otherwise.
+enum class UpdateCheckMode {
+    Off,        // never reach the network unless `lyxbosa update --check` is typed
+    OnDemand,   // same, spelled by an operator who wants to say so out loud
+    Periodic    // at most once per interval, on an interactive scan only
+};
+
 // How scan progress is reported.
 enum class ProgressWhen {
     Auto,    // full-screen UI when the terminal supports it, else plain on stderr
@@ -183,9 +194,14 @@ inline uint64_t parseFileSize(std::string_view s) {
     return value;
 }
 
-// Parse duration strings like "60s", "5m", "2h", or a bare "90" (seconds).
+// Parse duration strings like "60s", "5m", "2h", "7d", or a bare "90" (seconds).
 // Returns 0 for an empty or unparseable value, which every caller reads as
 // "unlimited".
+//
+// An unrecognised unit is ignored rather than rejected, so the value is read as
+// seconds and nothing says so. That is why the day unit is here: updates.interval
+// invites "7d", and without this "7d" was seven *seconds* - a check that fires
+// every run, written by someone who asked for weekly, with nothing to notice.
 inline uint64_t parseDurationSeconds(std::string_view s) {
     if (s.empty()) return 0;
 
@@ -206,6 +222,8 @@ inline uint64_t parseDurationSeconds(std::string_view s) {
             value *= 60ULL;
         } else if (unit == 'h' || unit == 'H') {
             value *= 3600ULL;
+        } else if (unit == 'd' || unit == 'D') {
+            value *= 86400ULL;
         }
     }
 
@@ -217,6 +235,29 @@ inline bool colorWhenFromString(std::string_view s, ColorWhen& out) {
     if (s == "auto")   { out = ColorWhen::Auto;   return true; }
     if (s == "always") { out = ColorWhen::Always; return true; }
     if (s == "never")  { out = ColorWhen::Never;  return true; }
+    return false;
+}
+
+// Convert UpdateCheckMode to string
+constexpr std::string_view updateCheckModeToString(UpdateCheckMode m) {
+    switch (m) {
+        case UpdateCheckMode::Off:      return "off";
+        case UpdateCheckMode::OnDemand: return "on-demand";
+        case UpdateCheckMode::Periodic: return "periodic";
+    }
+    return "off";
+}
+
+// Parse UpdateCheckMode from string ("off", "on-demand", "periodic").
+//
+// Returns false rather than defaulting, because the default here decides whether a
+// binary reaches the network: a typo silently reverting to whatever the compiled-in
+// default happens to be is exactly the setting an operator most needs to be told
+// about. Config::validate turns the false into a refusal to load.
+inline bool updateCheckModeFromString(std::string_view s, UpdateCheckMode& out) {
+    if (s == "off")       { out = UpdateCheckMode::Off;      return true; }
+    if (s == "on-demand") { out = UpdateCheckMode::OnDemand; return true; }
+    if (s == "periodic")  { out = UpdateCheckMode::Periodic; return true; }
     return false;
 }
 

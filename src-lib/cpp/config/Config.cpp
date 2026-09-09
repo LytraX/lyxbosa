@@ -200,6 +200,26 @@ ActionsConfig parseActionsConfig(const YAML::Node& node) {
     return ac;
 }
 
+UpdatesConfig parseUpdatesConfig(const YAML::Node& node) {
+    UpdatesConfig uc;
+
+    // An unknown mode is left as the sentinel the validator refuses. Falling back to
+    // the compiled-in default here would let `check: of` - a typo away from `off` -
+    // silently turn the network on for someone who wrote the line to turn it off.
+    if (node["check"]) {
+        if (!updateCheckModeFromString(node["check"].as<std::string>(), uc.check)) {
+            uc.checkValid = false;
+            uc.checkRaw = node["check"].as<std::string>();
+        }
+    }
+    if (node["interval"]) {
+        uc.intervalSeconds = parseDurationSeconds(node["interval"].as<std::string>());
+        uc.intervalRaw = node["interval"].as<std::string>();
+    }
+
+    return uc;
+}
+
 BuiltinRulesConfig parseBuiltinRulesConfig(const YAML::Node& node) {
     BuiltinRulesConfig bc;
 
@@ -271,6 +291,10 @@ AppConfig Config::loadFromString(std::string_view yaml) {
             config.builtinRules = parseBuiltinRulesConfig(root["builtin_rules"]);
         }
 
+        if (root["updates"]) {
+            config.updates = parseUpdatesConfig(root["updates"]);
+        }
+
     } catch (const YAML::Exception& e) {
         throw ConfigError(fmt::format("YAML parse error: {}", e.what()));
     }
@@ -286,7 +310,7 @@ AppConfig Config::loadFromString(std::string_view yaml) {
 
 std::string Config::generateDefault() {
     return R"(# LyxBoSa Configuration
-# https://github.com/Lyr-7D1h/LyxBoSa
+# https://github.com/LytraX/lyxbosa
 version: 1
 
 scan:
@@ -550,7 +574,25 @@ actions:
     #   to: soc@example.com
     #   from: lyxbosa@example.com
     #   subject: "LyxBoSa: findings on ${HOSTNAME}"
-)";
+)" + fmt::format(R"(
+# Looking for a newer release.
+#
+# check: off        never reach the network unless `lyxbosa update --check` is typed
+#        on-demand  the same, spelled out
+#        periodic   at most once per `interval`, and only on an interactive scan
+#
+# A periodic check never runs from `check`, under --quiet/--silent/--force, without
+# a terminal, in CI, on a development build, or twice inside the interval. It cannot
+# fail a scan, change an exit code or delay output.
+#
+# PRIVACY: a version check tells whoever serves it your IP address, which version of
+# this scanner you are running, and when you ran it. On an incident-response
+# engagement that is telemetry about the investigation. Set `off` if that matters.
+updates:
+  check: {}
+  interval: {}
+)", updateCheckModeToString(kDefaultUpdateCheck),
+                    fmt::format("{}h", kDefaultUpdateInterval / 3600));
 }
 
 std::string Config::validate(const AppConfig& config) {
@@ -582,6 +624,26 @@ std::string Config::validate(const AppConfig& config) {
         return "Quarantine is enabled but no directory specified";
     }
 
+    // Both update settings refuse rather than defaulting. `updates.check` decides
+    // whether this binary ever opens a socket, and an operator who wrote the line to
+    // turn that off has to be told when the line does not say what they think - not
+    // left with a typo that reverts to the compiled-in default.
+    if (!config.updates.checkValid) {
+        return fmt::format("Invalid updates.check value: '{}'. Valid values are: "
+                           "off, on-demand, periodic",
+                           config.updates.checkRaw);
+    }
+
+    // An interval of zero is "check on every run", which is the thing the whole
+    // design exists to prevent - and it is also what an unparseable duration such as
+    // "daily" or "1 week" silently becomes.
+    if (config.updates.intervalSeconds == 0 && !config.updates.intervalRaw.empty()) {
+        return fmt::format("Invalid updates.interval value: '{}'. Use a duration such "
+                           "as 24h, 7d, 90m or a bare number of seconds; 0 would mean "
+                           "checking on every run",
+                           config.updates.intervalRaw);
+    }
+
     return "";  // Valid
 }
 
@@ -594,6 +656,18 @@ std::vector<std::string> Config::warnings(const AppConfig& config) {
     if (config.actions.alert.enabled && config.actions.alert.to.empty()) {
         out.push_back("actions.alert.enabled is true but actions.alert.email.to is empty: "
                       "there is nobody to alert");
+    }
+
+    // Legal, and worth saying once: the floor exists because a rule set does not
+    // change hourly, and a fleet behind one egress address checking every fifteen
+    // minutes is the load pattern that gets the check rate-limited into uselessness.
+    if (config.updates.check == UpdateCheckMode::Periodic &&
+        config.updates.intervalSeconds > 0 &&
+        config.updates.intervalSeconds < 3600) {
+        out.push_back(fmt::format("updates.interval is {}s: a release does not appear "
+                                  "more than once a day, so anything under an hour is "
+                                  "requests nobody reads the answer to",
+                                  config.updates.intervalSeconds));
     }
 
     if (!config.archives.enabled) {
