@@ -7,11 +7,15 @@
 //   It cannot fail a scan. A source that throws, hangs, returns nonsense or is not
 //   there at all produces no notice and nothing else.
 //   It cannot change an exit code. Nothing here returns a status to the caller.
-//   It cannot delay output. resultIfReady() never blocks, and the destructor cancels
-//   the worker rather than waiting for it.
+//   It cannot delay output. resultIfReady() never blocks, so the notice is written
+//   from whatever is known when the report is finished and never from waiting.
 //
 // A scanner that exits non-zero because GitHub was slow is a broken scanner, and so
 // is one that takes two seconds longer to print because GitHub was slow.
+//
+// The destructor is the one place that waits, and it is not an exception to any of
+// the above: the handle outlives the report, so by the time it runs the last byte has
+// been printed. See kUpdateAnswerGrace.
 
 #include "update/UpdatePolicy.h"
 #include "update/UpdateState.h"
@@ -31,6 +35,31 @@ namespace lyxbosa {
 // About two seconds. Long enough for a TLS handshake and a small response on a
 // working connection, short enough that a wedged one is not worth noticing.
 inline constexpr std::chrono::milliseconds kUpdateCheckTimeout{2000};
+
+// How long teardown will wait for an answer the interval has already been spent on.
+//
+// THE DEFECT THIS EXISTS FOR
+// The timestamp is written BEFORE the request - it has to be, or an unreachable
+// network means a request on every run - and the answer was written only if the fetch
+// finished. The destructor cancelled the worker the moment the scan ended, so a scan
+// that finished before its request did burned the interval and learned nothing: the
+// state file said a check had happened and never said what it found. Every later scan
+// inside that interval then read an empty cache and stayed silent. For anyone whose
+// scans are quick, the notice was not rare - it was unreachable.
+//
+// WHAT THIS COSTS
+// Not output. The handle is a local of the scan command and outlives the report, so
+// this wait begins after the last byte has been printed; nothing a person is reading
+// is held back, and the exit code was decided before it. What it costs is up to this
+// much extra process lifetime, at most once per interval, and only on a run that was
+// allowed to check at all - interactive, on a terminal, not CI, and none of --force,
+// --quiet or --silent. It is also skipped entirely for the common case where the
+// worker has already finished, which is every scan slower than one request.
+//
+// One second, against a request measured at about a quarter of one. Four times the
+// observed cost leaves room for a slow handshake without turning a cancelled network
+// into a pause somebody notices; past it the answer is abandoned exactly as before.
+inline constexpr std::chrono::milliseconds kUpdateAnswerGrace{1000};
 
 struct UpdateCheckResult {
     FetchOutcome outcome;
@@ -66,10 +95,14 @@ class BackgroundUpdateCheck {
 public:
     BackgroundUpdateCheck(std::shared_ptr<VersionSource> source, Version running,
                           std::filesystem::path statePath, uint64_t startedAtEpoch,
-                          std::chrono::milliseconds timeout = kUpdateCheckTimeout);
+                          std::chrono::milliseconds timeout = kUpdateCheckTimeout,
+                          std::chrono::milliseconds grace = kUpdateAnswerGrace);
 
-    // Cancels and joins. Prompt: the flag is what the source is required to watch,
-    // and the real one polls it every 50 ms and abandons the transfer when it is set.
+    // Waits up to `grace` for an answer, then cancels and joins. Cancellation is
+    // prompt: the flag is what the source is required to watch, and the real one polls
+    // it every 50 ms and abandons the transfer when it is set. So the bound on
+    // teardown is the grace, not the timeout - and a check already finished costs
+    // nothing at all.
     ~BackgroundUpdateCheck();
 
     BackgroundUpdateCheck(const BackgroundUpdateCheck&) = delete;
@@ -85,6 +118,7 @@ private:
     std::filesystem::path statePath_;
     uint64_t startedAtEpoch_ = 0;
     std::chrono::milliseconds timeout_;
+    std::chrono::milliseconds grace_;
 
     std::atomic<bool> cancel_{false};
     std::atomic<bool> done_{false};
@@ -121,10 +155,15 @@ struct UpdateCheckHandle {
 // successes would run again on every single invocation for as long as the network is
 // unreachable. It is also the only honest answer to "is the state writable" - which
 // is why the probe is a write and not a stat.
+//
+// The reservation throttles the REQUEST. It must not also throttle the notice, and
+// that is a second write rather than a change to this one: the worker records what it
+// learned, and kUpdateAnswerGrace is what gives it the chance to.
 UpdateCheckHandle startUpdateCheck(
     UpdateCheckContext context,
     std::shared_ptr<VersionSource> source,
     const std::filesystem::path& statePath,
-    std::chrono::milliseconds timeout = kUpdateCheckTimeout);
+    std::chrono::milliseconds timeout = kUpdateCheckTimeout,
+    std::chrono::milliseconds grace = kUpdateAnswerGrace);
 
 }  // namespace lyxbosa

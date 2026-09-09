@@ -1,5 +1,7 @@
 #include "update/UpdateCheck.h"
 
+#include "core/Interrupt.h"
+
 #include <fmt/format.h>
 
 #include <exception>
@@ -72,12 +74,14 @@ BackgroundUpdateCheck::BackgroundUpdateCheck(std::shared_ptr<VersionSource> sour
                                              Version running,
                                              std::filesystem::path statePath,
                                              uint64_t startedAtEpoch,
-                                             std::chrono::milliseconds timeout)
+                                             std::chrono::milliseconds timeout,
+                                             std::chrono::milliseconds grace)
     : source_(std::move(source)),
       running_(running),
       statePath_(std::move(statePath)),
       startedAtEpoch_(startedAtEpoch),
-      timeout_(timeout) {
+      timeout_(timeout),
+      grace_(grace) {
     worker_ = std::thread([this] {
         UpdateCheckResult result;
         try {
@@ -89,7 +93,10 @@ BackgroundUpdateCheck::BackgroundUpdateCheck(std::shared_ptr<VersionSource> sour
 
                     // Best effort, and deliberately not checked: the timestamp that
                     // makes the interval work was already written by the reservation.
-                    // This only adds what the answer was, which nothing depends on.
+                    // This adds what the answer was - which THIS scan does not depend
+                    // on, and every later scan inside the interval does. It is the
+                    // only record of it, which is why the destructor now gives this
+                    // line a chance to run rather than cancelling on top of it.
                     UpdateState state;
                     state.lastCheckEpoch = startedAtEpoch_;
                     state.latestVersion = toString(*parsed);
@@ -109,6 +116,20 @@ BackgroundUpdateCheck::BackgroundUpdateCheck(std::shared_ptr<VersionSource> sour
 }
 
 BackgroundUpdateCheck::~BackgroundUpdateCheck() {
+    // Wait for an answer the interval has already been spent on, rather than throwing
+    // away one that is nearly here - see kUpdateAnswerGrace for why that is not a
+    // delay anybody is waiting through, and what it costs.
+    //
+    // Ctrl+C ends the wait immediately. A person who interrupted a scan is asking for
+    // the process to be over, and a second of tidiness after that reads as a hang.
+    // Polling rather than a condition variable because done_ is already the worker's
+    // one publication point, and a second one would be a second thing to keep in step.
+    const auto deadline = std::chrono::steady_clock::now() + grace_;
+    while (!done_.load(std::memory_order_acquire) && !interrupted() &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
     cancel_.store(true, std::memory_order_relaxed);
     if (worker_.joinable()) {
         worker_.join();
@@ -126,7 +147,8 @@ UpdateCheckHandle startUpdateCheck(
     UpdateCheckContext context,
     std::shared_ptr<VersionSource> source,
     const std::filesystem::path& statePath,
-    std::chrono::milliseconds timeout) {
+    std::chrono::milliseconds timeout,
+    std::chrono::milliseconds grace) {
 
     UpdateCheckHandle handle;
 
@@ -171,7 +193,7 @@ UpdateCheckHandle startUpdateCheck(
     }
 
     handle.live = std::make_unique<BackgroundUpdateCheck>(
-        std::move(source), context.running, statePath, context.nowEpoch, timeout);
+        std::move(source), context.running, statePath, context.nowEpoch, timeout, grace);
     return handle;
 }
 
