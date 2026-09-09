@@ -10,6 +10,9 @@
 #include "config/Config.h"
 #include "core/Scanner.h"
 
+#include "PlatformSkips.h"
+
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -31,8 +34,12 @@ namespace fs = std::filesystem;
 class TempDir {
 public:
     TempDir() {
+        // A steady_clock tick rather than ::getpid(), which is POSIX-only and was the
+        // third unguarded assumption in this suite. The name only has to be unique
+        // among concurrent runs, and this is what tests/update_test.cpp already uses.
+        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
         path_ = fs::temp_directory_path() /
-                ("lyxbosa-archive-test-" + std::to_string(::getpid()) + "-" +
+                ("lyxbosa-archive-test-" + std::to_string(tick) + "-" +
                  std::to_string(counter_++));
         fs::create_directories(path_);
     }
@@ -735,8 +742,8 @@ TEST(FileSkipReasonTest, OversizeFileIsReportedAsASizeSkip) {
 // and the file was counted as scanned with no findings - the scanner asserting a
 // file was clean without having read a byte of it.
 TEST(FileSkipReasonTest, UnreadableFileIsNotReportedAsScannedAndClean) {
-    if (::geteuid() == 0) {
-        GTEST_SKIP() << "root can read a mode-000 file, so there is nothing to deny";
+    if (const auto why = test::whyCannotDenyOwnAccess()) {
+        GTEST_SKIP() << *why << " - a mode-000 file would still be read";
     }
 
     TempDir dir;
@@ -801,8 +808,8 @@ TEST(FileSkipReasonTest, ExcludedFilesAreCountedAlwaysAndListedOnRequest) {
 // scan's coverage. directory_options::skip_permission_denied reported it as an
 // empty directory, which is indistinguishable from one that really is empty.
 TEST(FileSkipReasonTest, UnreadableDirectoryIsCounted) {
-    if (::geteuid() == 0) {
-        GTEST_SKIP() << "root can read a mode-000 directory";
+    if (const auto why = test::whyCannotDenyOwnAccess()) {
+        GTEST_SKIP() << *why << " - a mode-000 directory would still be read";
     }
 
     TempDir dir;

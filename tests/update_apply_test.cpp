@@ -34,6 +34,26 @@
 //   with a second key. Its private half is a seed of 0,1,2..31 - not key material, and
 //   deliberately not in minisign's secret-key format, which corpus/pre-push-check.py
 //   refuses by shape.
+//
+// TWO PLATFORM FACTS DECIDE WHICH CASES CAN BE BUILT
+// ---------------------------------------------------
+// They are separate reasons and are written separately, even though CMakeLists.txt
+// makes them true on the same platforms today - it turns the verifier off exactly when
+// WIN32, because curl there uses Schannel and no OpenSSL is built at all.
+//
+//   LYXBOSA_UPDATE_VERIFY. A build with no Ed25519 cannot BUILD a signature to
+//   present, so every case whose subject is a signature has nothing to hand the
+//   verifier. Guarded with the same switch src-lib/cpp/update/Minisign.cpp uses for
+//   the verifier itself, rather than a second one that could disagree with it.
+//
+//   _WIN32. There are no POSIX mode bits for chmod to set and no #!/bin/sh for the
+//   smoke test to run, so every case whose subject is a permission or a runnable
+//   stand-in binary has nothing to write.
+//
+// Where a region is compiled out, what replaces it asserts THIS platform's contract -
+// that the verifier refuses rather than accepts, that the hasher answers nothing
+// rather than zero, that the updater refuses before it fetches a byte. A suite that
+// silently contains nothing reports no failures, and no failures reads as green.
 
 #include <gtest/gtest.h>
 
@@ -46,7 +66,11 @@
 #include "update/Version.h"
 #include "update/VersionSource.h"
 
+#include "PlatformSkips.h"
+
+#ifdef LYXBOSA_UPDATE_VERIFY
 #include <openssl/evp.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -58,9 +82,12 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
+
+#ifndef _WIN32
 #include <sys/stat.h>
 #include <unistd.h>
-#include <vector>
+#endif
 
 using namespace lyxbosa;
 
@@ -107,16 +134,19 @@ std::string readFile(const fs::path& path) {
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-// A stand-in for an installed binary: a script that runs and prints something. It has
-// to be a real executable, because the smoke test really execs it.
-void writeExecutable(const fs::path& path, std::string_view says, uint32_t mode = 0755) {
-    writeFile(path, std::string("#!/bin/sh\necho ") + std::string(says) + "\n");
-    ::chmod(path.string().c_str(), static_cast<mode_t>(mode));
-}
-
 std::string executableText(std::string_view says) {
     return std::string("#!/bin/sh\necho ") + std::string(says) + "\n";
 }
+
+#ifndef _WIN32
+// A stand-in for an installed binary: a script that runs and prints something. It has
+// to be a real executable, because the smoke test really execs it - which is why there
+// is no Windows version of this rather than one that writes a .bat and hopes.
+void writeExecutable(const fs::path& path, std::string_view says, uint32_t mode = 0755) {
+    writeFile(path, executableText(says));
+    ::chmod(path.string().c_str(), static_cast<mode_t>(mode));
+}
+#endif
 
 std::vector<std::string> namesIn(const fs::path& directory) {
     std::vector<std::string> names;
@@ -129,8 +159,11 @@ std::vector<std::string> namesIn(const fs::path& directory) {
 }
 
 // ---------------------------------------------------------------------------
-// Signing, inside the test.
+// Signing, inside the test. Needs Ed25519, so a build without a verifier has no way
+// to construct any of the material the cases below present.
 // ---------------------------------------------------------------------------
+
+#ifdef LYXBOSA_UPDATE_VERIFY
 
 std::string base64Encode(const std::vector<uint8_t>& bytes) {
     static constexpr char kAlphabet[] =
@@ -233,6 +266,8 @@ minisign::Keyring keyringOf(const TestKey& key) {
     return minisign::parseKeyring("signing  " + key.keyringText() + "\n");
 }
 
+#endif  // LYXBOSA_UPDATE_VERIFY
+
 // ---------------------------------------------------------------------------
 // A real minisign 0.12 fixture. Its secret key was destroyed after it was made.
 // ---------------------------------------------------------------------------
@@ -245,6 +280,14 @@ constexpr const char* kRealChecksumList =
     "c865f6c5ab8d1b0bcd383a5e1e3879d22681c96bf462c269b7581d523fbe70ab  lyxbosa-linux-arm64\n"
     "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb  lyxbosa-windows-amd64.exe\n"
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  lyxbosa-windows-arm64.exe\n";
+
+// A second key, for the one case about a keyring holding more than one. Shape only:
+// 56 characters beginning RW, decoding to 42 bytes that carry minisign's "Ed" marker,
+// which is everything parseKeyring checks. Nothing ever verifies with it. A literal
+// rather than a generated key, because generating one needs Ed25519 and this case is
+// about the parser - which is also why it now builds on a platform that has none.
+constexpr const char* kSecondPublicKey =
+    "RWQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 constexpr const char* kRealSignature =
     "untrusted comment: verify with: minisign -Vm SHA256SUMS -P <key from "
@@ -351,8 +394,11 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// A whole release, and the one thing each case spoils.
+// A whole release, and the one thing each case spoils. Needs the verifier to sign
+// with and to hash with, and POSIX modes for the binary it installs over.
 // ---------------------------------------------------------------------------
+
+#if defined(LYXBOSA_UPDATE_VERIFY) && !defined(_WIN32)
 
 std::string sha256Hex(const std::string& content) {
     TempDir dir;
@@ -427,6 +473,8 @@ struct Fixture {
     }
 };
 
+#endif  // LYXBOSA_UPDATE_VERIFY && !_WIN32
+
 }  // namespace
 
 // ===========================================================================
@@ -443,13 +491,13 @@ TEST(KeyringTest, ReadsRoleAndKey) {
 }
 
 TEST(KeyringTest, ReadsMoreThanOneKeyForRotation) {
-    TestKey a(1);
-    TestKey b(100);
     const auto keyring = minisign::parseKeyring(
-        "signing " + a.keyringText() + "\ntrusted " + b.keyringText() + "\n");
+        std::string("signing ") + kRealPublicKey + "\ntrusted " + kSecondPublicKey + "\n");
     ASSERT_TRUE(keyring.ok()) << keyring.error;
     ASSERT_EQ(keyring.keys.size(), 2u);
+    EXPECT_EQ(keyring.keys[0].role, "signing");
     EXPECT_EQ(keyring.keys[1].role, "trusted");
+    EXPECT_EQ(keyring.keys[1].text, kSecondPublicKey);
 }
 
 TEST(KeyringTest, RefusesEverythingMalformed) {
@@ -508,8 +556,13 @@ TEST(EmbeddedKeyringTest, ParsesAndCarriesExactlyOneSigningKey) {
 }
 
 // ===========================================================================
-// A signature made by real minisign 0.12.
+// A signature made by real minisign 0.12, then the parser, then the global
+// signature. Every case needs Ed25519 - to verify with, or to build the material it
+// presents - so the whole run of them is one region, and the #else below is what a
+// build without a verifier owes instead.
 // ===========================================================================
+
+#ifdef LYXBOSA_UPDATE_VERIFY
 
 TEST(MinisignFixtureTest, VerifiesWhatTheReferenceImplementationProduced) {
     const auto keyring = minisign::parseKeyring(std::string("signing ") + kRealPublicKey);
@@ -656,6 +709,33 @@ TEST(GlobalSignatureTest, AcceptsTheCommentThatWasSigned) {
     EXPECT_EQ(verified.status, minisign::VerifyStatus::Ok) << verified.detail;
 }
 
+#else  // LYXBOSA_UPDATE_VERIFY
+
+// What this build owes in place of everything above. The point is not that the cases
+// are absent - it is that "no verifier" must mean REFUSE and never "nothing checked it,
+// so it must be fine". The fixture is a real minisign 0.12 signature over a real list
+// by the matching key, so it is the strongest input available: if anything were going
+// to be waved through here, this would be it.
+TEST(MinisignFixtureTest, ABuildWithNoVerifierRefusesTheSignatureItCannotCheck) {
+    EXPECT_FALSE(minisign::verifierAvailable());
+
+    // Parsing is not verification and stays compiled in, so the refusal below is about
+    // the signature rather than about failing to read the file.
+    const auto keyring = minisign::parseKeyring(std::string("signing ") + kRealPublicKey);
+    ASSERT_TRUE(keyring.ok()) << keyring.error;
+    const auto parsed = minisign::parseSignature(kRealSignature);
+    ASSERT_TRUE(parsed.ok()) << parsed.error;
+    EXPECT_TRUE(parsed.signature.prehashed);
+
+    const auto verified =
+        minisign::verifyDetached(kRealChecksumList, parsed.signature, keyring);
+    EXPECT_EQ(verified.status, minisign::VerifyStatus::NoVerifier);
+    EXPECT_TRUE(verified.trustedComment.empty())
+        << "a comment that was never verified must not be handed back";
+}
+
+#endif  // LYXBOSA_UPDATE_VERIFY
+
 TEST(TrustedCommentTest, MatchesAWholeWordAndNotASubstring) {
     EXPECT_TRUE(minisign::trustedCommentNamesTag("LyxBoSa v2.3.0 SHA256SUMS", "v2.3.0"));
     EXPECT_TRUE(minisign::trustedCommentNamesTag("v2.3.0", "v2.3.0"));
@@ -709,6 +789,8 @@ TEST(ChecksumListTest, AMalformedLineDiscardsTheWholeList) {
     EXPECT_TRUE(list.entries.empty());
 }
 
+#ifdef LYXBOSA_UPDATE_VERIFY
+
 TEST(ChecksumTest, HashesAFileAndCatchesOneChangedByte) {
     TempDir dir;
     writeFile(dir.file("a"), "abc");
@@ -721,6 +803,22 @@ TEST(ChecksumTest, HashesAFileAndCatchesOneChangedByte) {
     EXPECT_NE(*sha256File(dir.file("a")), *hash);
     EXPECT_FALSE(sha256File(dir.file("missing")).has_value());
 }
+
+#else  // LYXBOSA_UPDATE_VERIFY
+
+// SHA-256 comes from the same library as Ed25519, so a build without one has neither.
+// What matters is which shape "cannot hash" takes: nullopt, never an empty or
+// all-zero digest, because hashesEqual() would compare two of those as equal and a
+// download would match a list it was never in.
+TEST(ChecksumTest, ABuildWithNoHasherAnswersNothingRatherThanAnEmptyDigest) {
+    TempDir dir;
+    writeFile(dir.file("a"), "abc");
+    EXPECT_FALSE(sha256File(dir.file("a")).has_value());
+    EXPECT_FALSE(sha256File(dir.file("missing")).has_value());
+    EXPECT_FALSE(hashesEqual("", ""));
+}
+
+#endif  // LYXBOSA_UPDATE_VERIFY
 
 TEST(ChecksumTest, ComparisonIsCaseInsensitiveAndTotal) {
     EXPECT_TRUE(hashesEqual("ABCD", "abcd"));
@@ -760,12 +858,15 @@ TEST(InstallPathTest, AWritableDirectoryIsAcceptedAndAMissingOneIsNot) {
 }
 
 TEST(InstallPathTest, AnUnwritableDirectoryIsRefused) {
-    if (::geteuid() == 0) {
-        // Stated rather than skipped silently: root ignores the permission bits this
-        // case sets, so it cannot observe anything here and says so instead of passing.
-        GTEST_SKIP() << "running as root - permission bits do not apply, so this case "
-                        "cannot observe a refusal";
+    // Stated rather than skipped silently: where the permission bits this case sets are
+    // ignored - as root, or on a platform that has none - it cannot observe anything
+    // here and says which instead of passing.
+    if (const auto why = test::whyCannotDenyOwnAccess()) {
+        GTEST_SKIP() << *why;
     }
+    // No preprocessor guard: everything below is std::filesystem and canReplace(), so
+    // it compiles anywhere. The skip above is what stops it running where it could not
+    // observe anything.
     TempDir dir;
     const auto locked = dir.file("locked");
     fs::create_directories(locked);
@@ -790,6 +891,8 @@ TEST(InstallPathTest, StagingSitsBesideTheTargetSoTheRenameStaysOnOneFilesystem)
     EXPECT_EQ(staged.parent_path(), fs::path("/opt/lyxbosa/bin"));
     EXPECT_NE(staged.filename(), fs::path("lyxbosa"));
 }
+
+#ifndef _WIN32
 
 TEST(InstallPathTest, ReplaceIsAtomicAndCarriesTheOldModeOver) {
     TempDir dir;
@@ -824,9 +927,33 @@ TEST(InstallPathTest, TheSmokeTestTellsARunnableBinaryFromOneThatIsNot) {
     EXPECT_FALSE(stagedBinaryRuns(dir.file("absent")));
 }
 
+#else  // _WIN32
+
+// The two cases above are about POSIX mode bits: that a download arriving 0644 is
+// installed with the target's own 0700, and that a file which is present, executable
+// and exits non-zero is not a binary to install. Neither can be set up here, and the
+// contract instead is that fileMode() says there is no mode rather than guessing one -
+// because replaceAtomically() carries whatever it returns onto the new binary.
+TEST(InstallPathTest, ThereAreNoModeBitsToCarryOnThisPlatform) {
+    TempDir dir;
+    writeFile(dir.file("lyxbosa"), "x");
+    const auto mode = fileMode(dir.file("lyxbosa"));
+    ASSERT_TRUE(mode.has_value()) << "a file that is there has an answer";
+    EXPECT_EQ(*mode, 0u) << "and the answer is that there is no mode to carry over";
+    EXPECT_FALSE(fileMode(dir.file("absent")).has_value());
+
+    EXPECT_FALSE(stagedBinaryRuns(dir.file("absent")));
+}
+
+#endif  // _WIN32
+
 // ===========================================================================
-// The whole thing: one case per way of refusing.
+// The whole thing: one case per way of refusing. Each one builds a whole release and
+// installs it over a stand-in binary, so it needs Ed25519 to sign with and POSIX modes
+// to install with. The #else below is what this platform owes instead.
 // ===========================================================================
+
+#if defined(LYXBOSA_UPDATE_VERIFY) && !defined(_WIN32)
 
 TEST(ApplyTest, ReplacesTheBinaryWhenEverythingChecksOut) {
     TestKey key(1);
@@ -1266,6 +1393,31 @@ TEST(ApplyTest, TheDefaultKeyringIsTheOneCompiledIn) {
     fixture.expectNothingHappened();
 }
 
+#else  // LYXBOSA_UPDATE_VERIFY && !_WIN32
+
+// The refusals above cannot be built here, and the one that matters on this platform
+// is a different one: applyUpdate refuses on its first guard, before it asks anything
+// or fetches anything. The assertion is that no byte was requested - a build that
+// downloaded a release it then declined to install would be reaching the network on
+// every `lyxbosa update` for nothing, and would look identical in the exit code.
+TEST(ApplyTest, ThisPlatformRefusesBeforeItFetchesAByte) {
+    FakeVersionSource versions("v2.3.0");
+    FakeAssetSource assets;
+
+    ApplyOptions options;
+    options.running = Version{2, 2, 1};
+    options.assumeYes = true;
+
+    const auto result = applyUpdate(versions, assets, options);
+
+    EXPECT_NE(result.outcome, ApplyOutcome::Replaced);
+    EXPECT_FALSE(result.detail.empty()) << "a refusal owes a reason";
+    EXPECT_TRUE(assets.fetched.empty()) << "it must refuse before it fetches";
+    EXPECT_EQ(versions.calls.load(), 0) << "and before it asks what the newest is";
+}
+
+#endif  // LYXBOSA_UPDATE_VERIFY && !_WIN32
+
 TEST(ApplyTest, AShippedBuildTalksToGitHubAndNowhereElse) {
     // The origin override is compiled out unless a local demo build asks for it, and a
     // released binary has no code path that reads the variable at all. Asserted here so
@@ -1285,7 +1437,21 @@ TEST(ApplyTest, ThisPlatformKnowsWhichAssetItWouldInstall) {
     // A platform with no asset must produce an empty name rather than a guess, and the
     // one running these tests is a platform a release publishes for.
     EXPECT_FALSE(platformAssetName().empty());
-    EXPECT_TRUE(platformCanReplaceRunningBinary());
-    EXPECT_TRUE(minisign::verifierAvailable());
     EXPECT_FALSE(runningExecutablePath().empty());
+
+    // Both arms are asserted rather than one being skipped. "Cannot" is as much this
+    // platform's contract as "can", and a build that quietly gained or lost either
+    // ability should fail here and be looked at rather than be discovered by a user.
+#ifdef _WIN32
+    EXPECT_FALSE(platformCanReplaceRunningBinary())
+        << "a running .exe is locked, so it cannot be replaced in place";
+#else
+    EXPECT_TRUE(platformCanReplaceRunningBinary());
+#endif
+#ifdef LYXBOSA_UPDATE_VERIFY
+    EXPECT_TRUE(minisign::verifierAvailable());
+#else
+    EXPECT_FALSE(minisign::verifierAvailable())
+        << "no OpenSSL is built on this platform; update refuses rather than degrading";
+#endif
 }

@@ -33,14 +33,12 @@
 #include "system/CliArgs.h"
 #include "use-cases/ScanUseCase.h"
 
+#include "PlatformSkips.h"
+
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
-
-#ifndef _WIN32
-#include <unistd.h>
-#endif
 
 using namespace lyxbosa;
 
@@ -93,23 +91,6 @@ ScanResult scanOf(const std::vector<std::string>& directories) {
     Scanner scanner(configFor(directories));
     scanner.setPreCount(false);
     return scanner.scan();
-}
-
-// Why this platform cannot make a directory the current user may not read, or nullopt
-// when it can. Two reasons, and a case that hits either has to say so rather than pass
-// without observing anything: root ignores the permission bits, and Windows has no
-// POSIX mode for std::filesystem::permissions to clear.
-std::optional<std::string> whyCannotDenyOwnReads() {
-#ifdef _WIN32
-    return "Windows has no POSIX permission bits, so a mode-000 directory is still "
-           "readable and no refusal can be observed";
-#else
-    if (::geteuid() == 0) {
-        return "running as root - a mode-000 directory is still readable, so no "
-               "refusal can be observed";
-    }
-    return std::nullopt;
-#endif
 }
 
 // The exit code `lyxbosa scan` would return for these arguments. Every field that
@@ -210,8 +191,8 @@ TEST(ScanRootTest, OneAbsentRootAmongFourLeavesTheOtherThreeWalked) {
 // is the host refusing, which is already counted and must stay counted the way it is -
 // folding it in here would make a scan of / as an ordinary user an error.
 TEST(ScanRootTest, AnUnreadableRootIsCountedAsUnreadableAndNotAsMissing) {
-    if (const auto why = whyCannotDenyOwnReads()) {
-        GTEST_SKIP() << *why;
+    if (const auto why = test::whyCannotDenyOwnAccess()) {
+        GTEST_SKIP() << *why << " - a mode-000 directory would still be read";
     }
 
     TempDir dir;
@@ -300,8 +281,8 @@ TEST(ScanExitTest, OneMissingRootAmongFourRefusesTheWholeScan) {
 // Recorded here so that a later round which decides otherwise has to change a case
 // rather than discovering it in the field.
 TEST(ScanExitTest, AnUnreadableRootStillExitsZero) {
-    if (const auto why = whyCannotDenyOwnReads()) {
-        GTEST_SKIP() << *why;
+    if (const auto why = test::whyCannotDenyOwnAccess()) {
+        GTEST_SKIP() << *why << " - a mode-000 directory would still be read";
     }
 
     TempDir dir;
