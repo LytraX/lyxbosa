@@ -47,14 +47,29 @@ struct CountResult {
 // one, so the count can be exact rather than a guess.
 using CountAugmentCallback = std::function<void(const FileInfo&, CountResult&)>;
 
+// Why a directory named as a scan root cannot be walked, or nullopt when it can be.
+//
+// A root is the operator's own words - an argument on the command line or a line in a
+// configuration file - so a root that is not there is their mistake and not a fact
+// about the tree. That is deliberately NOT the question walkDirectory() asks of a
+// subdirectory it descends into: that one can vanish under a running scan, which is a
+// race and nobody's error. The only thing that tells the two apart is which of them
+// the operator named, and only walk() knows that.
+std::optional<std::string> rootUnusableReason(const std::filesystem::path& dir);
+
 // Directory traversal with filtering
 class FileWalker {
 public:
     explicit FileWalker(const ScanConfig& config);
 
     // Walk all configured directories and call callback for each matching file
-    // Returns the number of directories traversed
-    size_t walk(FileCallback callback, size_t* unreadableDirs = nullptr) const;
+    // Returns the number of directories traversed.
+    //
+    // `missingRoots` collects every configured root that rootUnusableReason() refused,
+    // because a walk whose success is defined by what it managed to open reports a
+    // root that was never there as a clean scan of nothing.
+    size_t walk(FileCallback callback, size_t* unreadableDirs = nullptr,
+                std::vector<std::filesystem::path>* missingRoots = nullptr) const;
 
     // Walk a single directory (stopped is set to true if callback returns false)
     size_t walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,

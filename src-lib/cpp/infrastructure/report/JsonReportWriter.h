@@ -83,6 +83,7 @@ public:
         out_ << "  \"filesSkippedSize\": " << result.filesSkippedSize() << ",\n";
         writeFilesSkipped(result);
         out_ << "  \"filesQuarantined\": " << result.filesQuarantined << ",\n";
+        writeRootsMissing(result);
         writeArchives(result.archives);
         out_ << "  \"durationMs\": " << result.duration().count() << "\n";
         out_ << "}\n";
@@ -100,6 +101,21 @@ public:
         out_ << "    \"unreadable\": " << result.skips.count(SkipReason::Unreadable) << "\n";
         out_ << "  },\n";
         out_ << "  \"directoriesUnreadable\": " << result.directoriesUnreadable << ",\n";
+    }
+
+    // The roots that were named and were not there. Emitted unconditionally and as an
+    // array rather than a count, because a consumer that reads only the counts above
+    // cannot otherwise tell a clean scan of a whole tree from a successful scan of
+    // nothing at all - which is the machine-readable form of the same lie.
+    void writeRootsMissing(const ScanResult& result) {
+        out_ << "  \"rootsMissing\": [";
+        bool first = true;
+        for (const auto& root : result.rootsMissing) {
+            out_ << (first ? "\n    " : ",\n    ");
+            first = false;
+            writeString(out_, pathForDisplay(root));
+        }
+        out_ << (first ? "],\n" : "\n  ],\n");
     }
 
     // Archive handling, including every member that was not scanned and why.

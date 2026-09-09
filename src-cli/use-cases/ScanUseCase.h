@@ -70,6 +70,19 @@ public:
             return 1;
         }
 
+        // A root the operator named and that is not there is their mistake, and the
+        // walk used to step over it: "Files scanned: 0", "No matches found", exit 0 -
+        // which is what a clean tree reports. A typo in a cron entry therefore agreed
+        // with itself forever. `check` already refuses a file that is not there, and
+        // this is the same refusal one level up.
+        //
+        // Before any work, so that a set of roots which was wrong from the start does
+        // not cost a forty-minute scan first - and before the update check below, so a
+        // run that refuses here has not spent its interval either.
+        if (!refuseUnusableRoots(config)) {
+            return 1;
+        }
+
         // Guards that have been turned off are legal, and worth saying out loud
         // before a scan rather than after one that never came back.
         if (!args.silent) {
@@ -205,6 +218,54 @@ private:
             }
         }
         return true;
+    }
+
+    // Every named root that cannot be walked, one formatted line each. Empty when the
+    // scan can go ahead.
+    static std::vector<std::string> unusableRoots(const AppConfig& config) {
+        std::vector<std::string> lines;
+        for (const auto& dir : config.scan.directories) {
+            if (const auto why = rootUnusableReason(dir)) {
+                lines.push_back(fmt::format(
+                    "{}: {}", pathForDisplay(std::filesystem::path(dir)), *why));
+            }
+        }
+        return lines;
+    }
+
+    // False when the scan must not start. One root that is not there refuses the whole
+    // run rather than scanning the others: scanning three of four roots and reporting
+    // the result as the scan is the same shape of quiet under-coverage, one level up,
+    // and an operator who is told which path is wrong can fix it in a second.
+    bool refuseUnusableRoots(const AppConfig& config) const {
+        const auto unusable = unusableRoots(config);
+        if (unusable.empty()) {
+            return true;
+        }
+
+        const size_t total = config.scan.directories.size();
+        if (total == 1) {
+            terminal_.printErr(Terminal::error(),
+                "Error: the directory to scan is not usable:\n");
+        } else {
+            terminal_.printErr(Terminal::error(),
+                "Error: {} of the {} directories to scan {} not usable:\n",
+                unusable.size(), total, unusable.size() == 1 ? "is" : "are");
+        }
+        for (const auto& line : unusable) {
+            terminal_.printErr(Terminal::error(), "       {}\n", line);
+        }
+        if (total == unusable.size()) {
+            terminal_.printErr(Terminal::error(), "       Nothing has been scanned.\n");
+        } else {
+            terminal_.printErr(Terminal::error(),
+                "       Nothing has been scanned, not even the roots that are there.\n");
+        }
+        terminal_.printErr(Terminal::error(),
+            "       A run that stepped over a missing root would report what a clean\n"
+            "       tree reports, so the whole scan is refused instead. Correct the\n"
+            "       path, or take it out of the directories to scan.\n");
+        return false;
     }
 
     void applyOverrides(const CliArgs& args, AppConfig& config) {
@@ -527,9 +588,32 @@ private:
             }
         }
 
+        // The refusal in execute() proves every named root was there when the command
+        // started. This is the race that one cannot cover: a root taken away while the
+        // scan was running. Not the operator's mistake, so the findings stand and are
+        // printed and written - but the tree below it was not covered, and only the
+        // operator can decide what that means. Printed under --quiet, which suppresses
+        // progress and the summary; only --silent, which promises no output at all,
+        // holds it back.
+        if (!result.rootsMissing.empty() && !args.silent) {
+            terminal_.printErr(Terminal::error(),
+                "\nError: a directory named for this scan was gone by the time the scan\n"
+                "       reached it, so nothing below it was covered:\n");
+            for (const auto& root : result.rootsMissing) {
+                terminal_.printErr(Terminal::error(), "       {}\n", pathForDisplay(root));
+            }
+        }
+
         // Return 130 on interrupt (standard convention), 2 if matches found, 0 otherwise
         if (interrupted) {
             return 130;
+        }
+        // A scan that did not cover what it was asked to cover is an error, and it
+        // outranks the findings for the same reason the interrupt above already does:
+        // the exit code answers "did this do what I asked", not "what did it find",
+        // and the findings are in the report either way.
+        if (!result.rootsMissing.empty()) {
+            return 1;
         }
         return result.filesWithMatches > 0 ? 2 : 0;
     }

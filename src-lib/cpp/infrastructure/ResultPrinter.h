@@ -143,6 +143,17 @@ public:
                    result.directoriesUnreadable);
         }
 
+        // Named and not there. Listed rather than counted, because the operator can
+        // only act on it if they are told which path it was.
+        if (!result.rootsMissing.empty()) {
+            styled(Terminal::error(), "Roots not scanned: {}\n",
+                   result.rootsMissing.size());
+            for (const auto& root : result.rootsMissing) {
+                styled(Terminal::error(), "  {} - not there when the scan reached it\n",
+                       pathForDisplay(root));
+            }
+        }
+
         if (result.filesQuarantined > 0) {
             plain("Files quarantined: {}\n", result.filesQuarantined);
         }
@@ -155,6 +166,12 @@ public:
             if (result.highCount > 0)     styled(Terminal::high(),     "  High: {}\n", result.highCount);
             if (result.mediumCount > 0)   styled(Terminal::medium(),   "  Medium: {}\n", result.mediumCount);
             if (result.lowCount > 0)      styled(Terminal::low(),      "  Low: {}\n", result.lowCount);
+        } else if (!result.rootsMissing.empty()) {
+            // "No matches found" is what a clean tree reports. A scan that never
+            // entered one of the roots it was given has not cleared that tree, and
+            // saying otherwise here is the same silent skip the file-level reasons
+            // above are printed to prevent.
+            plain("\nNo matches found in what was scanned.\n");
         } else {
             plain("\nNo matches found.\n");
         }
