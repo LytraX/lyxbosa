@@ -71,6 +71,23 @@ ROOT = os.path.dirname(HERE)
 # Point LYXBOSA_BIN at your own build instead.
 SCANNER = os.environ.get("LYXBOSA_BIN") or os.path.join(ROOT, "build-release", "lyxbosa")
 
+def control_scanner():
+    """The binary `--inject` runs its end-to-end cases against.
+
+    A control is not a measurement, and the two want different defaults. A published
+    figure has to come from `build-release/` so that what is quoted is what was measured,
+    and AGENTS.md forbids rebuilding that one mid-round for exactly that reason - so it
+    is routinely older than the source, and a control that insisted on it would report
+    the age of a build as a failure of the round being checked. A control only has to run
+    against a scanner that can answer, and the freshest one on hand is `build/`.
+
+    An explicit LYXBOSA_BIN still wins: naming a binary means that binary.
+    """
+    if os.environ.get("LYXBOSA_BIN"):
+        return SCANNER
+    dev = os.path.join(ROOT, "build", "lyxbosa")
+    return dev if os.path.exists(dev) else SCANNER
+
 def die(msg, code=2):
     print("error: %s" % msg, file=sys.stderr); sys.exit(code)
 
@@ -799,6 +816,9 @@ def inject():
     Two of the end-to-end cases need a path the current user cannot read, which root can
     always read; those say so and are counted as not observed rather than passed.
     """
+    global SCANNER
+    SCANNER = control_scanner()
+
     fails, cases, unobserved = [], [], []
 
     def case(label, ok):
