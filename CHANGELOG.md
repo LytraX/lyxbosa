@@ -148,8 +148,52 @@ itself with it.
   `lyxbosa init-config` wrote `# https://github.com/Lyr-7D1h/LyxBoSa` into the header of every
   configuration file anyone generated.
 
+- **A scan of a directory that does not exist reported success.** `scan /path/that/is/not/there`
+  printed `Files scanned: 0`, `No matches found` and exited **0** - byte-identical to a scan of
+  a clean tree apart from the directory count. A typo in a cron entry therefore reported clean
+  for as long as nobody looked, and the exit code agreed with it.
+
+  A root named by the operator - on the command line or in `scan.directories` - is now checked
+  before any work starts. If any named root is missing, or is not a directory, the whole run is
+  refused with the offending path and exit **1**; the roots that *were* there are not scanned
+  either, because scanning three of four and reporting the result as "the scan" is the same
+  quiet under-coverage one level up. A root that disappears *while* the scan is running is a
+  race rather than an operator error: those findings are still reported and written, the paths
+  are named on stderr, and the run exits **1**.
+
+  A subdirectory that vanishes mid-walk is unchanged, and so is an unreadable directory - that
+  is still counted and non-fatal, so scanning `/` as an ordinary user is not an error.
+
+- **The update notice could not appear at all for anyone whose scans are quick.** The check
+  reserves its interval by writing a timestamp *before* the request - it has to, or an
+  unreachable network means an outbound request on every single run - and the answer was
+  written only when the fetch finished. Teardown cancelled the worker the moment the scan
+  ended, so a scan that finished before its request did spent the interval and learned nothing:
+  the state file recorded that a check had happened and never what it found, and every later
+  scan inside that interval read an empty cache and stayed silent.
+
+  Teardown now waits up to one second for an answer the interval has already been paid for,
+  and `Ctrl+C` ends that wait at once. It costs no output - the wait begins after the last byte
+  is printed and after the exit code is decided - and it is skipped entirely when the answer
+  already arrived, which is every scan slower than one request.
+
+- **The update refusal pointed at a file that releases do not ship.** A platform that cannot
+  replace its own running binary refuses and tells the user how to install by hand; that text
+  named `keys/minisign-trusted.txt`, which exists only in a source checkout. A release
+  publishes the binaries, `SHA256SUMS` and `SHA256SUMS.minisig` and no keyring, so the one
+  instruction a stranded user was given could not be followed.
+
 ### Compatibility
 
+- **`scan` can now exit 1 where it exited 0.** A run whose named directory is missing or is not
+  a directory is refused instead of reported as clean. Any script that has been scanning a path
+  that stopped existing has been reading a false all-clear and will now see the error; that is
+  the point of the change, and the fix is to correct the path or drop it from
+  `scan.directories`. Exit **2** for findings and **0** for a clean scan are unchanged.
+- **JSON reports carry a new `rootsMissing` array.** It is empty on an ordinary scan, and names
+  any root that disappeared while the scan was running, so a consumer reading only the counters
+  cannot mistake a scan of nothing for a clean tree. Existing fields are unchanged. CSV is
+  unchanged: it is one row per match with no scan-level channel.
 - **This is a minor bump, not a patch.** A new subcommand and a new top-level configuration
   section are both user-visible surface, and the default behaviour of `scan` changes: an
   interactive scan on a terminal may now make one outbound request a day. A subcommand that
