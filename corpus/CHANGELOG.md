@@ -100,6 +100,46 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Fixed
 
+- **`corpus/verify.py` reported a false-positive rate over whatever the host let the scanner
+  open, and counted what it could not open as clean.** The denominator was `totalFilesScanned`,
+  which counts a file the scanner reached and could not read; the clean count was that minus
+  the matches. A file the host withheld was therefore in the denominator with no finding
+  against it — clean without a byte read. A directory the walk could not list, a root gone
+  mid-scan and an interrupted walk were recorded and asserted nothing, and a scan refused
+  before it started for a missing root was read as zero samples and `n/a` with no failure.
+  Harmless on Linux today — zero unreadable entries under the pinned trees, by `find` — and
+  not on Windows, where Defender withholds files during the scan and chooses which.
+
+  The suite now **refuses the figure** and records a failure when the report carries any
+  unreadable file, any unlistable directory, a missing root, an interruption, or when there is
+  no report; and discloses, without refusing, what the scanner's own policy declined — over
+  the size cap, excluded — which leaves the denominator. The rule is who chose the shortfall:
+  policy is reproducible and part of the figure's definition, a host's refusal is neither.
+  **The denominator is now files read**, so the next measurement will be smaller than the
+  197,559 in `README.md` by the count of files over the size cap; that difference is
+  attributed here in advance and is not a change in the scanner.
+
+  The malicious half had the same defect one level down: `check` exits 1 for a file it cannot
+  read, and the suite read only the rule list off stdout, so an unreadable sample was an empty
+  list — a miss on a `must_detect` row, *still missed* on a `known_miss` row, clean on a
+  `must_not_detect` row and *newly fixed* on a known false positive, three of the four green.
+  The exit code is read first now; an error is counted under `unscanned`, listed under
+  failures, and is never a verdict. `--inject` (41 cases) asserts every refusing channel
+  refuses, every policy channel does not, and — with the real scanner over a real tree — that a
+  file the user cannot read refuses the figure and the same tree with access restored reports
+  again. `control-suites.py` discovers it on its own: 42 suites, from 41. CORPUS_PLAN §11
+  records this as the fourteenth instance.
+
+  **A report that lacks a channel is refused too, and the control found why that matters.**
+  Run against `build-release/`, the first end-to-end case took a path the rule had not covered:
+  that binary predates `rootsMissing`, steps over a root that is not there, exits 0 and writes
+  a report indistinguishable from a clean scan of a tree that was there. Absence of the channel
+  is not evidence of coverage, so a report missing `interrupted`, `filesSkipped`,
+  `directoriesUnreadable` or `rootsMissing` is refused by name, and the control fails loudly —
+  naming the binary and the channel it lacks — rather than skipping, until the scanner under
+  test is one that reports them. `control-suites.py` therefore reports `verify.py` as FAILED
+  on a machine whose `build-release/` predates that channel, and says so in one line.
+
 - **A promotion wrote "no rule fired" onto 29 rows the scanner detects.**
   `promote-pending.closed_expect()` recorded `closed_known_miss.was` from the row's prose
   `known_miss_reason`, falling back to the literal string `"no rule fired"` when there was
