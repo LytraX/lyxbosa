@@ -22,6 +22,8 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [2.3.0] - 2026-09-10
+
 The scanner can tell you a newer release exists, and now fetch it, check it and replace
 itself with it.
 
@@ -128,7 +130,7 @@ itself with it.
   every run, written by someone who asked for weekly, with nothing to say so. It now
   understands `d`, which `archives.time_budget` gains too.
 
-### Fixed
+### Security
 
 - **A webshell could lower the severity of its own detection by writing a comment into
   itself.** `<?php $x = "FilesMan"; echo $x; // nolint` was reported by `check` as `[LOW]`,
@@ -206,6 +208,8 @@ itself with it.
   FTP class, 9 `OBF003` on vendored phpseclib and PhpSpreadsheet, 2 `WS006` on the Magento
   fixtures - are held back after the change by the pattern or by a directory, and every
   fragment removed was holding back nothing, which is why removing it moved nothing.
+
+### Fixed
 
 - **On Windows, none of the path-based suppressions fired.** Twelve fragments in the
   context filters - `/vendor/`, `/tests/`, `/.ssh/`, `/wflogs/` and eight more - are spelled
@@ -693,7 +697,8 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/LytraX/lyxbosa/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/LytraX/lyxbosa/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/LytraX/lyxbosa/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/LytraX/lyxbosa/compare/v2.0.2...v2.1.0
