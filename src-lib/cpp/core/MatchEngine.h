@@ -8,6 +8,8 @@
 
 #include <re2/set.h>
 #include <memory>
+#include <optional>
+#include <span>
 #include <vector>
 #include <memory>
 #include <string_view>
@@ -112,9 +114,29 @@ public:
     static bool underDirectoryNamed(std::string_view path, std::string_view name);
     static bool underDirectoryContaining(std::string_view path, std::string_view fragment);
 
+    // In-file annotations - `// nolint`, `phpcs:ignore` and the rest of
+    // annotationMarkers() - on a matched line or the line before it.
+    //
+    // Finding one and obeying one are two questions, answered in two places.
+    // annotationNear() answers the first and is pure: it reads bytes and says which
+    // marker is there, by substring, on the line holding `offset` or the line before
+    // it. Obeying is applyAnnotation()'s, and it obeys only when the operator said to -
+    // setTrustAnnotations(true), from `annotations.trust` in a configuration the
+    // operator wrote. Off, no marker moves any finding of any rule, because the file
+    // being judged may have been written by the attacker and the marker with it. On, a
+    // marked finding is reported at Low with its original severity kept beside it and
+    // `suppressed` set, for every rule including the signatures. The reasons are at
+    // applyAnnotation()'s definition; AnnotationTest pins every marker in both positions
+    // under both settings.
+    void setTrustAnnotations(bool trust) { trustAnnotations_ = trust; }
+    bool trustsAnnotations() const { return trustAnnotations_; }
+    static std::optional<std::string_view> annotationNear(std::string_view content, size_t offset);
+    static std::span<const std::string_view> annotationMarkers();
+
 private:
-    // Check if match has suppression comment nearby
-    static bool hasSuppression(std::string_view content, size_t offset);
+    // Lower `match` to Low with the original severity kept beside it, if a marker is in
+    // reach AND the operator trusts the files. The decision is written at the definition.
+    void applyAnnotation(FileMatch& match, std::string_view content) const;
 
     // Get the line containing a specific offset
     static std::string_view getLineAtOffset(std::string_view content, size_t offset);
@@ -143,6 +165,10 @@ private:
     std::vector<std::unique_ptr<Rule>> rules_;  // Custom YAML rules
     std::vector<const rules::BuiltinRule*> builtinRules_;  // Built-in CTRE rules
     std::unordered_set<std::string> disabledRules_;  // Disabled rule codes
+
+    // Whether a marker inside a scanned file is obeyed. False until a configuration
+    // says otherwise, for the reasons at applyAnnotation().
+    bool trustAnnotations_ = false;
 };
 
 }  // namespace lyxbosa

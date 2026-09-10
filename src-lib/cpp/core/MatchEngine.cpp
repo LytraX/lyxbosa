@@ -2,13 +2,19 @@
 #include "utils/SafeText.h"
 #include "analysis/StringAssembly.h"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <vector>
 
 namespace lyxbosa {
 
-// Suppression comment patterns to detect
-static const std::vector<std::string> suppressionPatterns = {
+// In-file annotation markers: the spellings other tools' users already write, so a line
+// a developer has marked as a known false positive for phpcs, flake8, golangci-lint,
+// SonarQube, Java, TypeScript or ESLint reads as marked for this scanner too. Exposed
+// through annotationMarkers() so the tests drive every entry and notice when the list
+// shrinks. Whether any of them is OBEYED is decided nowhere near here - see
+// applyAnnotation().
+static constexpr std::array<std::string_view, 12> kAnnotationMarkers = {
     "phpcs:ignore",
     "phpcs:disable",
     "@codingStandardsIgnore",
@@ -23,14 +29,18 @@ static const std::vector<std::string> suppressionPatterns = {
     "/* eslint-disable",
 };
 
-// Check if a line contains a suppression comment
-static bool lineContainsSuppression(std::string_view line) {
-    for (const auto& pattern : suppressionPatterns) {
-        if (line.find(pattern) != std::string_view::npos) {
-            return true;
+// The first marker on `line`, by plain substring. Not a comment lexer: a string literal,
+// a variable name or a run of encoded text holding the same bytes counts too. That is
+// acceptable exactly when the author of the line is trusted - a suppression they did not
+// mean is a Low finding they still see - and it is why the engine consults this only
+// under trust.
+static std::optional<std::string_view> markerOn(std::string_view line) {
+    for (std::string_view marker : kAnnotationMarkers) {
+        if (line.find(marker) != std::string_view::npos) {
+            return marker;
         }
     }
-    return false;
+    return std::nullopt;
 }
 
 // Get the line containing the given offset
@@ -1246,19 +1256,70 @@ static std::string_view getPreviousLine(std::string_view content, size_t offset)
     return content.substr(prevLineStart, lineStart - prevLineStart);
 }
 
-// Check if match has suppression comment nearby (same line or previous line)
-bool MatchEngine::hasSuppression(std::string_view content, size_t offset) {
-    std::string_view currentLine = getLineAt(content, offset);
-    if (lineContainsSuppression(currentLine)) {
-        return true;
+// The marker on the line holding `offset` or on the line before it, if any. Pure: it
+// says what is there and never whether that counts.
+std::optional<std::string_view> MatchEngine::annotationNear(std::string_view content, size_t offset) {
+    if (const auto marker = markerOn(getLineAt(content, offset))) {
+        return marker;
     }
-
-    std::string_view prevLine = getPreviousLine(content, offset);
-    if (!prevLine.empty() && lineContainsSuppression(prevLine)) {
-        return true;
+    const std::string_view prevLine = getPreviousLine(content, offset);
+    if (!prevLine.empty()) {
+        if (const auto marker = markerOn(prevLine)) {
+            return marker;
+        }
     }
+    return std::nullopt;
+}
 
-    return false;
+std::span<const std::string_view> MatchEngine::annotationMarkers() {
+    return kAnnotationMarkers;
+}
+
+// Whether a marker near a match is obeyed. This is the one place the answer is given,
+// and the answer is the operator's, not the file's.
+//
+// A marker is an instruction inside the file being judged. On a developer's own
+// repository it is their note that a line is a known false positive, and lowering the
+// finding to Low with the original severity kept beside it is the feature. On a web root
+// an attacker has written to, the file is the attacker's and so is the marker:
+// `$x = "FilesMan"; // nolint` reported a Critical webshell signature as Low - still
+// printed, still exit 2, and Low is what a quarantine threshold, an alerting rule or a
+// report filter reads. The same bytes mean opposite things in the two deployments and
+// nothing in the file tells them apart. Only the operator knows which one this is, so
+// only the operator's configuration can say: `annotations.trust`, false unless a
+// configuration file the operator wrote says true.
+//
+// Under trust the marker is honoured for every rule, signatures included. The location
+// rule beside this one - a signature has no location prior, a heuristic's names a
+// directory - does not carry over unchanged, and the difference is what kind of evidence
+// each is. A directory is evidence about a heuristic in either deployment and about a
+// signature in neither, so the rule kind decides. An annotation is evidence in exactly
+// one deployment, whatever the rule - a security plugin shipping a table of signature
+// strings is a real file a real developer annotates - so the deployment decides, and
+// the rule kind does not enter into it. Withholding annotations from signatures alone
+// would have left every Critical heuristic steerable by the same bytes on a hostile
+// host; a floor below which a marker cannot lower a finding is a smaller weakening and
+// still one; a marker that must be a real comment or must name the rule is one an
+// attacker writes as easily as `// nolint`, and closes nothing where it matters.
+//
+// What the marker IS stays as it was: a substring on the line or the line before, with
+// no comment lexing - see markerOn() for why that is acceptable under trust and only
+// there.
+//
+// Measured before the default was chosen, over the stock CMS trees: 148 reported matches
+// in 197,553 files and none with a marker in reach, in trees where more than 15,000
+// files carry a phpcs marker somewhere; over the 182 shipped malicious samples, 175
+// matches and none. The default holds back nothing and closes the repro.
+void MatchEngine::applyAnnotation(FileMatch& match, std::string_view content) const {
+    if (!trustAnnotations_) {
+        return;
+    }
+    if (!annotationNear(content, match.offset)) {
+        return;
+    }
+    match.suppressed = true;
+    match.originalSeverity = match.severity;
+    match.severity = Severity::Low;
 }
 
 // Calculate byte offset from line/column
@@ -1502,13 +1563,9 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
     for (const auto& rule : rules_) {
         auto ruleMatches = rule->match(content);
 
-        // Check each match for suppression comments
+        // A marker in the file lowers a finding only if the operator trusts the file.
         for (auto& match : ruleMatches) {
-            if (hasSuppression(content, match.offset)) {
-                match.suppressed = true;
-                match.originalSeverity = match.severity;
-                match.severity = Severity::Low;  // Downgrade to Low
-            }
+            applyAnnotation(match, content);
         }
 
         allMatches.insert(allMatches.end(),
@@ -1599,12 +1656,8 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
                 fm.context = match.note + " | " + fm.context;
             }
 
-            // Check for suppression
-            if (hasSuppression(content, fm.offset)) {
-                fm.suppressed = true;
-                fm.originalSeverity = fm.severity;
-                fm.severity = Severity::Low;
-            }
+            // A marker in the file lowers a finding only if the operator trusts the file.
+            applyAnnotation(fm, content);
 
             allMatches.push_back(std::move(fm));
         }

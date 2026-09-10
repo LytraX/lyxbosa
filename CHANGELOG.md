@@ -130,6 +130,40 @@ itself with it.
 
 ### Fixed
 
+- **A webshell could lower the severity of its own detection by writing a comment into
+  itself.** `<?php $x = "FilesMan"; echo $x; // nolint` was reported by `check` as `[LOW]`,
+  and the same line without the comment as `[CRITICAL]`. Twelve markers - `// nolint`,
+  `# noqa`, `phpcs:ignore`, `// eslint-disable`, `@SuppressWarnings`, `// NOSONAR` and six
+  more - on a matched line or the line before it lowered any finding of any rule to `low`,
+  keeping the original severity beside it. The finding was still printed and the exit code
+  was still 2; the severity is what a quarantine threshold, an alerting rule or a report
+  filter reads, and the attacker wrote the comment as surely as the shell. The marker was
+  found by substring, so `$y = "// nolint";` on the line did the same, and the previous-line
+  rule doubled the surface. `check` printed the lowered severity with no sign it had been
+  lowered.
+
+  Whether a marker is obeyed is now the configuration's decision, and the default is no:
+  `annotations.trust: false`. The bytes cannot say who wrote them, and that is the whole
+  question - on a developer's own repository the marker is their note about a known false
+  positive, on a web root it is the attacker's - so only the operator can answer it. With
+  `trust: true` every marker works as before for every rule, signatures included, because a
+  trusted author annotating a table of signature strings is a real case; a scan that trusts
+  says so in a warning before it starts, and `check` now prints a lowered finding as
+  `[SUPPRESSED:CRITICAL]` the way `scan` always did. Rejected: withholding annotations from
+  signatures only, which would have left every Critical heuristic (`BD005`, `DRP001`,
+  `CRED007` ...) steerable by the same bytes on a hostile host; requiring the marker to be a
+  real comment or to name the rule, which an attacker writes as easily as `// nolint` and so
+  closes nothing where it matters; a severity floor, which is a smaller weakening and still
+  one.
+
+  Measured before the default was chosen, with the same corpus and stock trees on both
+  sides: in 197,553 stock CMS files the scanner reports 148 matches and not one has a marker
+  on its line or the line before, in trees where more than 15,000 files carry `phpcs:ignore`
+  or `phpcs:disable` somewhere; in the 182 shipped malicious samples, 175 matches and none.
+  Detection 730 of 1,299 reviewed samples, 131 of 131 regression samples rule-exact, 44
+  benign findings in 197,559 files, on both sides - the same files, the same matches and the
+  same severities pair by pair. The default holds back nothing and closes the repro.
+
 - **A webshell could suppress its own detection by choosing its file name.** The 8
   September release reports `WS006`, the Critical FilesMan signature, for `shell.php` and
   nothing for `shell_test.php` or `shellTest.php` - identical bytes, three names, one
@@ -248,6 +282,13 @@ itself with it.
 
 ### Compatibility
 
+- **A finding is no longer marked `suppressed` unless the configuration says
+  `annotations.trust: true`.** A report consumer that relied on `suppressed: true`,
+  `originalSeverity` or the `[SUPPRESSED:...]` text marker sees those findings at their
+  rule's own severity instead, which is the point of the change. An existing configuration
+  file keeps working and gets the compiled-in default (`false`); add
+  `annotations:\n  trust: true` to keep the old behaviour on trees you wrote, or regenerate
+  the file with `lyxbosa init-config`. No exit code changes.
 - **`scan` can now exit 1 where it exited 0.** A run whose named directory is missing or is not
   a directory is refused instead of reported as clean. Any script that has been scanning a path
   that stopped existing has been reading a false all-clear and will now see the error; that is

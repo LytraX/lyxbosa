@@ -44,6 +44,12 @@ Scanner::Scanner(const AppConfig& config)
 
     // Load custom YAML rules (in addition to built-in)
     engine_.loadRules(config_.rules);
+
+    // Whether a marker inside a scanned file may lower that file's own findings. The
+    // engine's default is no, and only a configuration the operator wrote can say yes;
+    // the reasons are at MatchEngine::applyAnnotation(). The archive scanner shares this
+    // engine, so a member of a zip is held to the same answer as a loose file.
+    engine_.setTrustAnnotations(config_.annotations.trust);
 }
 
 ScanResult Scanner::scan() {
