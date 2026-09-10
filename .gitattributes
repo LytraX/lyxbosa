@@ -1,0 +1,17 @@
+# Line endings for files whose BYTES are compared, not just their content.
+#
+# keys/minisign-trusted.txt is read by CMake at configure time and embedded in the
+# binary as a raw string literal. A raw string literal maps a CRLF in the source to a
+# single newline during translation, so what is compiled in is LF on every platform no
+# matter what is on disk. Git's autocrlf, which is on by default in a Windows checkout,
+# gives that same file CRLF in the working tree - and the two then differ.
+#
+# That difference is harmless to verification: the parser tolerates both, and a Windows
+# build carries the right key. It is not harmless to the check. The binary is supposed
+# to carry the keyring THIS repository holds, byte for byte, and the test asserting so
+# is the only thing standing between a release and a verifier trusting a key nobody
+# reviewed. Normalising the comparison to make it pass would delete exactly the property
+# worth having, so the file is pinned instead.
+#
+# Found by the first run of the Windows test job, on the first pull request that had one.
+keys/minisign-trusted.txt text eol=lf
