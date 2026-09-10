@@ -82,20 +82,28 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # This job's own key, falling back to the release one. See the note in test-linux.
-      # Measured here: a run that landed on runner image 20260907.229 rebuilt all ten
-      # packages and took 11m34s, then logged "Cache hit occurred on the primary key, not
-      # saving cache" and threw the lot away. The next run, on 20260824.214, rebuilt
-      # nothing and took 4m56s - and would have paid the same 11m34s again the moment it
-      # met the newer image.
+      # This job's own key, and ImageVersion is in it because a cache key has to be at
+      # least as specific as the thing it caches. vcpkg's ABI hash includes the compiler;
+      # GitHub rolls windows-latest to new toolsets; so one key without the image serves
+      # two incompatible toolchains, and whichever image writes it first owns it forever.
+      #
+      # That was measured the hard way, twice. Sharing build-windows's key: hit on the
+      # primary, rebuild all ten packages, "not saving cache", 11m34s. Then with a key of
+      # its own but still no image in it: saved on image 20260824.214, met 20260907.229,
+      # restored binaries the new compiler could not use, rebuilt all ten again, "not
+      # saving cache" again, 12m0s. The rule that bit both times is the same one - nothing
+      # is saved when the PRIMARY key hits - and the repair is to stop asking one key to
+      # answer for two compilers. See the note in test-linux, whose key hashes the
+      # Dockerfile and so has pinned its compiler all along.
       - name: Set up vcpkg cache
         uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-tests-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-windows-tests-${{ env.ImageVersion }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
+            vcpkg-windows-tests-${{ env.ImageVersion }}-
             vcpkg-windows-tests-
-            vcpkg-windows-static-
+            vcpkg-windows-static-${{ env.ImageVersion }}-
 
       - name: Create binary cache dir
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE
@@ -177,8 +185,10 @@ jobs:
         uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-static-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-          restore-keys: vcpkg-windows-static-
+          key: vcpkg-windows-static-${{ env.ImageVersion }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-windows-static-${{ env.ImageVersion }}-
+            vcpkg-windows-static-
 
       - name: Create binary cache dir
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE
