@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Attached to every executable by lyxbosa_configure_windows_exe in CMakeLists.txt.
+
+  longPathAware is the binary's half of opening a path at or past MAX_PATH (260) with
+  the ordinary Win32 calls std::filesystem and std::ifstream make. The other half is the
+  machine's: LongPathsEnabled under HKLM\SYSTEM\CurrentControlSet\Control\FileSystem.
+  Without this entry the scanner could not open fifteen files in the stock CMS trees at
+  260 to 271 characters, on a machine that had the registry value on.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings xmlns:ws2="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
+      <ws2:longPathAware>true</ws2:longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

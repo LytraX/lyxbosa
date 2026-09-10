@@ -18,7 +18,9 @@
 #include <optional>
 #include <string>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
 #endif
 
@@ -34,6 +36,37 @@ inline std::optional<std::string> whyCannotDenyOwnAccess() {
         return "running as root - the permission bits this case sets are ignored, so "
                "no refusal can be observed";
     }
+    return std::nullopt;
+#endif
+}
+
+// Nullopt when this machine lets a process that declares longPathAware open a path at
+// or past MAX_PATH. Windows needs two things for that and only one of them is the
+// binary's to provide: the manifest CMakeLists.txt attaches to every executable, and
+// the LongPathsEnabled value under HKLM\SYSTEM\CurrentControlSet\Control\FileSystem.
+// With the value off the path is refused however the binary was built, so a case about
+// the manifest cannot observe anything and says which half it could not meet. The
+// manifest's absence is never a reason to skip: that is the defect, and the case fails.
+inline std::optional<std::string> whyCannotObserveLongPaths() {
+#ifdef _WIN32
+    DWORD enabled = 0;
+    DWORD size = sizeof(enabled);
+    const LSTATUS status = RegGetValueW(
+        HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\FileSystem",
+        L"LongPathsEnabled", RRF_RT_REG_DWORD, nullptr, &enabled, &size);
+    if (status != ERROR_SUCCESS) {
+        return "LongPathsEnabled is not set under HKLM\\SYSTEM\\CurrentControlSet\\Control\\"
+               "FileSystem (RegGetValueW returned " + std::to_string(status) + "), so Windows "
+               "refuses a path at MAX_PATH whatever this binary's manifest declares";
+    }
+    if (enabled != 1) {
+        return "LongPathsEnabled is " + std::to_string(enabled) + " under HKLM\\SYSTEM\\"
+               "CurrentControlSet\\Control\\FileSystem, so Windows refuses a path at "
+               "MAX_PATH whatever this binary's manifest declares";
+    }
+    return std::nullopt;
+#else
+    // PATH_MAX is 4096 here and the case stays well inside it; the property is observed.
     return std::nullopt;
 #endif
 }

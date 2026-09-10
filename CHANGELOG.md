@@ -142,6 +142,14 @@ itself with it.
   *named* `tests\shell.php` must not read as a fixture under `tests/`. Nothing about how a
   path is *printed* in a report changes anywhere.
 
+- **On Windows, a file at a path of 260 characters or more could not be opened.** Fifteen
+  files in the stock CMS trees, at 260 to 271 characters, were counted unreadable by a scan
+  and reported as not found by `check`, while Python opened every one of them - on a machine
+  that had `LongPathsEnabled` set. Windows requires that registry value *and* a
+  `longPathAware` entry in the executable's manifest, and `lyxbosa.exe` carried no manifest.
+  It does now. The registry half is still the machine's: without it, such files are counted
+  as before.
+
 - **`SSL_CERT_FILE`, `CURL_CA_BUNDLE` and `SSL_CERT_DIR` did nothing, and setting one made
   things worse.** The version check treated any of the three being set as "the operator has
   pointed us somewhere", and stood aside instead of configuring the trust store itself.
