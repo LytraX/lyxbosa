@@ -130,6 +130,26 @@ itself with it.
 
 ### Fixed
 
+- **On Windows, none of the path-based suppressions fired.** Twelve fragments in the
+  context filters - `/vendor/`, `/tests/`, `/.ssh/`, `/wflogs/` and eight more - are spelled
+  with forward slashes, and a Windows path arrives with backslashes, so `\vendor\` never
+  contained `/vendor/`. Measured over the same corpus and the same stock CMS trees, the
+  Windows binary reported 47 benign-sweep findings against 44 on Linux, a strict superset:
+  OBF003 on a vendored PhpSpreadsheet writer and WS006 on two Magento test fixtures.
+  Detection agreed exactly on both platforms and is untouched. On Windows the separator is
+  now normalised once, where the match context is built, before any filter runs. On Linux
+  and macOS nothing changes: a backslash there is a character in a file name, and a file
+  *named* `tests\shell.php` must not read as a fixture under `tests/`. Nothing about how a
+  path is *printed* in a report changes anywhere.
+
+- **On Windows, a file at a path of 260 characters or more could not be opened.** Fifteen
+  files in the stock CMS trees, at 260 to 271 characters, were counted unreadable by a scan
+  and reported as not found by `check`, while Python opened every one of them - on a machine
+  that had `LongPathsEnabled` set. Windows requires that registry value *and* a
+  `longPathAware` entry in the executable's manifest, and `lyxbosa.exe` carried no manifest.
+  It does now. The registry half is still the machine's: without it, such files are counted
+  as before.
+
 - **`SSL_CERT_FILE`, `CURL_CA_BUNDLE` and `SSL_CERT_DIR` did nothing, and setting one made
   things worse.** The version check treated any of the three being set as "the operator has
   pointed us somewhere", and stood aside instead of configuring the trust store itself.

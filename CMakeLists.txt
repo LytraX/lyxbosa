@@ -198,6 +198,29 @@ if(WIN32)
   set(WIN_RC_FILE ${CMAKE_BINARY_DIR}/lyxbosa.rc)
 endif()
 
+# Windows application manifest.
+#
+# A process opens a path at or past MAX_PATH (260) with the ordinary Win32 calls that
+# std::filesystem and std::ifstream make only if Windows has been told twice: the
+# LongPathsEnabled value in the registry, which is the machine's to set, and a
+# longPathAware entry in the executable's manifest, which is ours. Without the manifest
+# the scanner could not open fifteen files in the stock CMS trees, at 260 to 271
+# characters, on a machine whose registry value was on - while Python, which ships the
+# entry, opened every one of them.
+#
+# One function for every executable, the way lyxbosa_configure_update is, so the release
+# binary and the test binary cannot drift apart on it: a manifest present in only one of
+# them is a fix nobody can test. CMake merges a `.manifest` source into the
+# linker-generated manifest with mt.exe (release notes, 3.4) under the Visual Studio
+# generator that build.ps1 and test.ps1 use and under Ninja alike. Nothing here reaches
+# a non-MSVC build: the source is not even listed.
+set(LYXBOSA_WIN_MANIFEST ${CMAKE_SOURCE_DIR}/cmake/lyxbosa.manifest)
+function(lyxbosa_configure_windows_exe target)
+  if(MSVC)
+    target_sources(${target} PRIVATE ${LYXBOSA_WIN_MANIFEST})
+  endif()
+endfunction()
+
 # Create the CLI executable
 add_executable(lyxbosa
     src-cli/lyxbosa.cpp
@@ -205,6 +228,7 @@ add_executable(lyxbosa
     ${UPDATE_SOURCES}
     ${WIN_RC_FILE}
 )
+lyxbosa_configure_windows_exe(lyxbosa)
 
 target_include_directories(lyxbosa PRIVATE
     ${CMAKE_SOURCE_DIR}/src-lib/cpp
@@ -238,6 +262,7 @@ endif()
 option(LYXBOSA_BENCHMARKS "Build the regex engine benchmark" OFF)
 if(LYXBOSA_BENCHMARKS)
   add_executable(lyxbosa_bench_regex benchmarks/regex_engines.cpp ${LIB_SOURCES})
+  lyxbosa_configure_windows_exe(lyxbosa_bench_regex)
   target_include_directories(lyxbosa_bench_regex PRIVATE
     ${CMAKE_SOURCE_DIR}/src-lib/cpp
     ${CMAKE_SOURCE_DIR}/src-cli
@@ -265,14 +290,17 @@ if(BUILD_TESTS)
 
   add_executable(lyxbosa_tests
     tests/rules_test.cpp
+    tests/path_filter_test.cpp
     tests/progress_model_test.cpp
     tests/archive_test.cpp
     tests/scan_root_test.cpp
+    tests/long_path_test.cpp
     tests/update_test.cpp
     tests/update_apply_test.cpp
     ${LIB_SOURCES}
     ${UPDATE_SOURCES}
   )
+  lyxbosa_configure_windows_exe(lyxbosa_tests)
 
   target_include_directories(lyxbosa_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src-lib/cpp

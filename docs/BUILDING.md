@@ -237,6 +237,15 @@ Builds x64 and ARM64 with the `*-windows-static` triplets, `BUILD_TESTS=OFF` and
 `dist\lyxbosa-windows-<arch>.exe`. Clones and bootstraps vcpkg into the repo if
 `VCPKG_ROOT` is unset.
 
+Every executable - the CLI, the test binary and the benchmark - carries
+[`cmake/lyxbosa.manifest`](../cmake/lyxbosa.manifest), which declares it `longPathAware`.
+Windows opens a path at or past `MAX_PATH` (260 characters) only for a process whose
+manifest says so **and** on a machine with `LongPathsEnabled` set to 1 under
+`HKLM\SYSTEM\CurrentControlSet\Control\FileSystem`. The manifest is the binary's half;
+on a machine without the registry value a scan counts such files as unreadable and `check`
+reports them as not found. `tests/long_path_test.cpp` observes the property where the
+machine allows it and skips, naming the half it could not meet, where it does not.
+
 ### CI
 
 [`.github/workflows/build.yml`](../.github/workflows/build.yml) runs both of the above
