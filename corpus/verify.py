@@ -276,10 +276,20 @@ def unpack_shards(dest):
             continue
         out = os.path.join(dest, f[:-len(".tar.zst")])
         os.makedirs(out, exist_ok=True)
-        r = subprocess.run(["tar", "-C", out, "-I", "zstd", "-xf", os.path.join(sd, f)],
-                           capture_output=True)
+        src = os.path.join(sd, f)
+        r = subprocess.run(["tar", "-C", out, "-I", "zstd", "-xf", src], capture_output=True)
         if r.returncode != 0:
-            die("could not unpack %s: %s" % (f, r.stderr.decode()[:200]))
+            # `-I` is GNU tar's --use-compress-program. bsdtar - the tar Windows ships in
+            # system32, and the one Python finds on PATH there - spells that
+            # --use-compress-program too, but reads `-I` as --include, so the line above
+            # becomes an inclusion pattern and fails with "Failed to open 'zstd'". bsdtar
+            # links libzstd and decompresses .tar.zst from the magic without being told.
+            # Retry that way rather than branching on the platform: the GNU form is tried
+            # first and still decides the outcome wherever it works, so Linux is unchanged.
+            r2 = subprocess.run(["tar", "-C", out, "-xf", src], capture_output=True)
+            if r2.returncode != 0:
+                die("could not unpack %s: %s / %s" % (f, r.stderr.decode()[:200],
+                                                      r2.stderr.decode()[:200]))
         shards.append(out)
     return shards
 
