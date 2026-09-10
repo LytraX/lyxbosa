@@ -130,6 +130,49 @@ itself with it.
 
 ### Fixed
 
+- **A webshell could suppress its own detection by choosing its file name.** The 8
+  September release reports `WS006`, the Critical FilesMan signature, for `shell.php` and
+  nothing for `shell_test.php` or `shellTest.php` - identical bytes, three names, one
+  directory - because the rule's context filter skipped any path containing `Test.php` or
+  `_test.php`, fragments with no separator that matched inside the file name. Seven
+  fragments across the filters had that shape, `BD005` tested ten more (`ftp`, `socket`,
+  `Handler.php` ...) and `OBF004` looked for `.js` anywhere in the path, so a Critical
+  socket-backdoor finding was silent for a file named `ftp.php` and a long base64 decode
+  for one named `shell.js.php`. This was never platform-specific.
+
+  Two decisions, both pinned by tests:
+
+  - **A signature has no path suppression.** Every `WS` rule matches the name of a malware
+    family, and where a file sits is no evidence about that; `WS006`'s filter is gone and
+    its verdict is a function of the bytes. The only benign occurrences in 214,675 stock
+    CMS files were the inside of a longer identifier (`DeployedFilesManager`, in a Magento
+    list of obsolete classes), so the pattern now ends on a word boundary and they do not
+    match. No shipped corpus sample expects `WS006`; that boundary is measured on the
+    benign side only. Severity is not the gate: `DRP001`, `BD005` and `BD013` are Critical
+    and heuristic, and a location is real evidence for a heuristic.
+  - **A heuristic's path suppression names a directory, compared case-insensitively, and
+    never the file name.** Every fragment is now a whole directory component (`vendor`,
+    `tests`, `.ssh`, `wflogs` ...) or, for a product whose directory name varies by
+    distribution (`elementor`, `elementor-pro`), part of one. `OBF003` drops `sodium`,
+    `openssl` and `php-jwt`: no file under any of the 2,676 stock paths carrying those
+    names has the rule's shape. `BD005` drops its list entirely: what it shielded was
+    WordPress core's own `class-ftp-sockets.php`, whose `_exec()` method the pattern's
+    bare `exec` reached, and the pattern now asks for a call at a word boundary. `OBF004`
+    tests the trailing extension.
+
+  Case folding is a behaviour change on Linux: `OBF002` now treats Magento's `Test/Unit/`
+  as a test directory, as `BD013` and `OBF003` already did and as Windows always did for
+  every rule, its file systems being case-insensitive. It moved nothing in the stock trees.
+
+  Measured with the same corpus and stock trees before and after: detection 730 of 1,299
+  reviewed samples on both sides, 131 of 131 regression samples still firing and rule-exact,
+  30 pinned false positives still firing and none regressed; benign sweep 44 findings in
+  197,553 files on both sides, the same 44 files and the same 148 matches pair by pair. The
+  36 findings the old path suppressions were holding back - 25 `BD005` on WordPress core's
+  FTP class, 9 `OBF003` on vendored phpseclib and PhpSpreadsheet, 2 `WS006` on the Magento
+  fixtures - are held back after the change by the pattern or by a directory, and every
+  fragment removed was holding back nothing, which is why removing it moved nothing.
+
 - **On Windows, none of the path-based suppressions fired.** Twelve fragments in the
   context filters - `/vendor/`, `/tests/`, `/.ssh/`, `/wflogs/` and eight more - are spelled
   with forward slashes, and a Windows path arrives with backslashes, so `\vendor\` never

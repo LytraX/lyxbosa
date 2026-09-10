@@ -98,8 +98,13 @@ namespace detail_BD005 {
         { R"((?i:fsockopen)\s*\([^)]+\)\s*.*?(?i:fwrite)\s*\([^)]*\$_(GET|POST|REQUEST))",
           "Socket with user data", false,
           {"fsockopen", "fwrite", "$_get|$_post|$_request"} },
-        // socket operations combined with shell commands
-        { R"((?i:socket_create)\s*\([^)]+\).*?((?i:shell_exec)|(?i:exec)|(?i:system)|(?i:passthru)|(?i:popen)))",
+        // socket operations combined with shell commands. The shell function is a CALL
+        // at a word boundary: bare `exec` reached `_exec(` and `execute(`, which is how
+        // WordPress core's own FTP class fired this Critical rule under any name its
+        // path prior did not cover (25 stock versions of it; Monolog's CubeHandler
+        // matched too, 9 vendored copies, and the UDP line test in the context filter
+        // caught those). With the boundary and the paren, none of the 34 matches.
+        { R"((?i:socket_create)\s*\([^)]+\).*?\b((?i:shell_exec)|(?i:exec)|(?i:system)|(?i:passthru)|(?i:popen))\s*\()",
           "Socket with shell execution", false,
           {"socket_create"} },
         // socket write with user input

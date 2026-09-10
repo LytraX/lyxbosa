@@ -3,7 +3,7 @@
 // THE TWO DEFECTS THESE CASES EXIST FOR
 // -------------------------------------
 // applyContextFilter suppresses a rule by looking for fragments in the file's path:
-// `/vendor/` for vendored crypto under OBF003, `/tests/` for fixtures under WS006, and
+// `/vendor/` for vendored crypto under OBF003, `/tests/` for fixtures under BD013, and
 // ten more. Every fragment is spelled with forward slashes, and a Windows path arrives
 // with the separator Windows gave it. So `\vendor\` never contained `/vendor/`, and
 // eleven of the twelve fragments could not fire on Windows at all. Measured over the
@@ -293,21 +293,10 @@ TEST_F(PathSuppressionTest, OBF003_StillFiresOutsideAVendorTreeHoweverThePathIsS
     EXPECT_TRUE(fires("OBF003", kPackHex, backslashed(forward)));
 }
 
-TEST_F(PathSuppressionTest, WS006_ATestFixtureIsSuppressedOnceInFilterSpelling) {
-    const std::string forward =
-        "dev/tests/integration/testsuite/Magento/Backend/_files/filesman_fixture.php";
-    EXPECT_FALSE(fires("WS006", kFilesMan, forward));
-    EXPECT_FALSE(fires("WS006", kFilesMan, MatchEngine::filterPath(backslashed(forward))));
-    EXPECT_FALSE(fires("WS006", kFilesMan, MatchEngine::filterPath(
-                           "C:\\sites\\shop/dev/tests\\integration\\testsuite/fixture.php")));
-}
-
-TEST_F(PathSuppressionTest, WS006_OnWindowsTheRawBackslashPathIsSuppressedByTheBinding) {
-    if (const auto why = whyBackslashIsNotASeparatorHere()) GTEST_SKIP() << *why;
-    EXPECT_FALSE(fires("WS006", kFilesMan,
-                       "C:\\sites\\shop\\dev\\tests\\integration\\testsuite\\fixture.php"))
-        << "the Magento fixtures on Windows: \\tests\\ never contained /tests/";
-}
+// WS006 no longer has a path suppression at all - a signature's verdict is a function
+// of the bytes, see LocationPriorTest - so the two Magento-fixture cases that stood here
+// are gone with it. What remains is the evasion control, which is now true for every
+// spelling rather than only for the backslash one.
 
 // THE EVASION, by shape: the repro's second file. One name in an uploads directory,
 // chosen by whoever dropped the shell. It must fire.
@@ -331,9 +320,9 @@ TEST_F(PathSuppressionTest, WS006_StillFiresOutsideATestTreeHoweverThePathIsSpel
 //
 // One row per rule: the content that fires it, every forward-slash path that must
 // suppress it, and one path that must not. The cases derive the backslash spelling of
-// each. Fragments with no separator in them (`testdata`, BD005's `vendor-prefixed`)
-// are not here - a separator is what these cases are about; the twelve that carry one
-// all are.
+// each. A separator is what these cases are about; every fragment is now a directory
+// name (see LocationPriorTest, which covers each one in every spelling), and WS006 has
+// no row because a signature has no location prior.
 
 namespace {
 
@@ -371,10 +360,6 @@ const std::vector<FragmentCase> kFragmentCases = {
      {"wp-content/plugins/foo/vendor/lib/x.php",                    // vendor/
       "wp-content/plugins/foo/vendor-prefixed/lib/x.php"},          // vendor-prefixed/
      "wp-content/uploads/loader.php"},
-    {"WS006", std::string(kFilesMan),
-     {"dev/tests/integration/x.php",                                // /tests/
-      "app/code/Magento/Foo/test/x.php"},                           // /test/
-     "wp-content/uploads/shell.php"},
     {"BD013", std::string(kPrivateKey),
      {"src/tests/keys/private.php",                                 // /tests/
       "src/test/keys/private.php",                                  // /test/
