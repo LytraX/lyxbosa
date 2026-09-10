@@ -82,6 +82,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # ImageVersion is set by the runner, and the `env` context inside a `with:`
+      # expression sees only what this file declares - so ${{ steps.toolchain.outputs.value }} expanded
+      # to nothing and saved a key with an empty segment, which is how the first attempt at
+      # this looked like it had worked. Reading it in a step is the way to reach it.
+      #
+      # `:?` rather than a default: a key that silently loses the toolchain is the exact
+      # failure being fixed here, so an absent variable stops the job rather than quietly
+      # producing one key for every compiler again.
+      - name: Name the toolchain the cache is keyed to
+        id: toolchain
+        shell: bash
+        run: echo "value=${ImageVersion:?the runner did not set ImageVersion}" >> "$GITHUB_OUTPUT"
+
       # This job's own key, and ImageVersion is in it because a cache key has to be at
       # least as specific as the thing it caches. vcpkg's ABI hash includes the compiler;
       # GitHub rolls windows-latest to new toolsets; so one key without the image serves
@@ -99,11 +112,11 @@ jobs:
         uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-tests-${{ env.ImageVersion }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-windows-tests-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-windows-tests-${{ env.ImageVersion }}-
+            vcpkg-windows-tests-${{ steps.toolchain.outputs.value }}-
             vcpkg-windows-tests-
-            vcpkg-windows-static-${{ env.ImageVersion }}-
+            vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-
 
       - name: Create binary cache dir
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE
@@ -181,13 +194,26 @@ jobs:
         shell: bash
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      # ImageVersion is set by the runner, and the `env` context inside a `with:`
+      # expression sees only what this file declares - so ${{ steps.toolchain.outputs.value }} expanded
+      # to nothing and saved a key with an empty segment, which is how the first attempt at
+      # this looked like it had worked. Reading it in a step is the way to reach it.
+      #
+      # `:?` rather than a default: a key that silently loses the toolchain is the exact
+      # failure being fixed here, so an absent variable stops the job rather than quietly
+      # producing one key for every compiler again.
+      - name: Name the toolchain the cache is keyed to
+        id: toolchain
+        shell: bash
+        run: echo "value=${ImageVersion:?the runner did not set ImageVersion}" >> "$GITHUB_OUTPUT"
+
       - name: Set up vcpkg cache
         uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-static-${{ env.ImageVersion }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-windows-static-${{ env.ImageVersion }}-
+            vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-
             vcpkg-windows-static-
 
       - name: Create binary cache dir
