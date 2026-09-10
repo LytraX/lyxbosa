@@ -1387,9 +1387,9 @@ Still open, and each changes the work:
 
 ---
 
-## 11. One property, thirteen appearances: a measurement that cannot deliver bad news
+## 11. One property, fourteen appearances: a measurement that cannot deliver bad news
 
-Thirteen separate cautions in this plan share one diagnostic tell. Five of them are the same
+Fourteen separate cautions in this plan share one diagnostic tell. Five of them are the same
 statement in different clothes; two reach the same place by a different mechanism and
 need a different repair, which is exactly why they are worth listing together:
 
@@ -1608,9 +1608,54 @@ by splitting a cluster on a literal a minority of its members carry. The number 
 is 87 rows still out of reach, and they stay counted in `malicious_family_population` rather
 than leaving the denominator.
 
-**Assume a fourteenth exists in whatever you measure next.**
+**A fourteenth, found 2026-09-10, and it is in the tool that measures the other thirteen.**
+`corpus/verify.py` scans the pinned benign trees once and reported the false-positive rate over
+`totalFilesScanned` as the scanner counts it. The scanner counts a file it reached and could
+not open — it has to, so that the file appears in the report as unreadable rather than
+vanishing — and the suite took that count as its denominator and *scanned minus matched* as
+its clean count. So a file the host withheld was in the denominator and, having no finding
+against it, was counted clean: the suite asserting a file was clean without a byte of it read,
+which is the silent skip the scanner's own `SkipReason` header says it exists to prevent. A
+directory the walk could not list, a root gone mid-scan and an interrupted walk were recorded
+in the report and asserted nothing. A root missing at the start refuses the whole scan before a
+report is written, and the suite read *no report* as zero benign samples and printed `n/a`
+with no failure. The malicious half had the same shape one level down: `check` exits 1 for a
+file it cannot read, the suite read only the rule list off stdout, and an empty list was a miss
+on a `must_detect` row, *still missed* on a `known_miss` row, clean on a `must_not_detect` row
+and *newly fixed* on a known false positive — three of the four green.
 
-**Assume a fourteenth exists in whatever you measure next** — and note that the first nine were
+Sized: zero entries under the pinned trees on this machine are unreadable (a `find`, not the
+wrapper, over 214,811 files), so on Linux the figure was right by luck. It stops being luck on
+Windows, where Defender quarantines samples during the scan — a 28-byte fixture went within a
+second, its directory entry survived, every open returned permission denied — so the withheld
+set is chosen by Defender, is correlated with exactly what a false positive looks like, and
+moves as it works through the tree.
+
+Repaired 2026-09-10, by refusing rather than correcting. `coverage_refusal()` withholds the
+figure and records a failure when the report shows any file or directory the host withheld,
+any root missing, an interrupted walk, or no report at all; what the scanner's own policy
+declined — over the size cap, excluded — is disclosed beside the figure and leaves the
+denominator, which is now files *read*. The line between the two is who chose the shortfall:
+the scanner's policy is reproducible and part of the figure's definition, the host's refusal
+is neither. `check`'s exit code is read before its output, and an error is counted as
+`unscanned` and never as a verdict. `--inject` asserts each channel refuses, each policy
+channel does not, and — with the real scanner over a real tree — that a file the user cannot
+read refuses the figure and the same tree with access restored reports again. The next figure
+will have a smaller denominator than the 197,559 in `README.md` by the count of files over the
+size cap, and that difference is attributed here in advance: it is not a change in the scanner.
+
+**And the control's first run found the rule's own bound.** Against `build-release/` the
+missing-root case took a path the rule had not covered: that binary predates `rootsMissing`,
+steps over a root that is not there, exits 0, and writes a report indistinguishable from a
+clean scan of a tree that was there. A rule that reads a channel is bounded by the scanner
+reporting it — absence of the channel is not evidence of coverage — so a report lacking any of
+the four channels is refused by name, and the control fails loudly on such a scanner rather
+than passing on a binary the suite would refuse. The control was written to assert the rule
+and, on its first run, sized the rule's frame instead; that is the ninth's lesson again.
+
+**Assume a fifteenth exists in whatever you measure next.**
+
+**Assume a fifteenth exists in whatever you measure next** — and note that the first nine were
 found by somebody reading, while three of the ninth's parts and all of the tenth were found by
 asking a tool to state the size of a limit it had already written down. Writing the bound down
 is cheap and it is not the check. Sizing it is the check. The tenth is the sharper lesson:

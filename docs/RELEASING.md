@@ -172,11 +172,18 @@ the tag ref has to be pushed explicitly.
 gh run watch
 ```
 
-Three jobs: `build-linux` (amd64 and arm64 matrix), `build-windows`, then `release`,
+Five jobs. `test-linux` (amd64 and arm64 matrix) and `test-windows` build the tree with
+`BUILD_TESTS=ON` and run `ctest`; they are the same jobs a pull request to `master` runs,
+and a tag runs them too. `build-linux` (amd64 and arm64 matrix) and `build-windows` produce
+the binaries, with the tests off — a release build compiles only what it ships, which is
+why the test build is a separate configure in `docker/build/Linux/test-inside.sh` and
+`docker/build/Windows/test.ps1` rather than a flag on the release scripts. Then `release`,
 which only runs `if: startsWith(github.ref, 'refs/tags/v')` and needs both builds to
-succeed. If either fails, no release is published and the tag is left pointing at a
+succeed. If either build fails, no release is published and the tag is left pointing at a
 commit with nothing attached — see [If a release goes
-wrong](#if-a-release-goes-wrong).
+wrong](#if-a-release-goes-wrong). A test job failing does not stop the release; it is
+reported on the run, and gating on it is a decision to take once the jobs have been seen
+to pass.
 
 ---
 
