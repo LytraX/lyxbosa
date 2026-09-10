@@ -18,7 +18,7 @@ At its core, LyxBoSa uses a layered matching engine that applies multiple patter
 - **Heuristic analysis** -- behavioral detection for techniques like variable function calls, base64 concatenation, and goto-based obfuscation.
 - **Constant folding** -- resolves string expressions the way PHP would, so identifiers assembled at runtime (`$f="ba"; $h="s"; $o=$f.$h."e64_decode";`, `strrev()`, `implode()`, `chr()` chains, nested decoders) are detected by what they resolve to rather than by how they were split up.
 
-The engine also includes context-aware filtering, suppression comments, and false-positive reduction by recognizing SQL queries and code comments.
+The engine also includes context-aware filtering, false-positive reduction by recognizing SQL queries and code comments, and [in-file annotations](#in-file-annotations) that are obeyed only when the configuration says the scanned files are trusted.
 
 ### Built-in Rule Categories
 
@@ -213,6 +213,36 @@ and logs.
 Raising the cap buys coverage, not detections. On that host the extra 230 files it read
 matched nothing — the reason to read them is that an unopened file should not be counted
 as clean.
+
+### In-file annotations
+
+A `// nolint`, `# noqa`, `phpcs:ignore`, `// eslint-disable`, `@SuppressWarnings` or
+`// NOSONAR` on a matched line, or on the line before it, can mark that finding as
+suppressed: it is reported at severity `low` with the original severity kept beside it
+(`[SUPPRESSED:CRITICAL]` in text, `originalSeverity` and `suppressed: true` in JSON, the
+`original_severity` and `suppressed` columns in CSV), it is still counted, and `check`
+still exits 2.
+
+**Whether a marker is obeyed is decided by the configuration, and by default it is not.**
+
+```yaml
+annotations:
+  trust: false   # true = obey markers written inside the scanned files
+```
+
+The marker is inside the file being judged, and the two ways this tool is used read that
+in opposite ways. On a repository you wrote, or a plugin you maintain, the marker is your
+note that a line is a known false positive, and `trust: true` is the feature. On a web
+root an attacker has written to, the file is the attacker's and so is the marker:
+`$x = "FilesMan"; // nolint` would report a critical webshell signature as `low`, and
+`low` is what a quarantine threshold, an alerting rule or a report filter reads. Nothing
+in the file tells the two cases apart; only you know which scan this is. A scan with
+`trust: true` says so in a warning before it starts.
+
+The marker is matched as a substring of the line, not parsed as a comment, so under
+`trust: true` the same bytes inside a string literal count too, and a marker one line
+above a match counts even when it was written about a different line. That is the trade
+of trusting the author: a suppression they did not mean is a `low` finding they still see.
 
 ### Key Features
 

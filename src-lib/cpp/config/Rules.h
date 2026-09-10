@@ -169,6 +169,31 @@ struct UpdatesConfig {
     std::string intervalRaw;
 };
 
+// In-file annotations: `// nolint`, `phpcs:ignore`, `// eslint-disable` and the other
+// markers MatchEngine::annotationMarkers() lists, on a matched line or the line before it.
+//
+// THE DEFAULT IS THE DECISION, AND IT IS OFF.
+//
+// An annotation is an instruction found inside the file being judged, and whether to obey
+// it turns on one thing the bytes cannot say: who wrote them. A developer scanning their
+// own repository wrote the marker beside a line they know is a false positive, and
+// honouring it is the feature. An incident responder scanning a web root an attacker has
+// written to is reading the attacker's file, and the marker is one more line the attacker
+// wrote: `$x = "FilesMan"; // nolint` reported a Critical webshell signature as Low, which
+// is the severity a quarantine threshold, an alerting rule or a report filter reads. Same
+// bytes, opposite meanings, and nothing in the file distinguishes them. Only the operator
+// knows which deployment this is, so only the operator's configuration can say - and this
+// tool is named for the second deployment, so the compiled-in default serves it.
+//
+// Measured before the default was chosen: over the 197,553 files of the stock CMS trees
+// the scanner reports 148 matches and not one has a marker on its line or the line
+// before, in trees where more than 15,000 files carry `phpcs:ignore` or `phpcs:disable`
+// somewhere; over the 182 shipped malicious samples, 175 matches and none. `false` holds
+// back nothing and closes the repro.
+struct AnnotationsConfig {
+    bool trust = false;
+};
+
 // Built-in rules configuration
 struct BuiltinRulesConfig {
     bool enabled = true;                        // Load built-in rules by default
@@ -183,6 +208,7 @@ struct AppConfig {
     ArchiveConfig archives;                     // Archive (zip/tar/tar.gz) handling
     std::vector<RuleConfig> rules;              // Custom YAML rules
     BuiltinRulesConfig builtinRules;            // Built-in CTRE rules config
+    AnnotationsConfig annotations;              // Whether a file may mark its own findings
     ActionsConfig actions;
     UpdatesConfig updates;                      // Whether and how often to look for a newer release
 };

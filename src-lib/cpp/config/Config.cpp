@@ -242,6 +242,16 @@ BuiltinRulesConfig parseBuiltinRulesConfig(const YAML::Node& node) {
     return bc;
 }
 
+AnnotationsConfig parseAnnotationsConfig(const YAML::Node& node) {
+    AnnotationsConfig ac;
+
+    if (node["trust"]) {
+        ac.trust = node["trust"].as<bool>();
+    }
+
+    return ac;
+}
+
 }  // namespace
 
 AppConfig Config::loadFromFile(const std::filesystem::path& path) {
@@ -289,6 +299,10 @@ AppConfig Config::loadFromString(std::string_view yaml) {
 
         if (root["builtin_rules"]) {
             config.builtinRules = parseBuiltinRulesConfig(root["builtin_rules"]);
+        }
+
+        if (root["annotations"]) {
+            config.annotations = parseAnnotationsConfig(root["annotations"]);
         }
 
         if (root["updates"]) {
@@ -554,6 +568,22 @@ builtin_rules:
 #         value: "regex\\s+pattern"
 #         flags: i          # i = case insensitive
 
+# In-file annotations
+#
+# A `// nolint`, `# noqa`, `phpcs:ignore`, `// eslint-disable`, `@SuppressWarnings` or
+# `// NOSONAR` on a matched line, or on the line before it, marks that finding as
+# suppressed: reported at severity low with the original severity kept beside it, still
+# counted, and `check` still exits 2.
+#
+# Off unless you say otherwise, because the marker is inside the file being judged. On
+# code you wrote it is your note that a line is a known false positive. On a web root an
+# attacker has written to, it is one more line the attacker wrote, and `// nolint` beside
+# a webshell signature would report a critical finding as low - which is what a quarantine
+# threshold or an alert rule reads. Set `trust: true` only when every file under the scan
+# was written by someone you trust: your own repository, a plugin you maintain.
+annotations:
+  trust: false
+
 # Actions
 actions:
   quarantine:
@@ -668,6 +698,15 @@ std::vector<std::string> Config::warnings(const AppConfig& config) {
                                   "more than once a day, so anything under an hour is "
                                   "requests nobody reads the answer to",
                                   config.updates.intervalSeconds));
+    }
+
+    // Legal, and the one setting here that hands a decision to the files being scanned.
+    // Said before the scan, because a Low finding that was Critical is not something the
+    // report shouts about afterwards.
+    if (config.annotations.trust) {
+        out.push_back("annotations.trust is true: a `// nolint`, `phpcs:ignore` or similar "
+                      "marker inside a file lowers that file's own findings to low. Right "
+                      "for code you wrote; on a web root, the attacker writes the file");
     }
 
     if (!config.archives.enabled) {

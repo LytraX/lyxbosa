@@ -9,6 +9,7 @@
 #include "config/Config.h"
 #include "core/Scanner.h"
 #include "system/CliArgs.h"
+#include <cctype>
 #include <filesystem>
 #include <map>
 
@@ -127,19 +128,26 @@ private:
             const auto& match = *group.first;
 
             fmt::print("  ");
-            switch (match.severity) {
-                case Severity::Critical:
-                    terminal_.print(Terminal::critical(), "[CRITICAL]");
-                    break;
-                case Severity::High:
-                    terminal_.print(Terminal::high(), "[HIGH]");
-                    break;
-                case Severity::Medium:
-                    terminal_.print(Terminal::medium(), "[MEDIUM]");
-                    break;
-                case Severity::Low:
-                    terminal_.print(Terminal::low(), "[LOW]");
-                    break;
+            if (match.suppressed) {
+                // The same marker the scan printer uses: a finding an annotation lowered
+                // says so, and says what it was, rather than reading as a plain Low.
+                terminal_.print(Terminal::muted(), "[SUPPRESSED:{}]",
+                                upperSeverity(match.originalSeverity));
+            } else {
+                switch (match.severity) {
+                    case Severity::Critical:
+                        terminal_.print(Terminal::critical(), "[CRITICAL]");
+                        break;
+                    case Severity::High:
+                        terminal_.print(Terminal::high(), "[HIGH]");
+                        break;
+                    case Severity::Medium:
+                        terminal_.print(Terminal::medium(), "[MEDIUM]");
+                        break;
+                    case Severity::Low:
+                        terminal_.print(Terminal::low(), "[LOW]");
+                        break;
+                }
             }
 
             // Show line with column range if multiple hits
@@ -157,6 +165,12 @@ private:
                 terminal_.print(Terminal::context(), "    {}\n", match.context);
             }
         }
+    }
+
+    static std::string upperSeverity(Severity s) {
+        std::string out(severityToString(s));
+        for (auto& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return out;
     }
 
     bool loadConfig(const CliArgs& args, AppConfig& config) {
