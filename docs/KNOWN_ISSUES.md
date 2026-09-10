@@ -268,3 +268,32 @@ made while cataloguing samples.
 reason recorded, so the gap is measured rather than assumed. A golden-suite run should
 report them as expected misses, not as failures — see the note on `known_miss` in §8 of
 `docs/tasks/CORPUS_PLAN.md`.
+
+## 5. A suppression comment downgrades a Critical signature, and the comment is in the file
+
+**Where:** `src-lib/cpp/core/MatchEngine.cpp`, `hasSuppression()` and `suppressionPatterns`.
+
+A match with `// nolint`, `# noqa`, `phpcs:ignore` or one of nine other markers on its own
+line or the line before is reported as suppressed: severity `Low`, the original severity
+kept beside it, and `check` still exits 2. That is the right design for a developer
+annotating a line they own. It is also a string that whoever wrote the file controls, and a
+file under a malware scanner was written by the attacker:
+
+```php
+<?php $x = "FilesMan"; // nolint
+```
+
+`check` prints `[LOW] FilesMan webshell` for that line and `[CRITICAL]` for the same line
+without the comment, in the release build and in this one. It is the same class of defect
+as the path suppressions this file's fourth entry sits beside - a suppression keyed on a
+string the attacker supplies - through the scanner's other suppression mechanism.
+
+**Why it is recorded rather than fixed.** It does not silence. The finding is still
+reported and still exits 2; the scan printer shows it as `[SUPPRESSED:CRITICAL]`, and the
+JSON and CSV writers carry `suppressed` and the original severity beside the downgraded one.
+What changes is the severity a consumer that sorts or thresholds by it sees, and `check`'s
+compact printer, which shows only the downgraded severity. The repair is the question the
+path suppressions answered - which rules may an in-file string downgrade at all, and for a
+signature the answer is none - but it changes what every report format emits for a
+suppressed finding and wants its own count of how often a marker sits on a real finding in
+the corpus before the downgrade is withheld.

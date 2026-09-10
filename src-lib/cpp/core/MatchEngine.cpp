@@ -147,6 +147,84 @@ static std::string lowerExtension(std::string_view filePath) {
     return path.substr(dot);
 }
 
+// ============================================================================
+// Location priors: what a path may decide, and what it may not
+// ============================================================================
+//
+// A context filter may drop a match because of WHERE the file sits - under a vendored
+// library, under a fixture tree, inside a page builder's plugin - and every such test
+// goes through the two functions below. Both read directory components only: the
+// trailing file name is never consulted, and comparison is case-insensitive.
+//
+// THE NAME IS EXCLUDED because it is the part of a path an attacker chooses most
+// cheaply. An upload primitive hands out a file name and rarely a directory, and the
+// release build reported a Critical webshell signature for shell.php and nothing for
+// shellTest.php on identical bytes, because `Test.php` matched inside the name. A
+// directory can be claimed too - `mkdir vendor` costs nothing to an attacker who can
+// already write - and that is accepted, per rule, for the rules that keep a location
+// prior: every one of them is a heuristic, a shape that legitimate libraries produce
+// in thousands of files, and the trade is stated where the prior is.
+//
+// A SIGNATURE HAS NO LOCATION PRIOR. A rule that matches the name of a malware family
+// (every WS rule) is deciding what the bytes are, and no directory is evidence about
+// that; its verdict is a function of the file's bytes alone. Severity is not the gate:
+// DRP001, BD005 and BD013 are Critical and heuristic, and two of them keep a prior.
+//
+// CASE-INSENSITIVE ON EVERY PLATFORM. Windows file systems do not distinguish `Vendor`
+// from `vendor`, so a filter that does is answering a question the platform cannot
+// ask; on POSIX the prior is about what a directory is FOR, and Magento's `Test/Unit/`
+// is for what `test/` is for. Folding widens what a directory can spell and nothing
+// more: a name still grants nothing, so it adds no capability a directory did not
+// already have. Before this was written down three rules folded, five did not, and
+// BD005 listed both spellings of two fragments by hand.
+//
+// The separator is `/`: on Windows match() has already rewritten every backslash, and
+// on POSIX a backslash is a character in a name (see MatchEngine::filterPath).
+
+static bool equalsIgnoreCase(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool containsIgnoreCase(std::string_view haystack, std::string_view needle) {
+    if (needle.empty() || needle.size() > haystack.size()) return false;
+    for (size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
+        if (equalsIgnoreCase(haystack.substr(i, needle.size()), needle)) return true;
+    }
+    return false;
+}
+
+// Calls `f` with each directory component of `path` - every `/`-separated piece except
+// the last, which is the file name - until one returns true.
+template <typename F>
+static bool anyDirectoryComponent(std::string_view path, F&& f) {
+    size_t start = 0;
+    while (true) {
+        const size_t slash = path.find('/', start);
+        if (slash == std::string_view::npos) return false;   // the last component: the name
+        if (f(path.substr(start, slash - start))) return true;
+        start = slash + 1;
+    }
+}
+
+bool MatchEngine::underDirectoryNamed(std::string_view path, std::string_view name) {
+    return anyDirectoryComponent(path, [name](std::string_view component) {
+        return equalsIgnoreCase(component, name);
+    });
+}
+
+bool MatchEngine::underDirectoryContaining(std::string_view path, std::string_view fragment) {
+    return anyDirectoryComponent(path, [fragment](std::string_view component) {
+        return containsIgnoreCase(component, fragment);
+    });
+}
+
 // Whether a file's type means the webserver serves it as data rather than executing it.
 // A `.php` is code; a `.html`, `.json` or `.log` is a document, and PHP or shell source
 // quoted inside one is a *record of* code, not code that runs.
@@ -418,8 +496,8 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         }
 
         // Wordfence stores its WAF state as binary inside .php files guarded by an
-        // exit header. Real, common, and not malware.
-        if (path.find("/wflogs/") != std::string::npos) {
+        // exit header. Real, common, and not malware. A location prior, directory only.
+        if (underDirectoryNamed(ctx.filePath, "wflogs")) {
             return false;
         }
 
@@ -569,16 +647,15 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
             return false;  // Documentation, not a key in use
         }
 
-        std::string path(ctx.filePath);
-        std::transform(path.begin(), path.end(), path.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
         // Fixture keys are generated to be published; that is what makes them fixtures.
-        static constexpr std::string_view kFixturePaths[] = {
-            "/tests/", "/test/", "testdata", "/fixtures/", "/fixture/",
+        // A location prior on a Critical rule, kept because the shape - a PEM block - is
+        // exactly what a fixture directory holds. Directories only: `testdata` used to
+        // match anywhere in the path, which made a file called testdata.php a fixture.
+        static constexpr std::string_view kFixtureDirectories[] = {
+            "tests", "test", "testdata", "fixtures", "fixture",
         };
-        for (auto fragment : kFixturePaths) {
-            if (path.find(fragment) != std::string::npos) {
+        for (auto name : kFixtureDirectories) {
+            if (underDirectoryNamed(ctx.filePath, name)) {
                 return false;
             }
         }
@@ -586,7 +663,7 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         // A private key inside ~/.ssh is a private key where private keys belong. Worth an
         // operator's attention as hygiene, but it is not an embedded C2 credential, which is
         // what this rule reports at critical.
-        if (path.find("/.ssh/") != std::string::npos) {
+        if (underDirectoryNamed(ctx.filePath, ".ssh")) {
             return false;
         }
 
@@ -658,32 +735,20 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
     }
 
     // BD005: Socket-based backdoor
-    // False positives: Legitimate FTP/socket classes in CMS, logging libraries (Monolog)
-    // The pattern socket_create...socket_connect is used by WordPress's class-ftp-sockets.php
-    // Monolog's CubeHandler uses socket_create for UDP logging to Cube analytics
-    // Only flag if context suggests malicious use
+    //
+    // No location prior, and there was one: ten bare substrings - `ftp`, `socket`,
+    // `Handler.php`, `Guzzle` and the rest - matched anywhere in the path, so a
+    // Critical rule was silent for any file NAMED ftp.php, socket.php or MyHandler.php.
+    // What the list was shielding was one thing: WordPress core's own
+    // wp-admin/includes/class-ftp-sockets.php, whose socket_create() is followed 40
+    // lines later by its `_exec()` FTP-command method, which the pattern's bare `exec`
+    // alternative reached. The pattern now asks for a call to a shell function at a
+    // word boundary - `_exec(` and `execute(` are neither. The old alternative matched
+    // 34 stock files out of 214,675: those 25 copies of the class, which fired, and 9
+    // vendored copies of Monolog's CubeHandler, which the UDP line test below already
+    // dropped. The new one matches none. Nothing shipped in the corpus expects BD005,
+    // so the tightening is measured on the benign side only, and stated as such.
     if (ruleCode == "BD005") {
-        // Check if this is a legitimate FTP/socket/logging utility file
-        static const std::vector<std::string_view> legitimatePaths = {
-            "ftp",
-            "socket",
-            "class-ftp",
-            "FTP",
-            "Socket",
-            "monolog",               // Monolog logging library
-            "Monolog",
-            "vendor-prefixed",       // CMS vendor-prefixed libraries
-            "Handler.php",           // Logging handlers (CubeHandler, SocketHandler, etc.)
-            "Guzzle",               // HTTP client library
-        };
-
-        // Check file path
-        for (const auto& name : legitimatePaths) {
-            if (ctx.filePath.find(name) != std::string_view::npos) {
-                return false;  // Skip - legitimate library
-            }
-        }
-
         // Check for FTP/logging-related context on the matched line
         std::string_view line = getLineAtOffset(ctx.content, ctx.matchOffset);
         if (line.find("ftp") != std::string_view::npos ||
@@ -699,20 +764,18 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         return true;  // Keep - suspicious socket usage
     }
 
-    // WS006: FilesMan webshell
-    // False positives: Magento test files that contain "FilesMan" in method names
-    // Only flag if context suggests actual webshell behavior
-    if (ruleCode == "WS006") {
-        // Skip if this is a test file
-        if (ctx.filePath.find("/tests/") != std::string_view::npos ||
-            ctx.filePath.find("/test/") != std::string_view::npos ||
-            ctx.filePath.find("_test.php") != std::string_view::npos ||
-            ctx.filePath.find("Test.php") != std::string_view::npos) {
-            return false;  // Skip - test file
-        }
-
-        return true;  // Keep the match
-    }
+    // WS006: FilesMan webshell - and every other WS rule
+    //
+    // No webshell rule has a location prior, and this is where the last one was. A WS
+    // rule is a signature: it matches the name of a malware family, which has no
+    // legitimate reason to be anywhere, so no path is evidence about it. This one
+    // skipped any path containing /tests/, /test/, _test.php or Test.php; the last two
+    // are fragments of a file NAME, and the release build reported a Critical finding
+    // for shell.php and nothing for shellTest.php on identical bytes. The only benign
+    // occurrences in 214,675 stock files were the substring of a longer identifier -
+    // DeployedFilesManager, in a Magento list of obsolete class names - and the pattern
+    // now says so with a word boundary. LocationPriorTest pins that no WS rule can be
+    // suppressed by any path.
 
     // DEFC001: Hacker signature
     // "hacked by <word>" also occurs in ordinary English prose - security plugin
@@ -756,15 +819,13 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
             return false;
         }
 
-        // Skip in vendor directories - third-party libraries
-        if (ctx.filePath.find("/vendor/") != std::string_view::npos) {
-            return false;  // Skip - vendor library
-        }
-
-        // Skip in test files
-        if (ctx.filePath.find("/tests/") != std::string_view::npos ||
-            ctx.filePath.find("/test/") != std::string_view::npos) {
-            return false;  // Skip - test file
+        // Location priors, directory names only: a vendored library, or a fixture tree.
+        // Case-folded like every other prior, so Magento's `Test/Unit/` counts as a test
+        // directory here for the first time.
+        for (auto name : {"vendor", "tests", "test"}) {
+            if (underDirectoryNamed(ctx.filePath, name)) {
+                return false;
+            }
         }
 
         return true;
@@ -911,22 +972,25 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
             return false;
         }
 
-        // Path tests are lowercased, because a vendored copy is as likely to be spelled
-        // `PHPSecLib` or `Crypt` as `phpseclib`. OBF036 already did this; OBF003 did not,
-        // which is why one capitalised copy inside Forminator kept reporting.
-        std::string path(ctx.filePath);
-        std::transform(path.begin(), path.end(), path.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-        // `third-party/` and `vendor-prefixed/` are the same thing as `vendor/`: Site Kit,
-        // Forminator, WPForms and Fluent SMTP all prefix their dependencies into one of
-        // these rather than leaving them under vendor/.
-        static constexpr std::string_view kLibraryPaths[] = {
-            "/vendor/", "third-party/", "third_party/", "vendor-prefixed/",
-            "phpseclib", "/crypt/", "sodium", "openssl", "php-jwt",
+        // Location priors, directory names only. `third-party/` and `vendor-prefixed/`
+        // are the same thing as `vendor/`: Site Kit, Forminator, WPForms and Fluent SMTP
+        // all prefix their dependencies into one of these rather than leaving them under
+        // vendor/. `phpseclib` and `crypt` are the library's own directory names, folded,
+        // and cover the one copy that sits under none of the first four - Forminator's
+        // hub-connector ships PHPSecLib/Crypt/RSA.php outside any vendor directory.
+        //
+        // `sodium`, `openssl` and `php-jwt` were here as bare substrings and are gone.
+        // Over 214,675 stock files, 2,571 sit under a sodium path, 29 under an openssl one
+        // and 76 under php-jwt, and not one carries this rule's shape: php-jwt's only
+        // pack('H*') is the rsaEncryption OID the content test above already exempts. A
+        // prior that shields nothing is a claimable name for free. The 9 stock files that
+        // do carry the shape - phpseclib's EC and RSA, PhpSpreadsheet's Xls writer - all sit
+        // under one of the six names below.
+        static constexpr std::string_view kLibraryDirectories[] = {
+            "vendor", "third-party", "third_party", "vendor-prefixed", "phpseclib", "crypt",
         };
-        for (auto fragment : kLibraryPaths) {
-            if (path.find(fragment) != std::string::npos) {
+        for (auto name : kLibraryDirectories) {
+            if (underDirectoryNamed(ctx.filePath, name)) {
                 return false;  // Skip - crypto library
             }
         }
@@ -938,9 +1002,17 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
     // False positives: JS files may contain legitimate long base64 strings (icons, images)
     // Only flag in PHP files or if base64 is being decoded
     if (ruleCode == "OBF004") {
-        // Skip base64 in JS files - often legitimate embedded data
-        if (ctx.filePath.find(".js") != std::string_view::npos) {
-            return false;  // Skip - JS files commonly have embedded base64 images
+        // Skip base64 in JavaScript and its data siblings - embedded icons and fonts.
+        // An extension test, on the trailing extension only: this used to look for `.js`
+        // anywhere in the path, which suppressed a PHP file named shell.js.php and any
+        // file under a directory called intro.js. Over 214,675 stock files, none of the
+        // 34,053 with `.js` somewhere in the path carries this rule's shape.
+        static constexpr std::string_view kScriptExtensions[] = {
+            ".js", ".mjs", ".cjs", ".jsx", ".json", ".map",
+        };
+        const std::string ext = lowerExtension(ctx.filePath);
+        for (auto candidate : kScriptExtensions) {
+            if (ext == candidate) return false;
         }
 
         return true;  // Keep for PHP files
@@ -952,20 +1024,24 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
     // Real malware: decoded content is eval'd or written as PHP
     // Legitimate: decoded content is json_decoded for data processing
     if (ruleCode == "OBF010") {
-        // Skip in known CMS plugin paths that legitimately use compressed data
-        static const std::vector<std::string_view> legitimatePaths = {
+        // Location priors, directories only. A product's directory name varies by
+        // distribution (revslider, revslider-pro), so a product name is matched inside a
+        // directory component; a vendor directory is matched by its whole name.
+        static constexpr std::string_view kProductDirectories[] = {
             "revslider",            // Revolution Slider
             "revolution-slider",
-            "LayerSlider",
+            "layerslider",
             "theme-options",
             "redux-framework",      // Redux Options Framework
-            "vendor/",
-            "vendor-prefixed/",
         };
-
-        for (const auto& path : legitimatePaths) {
-            if (ctx.filePath.find(path) != std::string_view::npos) {
+        for (auto fragment : kProductDirectories) {
+            if (underDirectoryContaining(ctx.filePath, fragment)) {
                 return false;  // Skip - known CMS plugin
+            }
+        }
+        for (auto name : {"vendor", "vendor-prefixed"}) {
+            if (underDirectoryNamed(ctx.filePath, name)) {
+                return false;
             }
         }
 
@@ -988,21 +1064,25 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
     // Real malware: raw payload decoding followed by eval/exec
     // Legitimate: content displayed via htmlentities() or used in templates
     if (ruleCode == "OBF011") {
-        // Skip in known CMS page builder paths
-        static const std::vector<std::string_view> legitimatePaths = {
+        // Location priors, directories only: a product name inside a directory component
+        // (elementor, elementor-pro, essential-addons-for-elementor-lite), a vendor
+        // directory by its whole name. A file named divi.php in uploads is neither.
+        static constexpr std::string_view kProductDirectories[] = {
             "js_composer",          // WPBakery Page Builder
             "wpbakery",
             "visual-composer",
             "elementor",            // Elementor page builder
             "divi",                 // Divi theme builder
             "beaver-builder",
-            "vendor/",
-            "vendor-prefixed/",
         };
-
-        for (const auto& path : legitimatePaths) {
-            if (ctx.filePath.find(path) != std::string_view::npos) {
+        for (auto fragment : kProductDirectories) {
+            if (underDirectoryContaining(ctx.filePath, fragment)) {
                 return false;  // Skip - known CMS builder plugin
+            }
+        }
+        for (auto name : {"vendor", "vendor-prefixed"}) {
+            if (underDirectoryNamed(ctx.filePath, name)) {
+                return false;
             }
         }
 
@@ -1123,24 +1203,24 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
             }
         }
 
-        // Also skip if this is in a known CMS plugin doing API calls
-        static const std::vector<std::string_view> legitimatePaths = {
-            "revslider",
-            "googlefonts",
-            "google-fonts",
-            "vendor/",
-            "vendor-prefixed/",
-        };
-
-        for (const auto& path : legitimatePaths) {
-            if (ctx.filePath.find(path) != std::string_view::npos) {
-                // Even in known paths, check if eval is close to the URL fetch
-                // If eval is >500 chars away, it's likely a coincidental match
-                size_t searchEnd = std::min(ctx.matchOffset + 500, ctx.content.size());
-                std::string_view nearContext = ctx.content.substr(ctx.matchOffset, searchEnd - ctx.matchOffset);
-                if (nearContext.find("eval") == std::string_view::npos) {
-                    return false;  // Skip - eval is far from the fetch, likely unrelated
-                }
+        // Also skip if this is in a known CMS plugin doing API calls. Location priors,
+        // directories only: a product name inside a directory component, a vendor
+        // directory by its whole name. jetpack/modules/google-fonts.php is a file NAME and
+        // no longer matches; it carries no fetch-and-eval to shield.
+        bool inKnownPluginDirectory = false;
+        for (auto fragment : {"revslider", "googlefonts", "google-fonts"}) {
+            if (underDirectoryContaining(ctx.filePath, fragment)) inKnownPluginDirectory = true;
+        }
+        for (auto name : {"vendor", "vendor-prefixed"}) {
+            if (underDirectoryNamed(ctx.filePath, name)) inKnownPluginDirectory = true;
+        }
+        if (inKnownPluginDirectory) {
+            // Even in known paths, check if eval is close to the URL fetch
+            // If eval is >500 chars away, it's likely a coincidental match
+            size_t searchEnd = std::min(ctx.matchOffset + 500, ctx.content.size());
+            std::string_view nearContext = ctx.content.substr(ctx.matchOffset, searchEnd - ctx.matchOffset);
+            if (nearContext.find("eval") == std::string_view::npos) {
+                return false;  // Skip - eval is far from the fetch, likely unrelated
             }
         }
 

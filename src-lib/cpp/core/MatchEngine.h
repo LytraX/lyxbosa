@@ -21,15 +21,16 @@ namespace lyxbosa {
 struct MatchContext {
     std::string_view content;       // Full file content
 
-    // The file's path as the context filters see it. Every path test in
-    // applyContextFilter is written against `/vendor/`, `/tests/`, `/.ssh/` and the
-    // like. On Windows, where a backslash cannot be part of a name and so is always a
-    // separator, MatchEngine::match() puts the path through filterPath() ONCE, here,
-    // before any of them runs. On POSIX a backslash is a character in a name and the
-    // path arrives byte for byte: rewriting it there would let a file NAMED
-    // `tests\shell.php` claim a suppression meant for a directory. A filter reads its
-    // path from this field and from nowhere else - that is what keeps a fragment added
-    // later from having to know about Windows at all.
+    // The file's path as the context filters see it. Every location test in
+    // applyContextFilter goes through MatchEngine::underDirectoryNamed() or
+    // underDirectoryContaining(), which read directory components only - never the
+    // file name - and fold case. On Windows, where a backslash cannot be part of a name
+    // and so is always a separator, MatchEngine::match() puts the path through
+    // filterPath() ONCE, here, before any of them runs. On POSIX a backslash is a
+    // character in a name and the path arrives byte for byte: rewriting it there would
+    // let a file NAMED `tests\shell.php` claim a suppression meant for a directory. A
+    // filter reads its path from this field and from nowhere else - that is what keeps
+    // a fragment added later from having to know about Windows at all.
     std::string_view filePath;
     size_t matchOffset;             // Byte offset of match
     size_t matchLine;               // Line number (1-based)
@@ -98,6 +99,18 @@ public:
     // there: it is exact where a backslash cannot be part of a name and a guess
     // everywhere else. Never applied to what a report prints.
     static std::string filterPath(std::string_view path);
+
+    // The two ways a context filter may read a location, and the only two. Both look
+    // at directory components - every `/`-separated piece of `path` except the last,
+    // which is the file name - and compare case-insensitively. A name grants nothing:
+    // that is the whole contract, and LocationPriorTest pins it for every prior.
+    //
+    // underDirectoryNamed: some directory component equals `name` (`vendor`, `tests`,
+    // `.ssh`). underDirectoryContaining: some directory component contains `fragment`,
+    // for a product whose directory name varies by distribution (`elementor`,
+    // `elementor-pro`, `essential-addons-for-elementor-lite`).
+    static bool underDirectoryNamed(std::string_view path, std::string_view name);
+    static bool underDirectoryContaining(std::string_view path, std::string_view fragment);
 
 private:
     // Check if match has suppression comment nearby

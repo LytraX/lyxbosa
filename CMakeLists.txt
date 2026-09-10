@@ -291,6 +291,7 @@ if(BUILD_TESTS)
   add_executable(lyxbosa_tests
     tests/rules_test.cpp
     tests/path_filter_test.cpp
+    tests/location_prior_test.cpp
     tests/progress_model_test.cpp
     tests/archive_test.cpp
     tests/scan_root_test.cpp

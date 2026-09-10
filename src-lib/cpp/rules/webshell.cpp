@@ -99,9 +99,17 @@ const BuiltinRule WS005 {
 };
 
 // WS006: FilesMan webshell
+//
+// The signature is a token: `$default_action = 'FilesMan'`, `actionFilesMan()`,
+// `case 'FilesMan':`. The trailing word boundary is what keeps it one - without it the
+// only benign occurrences in 214,675 stock files matched, and both were the inside of a
+// longer identifier (DeployedFilesManager, PublicFilesManagerInterface) in a Magento
+// list of obsolete class names. That imprecision used to be papered over by a path
+// suppression for test directories, which a file name could claim; see the WS006 note
+// in MatchEngine::applyContextFilter. No leading boundary: actionFilesMan must match.
 namespace detail_WS006 {
     static constexpr Pattern patterns[] = {
-        { R"(FilesMan|Fil3sM4n)",
+        { R"((?:FilesMan|Fil3sM4n)\b)",
           "FilesMan signature", false,
           {"filesman|fil3sm4n"} },
     };
