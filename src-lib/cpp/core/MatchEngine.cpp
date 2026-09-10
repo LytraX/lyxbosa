@@ -419,8 +419,7 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
 
         // Wordfence stores its WAF state as binary inside .php files guarded by an
         // exit header. Real, common, and not malware.
-        if (path.find("/wflogs/") != std::string::npos ||
-            path.find("\\wflogs\\") != std::string::npos) {
+        if (path.find("/wflogs/") != std::string::npos) {
             return false;
         }
 
@@ -1379,8 +1378,45 @@ void MatchEngine::addRule(std::unique_ptr<Rule> rule) {
     }
 }
 
+std::string MatchEngine::filterPath(std::string_view path) {
+    std::string normalised(path);
+    std::replace(normalised.begin(), normalised.end(), '\\', '/');
+    return normalised;
+}
+
 std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_view filePath) const {
     std::vector<FileMatch> allMatches;
+
+    // The one place a MatchContext is built, so the one place the separator is decided.
+    // Every fragment a filter tests - `/vendor/`, `/tests/`, `/.ssh/`, `/wflogs/` - is
+    // spelled with forward slashes, and a Windows path arrives with backslashes.
+    //
+    // Windows forbids a backslash inside a path component, so there a backslash is
+    // always a separator and rewriting it is exact: `\vendor\` IS `/vendor/`. POSIX
+    // permits one, so there a backslash is sometimes a character in a name, and
+    // rewriting it would be a guess - in the direction that grants a suppression. A
+    // file named `tests\shell.php` in an uploads directory is one file, named by
+    // whoever dropped it; rewritten, it reads as a fixture under `/tests/` and WS006
+    // lets a live webshell signature through. The scanner runs on compromised hosts,
+    // and a name the attacker spells must not be able to claim a suppression. So the
+    // rewrite is conditional on the platform whose path grammar makes it exact, and on
+    // POSIX the filters see the path byte for byte as the platform gave it.
+    //
+    // Archive members come through here too, as `<archive>!/<member>`, and a member
+    // name is attacker-controlled as surely as a file name. The same rule holds and
+    // grants nothing new: on Windows a member spelled `tests\x.php` is suppressed
+    // exactly as one spelled `tests/x.php` already is on every platform, and on POSIX
+    // it is not rewritten. What a Windows-written zip loses on POSIX is the vendor and
+    // fixture suppressions for its backslash-named members - a benign finding an
+    // operator looks at, which is the cheaper side of that trade.
+    //
+    // What a report prints is untouched either way: this string goes into the context
+    // and nowhere else.
+#ifdef _WIN32
+    const std::string contextPath = filterPath(filePath);
+#else
+    const std::string_view contextPath = filePath;
+#endif
 
     // Match custom YAML rules
     for (const auto& rule : rules_) {
@@ -1452,7 +1488,7 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
             // Apply context-aware filter to reduce false positives
             MatchContext ctx{
                 .content = content,
-                .filePath = filePath,
+                .filePath = contextPath,
                 .matchOffset = offset,
                 .matchLine = match.line,
                 .matchColumn = match.column,

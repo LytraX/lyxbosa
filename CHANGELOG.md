@@ -130,6 +130,18 @@ itself with it.
 
 ### Fixed
 
+- **On Windows, none of the path-based suppressions fired.** Twelve fragments in the
+  context filters - `/vendor/`, `/tests/`, `/.ssh/`, `/wflogs/` and eight more - are spelled
+  with forward slashes, and a Windows path arrives with backslashes, so `\vendor\` never
+  contained `/vendor/`. Measured over the same corpus and the same stock CMS trees, the
+  Windows binary reported 47 benign-sweep findings against 44 on Linux, a strict superset:
+  OBF003 on a vendored PhpSpreadsheet writer and WS006 on two Magento test fixtures.
+  Detection agreed exactly on both platforms and is untouched. On Windows the separator is
+  now normalised once, where the match context is built, before any filter runs. On Linux
+  and macOS nothing changes: a backslash there is a character in a file name, and a file
+  *named* `tests\shell.php` must not read as a fixture under `tests/`. Nothing about how a
+  path is *printed* in a report changes anywhere.
+
 - **`SSL_CERT_FILE`, `CURL_CA_BUNDLE` and `SSL_CERT_DIR` did nothing, and setting one made
   things worse.** The version check treated any of the three being set as "the operator has
   pointed us somewhere", and stood aside instead of configuring the trust store itself.

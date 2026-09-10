@@ -20,7 +20,17 @@ namespace lyxbosa {
 // Context information passed to filters
 struct MatchContext {
     std::string_view content;       // Full file content
-    std::string_view filePath;      // File path (for extension checks)
+
+    // The file's path as the context filters see it. Every path test in
+    // applyContextFilter is written against `/vendor/`, `/tests/`, `/.ssh/` and the
+    // like. On Windows, where a backslash cannot be part of a name and so is always a
+    // separator, MatchEngine::match() puts the path through filterPath() ONCE, here,
+    // before any of them runs. On POSIX a backslash is a character in a name and the
+    // path arrives byte for byte: rewriting it there would let a file NAMED
+    // `tests\shell.php` claim a suppression meant for a directory. A filter reads its
+    // path from this field and from nowhere else - that is what keeps a fragment added
+    // later from having to know about Windows at all.
+    std::string_view filePath;
     size_t matchOffset;             // Byte offset of match
     size_t matchLine;               // Line number (1-based)
     size_t matchColumn;             // Column number (1-based)
@@ -76,8 +86,18 @@ public:
     // Apply the context filter for a rule code: true keeps the match, false discards it.
     // Public so the rule tests can exercise a filter without building a whole scan -
     // several rules (OBF036, DEFC001) carry most of their precision here rather than
-    // in the pattern, so the filter is the part worth testing directly.
+    // in the pattern, so the filter is the part worth testing directly. A caller that
+    // builds the MatchContext itself owes it a filePath in filterPath() spelling.
     static bool applyContextFilter(const std::string& ruleCode, const MatchContext& ctx);
+
+    // The spelling of a Windows path the context filters see: every backslash turned
+    // into a forward slash and nothing else touched, so a mixed path - a root the
+    // operator typed one way joined to components the walk spelled the other - comes
+    // out uniform. Pure, and public so the tests can drive every fragment through it
+    // on any platform. match() applies it under _WIN32 only, for the reason given
+    // there: it is exact where a backslash cannot be part of a name and a guess
+    // everywhere else. Never applied to what a report prints.
+    static std::string filterPath(std::string_view path);
 
 private:
     // Check if match has suppression comment nearby
