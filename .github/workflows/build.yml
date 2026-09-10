@@ -4,10 +4,89 @@ on:
   push:
     tags:
       - 'v*'
+  # Pull requests run the two test jobs and nothing else: the build jobs are gated on the
+  # event below, and `release` on the tag. Tags and manual runs run all five.
+  pull_request:
+    branches:
+      - master
   workflow_dispatch:
 
 jobs:
+  # ---------------------------------------------------------------- tests
+  #
+  # These two jobs are the only place the test suite runs anywhere but on somebody's
+  # desk. They build with BUILD_TESTS=ON and run ctest; the build jobs below build with
+  # the tests OFF, because a release should compile only what it ships - and that is
+  # exactly why a test target that could not compile on Windows shipped release after
+  # release with every build green. The two are deliberately separate configures, so
+  # a test-only switch can never leak into what is published; see the header of
+  # docker/build/Linux/test-inside.sh and docker/build/Windows/test.ps1.
+  #
+  # What they share with the build jobs is everything that costs time: the same
+  # container, compiler, triplets, static runtime and - keyed identically - the same
+  # vcpkg binary cache. A pull request that warms the cache warms it for the tag.
+  test-linux:
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Same path, same key, same restore-keys as build-linux: the entries a release
+      # build restored are the entries this build wants.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-linux-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile') }}
+          restore-keys: |
+            vcpkg-linux-${{ matrix.arch }}-
+
+      # Runs inside the release container, as an unprivileged user so the cases about
+      # unreadable files and directories are observed rather than skipped as root.
+      - name: Build with tests and run them (${{ matrix.arch }})
+        env:
+          VCPKG_BINARY_CACHE: .vcpkg-cache
+        run: docker/build/Linux/test.sh "${{ matrix.arch }}"
+
+      - name: Reclaim cache ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache || true
+
+  test-windows:
+    runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v5
+
+      # Same path and key as build-windows, for the same reason as above.
+      - name: Set up vcpkg cache
+        uses: actions/cache@v5
+        with:
+          path: C:\vcpkg-cache
+          key: vcpkg-windows-static-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: vcpkg-windows-static-
+
+      - name: Create binary cache dir
+        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE
+
+      # x64 only: the runner cannot execute an arm64 test binary, and compiling one it
+      # never runs is the half of the check that proves least.
+      - name: Build with tests and run them
+        run: docker/build/Windows/test.ps1
+        env:
+          VCPKG_ROOT: C:\vcpkg
+
+  # ---------------------------------------------------------------- release binaries
   build-linux:
+    if: github.event_name != 'pull_request'
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -58,6 +137,7 @@ jobs:
           path: dist/lyxbosa-linux-*
 
   build-windows:
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     env:
       VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-cache
