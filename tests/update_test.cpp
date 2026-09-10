@@ -72,6 +72,40 @@ public:
     }
 };
 
+// Answers, but not instantly. Every other source here returns before the caller can
+// look away, which is why none of them could observe what happens to an answer that
+// arrives after the scan has finished - a real request was measured at about a
+// quarter of a second against a scan of a hundredth.
+class SlowSource : public VersionSource {
+public:
+    explicit SlowSource(std::chrono::milliseconds delay, std::string version = "v9.9.9")
+        : delay_(delay), version_(std::move(version)) {}
+
+    FetchOutcome fetchLatest(std::chrono::milliseconds,
+                             const std::atomic<bool>& cancelled) override {
+        calls.fetch_add(1, std::memory_order_relaxed);
+        const auto deadline = std::chrono::steady_clock::now() + delay_;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (cancelled.load(std::memory_order_relaxed)) {
+                FetchOutcome cancelledOut;
+                cancelledOut.status = FetchOutcome::Status::Cancelled;
+                return cancelledOut;
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+        FetchOutcome out;
+        out.status = FetchOutcome::Status::Ok;
+        out.version = version_;
+        return out;
+    }
+
+    std::atomic<int> calls{0};
+
+private:
+    std::chrono::milliseconds delay_;
+    std::string version_;
+};
+
 // Blocks until cancelled, like a connection to a host that never answers.
 class HangingSource : public VersionSource {
 public:
@@ -683,7 +717,7 @@ TEST(FetchAndCompareTest, AnAnswerThatIsNotAVersionIsABadResponse) {
 
 // The property the whole design turns on: a check still in flight is polled, not
 // waited for, and tearing it down does not block on the network either.
-TEST(BackgroundUpdateCheckTest, AHangingCheckIsNeverWaitedFor) {
+TEST(BackgroundUpdateCheckTest, AHangingCheckIsBoundedByTheGraceAndNotTheTimeout) {
     TempDir dir;
     auto source = std::make_shared<HangingSource>();
 
@@ -691,7 +725,8 @@ TEST(BackgroundUpdateCheckTest, AHangingCheckIsNeverWaitedFor) {
     {
         auto check = std::make_unique<BackgroundUpdateCheck>(
             source, Version{2, 2, 1}, dir.file("update-check"), 1'757'000'000,
-            std::chrono::hours(1));  // a deadline nobody would wait out
+            std::chrono::hours(1),  // a deadline nobody would wait out
+            50ms);                  // and a grace that is not one either
 
         while (!source->started.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(1ms);
@@ -700,10 +735,148 @@ TEST(BackgroundUpdateCheckTest, AHangingCheckIsNeverWaitedFor) {
         EXPECT_FALSE(check->resultIfReady())
             << "polling a check in flight must not block until it finishes";
         EXPECT_EQ(updateNotice(check->resultIfReady(), std::nullopt, Version{2, 2, 1}), "");
-    }  // destructor cancels and joins
+    }  // destructor waits out the grace, then cancels and joins
 
     const auto elapsed = std::chrono::steady_clock::now() - begun;
-    EXPECT_LT(elapsed, 5s) << "teardown waited for the network";
+    // The assertion that matters is the bound, not "no wait at all": teardown now
+    // waits, and what stops a hung network from being felt is that the grace ends it
+    // and the source watches the cancel flag. An hour was available and was not taken.
+    EXPECT_LT(elapsed, 2s) << "teardown waited for the network rather than the grace";
+}
+
+// ---------------------------------------------------------------------------
+// An answer that arrives after the scan has finished
+//
+// The reservation writes the timestamp before the request, so the interval is spent
+// whether or not an answer comes back. Teardown used to cancel the moment the scan
+// ended, so a scan quicker than its request learned nothing and the state file
+// recorded only that a check had happened - and every later scan inside the interval
+// read that empty cache and said nothing. Each case below is paired with one asserting
+// the other answer, because a destructor that simply always waited would pass the
+// first of each pair.
+// ---------------------------------------------------------------------------
+
+TEST(AnswerGraceTest, AnAnswerThatArrivesAfterTheScanIsStillRecorded) {
+    TempDir dir;
+    const auto path = dir.file("update-check");
+    auto source = std::make_shared<SlowSource>(120ms, "v2.10.0");
+
+    // The reservation, written before the request exactly as startUpdateCheck writes
+    // it. It is what spends the interval, and it records no version.
+    ASSERT_TRUE(reserveUpdateCheck(path, 1'757'000'000));
+
+    {
+        // A scan that is over before the request is: the handle is destroyed at once.
+        BackgroundUpdateCheck check(source, Version{2, 2, 1}, path, 1'757'000'000,
+                                    kUpdateCheckTimeout, 2s);
+        EXPECT_FALSE(check.resultIfReady())
+            << "the answer must not be here yet, or this case proves nothing";
+    }
+
+    const auto state = readUpdateState(path);
+    ASSERT_TRUE(state);
+    EXPECT_EQ(state->latestVersion, "2.10.0")
+        << "the interval was spent on this answer; discarding it spends it for nothing";
+}
+
+// The companion. Without it the case above would pass against a destructor that waited
+// for however long the network took, which is the thing the contract forbids.
+TEST(AnswerGraceTest, AnAnswerThatMissesTheGraceIsAbandoned) {
+    TempDir dir;
+    const auto path = dir.file("update-check");
+    auto source = std::make_shared<SlowSource>(30s, "v2.10.0");
+
+    ASSERT_TRUE(reserveUpdateCheck(path, 1'757'000'000));
+
+    const auto begun = std::chrono::steady_clock::now();
+    {
+        BackgroundUpdateCheck check(source, Version{2, 2, 1}, path, 1'757'000'000,
+                                    kUpdateCheckTimeout, 40ms);
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - begun;
+
+    EXPECT_LT(elapsed, 2s) << "the grace is a bound, not a suggestion";
+
+    const auto state = readUpdateState(path);
+    ASSERT_TRUE(state) << "the reservation is still there - the interval was spent";
+    EXPECT_TRUE(state->latestVersion.empty())
+        << "and it learned nothing, which is what the next scan must be able to see";
+}
+
+// And the third answer: an answer already in hand costs nothing, which is every scan
+// that runs longer than one request - the case where this was never broken.
+TEST(AnswerGraceTest, ACheckAlreadyFinishedIsNotWaitedForAtAll) {
+    TempDir dir;
+    auto source = std::make_shared<CountingSource>("v2.10.0");
+
+    auto check = std::make_unique<BackgroundUpdateCheck>(
+        source, Version{2, 2, 1}, dir.file("update-check"), 1'757'000'000,
+        kUpdateCheckTimeout, 30s);  // a grace nobody would wait out
+
+    while (!check->resultIfReady()) {
+        std::this_thread::sleep_for(1ms);
+    }
+
+    const auto begun = std::chrono::steady_clock::now();
+    check.reset();
+    EXPECT_LT(std::chrono::steady_clock::now() - begun, 2s)
+        << "the wait must be for an answer, not unconditional";
+}
+
+// The defect as a user meets it, one level up: two scans inside one interval, the
+// first quicker than its request. The second is entitled to repeat what the first
+// learned without asking again, and before this change there was nothing to repeat.
+TEST(AnswerGraceTest, AScanThatOutranItsRequestLeavesTheNextScanAbleToSpeak) {
+    TempDir dir;
+    const auto path = dir.file("update-check");
+    auto source = std::make_shared<SlowSource>(120ms, "v2.10.0");
+
+    UpdateCheckContext first = checkableContext();
+    {
+        auto handle = startUpdateCheck(first, source, path, kUpdateCheckTimeout, 2s);
+        ASSERT_NE(handle.live, nullptr);
+        EXPECT_EQ(handle.decision, UpdateDecision::Check);
+        // This scan says nothing: its request had not answered when the report ended.
+        EXPECT_EQ(updateNotice(handle.live->resultIfReady(), handle.known, first.running),
+                  "");
+    }
+
+    // A second scan an hour later, well inside the one-day interval.
+    UpdateCheckContext second = checkableContext();
+    second.nowEpoch = first.nowEpoch + 3600;
+    auto handle = startUpdateCheck(second, source, path, kUpdateCheckTimeout, 2s);
+
+    EXPECT_EQ(handle.decision, UpdateDecision::SkipWithinInterval);
+    EXPECT_EQ(handle.live, nullptr);
+    EXPECT_EQ(source->calls.load(), 1) << "the interval still throttles the request";
+    ASSERT_TRUE(handle.known.has_value());
+    EXPECT_TRUE(handle.mayNotify);
+    EXPECT_NE(updateNotice(std::nullopt, handle.known, second.running), "")
+        << "the second scan inside the interval is what actually tells the user";
+}
+
+// The other direction of the same pair: when the answer really never arrived, the
+// second scan inside the interval still says nothing AND still does not ask again.
+// The interval must go on throttling requests whether or not one succeeded.
+TEST(AnswerGraceTest, AnIntervalSpentLearningNothingStaysSilentAndStaysThrottled) {
+    TempDir dir;
+    const auto path = dir.file("update-check");
+    auto source = std::make_shared<SlowSource>(30s, "v2.10.0");
+
+    UpdateCheckContext first = checkableContext();
+    {
+        auto handle = startUpdateCheck(first, source, path, kUpdateCheckTimeout, 40ms);
+        ASSERT_NE(handle.live, nullptr);
+    }
+
+    UpdateCheckContext second = checkableContext();
+    second.nowEpoch = first.nowEpoch + 3600;
+    auto handle = startUpdateCheck(second, source, path, kUpdateCheckTimeout, 40ms);
+
+    EXPECT_EQ(handle.decision, UpdateDecision::SkipWithinInterval);
+    EXPECT_EQ(source->calls.load(), 1) << "a check that failed must not become a retry";
+    EXPECT_FALSE(handle.known.has_value());
+    EXPECT_EQ(updateNotice(std::nullopt, handle.known, second.running), "");
 }
 
 // ---------------------------------------------------------------------------

@@ -156,11 +156,35 @@ private:
 
         // Every refusal ends the same way, because every refusal has the same answer:
         // the old binary is still there, and the release can be fetched and verified by
-        // hand. docs/RELEASING.md's "After the release" section is that procedure.
+        // hand. docs/RELEASING.md's "After the release" section is that procedure, and
+        // this is the short form of it.
+        //
+        // It names only things a person holding a downloaded release can reach. The
+        // previous version of this text said to verify with "the key in
+        // keys/minisign-trusted.txt", which is a path in a source checkout: a release
+        // publishes four binaries, SHA256SUMS and SHA256SUMS.minisig, and no keyring.
+        // On Windows this is the whole answer a user gets, because `update` refuses
+        // there and hands them this.
         fmt::print(stderr,
                    "\nThe binary you are running has not been changed.\n"
-                   "To install a release yourself: https://github.com/LytraX/lyxbosa/releases\n"
-                   "Verify it with the key in keys/minisign-trusted.txt before you run it.\n");
+                   "\n"
+                   "To install a release by hand, take the binary for this platform from\n"
+                   "https://github.com/LytraX/lyxbosa/releases together with SHA256SUMS\n"
+                   "and SHA256SUMS.minisig, and check the signature before the checksums:\n"
+                   "\n"
+                   "    minisign -Vm SHA256SUMS -P <key>\n"
+                   "    sha256sum -c SHA256SUMS\n"
+                   "\n"
+                   "The checksums are published beside the files they describe, so they\n"
+                   "are worth reading only once the signature over them verifies. The key\n"
+                   "is not published with the release for the same reason - take it from\n"
+                   "the repository, which is somewhere else:\n"
+                   "https://github.com/LytraX/lyxbosa/blob/master/keys/minisign-trusted.txt\n"
+                   "\n"
+                   "minisign prints the trusted comment, which is covered by the signature\n"
+                   "and names the release. Read it: a SHA256SUMS and .minisig pair lifted\n"
+                   "from an older release verifies perfectly well and describes different\n"
+                   "binaries. docs/RELEASING.md, \"After the release\", is the long form.\n");
         return 1;
     }
 

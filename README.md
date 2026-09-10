@@ -688,7 +688,7 @@ where it was.
 | the binary sits under a path a package manager owns | declined: an updater fighting `apt` leaves its database describing a file that is not there |
 | you cannot write the install directory | refused, with the reason. It never re-runs itself under `sudo` |
 | the download will not start on this host | refused before anything is replaced |
-| Windows | refused: a running `.exe` is locked, and replace-on-restart is not built yet |
+| Windows | refused: a running `.exe` is locked and cannot be overwritten in place |
 | macOS and other platforms | refused: a release publishes Linux and Windows binaries only |
 
 There is no `--to VERSION`. It is the one option that would put a hole in the downgrade

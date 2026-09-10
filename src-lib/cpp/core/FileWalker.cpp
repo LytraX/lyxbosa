@@ -60,11 +60,39 @@ FileWalker::FileWalker(const ScanConfig& config)
     : config_(config) {
 }
 
-size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs) const {
+std::optional<std::string> rootUnusableReason(const std::filesystem::path& dir) {
+    namespace fs = std::filesystem;
+
+    // The error_code overloads, because a root on a filesystem that is not answering
+    // is a root this cannot walk either, and that has to be a reason rather than an
+    // exception thrown out of a scan.
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || ec) {
+        return "no such directory";
+    }
+    if (!fs::is_directory(dir, ec) || ec) {
+        return "not a directory";
+    }
+    return std::nullopt;
+}
+
+size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs,
+                        std::vector<std::filesystem::path>* missingRoots) const {
     size_t dirCount = 0;
     bool stopped = false;
 
     for (const auto& dir : config_.directories) {
+        // A root the operator named and that is not there is recorded rather than
+        // walked past. walkDirectory() returns 0 for the same shape and must keep
+        // doing so - it is the recursion step as well, and a subdirectory that
+        // disappears mid-walk is a race - so the distinction is drawn here, which is
+        // the only place that knows a path came from the operator.
+        if (rootUnusableReason(dir)) {
+            if (missingRoots) {
+                missingRoots->push_back(dir);
+            }
+            continue;
+        }
         dirCount += walkDirectory(dir, callback, stopped, unreadableDirs);
         if (stopped) break;
     }

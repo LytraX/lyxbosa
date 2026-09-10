@@ -267,6 +267,7 @@ if(BUILD_TESTS)
     tests/rules_test.cpp
     tests/progress_model_test.cpp
     tests/archive_test.cpp
+    tests/scan_root_test.cpp
     tests/update_test.cpp
     tests/update_apply_test.cpp
     ${LIB_SOURCES}

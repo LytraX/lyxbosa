@@ -94,6 +94,15 @@ struct ScanResult {
     // tally - but the operator asked for this tree and did not get all of it.
     size_t directoriesUnreadable = 0;
 
+    // Roots the operator named that the walk could not enter: absent, or there but
+    // not a directory. A different fact from directoriesUnreadable, which is a tree
+    // the scanner reached and could not read - this one was never there to reach, so
+    // it is the operator's path that is wrong rather than the host's permissions.
+    // Kept apart because they want different answers: an unreadable subdirectory is a
+    // coverage warning, and a root that is not there means the scan that was asked
+    // for did not happen at all.
+    std::vector<std::filesystem::path> rootsMissing;
+
     // Timing
     std::chrono::steady_clock::time_point startTime;
     std::chrono::steady_clock::time_point endTime;

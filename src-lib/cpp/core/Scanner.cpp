@@ -392,7 +392,8 @@ ScanResult Scanner::scan() {
         return true;  // Continue walking
     };
 
-    result.totalDirectoriesScanned = walker.walk(fileCallback, &result.directoriesUnreadable);
+    result.totalDirectoriesScanned =
+        walker.walk(fileCallback, &result.directoriesUnreadable, &result.rootsMissing);
 
     if (counter.joinable()) {
         // countFiles polls the interrupt flag, so this returns promptly on Ctrl+C.
