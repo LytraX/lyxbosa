@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - 'v*'
+    # Not for artefacts - the build jobs skip here - but because a cache saved during a
+    # pull request is scoped to that pull request and invisible to the next one. Only the
+    # default branch's caches are shared. Without a run on master, every pull request
+    # starts cold no matter how well the keys are chosen, so the test jobs run here to
+    # leave a cache the next pull request can restore.
+    branches:
+      - master
   # Pull requests run the two test jobs and nothing else: the build jobs are gated on the
   # event below, and `release` on the tag. Tags and manual runs run all five.
   pull_request:
@@ -38,14 +45,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Same path, same key, same restore-keys as build-linux: the entries a release
-      # build restored are the entries this build wants.
+      # A key of this job's OWN, not build-linux's, because actions/cache saves nothing
+      # when the PRIMARY key hit and sharing a key means it always hits.
+      #
+      # What that costs is not obvious until a rebuild happens. vcpkg's binary cache is
+      # keyed by an ABI hash that includes the compiler, so when GitHub rolls the runner
+      # image to a new toolset every entry is invalidated and every package is rebuilt.
+      # That is unavoidable and it is fine - it should be paid once. Sharing the key made
+      # it recur: the rebuild could never be saved, so the next run on that image paid it
+      # again, and the one after that. Falling back to the release prefix keeps the thrift
+      # that is real, a cold cache still starting from what the release build had.
       - name: Restore vcpkg binary cache
         uses: actions/cache@v5
         with:
           path: .vcpkg-cache
-          key: vcpkg-linux-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile') }}
+          key: vcpkg-linux-tests-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile') }}
           restore-keys: |
+            vcpkg-linux-tests-${{ matrix.arch }}-
             vcpkg-linux-${{ matrix.arch }}-
 
       # Runs inside the release container, as an unprivileged user so the cases about
@@ -66,13 +82,41 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Same path and key as build-windows, for the same reason as above.
+      # ImageVersion is set by the runner, and the `env` context inside a `with:`
+      # expression sees only what this file declares - so ${{ steps.toolchain.outputs.value }} expanded
+      # to nothing and saved a key with an empty segment, which is how the first attempt at
+      # this looked like it had worked. Reading it in a step is the way to reach it.
+      #
+      # `:?` rather than a default: a key that silently loses the toolchain is the exact
+      # failure being fixed here, so an absent variable stops the job rather than quietly
+      # producing one key for every compiler again.
+      - name: Name the toolchain the cache is keyed to
+        id: toolchain
+        shell: bash
+        run: echo "value=${ImageVersion:?the runner did not set ImageVersion}" >> "$GITHUB_OUTPUT"
+
+      # This job's own key, and ImageVersion is in it because a cache key has to be at
+      # least as specific as the thing it caches. vcpkg's ABI hash includes the compiler;
+      # GitHub rolls windows-latest to new toolsets; so one key without the image serves
+      # two incompatible toolchains, and whichever image writes it first owns it forever.
+      #
+      # That was measured the hard way, twice. Sharing build-windows's key: hit on the
+      # primary, rebuild all ten packages, "not saving cache", 11m34s. Then with a key of
+      # its own but still no image in it: saved on image 20260824.214, met 20260907.229,
+      # restored binaries the new compiler could not use, rebuilt all ten again, "not
+      # saving cache" again, 12m0s. The rule that bit both times is the same one - nothing
+      # is saved when the PRIMARY key hits - and the repair is to stop asking one key to
+      # answer for two compilers. See the note in test-linux, whose key hashes the
+      # Dockerfile and so has pinned its compiler all along.
       - name: Set up vcpkg cache
         uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-static-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-          restore-keys: vcpkg-windows-static-
+          key: vcpkg-windows-tests-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-windows-tests-${{ steps.toolchain.outputs.value }}-
+            vcpkg-windows-tests-
+            vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-
 
       - name: Create binary cache dir
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE
@@ -86,7 +130,7 @@ jobs:
 
   # ---------------------------------------------------------------- release binaries
   build-linux:
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -137,7 +181,7 @@ jobs:
           path: dist/lyxbosa-linux-*
 
   build-windows:
-    if: github.event_name != 'pull_request'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     env:
       VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-cache
@@ -150,12 +194,27 @@ jobs:
         shell: bash
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      # ImageVersion is set by the runner, and the `env` context inside a `with:`
+      # expression sees only what this file declares - so ${{ steps.toolchain.outputs.value }} expanded
+      # to nothing and saved a key with an empty segment, which is how the first attempt at
+      # this looked like it had worked. Reading it in a step is the way to reach it.
+      #
+      # `:?` rather than a default: a key that silently loses the toolchain is the exact
+      # failure being fixed here, so an absent variable stops the job rather than quietly
+      # producing one key for every compiler again.
+      - name: Name the toolchain the cache is keyed to
+        id: toolchain
+        shell: bash
+        run: echo "value=${ImageVersion:?the runner did not set ImageVersion}" >> "$GITHUB_OUTPUT"
+
       - name: Set up vcpkg cache
         uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-static-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-          restore-keys: vcpkg-windows-static-
+          key: vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-
+            vcpkg-windows-static-
 
       - name: Create binary cache dir
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE

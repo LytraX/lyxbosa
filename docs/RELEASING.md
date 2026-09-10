@@ -174,7 +174,9 @@ gh run watch
 
 Five jobs. `test-linux` (amd64 and arm64 matrix) and `test-windows` build the tree with
 `BUILD_TESTS=ON` and run `ctest`; they are the same jobs a pull request to `master` runs,
-and a tag runs them too. `build-linux` (amd64 and arm64 matrix) and `build-windows` produce
+and a tag runs them too. They also run on a push to `master`, where they build nothing
+anyone downloads: a cache saved during a pull request is scoped to that pull request, so
+only a run on the default branch leaves one the next pull request can restore. `build-linux` (amd64 and arm64 matrix) and `build-windows` produce
 the binaries, with the tests off — a release build compiles only what it ships, which is
 why the test build is a separate configure in `docker/build/Linux/test-inside.sh` and
 `docker/build/Windows/test.ps1` rather than a flag on the release scripts. Then `release`,
