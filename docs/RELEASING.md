@@ -425,10 +425,15 @@ Then check the version is the tag, not `0.0.0`:
 
 ```bash
 ./lyxbosa-linux-amd64 --version
+2.3.0 (standard build, lyxbosa-linux-amd64)
 ```
 
-If it prints `0.0.0`, the version did not reach CMake — check that the tag matched
-`v*` and that the "Extract version from tag" step ran.
+The version is the first token; what follows names the build, so the same command on the
+portable asset reads `2.3.0 (portable build, lyxbosa-linux-amd64-portable)`. That is worth
+reading too: an asset whose name and whose banner disagree was renamed after it was built.
+
+If the version is `0.0.0`, it did not reach CMake — check that the tag matched `v*` and
+that the "Extract version from tag" step ran.
 
 ---
 
