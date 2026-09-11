@@ -411,6 +411,98 @@ later is refused by every earlier binary, which is why the new key ships as `tru
 release before it starts signing. Skipping that step does not break verification quietly - it
 sends everybody to a manual download.
 
+## Rebuilding a release
+
+A signature proves the bytes were signed by whoever holds the release key. It cannot prove
+the bytes are what the source says, because the key lives in this repository's CI, and
+`README.md` states that boundary where a user reads it. Rebuilding is what narrows it. Take
+the tagged source, build it in the same container, and compare the hash you get against the
+line in that release's `SHA256SUMS`. A match is evidence nobody has to take on trust: it
+holds whoever cut the release to the source they published.
+
+### What the procedure covers
+
+| asset | rebuilt and compared |
+|---|---|
+| `lyxbosa-linux-amd64` | yes |
+| `lyxbosa-linux-arm64` | yes |
+| `lyxbosa-linux-amd64-portable` | yes |
+| `lyxbosa-linux-arm64-portable` | yes |
+| `lyxbosa-windows-amd64.exe` | outside it |
+| `lyxbosa-windows-arm64.exe` | outside it |
+
+The four Linux assets are the ones a rebuilder can check, and the claim is that each
+rebuilds byte for byte. The Windows assets are outside the procedure because MSVC has a
+clock `SOURCE_DATE_EPOCH` does not reach: `link.exe` writes the current time into the PE
+header and the debug directory of everything it produces. The flag that replaces those with
+a content hash, `/Brepro`, would have to apply to every object in the link, which means to
+every dependency vcpkg builds and not only to this one - a triplet-wide change rather than a
+flag on one target. The Windows build scripts set the epoch regardless, because OpenSSL is
+in that graph too and it is one fewer moving part.
+
+`install.sh` and `install.ps1` are published verbatim from the tagged source, so `SHA256SUMS`
+can be checked against the files in the tree with no build at all.
+
+### The two things that are held constant
+
+**The clock.** vcpkg builds OpenSSL from source, and OpenSSL's `util/mkbuildinf.pl` stamps
+the build time into the version banner that `libcrypto` carries. The GNU build ID is a hash
+over the link inputs, so it moves with the banner. Those two - a 20-byte build ID and the
+four characters of the timestamp - are the whole of what two builds of one commit differ by,
+and `.text` is identical between them. `SOURCE_DATE_EPOCH` replaces the clock: the value is in
+[`docker/build/source-date-epoch`](../docker/build/source-date-epoch), every build script
+reads it, and the overlay triplets name it in `VCPKG_ENV_PASSTHROUGH` so that its value is
+part of vcpkg's ABI hash. That last part is load-bearing rather than tidy - without it the
+variable still reaches the port build, but a dependency cached under one epoch is restored
+for a request at another and the pin never touches the bytes.
+
+**The builder image.** The comparison is between two builds *of the same image*. Both
+Dockerfiles name a moving tag, and both install packages and clone vcpkg at image build
+time, so an image built from the same Dockerfile a year later is a different toolchain. What
+a rebuilder is verifying is therefore the source, given the builder - not the builder. To
+verify the builder as well, the image would have to be published by digest and pulled
+rather than rebuilt from the Dockerfile, and kept for as long as the release it built is
+worth checking.
+
+### Rebuilding one Linux asset
+
+```bash
+git clone https://github.com/LytraX/lyxbosa && cd lyxbosa
+git checkout v1.2.0
+
+docker/build/Linux/build.sh amd64 ./out 1.2.0          # or Linux-musl for -portable
+sha256sum out/lyxbosa-linux-amd64
+```
+
+The version argument matters: it is compiled in, so a rebuild at a different version is a
+different binary. Use the tag with the leading `v` removed, which is what the release job
+passes.
+
+Then compare that hash against the release's `SHA256SUMS` - after verifying the signature
+over it, for the reason *Release integrity* gives. The build directory inside the container
+is part of the specification and the script pins it; a build configured somewhere other
+than `/build` embeds that path through OpenSSL's `ENGINESDIR` and `MODULESDIR` and produces
+a different file. Where the *source* is checked out does not reach the binary.
+
+### Checking that the property still holds
+
+```bash
+docker/build/verify-reproducible.sh glibc amd64     # build twice, compare
+docker/build/verify-reproducible.sh musl amd64
+docker/build/verify-reproducible.sh --selftest      # the controls, no compiler needed
+docker/build/verify-reproducible.sh --control glibc amd64
+```
+
+The first form builds twice and reports whether the two runs produced the same file. It
+gives each run a vcpkg binary cache of its own, because two runs sharing one match for
+reasons that have nothing to do with any pin, and it separately requires each binary to
+carry `gmtime(SOURCE_DATE_EPOCH)` - equal bytes alone cannot tell a working pin from two
+builds that happened in the same second.
+
+`--control` is the other direction and costs two more builds: the same pair at two
+deliberately different epochs, which must produce *different* files. A green `--control` is
+what says the variable is reaching something.
+
 ## Verifying detection did not change
 
 Rule and engine changes must not move findings unless that is the point of the

@@ -97,6 +97,37 @@ function Announce($Line) {
     }
 }
 
+# The build timestamp, pinned, so the same source produces the same bytes.
+#
+# vcpkg builds OpenSSL from source here too - for the update verifier rather than for curl,
+# which uses Schannel on Windows - and its util/mkbuildinf.pl stamps the build time into the
+# banner libcrypto carries. On Linux that is measured: two builds of one commit minutes
+# apart differ in the banner and in the GNU build ID derived from it, and holding
+# SOURCE_DATE_EPOCH makes them the same file. Windows has a second clock this does not
+# touch, in the PE header the linker writes, so the Windows assets are not claimed to
+# reproduce - docs/RELEASING.md says which platforms the claim covers and why this is set
+# anyway: whatever else is left, it is one fewer thing, and it costs a variable.
+#
+# vcpkg scrubs the build environment on Windows, so the variable reaches a port build only
+# because the overlay triplets name it in VCPKG_ENV_PASSTHROUGH.
+#
+# An exported SOURCE_DATE_EPOCH wins, so a rebuilder can reproduce a release whose pinned
+# value differs from the one in the tree they happen to be holding.
+if (-not $env:SOURCE_DATE_EPOCH) {
+    $EpochFile = Join-Path $ScriptDir "..\source-date-epoch"
+    if (-not (Test-Path $EpochFile)) {
+        Write-Host "no epoch at $EpochFile" -ForegroundColor Red
+        exit 1
+    }
+    $env:SOURCE_DATE_EPOCH = (Get-Content $EpochFile -Raw).Trim()
+}
+if ($env:SOURCE_DATE_EPOCH -notmatch '^[0-9]+$') {
+    Write-Host "SOURCE_DATE_EPOCH is not a whole number of seconds: '$($env:SOURCE_DATE_EPOCH)'" -ForegroundColor Red
+    exit 1
+}
+$EpochUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$env:SOURCE_DATE_EPOCH).UtcDateTime
+Write-Host "SOURCE_DATE_EPOCH: $($env:SOURCE_DATE_EPOCH) ($EpochUtc UTC)"
+
 # Version override from environment
 $VersionArg = @()
 if ($env:LYXBOSA_VERSION) {

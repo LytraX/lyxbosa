@@ -875,6 +875,14 @@ download. It does not defend against a compromise of this repository or its CI, 
 signing key lives there, and no self-updater can do better without a separate offline
 signing step.
 
+**What narrows it is rebuilding.** The four Linux assets are built so that the same tagged
+source produces the same bytes: build the tag in the release container and the SHA256 you
+get is the one in that release's `SHA256SUMS`. Anyone can do that without holding any key,
+which turns the signature from the only evidence into one of two.
+[docs/RELEASING.md](docs/RELEASING.md#rebuilding-a-release) is the procedure, and it is
+also where the limits are - what a rebuild does and does not pin, and why the two Windows
+assets are outside it.
+
 ### `update --check` — ask without downloading
 
 ```bash
