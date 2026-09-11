@@ -108,6 +108,16 @@ std::vector<std::string> glibcVersionNames(unsigned minor) {
 class FakeHost : public ::testing::Test {
 protected:
     void SetUp() override {
+        // standardBuildHereAt() reads a glibc's dynamic string table through <elf.h>, so it
+        // is compiled only for Linux and answers Unknown everywhere else by design. These
+        // cases assert Yes and No against hosts built for the purpose, and off Linux there
+        // is nothing for them to observe - the same reason the BuildIdentityTest and
+        // PortableNoticeTest cases below skip rather than assert. Said here once because
+        // the fixture is shared, and said as a reason rather than as a silent pass.
+#if !defined(__linux__)
+        GTEST_SKIP() << "the glibc probe is compiled for Linux only, so a fake host has "
+                        "nothing to prove here";
+#endif
         root_ = fs::temp_directory_path() /
                 ("lyxbosa-host-" + std::to_string(::testing::UnitTest::GetInstance()
                                                       ->random_seed()) +
