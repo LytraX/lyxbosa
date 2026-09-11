@@ -1,4 +1,6 @@
 {
+  "name": "lyxbosa",
+  "version": "0.0.0",
   "dependencies": [
     "argparse",
     "reflectcpp",
@@ -24,5 +26,18 @@
       "$comment": "libcrypto for the update verifier (Ed25519, BLAKE2b-512, SHA-256). Already in the graph on Linux through curl's ssl feature; on Windows curl uses Schannel and this is the only thing that builds it. See CMakeLists.txt.",
       "name": "openssl"
     }
-  ]
+  ],
+  "features": {
+    "bundled-allocator": {
+      "description": "Carry an allocator in the binary instead of using the C library's. A feature rather than a dependency because only the static musl build asks for it: musl's allocator is deliberately small and simple, and the scan is malloc-heavy enough for that to cost real throughput. CMakeLists.txt decides what to do with it and docker/build/Linux-musl/build-inside.sh is what selects it.",
+      "dependencies": [
+        {
+          "name": "mimalloc",
+          "features": [
+            "override"
+          ]
+        }
+      ]
+    }
+  }
 }

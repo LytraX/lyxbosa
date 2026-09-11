@@ -109,6 +109,51 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   endif()
 endif()
 
+# The allocator the binary carries, if it carries one.
+#
+# musl's allocator is deliberately small and simple, and a scan is malloc-heavy: over
+# 53,977 files the static musl build ran about 40% slower than the glibc build of the
+# same commit, on the same tree, with the cache warm. That difference is the allocator
+# and not the C library in general, and it is the only thing that stops one Linux binary
+# from being the binary everybody gets. mimalloc carries its own free lists and heaps, is
+# built with MI_OVERRIDE so the ordinary malloc, free, new and delete entry points are
+# its own, and links into a static binary with nothing to load at run time.
+#
+# OFF by default and never inferred from the C library. The C library is detected here,
+# but the vcpkg feature that puts mimalloc in the dependency graph has to be selected on
+# the configure command line before this file runs at all, so a build that turned this on
+# by itself would fail to find a package nobody asked vcpkg to build.
+# docker/build/Linux-musl/build-inside.sh passes both halves together, and checks the
+# binary it produced actually runs on the allocator rather than trusting that it linked.
+option(LYXBOSA_BUNDLED_ALLOCATOR
+       "Link mimalloc into the binary in place of the C library's allocator" OFF)
+
+if(LYXBOSA_BUNDLED_ALLOCATOR)
+  find_package(mimalloc CONFIG REQUIRED)
+  # The port builds whichever of the two linkages the triplet asks for and exports the
+  # matching target; every triplet here is static, so mimalloc-static is what exists.
+  if(TARGET mimalloc-static)
+    set(LYXBOSA_ALLOCATOR_TARGET mimalloc-static)
+  elseif(TARGET mimalloc)
+    set(LYXBOSA_ALLOCATOR_TARGET mimalloc)
+  else()
+    message(FATAL_ERROR "mimalloc was found but exports neither mimalloc-static nor "
+                        "mimalloc: nothing would be linked and the binary would quietly "
+                        "keep the C library's allocator")
+  endif()
+  message(STATUS "Allocator: mimalloc (${LYXBOSA_ALLOCATOR_TARGET}), overriding malloc")
+endif()
+
+# Link the bundled allocator into an executable, if there is one. A function for the
+# same reason lyxbosa_configure_update is one: the CLI and the test binary must not
+# drift apart on it, because a test suite running on a different allocator from the
+# shipped binary is a suite that cannot see an allocator's effects at all.
+function(lyxbosa_configure_allocator target)
+  if(LYXBOSA_BUNDLED_ALLOCATOR)
+    target_link_libraries(${target} PRIVATE ${LYXBOSA_ALLOCATOR_TARGET})
+  endif()
+endfunction()
+
 # The keys a released binary trusts, compiled in from the one file that
 # keys/minisign-trusted.txt's header, docs/RELEASING.md and release-sign.sh all describe.
 # A verifier that read its keyring from disk at run time would be a verifier an attacker
@@ -278,6 +323,7 @@ target_link_libraries(lyxbosa
     Threads::Threads
 )
 lyxbosa_configure_update(lyxbosa)
+lyxbosa_configure_allocator(lyxbosa)
 
 if(LYXBOSA_TUI)
   target_link_libraries(lyxbosa PRIVATE ftxui::screen ftxui::dom ftxui::component)
@@ -333,6 +379,7 @@ if(BUILD_TESTS)
     tests/progress_model_test.cpp
     tests/archive_test.cpp
     tests/scan_root_test.cpp
+    tests/file_walker_test.cpp
     tests/long_path_test.cpp
     tests/update_test.cpp
     tests/update_apply_test.cpp
@@ -359,6 +406,7 @@ if(BUILD_TESTS)
       GTest::gtest
   )
   lyxbosa_configure_update(lyxbosa_tests)
+  lyxbosa_configure_allocator(lyxbosa_tests)
 
   # The keyring is compiled into the binary from this file. The test that asserts the
   # two are byte-identical needs to know where the file is, and it is given the path

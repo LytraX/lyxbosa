@@ -15,6 +15,7 @@
 // anything. Written once here so that no case can quietly ask a weaker question than
 // its neighbours, and so that adding the Windows arm was one edit rather than four.
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -25,6 +26,16 @@
 #endif
 
 namespace lyxbosa::test {
+
+// The current process id, spelled once. Only used to keep two concurrent test binaries
+// from colliding on a probe path.
+inline unsigned long getpid_portable() {
+#ifdef _WIN32
+    return static_cast<unsigned long>(::GetCurrentProcessId());
+#else
+    return static_cast<unsigned long>(::getpid());
+#endif
+}
 
 // Nullopt when this platform can deny the current user access to a path it owns.
 inline std::optional<std::string> whyCannotDenyOwnAccess() {
@@ -69,6 +80,28 @@ inline std::optional<std::string> whyCannotObserveLongPaths() {
     // PATH_MAX is 4096 here and the case stays well inside it; the property is observed.
     return std::nullopt;
 #endif
+}
+
+// Nullopt when this process can create a symbolic link. POSIX lets any user create one;
+// Windows needs SeCreateSymbolicLinkPrivilege or Developer Mode, and without it the
+// cases about symlink handling would set up a plain directory and then "observe" that
+// the walk descended into it - passing while blind, which is the shape AGENTS.md
+// records five earlier instances of. So the answer is taken from the host rather than
+// assumed: one link is created in a temporary directory and the error is reported.
+inline std::optional<std::string> whyCannotCreateSymlinks() {
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    const fs::path probe = fs::temp_directory_path() /
+                           ("lyxbosa-symlink-probe-" + std::to_string(getpid_portable()));
+    fs::remove(probe, ec);
+    fs::create_directory_symlink(fs::temp_directory_path(), probe, ec);
+    if (ec) {
+        return "this process may not create a symbolic link (" + ec.message() +
+               "), so the walk's symlink handling cannot be observed";
+    }
+    fs::remove(probe, ec);
+    return std::nullopt;
 }
 
 }  // namespace lyxbosa::test

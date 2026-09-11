@@ -22,7 +22,39 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Fixed
+
+- **A deep directory tree can no longer take the scanner off the end of a stack.** The
+  walk descended by calling itself once per directory level, so a tree's depth was paid
+  for in call frames - and directory depth is whatever the host's filesystem holds, which
+  on a compromised site is whatever the attacker put there. It now keeps an explicit list
+  of directories still to read, so depth costs no stack at all and ends where the
+  filesystem ends it. Only directories are held and never the files in them, so a
+  directory with ten million files in it costs the walk nothing either.
+
+  This was reachable on the musl build in particular. A scan runs a second walk on a
+  spawned thread to count files for the progress bar, and a spawned thread gets 8 MB of
+  stack from glibc and 128 KB from musl, so the static build had far less room for the
+  same tree. Reports are unchanged: files are now listed in a slightly different order -
+  every file of a directory before anything in its subdirectories, where before a
+  subdirectory's contents appeared where the subdirectory did - and nothing else about
+  them moves. Detection over the whole reviewed corpus is identical on both builds.
+
 ### Added
+
+- **The musl binary carries its own allocator**, which is most of what made it slower
+  than the glibc one. musl's allocator is deliberately small and simple and a scan asks a
+  great deal of it; mimalloc is now linked into the static build in its place. Measured
+  over 53,977 files with the page cache warm, alternating the two binaries: the musl
+  build went from 9.32, 9.38 and 9.33 seconds to 8.04, 8.11 and 8.07, against 7.43, 7.37
+  and 7.39 for the glibc binary of the same commit. On a tree of small files, where
+  allocation is most of the work, it is nearly all of the difference: 0.20 seconds
+  becomes 0.13 against glibc's 0.11. What remains is not the allocator: jemalloc,
+  linked the same way, lands on the same numbers to within a hundredth of a second on
+  all three trees, and on large files neither moves much. Detection is unchanged - 730 of
+  1,299, regression 131 of 131, 44 benign findings in 197,559 files read, the same as the
+  glibc build. The glibc binary is unaffected; only the static build links it, because
+  only the static build needed it.
 
 - **A static musl build of the Linux binary, published beside the glibc one.** Every
   release now carries `lyxbosa-linux-<arch>-musl` for amd64 and arm64 as well as

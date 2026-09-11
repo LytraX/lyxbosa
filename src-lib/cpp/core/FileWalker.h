@@ -71,7 +71,18 @@ public:
     size_t walk(FileCallback callback, size_t* unreadableDirs = nullptr,
                 std::vector<std::filesystem::path>* missingRoots = nullptr) const;
 
-    // Walk a single directory (stopped is set to true if callback returns false)
+    // Walk a single directory and everything under it (stopped is set to true if
+    // callback returns false). Returns the number of directories entered.
+    //
+    // The traversal is iterative - an explicit stack of directories, not recursion -
+    // so directory depth costs no call stack and cannot overflow one. That matters
+    // because depth is attacker-controlled and because the pre-count walk runs on a
+    // spawned thread, whose stack is 8 MB under glibc and 128 KB under musl. The
+    // implementation says what else that choice buys.
+    //
+    // Order: depth-first, and within a directory every file is reported before the
+    // walk descends into any subdirectory. Sibling order is the host's listing order.
+    // Callers must not depend on more than that.
     size_t walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,
                          size_t* unreadableDirs = nullptr) const;
 
