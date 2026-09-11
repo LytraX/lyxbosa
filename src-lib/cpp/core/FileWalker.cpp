@@ -104,15 +104,40 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
                                  size_t* unreadableDirs) const {
     namespace fs = std::filesystem;
 
-    if (stopped || !fs::exists(dir) || !fs::is_directory(dir)) {
-        return 0;
-    }
+    // An explicit stack of directories still to read, rather than one C++ call frame
+    // per directory level.
+    //
+    // Directory depth is attacker-controlled - a mkdir loop is three lines of shell -
+    // so a recursive walk turns a tree into a stack overflow, and the tool that
+    // crashes is the one somebody is running to investigate an incident. It was
+    // reachable in practice rather than in theory: Scanner::scan() runs a second walk
+    // on a spawned thread to pre-count files, glibc gives that thread 8 MB of stack
+    // and musl gives it 128 KB, so the static musl build died with SIGSEGV on a tree
+    // the glibc build walked without noticing. Raising the thread's stack would have
+    // moved the ceiling; an explicit stack removes it, on both C libraries, on any
+    // thread, and on Windows.
+    //
+    // Only directories are held here, never the files in them. A walk that buffered
+    // each directory's entries would trade a depth limit for a width one, and width
+    // is attacker-controlled in exactly the same way: this way a directory of ten
+    // million files costs the walk nothing at all.
+    //
+    // ORDER. Files are reported for the whole of one directory before the walk
+    // descends into any of its subdirectories, where the recursive version descended
+    // at the point a subdirectory appeared in the listing. Within each of those two
+    // groups the host's own listing order is preserved - children are pushed in
+    // reverse so they come back off the stack in the order they were read - and the
+    // traversal is still depth-first. Nothing downstream reads the walk's order: the
+    // scanner accumulates counts and appends findings, the reporters iterate whatever
+    // they are given, and no case asserts a sequence.
+    std::vector<fs::path> pending;
+    pending.push_back(dir);
 
-    if (dirCallback_) {
-        dirCallback_(dir);
-    }
+    // Subdirectories of the directory currently being read, in listing order. Held
+    // outside the loop so one buffer serves the whole walk.
+    std::vector<fs::path> children;
 
-    size_t dirCount = 1;
+    size_t dirCount = 0;
 
     std::error_code ec;
 
@@ -134,11 +159,11 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
 
         if (entry.is_directory(ec)) {
             if (config_.recursive && !entry.is_symlink(ec)) {
-                dirCount += walkDirectory(entry.path(), callback, stopped, unreadableDirs);
+                children.push_back(entry.path());
             } else if (config_.recursive && config_.followSymlinks && entry.is_symlink(ec)) {
-                dirCount += walkDirectory(entry.path(), callback, stopped, unreadableDirs);
+                children.push_back(entry.path());
             }
-            return !stopped;
+            return true;
         }
 
         if (!entry.is_regular_file(ec)) {
@@ -190,21 +215,48 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
         return true;
     };
 
-    try {
-        for (const auto& entry : fs::directory_iterator(dir, options, ec)) {
-            if (!processEntry(entry)) break;
+    while (!pending.empty() && !stopped) {
+        const fs::path current = std::move(pending.back());
+        pending.pop_back();
+
+        // Quiet about a path that is not a directory by the time the walk reaches
+        // it. A subdirectory can vanish under a running scan, and that is a race and
+        // nobody's error; a root the operator named and got wrong is walk()'s
+        // question, because walk() is the only place that knows a path came from the
+        // operator. One is_directory() answers both halves of the exists()-then-
+        // is_directory() pair the recursive version asked - absent and not-a-
+        // directory are both false - and asks the host once instead of twice.
+        std::error_code currentEc;
+        if (!fs::is_directory(current, currentEc)) {
+            continue;
         }
-        // directory_options::skip_permission_denied means the iterator swallows an
-        // unreadable subdirectory silently; `ec` is where it says so.
-        if (ec && unreadableDirs) {
-            ++*unreadableDirs;
+
+        if (dirCallback_) {
+            dirCallback_(current);
         }
-    } catch (const fs::filesystem_error&) {
-        // A directory the scanner was pointed at and could not read is a fact about
-        // the scan's coverage, not nothing.
-        if (unreadableDirs) {
-            ++*unreadableDirs;
+
+        ++dirCount;
+        children.clear();
+
+        try {
+            for (const auto& entry : fs::directory_iterator(current, options, ec)) {
+                if (!processEntry(entry)) break;
+            }
+            // directory_options::skip_permission_denied means the iterator swallows an
+            // unreadable subdirectory silently; `ec` is where it says so.
+            if (ec && unreadableDirs) {
+                ++*unreadableDirs;
+            }
+        } catch (const fs::filesystem_error&) {
+            // A directory the scanner was pointed at and could not read is a fact about
+            // the scan's coverage, not nothing.
+            if (unreadableDirs) {
+                ++*unreadableDirs;
+            }
         }
+
+        // Reversed, so the deepest-first stack hands them back in listing order.
+        pending.insert(pending.end(), children.rbegin(), children.rend());
     }
 
     return dirCount;

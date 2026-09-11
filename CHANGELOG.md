@@ -22,6 +22,24 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Fixed
+
+- **A deep directory tree can no longer take the scanner off the end of a stack.** The
+  walk descended by calling itself once per directory level, so a tree's depth was paid
+  for in call frames - and directory depth is whatever the host's filesystem holds, which
+  on a compromised site is whatever the attacker put there. It now keeps an explicit list
+  of directories still to read, so depth costs no stack at all and ends where the
+  filesystem ends it. Only directories are held and never the files in them, so a
+  directory with ten million files in it costs the walk nothing either.
+
+  This was reachable on the musl build in particular. A scan runs a second walk on a
+  spawned thread to count files for the progress bar, and a spawned thread gets 8 MB of
+  stack from glibc and 128 KB from musl, so the static build had far less room for the
+  same tree. Reports are unchanged: files are now listed in a slightly different order -
+  every file of a directory before anything in its subdirectories, where before a
+  subdirectory's contents appeared where the subdirectory did - and nothing else about
+  them moves. Detection over the whole reviewed corpus is identical on both builds.
+
 ### Added
 
 - **A static musl build of the Linux binary, published beside the glibc one.** Every

@@ -333,6 +333,7 @@ if(BUILD_TESTS)
     tests/progress_model_test.cpp
     tests/archive_test.cpp
     tests/scan_root_test.cpp
+    tests/file_walker_test.cpp
     tests/long_path_test.cpp
     tests/update_test.cpp
     tests/update_apply_test.cpp
