@@ -22,6 +22,52 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Changed
+
+- **The portable-build notice no longer quotes a speed figure, and no longer claims to be
+  said only once.** It said the standard build "is about 10% faster on a scan". That came
+  from one tree on one machine, and the difference is a property of the work rather than of
+  the two binaries: 11% over 53,977 mostly small files, 9% over 136 archives totalling
+  991 MB, and 2.5% on a live server scanning 81,701 files with 301 MB of archive expansion,
+  warm against warm — the most realistic of the three and nearly four times smaller than
+  the number the binary was printing. A percentage compiled into a binary also cannot be
+  corrected without a release. The line now says the standard build is faster and that how
+  much depends on the tree and the host; the three measurements, with what each was over,
+  are in `README.md` under *System support*, where they can be added to.
+
+- **That notice is now repeated at most once every 30 days instead of only ever once.**
+  Once-ever was not quiet, it was unobservable: a server scan's output scrolls, the state
+  file belongs to whichever user ran the scan, the person reading the output is routinely
+  not the person who installed the binary, and from outside the process "said once, months
+  ago" and "never said" are the same thing. The interval is the notice's own and is
+  deliberately **not** `updates.interval`: lengthening that buys less traffic to a
+  rate-limited API, and it must not also silence a line that opens no socket, for the same
+  reason the notice has never been gated on `updates.check`.
+
+  Everything about when it may speak at all is unchanged: an interactive scan only, stdout
+  a terminal, suppressed by `--quiet`, `--silent`, `--force`, a pipe and CI, silent unless
+  the host is proven able to run the standard build, and silent on any run whose state file
+  cannot be written.
+
+  **On upgrade it does not immediately repeat itself.** The cached state file gains a
+  `portable_notice_epoch` timestamp beside the `portable_notice_shown` flag it already
+  carried. A file holding only the old flag knows the line was said and not when, so the
+  first qualifying run writes a timestamp and prints nothing — the line is then due 30 days
+  later rather than at once, and rather than never. The old key is still written as well, so
+  a binary rolled back to a version that only understands it keeps its own once-ever
+  behaviour instead of announcing the line again. The file lives under the cache directory
+  and remains safe to delete.
+
+### Fixed
+
+- **An update check no longer resets the portable-build notice's interval.** Three places
+  recorded what a check had found — a scan's own background check, `update --check`, and
+  `update` — by building a cache record from nothing and writing it. Each wrote its own two
+  fields correctly and erased every other field the file held, so any run that reached the
+  network cleared the record of when that notice was last said and the line came back early.
+  All three now go through one function that reads the file before changing it, which is
+  also why there is one function rather than three corrected copies.
+
 ## [2.4.0] - 2026-09-11
 
 ### Fixed

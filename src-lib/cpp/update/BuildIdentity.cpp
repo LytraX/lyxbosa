@@ -219,6 +219,28 @@ StandardBuildHere standardBuildHere() {
 #endif
 }
 
+std::string portableBuildNoticeFor(std::string_view standardAsset) {
+    // Six spaces on the continuation lines, because the scan prints this behind a
+    // "Note: " prefix - the same shape as updateNotice(), and the lines are kept inside
+    // 78 columns so a narrow terminal does not re-wrap them into a paragraph.
+    //
+    // NO NUMBER IN HERE, and that is the rule rather than an omission. The difference
+    // between the two builds is a property of the work and not of the binaries: about a
+    // tenth on a tree of small files, a fortieth on a server scan whose time goes into
+    // archive expansion. One percentage compiled in cannot be corrected without a
+    // release, so the claim made here has to be one that stays true on a tree nobody has
+    // measured - and the measurements, with what each was over, belong in README.md
+    // under *System support*, where they can be added to. A test asserts that no
+    // digit-and-percent comes back into this string.
+    return fmt::format(
+        "this is the portable build, and this host can run the standard one.\n"
+        "      {} is faster on the same scan - how much depends on\n"
+        "      the tree and the host - and finds exactly the same things.\n"
+        "      Install it once by hand; updates stay on it. This is said\n"
+        "      again at most once a month.\n",
+        standardAsset);
+}
+
 std::string portableBuildNotice() {
     if (!isPortableBuild()) return {};
     if (standardBuildHere() != StandardBuildHere::Yes) return {};
@@ -226,17 +248,8 @@ std::string portableBuildNotice() {
     constexpr std::string_view kSuffix = "-portable";
     const std::string_view asset = platformAssetName();
     if (!asset.ends_with(kSuffix)) return {};
-    const std::string_view standard = asset.substr(0, asset.size() - kSuffix.size());
 
-    // Six spaces on the continuation lines, because the scan prints this behind a
-    // "Note: " prefix - the same shape as updateNotice(), and the lines are kept inside
-    // 78 columns so a narrow terminal does not re-wrap them into a paragraph.
-    return fmt::format(
-        "this is the portable build, and this host can run the standard one.\n"
-        "      {} is about 10% faster on a scan and finds exactly\n"
-        "      the same things. Install it once by hand; updates stay on it.\n"
-        "      This is said once.\n",
-        standard);
+    return portableBuildNoticeFor(asset.substr(0, asset.size() - kSuffix.size()));
 }
 
 }  // namespace lyxbosa

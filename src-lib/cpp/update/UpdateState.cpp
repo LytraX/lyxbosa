@@ -14,8 +14,8 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// A state file is three short lines. Anything larger is not one, and reading it
-// would be reading whatever else ended up at that path.
+// A state file is a handful of short lines. Anything larger is not one, and reading
+// it would be reading whatever else ended up at that path.
 constexpr std::uintmax_t kMaxStateBytes = 4096;
 
 // Long enough for any version this project will publish, short enough that a
@@ -118,11 +118,19 @@ std::optional<UpdateState> readUpdateState(const std::filesystem::path& path) {
                 state.latestVersion.assign(value);
                 sawAnything = true;
             }
+        } else if (key == "portable_notice_epoch") {
+            if (const auto epoch = parseEpoch(value)) {
+                state.portableNoticeEpoch = *epoch;
+                sawAnything = true;
+            }
         } else if (key == "portable_notice_shown") {
-            // Only the exact value this file writes counts as yes. Anything else -
-            // a truncated line, a hand-edit, a value from a later version of this
-            // file - means "not shown", which costs at most one extra line once.
-            state.portableNoticeShown = (value == "1");
+            // The pre-timestamp spelling of the key above. Only the exact value that
+            // version wrote counts as yes: anything else - a truncated line, a
+            // hand-edit, a value from some other version of this file - means "not
+            // shown", which costs at most one extra line once. An unparseable
+            // portable_notice_epoch therefore lands here, and the run that sees it
+            // stamps a fresh timestamp rather than printing.
+            state.portableNoticeShownLegacy = (value == "1");
             sawAnything = true;
         }
         // Anything else is a key from a later version of this file. Ignored, not an
@@ -157,7 +165,13 @@ bool writeUpdateState(const std::filesystem::path& path, const UpdateState& stat
             state.latestVersion.size() <= kMaxVersionChars) {
             out << "latest_version=" << state.latestVersion << '\n';
         }
-        if (state.portableNoticeShown) {
+        if (state.portableNoticeEpoch) {
+            out << "portable_notice_epoch=" << *state.portableNoticeEpoch << '\n';
+        }
+        // Beside the timestamp rather than instead of it, so that a binary rolled back
+        // to one that only knows this key keeps its own once-ever contract. See the
+        // field's comment in the header.
+        if (state.portableNoticeEpoch || state.portableNoticeShownLegacy) {
             out << "portable_notice_shown=1\n";
         }
         out.flush();
@@ -184,12 +198,23 @@ bool reserveUpdateCheck(const std::filesystem::path& path, uint64_t nowEpoch) {
     return writeUpdateState(path, state);
 }
 
-bool recordPortableNoticeShown(const std::filesystem::path& path) {
+bool recordLatestVersion(const std::filesystem::path& path, uint64_t nowEpoch,
+                         const std::string& version) {
     UpdateState state;
     if (const auto existing = readUpdateState(path)) {
         state = *existing;
     }
-    state.portableNoticeShown = true;
+    state.lastCheckEpoch = nowEpoch;
+    state.latestVersion = version;
+    return writeUpdateState(path, state);
+}
+
+bool recordPortableNoticeShown(const std::filesystem::path& path, uint64_t nowEpoch) {
+    UpdateState state;
+    if (const auto existing = readUpdateState(path)) {
+        state = *existing;
+    }
+    state.portableNoticeEpoch = nowEpoch;
     return writeUpdateState(path, state);
 }
 

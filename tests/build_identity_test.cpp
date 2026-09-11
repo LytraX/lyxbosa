@@ -21,7 +21,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace lyxbosa;
@@ -156,6 +159,15 @@ protected:
 
     fs::path root_;
 };
+
+// Whether a string quotes a percentage, in either spelling. A named predicate rather than
+// an inline expression, so that the case using it can assert it says yes as well as no: a
+// check only ever run on a string that passes is not known to be able to fail, and this
+// one is the whole defence against a figure coming back into a compiled-in sentence.
+bool quotesAPercentage(std::string_view text) {
+    return text.find('%') != std::string_view::npos ||
+           text.find("percent") != std::string_view::npos;
+}
 
 }  // namespace
 
@@ -294,8 +306,13 @@ TEST(BuildIdentityTest, TheRealHostAnswersYesWhenThisProcessIsItselfTheProof) {
 
 namespace {
 
+// A plausible "now", fixed rather than read off the clock, so that every interval case
+// below is arithmetic on two constants and nothing sleeps.
+constexpr uint64_t kNow = 1'757'600'000;
+
 // A context that would print, so that each case below turns exactly one thing off and
-// the reason a case passes is the thing it changed.
+// the reason a case passes is the thing it changed. Never said before, so no timestamp
+// and no legacy flag.
 PortableNoticeContext wouldPrint() {
     PortableNoticeContext ctx;
     ctx.callSite = UpdateCallSite::Scan;
@@ -306,7 +323,9 @@ PortableNoticeContext wouldPrint() {
     ctx.silent = false;
     ctx.force = false;
     ctx.stateWritable = true;
-    ctx.alreadyShown = false;
+    ctx.lastShownEpoch = std::nullopt;
+    ctx.shownBeforeTimestamps = false;
+    ctx.nowEpoch = kNow;
     ctx.standardBuild = StandardBuildHere::Yes;
     return ctx;
 }
@@ -378,10 +397,132 @@ TEST(PortableNoticeTest, OnlyAScanSaysIt) {
     }
 }
 
-TEST(PortableNoticeTest, ItIsSaidOnceAndThenNeverAgain) {
+TEST(PortableNoticeTest, ItIsNotRepeatedInsideTheInterval) {
+    // The half of the cadence that keeps it from being noise. A scan a second after the
+    // last one, one a day later, and one a second short of the interval are all silent.
+    for (const uint64_t elapsed : {uint64_t{0}, uint64_t{1}, uint64_t{24 * 60 * 60},
+                                   kPortableNoticeIntervalSeconds - 1}) {
+        auto ctx = wouldPrint();
+        ctx.lastShownEpoch = kNow - elapsed;
+        EXPECT_EQ(decidePortableNotice(ctx), PortableNoticeDecision::SkipSaidRecently)
+            << "repeated " << elapsed << " seconds after it was last said";
+    }
+}
+
+TEST(PortableNoticeTest, ItIsSaidAgainOnceTheIntervalHasPassed) {
+    // The half that the flag could not do at all, and the reason this is a timestamp:
+    // exactly at the interval, and long past it, the line comes back.
+    for (const uint64_t elapsed : {kPortableNoticeIntervalSeconds,
+                                   kPortableNoticeIntervalSeconds + 1,
+                                   10 * kPortableNoticeIntervalSeconds}) {
+        auto ctx = wouldPrint();
+        ctx.lastShownEpoch = kNow - elapsed;
+        EXPECT_EQ(decidePortableNotice(ctx), PortableNoticeDecision::Show)
+            << "still silent " << elapsed << " seconds after it was last said";
+    }
+}
+
+TEST(PortableNoticeTest, TheIntervalIsAMonthAndIsNotTheUpdateInterval) {
+    // Two claims, and the second is the one a future edit could quietly break. The
+    // number is a month, so a change to it fails here and has to be argued for; and it
+    // is this file's own constant, so an operator who lengthens updates.interval to be
+    // kind to a rate-limited API does not thereby silence a line that opens no socket.
+    EXPECT_EQ(kPortableNoticeIntervalSeconds, 30ull * 24 * 60 * 60);
+
+    // The decoupling is structural and the compiler is what enforces it:
+    // PortableNoticeContext has no interval field to set, so there is no path by which
+    // an operator's updates.interval could reach this decision. What is asserted here is
+    // that the decision is made from the constant and from nothing configurable - a run
+    // exactly an interval on says the line whatever any configuration says.
     auto ctx = wouldPrint();
-    ctx.alreadyShown = true;
-    EXPECT_EQ(decidePortableNotice(ctx), PortableNoticeDecision::SkipAlreadyShown);
+    ctx.lastShownEpoch = kNow - kPortableNoticeIntervalSeconds;
+    EXPECT_EQ(decidePortableNotice(ctx), PortableNoticeDecision::Show);
+}
+
+TEST(PortableNoticeTest, ATimestampInTheFutureIsDueRatherThanSilent) {
+    // A clock that was set forward and then corrected leaves a timestamp ahead of now.
+    // decideUpdateCheck() treats that as "do not check", because there the cost avoided
+    // is a request. Here the cost is one line and the run that prints it rewrites the
+    // timestamp, so due is the self-repairing answer and silent is how a host falls back
+    // into the once-ever state this cadence exists to leave.
+    auto ctx = wouldPrint();
+    ctx.lastShownEpoch = kNow + 5 * kPortableNoticeIntervalSeconds;
+    EXPECT_EQ(decidePortableNotice(ctx), PortableNoticeDecision::Show)
+        << "a timestamp in the future silenced the notice";
+}
+
+TEST(PortableNoticeTest, AnUpgradedStateFileStampsTheClockAndStaysQuiet) {
+    // The old flag, and no timestamp. Neither obvious answer is right: printing repeats
+    // a line the operator already dismissed the moment they upgrade, and skipping
+    // forever leaves the host silent for good on a flag that no longer means that. So
+    // the run writes a timestamp and prints nothing, and the line is due an interval
+    // later - which the next case asserts rather than assumes.
+    auto ctx = wouldPrint();
+    ctx.shownBeforeTimestamps = true;
+    ASSERT_EQ(decidePortableNotice(ctx), PortableNoticeDecision::AdoptLegacyFlag);
+    EXPECT_TRUE(portableNoticeWrites(decidePortableNotice(ctx)))
+        << "the upgrade outcome would not have written the state file, so it would "
+           "recur on every scan";
+
+    // An interval after the stamp, it is an ordinary due notice.
+    ctx.lastShownEpoch = kNow;
+    ctx.nowEpoch = kNow + kPortableNoticeIntervalSeconds;
+    EXPECT_EQ(decidePortableNotice(ctx), PortableNoticeDecision::Show);
+}
+
+TEST(PortableNoticeTest, AFreshStateFileWithNoOldFlagJustSaysIt) {
+    // The other direction, and the case that would pass silently if the legacy branch
+    // were reached by every run: a file that never carried the flag is not migrated,
+    // it is printed.
+    auto ctx = wouldPrint();
+    ctx.shownBeforeTimestamps = false;
+    EXPECT_EQ(decidePortableNotice(ctx), PortableNoticeDecision::Show);
+}
+
+TEST(PortableNoticeTest, ATimestampOutranksTheOldFlagInBothDirections) {
+    // Once a timestamp exists the flag is never consulted again, whichever way it
+    // points. A file carrying both - which is what this version writes - is governed by
+    // the timestamp, so the migration happens once and not on every run for ever.
+    auto recent = wouldPrint();
+    recent.shownBeforeTimestamps = true;
+    recent.lastShownEpoch = kNow - 1;
+    EXPECT_EQ(decidePortableNotice(recent), PortableNoticeDecision::SkipSaidRecently);
+
+    auto due = wouldPrint();
+    due.shownBeforeTimestamps = true;
+    due.lastShownEpoch = kNow - kPortableNoticeIntervalSeconds;
+    EXPECT_EQ(decidePortableNotice(due), PortableNoticeDecision::Show)
+        << "the old flag was still being consulted alongside a timestamp";
+}
+
+TEST(PortableNoticeTest, EverySuppressionOutranksTheUpgradeStampToo) {
+    // A cadence change is exactly the kind of edit that loosens a suppression, and the
+    // upgrade stamp is a second way to reach the state file. None of the gates above it
+    // may be bypassed by a state file that happens to carry the old flag - a --quiet run
+    // on an upgraded host must write nothing and say nothing.
+    for (const auto& [name, apply] :
+         std::vector<std::pair<const char*, void (*)(PortableNoticeContext&)>>{
+             {"--quiet", [](PortableNoticeContext& c) { c.quiet = true; }},
+             {"--silent", [](PortableNoticeContext& c) { c.silent = true; }},
+             {"--force", [](PortableNoticeContext& c) { c.force = true; }},
+             {"a pipe", [](PortableNoticeContext& c) { c.stdoutIsTty = false; }},
+             {"CI", [](PortableNoticeContext& c) { c.isCI = true; }},
+             {"another command",
+              [](PortableNoticeContext& c) { c.callSite = UpdateCallSite::OtherCommand; }},
+             {"a host with no alternative",
+              [](PortableNoticeContext& c) { c.standardBuild = StandardBuildHere::No; }},
+             {"an unwritable state file",
+              [](PortableNoticeContext& c) { c.stateWritable = false; }}}) {
+        auto ctx = wouldPrint();
+        ctx.shownBeforeTimestamps = true;
+        apply(ctx);
+        const auto decision = decidePortableNotice(ctx);
+        EXPECT_NE(decision, PortableNoticeDecision::Show)
+            << name << " did not suppress the notice on an upgraded state file";
+        EXPECT_FALSE(portableNoticeWrites(decision))
+            << name << " let an upgraded state file be written anyway: "
+            << portableNoticeReason(decision);
+    }
 }
 
 TEST(PortableNoticeTest, AStateFileThatCannotBeWrittenMeansSayNothing) {
@@ -414,6 +555,51 @@ TEST(PortableNoticeTest, TheStandardBuildProducesNoNoticeWhateverTheHostIs) {
 #endif
 }
 
+TEST(PortableNoticeTest, TheWordingQuotesNoPercentage) {
+    // The figure this sentence used to carry came from one tree on one machine and was
+    // nearly four times the difference measured on the most realistic of the three
+    // workloads since. A number compiled into a binary cannot be corrected without a
+    // release, so this case is what stops one being written back in - and it runs in
+    // every build and on every host, which the end-to-end case below cannot.
+    const std::string notice = portableBuildNoticeFor("lyxbosa-linux-amd64");
+    ASSERT_FALSE(notice.empty());
+    EXPECT_FALSE(quotesAPercentage(notice)) << notice;
+
+    // The positive control on the predicate itself, in both spellings. Without it a
+    // find() that had been broken into always returning npos would pass this file.
+    EXPECT_TRUE(quotesAPercentage("is about 10% faster on a scan"));
+    EXPECT_TRUE(quotesAPercentage("is about 10 percent faster on a scan"));
+}
+
+TEST(PortableNoticeTest, TheWordingSaysFasterAndSaysItDepends) {
+    // What has to survive an edit: the claim that stays true on a tree nobody has
+    // measured. Faster, and by an amount that is a property of the work.
+    const std::string notice = portableBuildNoticeFor("lyxbosa-linux-amd64");
+    EXPECT_NE(notice.find("faster"), std::string::npos) << notice;
+    EXPECT_NE(notice.find("depends"), std::string::npos) << notice;
+}
+
+TEST(PortableNoticeTest, TheWordingPromisesTheCadenceItActuallyKeeps) {
+    // It said "This is said once." while being said once, which was accurate and was the
+    // defect. What it may not do is promise once-ever while repeating: a sentence that
+    // disagrees with the policy is worse than either behaviour on its own.
+    const std::string notice = portableBuildNoticeFor("lyxbosa-linux-amd64");
+    EXPECT_EQ(notice.find("This is said once"), std::string::npos)
+        << "the sentence still promises once-ever: " << notice;
+    EXPECT_NE(notice.find("month"), std::string::npos)
+        << "the sentence does not say how often it comes back: " << notice;
+}
+
+TEST(PortableNoticeTest, TheWordingNamesTheStandardAssetAndNotThePortableOne) {
+    // The same two claims the musl-only case below makes about the shipped binary, made
+    // here where they are observable: every build, every host. The whole point of the
+    // line is that the reader can act on it, and acting means fetching a named file.
+    const std::string notice = portableBuildNoticeFor("lyxbosa-linux-arm64");
+    EXPECT_NE(notice.find("lyxbosa-linux-arm64"), std::string::npos) << notice;
+    EXPECT_EQ(notice.find("lyxbosa-linux-arm64-portable"), std::string::npos)
+        << "the notice names the build the reader already has: " << notice;
+}
+
 TEST(PortableNoticeTest, TheSentenceNamesTheAssetToInstall) {
 #if defined(__linux__) && defined(LYXBOSA_LIBC_MUSL)
     if (standardBuildHere() != StandardBuildHere::Yes) {
@@ -434,10 +620,10 @@ TEST(PortableNoticeTest, TheSentenceNamesTheAssetToInstall) {
 }
 
 // ---------------------------------------------------------------------------------------
-// The flag survives a round trip through the state file.
+// When it was last said survives a round trip through the state file.
 // ---------------------------------------------------------------------------------------
 
-TEST_F(FakeHost, TheShownFlagIsRememberedAndDoesNotDisturbTheRest) {
+TEST_F(FakeHost, TheTimeItWasSaidIsRememberedAndDoesNotDisturbTheRest) {
     const fs::path statePath = root_ / "update-check";
 
     UpdateState before;
@@ -447,17 +633,123 @@ TEST_F(FakeHost, TheShownFlagIsRememberedAndDoesNotDisturbTheRest) {
 
     auto read = readUpdateState(statePath);
     ASSERT_TRUE(read.has_value());
-    EXPECT_FALSE(read->portableNoticeShown) << "a state file that never said so said so";
+    EXPECT_FALSE(read->portableNoticeEpoch.has_value())
+        << "a state file that never said the line carried a time for it";
+    EXPECT_FALSE(read->portableNoticeShownLegacy);
 
-    ASSERT_TRUE(recordPortableNoticeShown(statePath));
+    ASSERT_TRUE(recordPortableNoticeShown(statePath, 1'757'600'000));
     read = readUpdateState(statePath);
     ASSERT_TRUE(read.has_value());
-    EXPECT_TRUE(read->portableNoticeShown);
+    ASSERT_TRUE(read->portableNoticeEpoch.has_value())
+        << "the time it was said was not recorded, so it would be said on every scan";
+    EXPECT_EQ(*read->portableNoticeEpoch, 1'757'600'000u);
+
+    // A second run overwrites the time rather than keeping the first one, which is what
+    // makes the interval run from the last saying and not from the first.
+    ASSERT_TRUE(recordPortableNoticeShown(statePath, 1'760'000'000));
+    read = readUpdateState(statePath);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(*read->portableNoticeEpoch, 1'760'000'000u);
 
     // The update check's own fields are what the notice must not damage: a scan that
     // says this line must not also forget when it last checked for a release.
     EXPECT_EQ(read->lastCheckEpoch, before.lastCheckEpoch);
     EXPECT_EQ(read->latestVersion, before.latestVersion);
+}
+
+TEST_F(FakeHost, AnUpgradedStateFileIsReadAsSaidWithNoWhen) {
+    // The file an operator upgrading from a once-ever binary already has. It has to come
+    // back as the legacy flag and NOT as a timestamp, because those two land on opposite
+    // decisions: one stamps the clock silently, the other would be read as a time and
+    // measured against the interval.
+    const fs::path statePath = root_ / "upgraded";
+    {
+        std::ofstream out(statePath, std::ios::trunc);
+        out << "last_check=1757500000\n"
+            << "latest_version=2.4.0\n"
+            << "portable_notice_shown=1\n";
+    }
+    const auto read = readUpdateState(statePath);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_TRUE(read->portableNoticeShownLegacy);
+    EXPECT_FALSE(read->portableNoticeEpoch.has_value())
+        << "the old flag was read as a time, which it is not";
+}
+
+TEST_F(FakeHost, StampingAnUpgradedFileLeavesBothKeysAndBothReaders) {
+    // What the upgrade run writes, and it is written for two readers. This version reads
+    // the timestamp and stops consulting the flag; a binary rolled back to one that only
+    // knows the flag still finds it and keeps its own once-ever contract rather than
+    // re-announcing.
+    const fs::path statePath = root_ / "upgraded-then-stamped";
+    {
+        std::ofstream out(statePath, std::ios::trunc);
+        out << "last_check=1757500000\nportable_notice_shown=1\n";
+    }
+    ASSERT_TRUE(recordPortableNoticeShown(statePath, 1'757'600'000));
+
+    const auto read = readUpdateState(statePath);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read->portableNoticeEpoch.has_value());
+    EXPECT_EQ(*read->portableNoticeEpoch, 1'757'600'000u);
+    EXPECT_TRUE(read->portableNoticeShownLegacy);
+
+    std::ifstream in(statePath);
+    const std::string text{std::istreambuf_iterator<char>(in),
+                           std::istreambuf_iterator<char>()};
+    EXPECT_NE(text.find("portable_notice_epoch=1757600000"), std::string::npos) << text;
+    EXPECT_NE(text.find("portable_notice_shown=1"), std::string::npos)
+        << "an older binary reading this file would announce the line again: " << text;
+}
+
+TEST_F(FakeHost, AFreshStampWritesTheFlagAnOlderBinaryNeeds) {
+    // The same thing on a file that never carried the flag: saying the line for the
+    // first time still leaves the older key behind it.
+    const fs::path statePath = root_ / "fresh";
+    ASSERT_TRUE(recordPortableNoticeShown(statePath, 1'757'600'000));
+    std::ifstream in(statePath);
+    const std::string text{std::istreambuf_iterator<char>(in),
+                           std::istreambuf_iterator<char>()};
+    EXPECT_NE(text.find("portable_notice_shown=1"), std::string::npos) << text;
+}
+
+TEST_F(FakeHost, AnUpdateCheckDoesNotResetTheNoticesClock) {
+    // The defect the cadence could not survive, and it was not in the cadence. Three
+    // places recorded what an update check found by building a state from nothing and
+    // writing it, which wrote their own two fields correctly and erased this timestamp -
+    // so any scan, `update --check` or `update` whose check reached the network reset the
+    // interval, and the line came back early. That is invisible from inside the notice:
+    // every gate was right and the state it read was simply gone.
+    const fs::path statePath = root_ / "update-check";
+    ASSERT_TRUE(recordPortableNoticeShown(statePath, 1'757'600'000));
+
+    ASSERT_TRUE(recordLatestVersion(statePath, 1'757'700'000, "2.4.0"));
+    auto read = readUpdateState(statePath);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read->portableNoticeEpoch.has_value())
+        << "recording a version erased when the notice was last said";
+    EXPECT_EQ(*read->portableNoticeEpoch, 1'757'600'000u)
+        << "recording a version moved when the notice was last said";
+    EXPECT_EQ(read->lastCheckEpoch, 1'757'700'000u);
+    EXPECT_EQ(read->latestVersion, "2.4.0");
+
+    // And the other direction, which already held and has to keep holding: saying the
+    // line must not lose what the last check found.
+    ASSERT_TRUE(recordPortableNoticeShown(statePath, 1'757'800'000));
+    read = readUpdateState(statePath);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(read->lastCheckEpoch, 1'757'700'000u);
+    EXPECT_EQ(read->latestVersion, "2.4.0");
+    EXPECT_EQ(*read->portableNoticeEpoch, 1'757'800'000u);
+
+    // The reservation is the third writer of the pair and was always a read-modify-write.
+    // Asserted here anyway, because this case is about the file surviving every writer
+    // and a green result from two of three is how the original defect went unnoticed.
+    ASSERT_TRUE(reserveUpdateCheck(statePath, 1'757'900'000));
+    read = readUpdateState(statePath);
+    ASSERT_TRUE(read.has_value());
+    EXPECT_EQ(*read->portableNoticeEpoch, 1'757'800'000u);
+    EXPECT_EQ(read->latestVersion, "2.4.0");
 }
 
 TEST_F(FakeHost, AnythingButTheWrittenValueMeansNotShown) {
@@ -473,6 +765,28 @@ TEST_F(FakeHost, AnythingButTheWrittenValueMeansNotShown) {
         }
         const auto read = readUpdateState(statePath);
         ASSERT_TRUE(read.has_value()) << line;
-        EXPECT_FALSE(read->portableNoticeShown) << line << " was read as shown";
+        EXPECT_FALSE(read->portableNoticeShownLegacy) << line << " was read as shown";
+    }
+}
+
+TEST_F(FakeHost, ATimestampThatDoesNotParseIsNoTimestamp) {
+    // A truncated or hand-edited time must not come back as a number, and must not come
+    // back as zero either - zero is 1970, which is an interval ago and would print. It
+    // comes back absent, and a file that also carries the old flag falls through to the
+    // upgrade path, which stamps a fresh time and says nothing.
+    for (const char* line : {"portable_notice_epoch=", "portable_notice_epoch=soon",
+                             "portable_notice_epoch=17576000x0",
+                             "portable_notice_epoch=-1",
+                             "portable_notice_epoch=999999999999999999999999"}) {
+        const fs::path statePath = root_ / "bad-epoch";
+        {
+            std::ofstream out(statePath, std::ios::trunc);
+            out << "last_check=1757500000\n" << line << "\nportable_notice_shown=1\n";
+        }
+        const auto read = readUpdateState(statePath);
+        ASSERT_TRUE(read.has_value()) << line;
+        EXPECT_FALSE(read->portableNoticeEpoch.has_value())
+            << line << " was read as a time";
+        EXPECT_TRUE(read->portableNoticeShownLegacy) << line;
     }
 }
