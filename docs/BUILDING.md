@@ -3,6 +3,11 @@
 LyxBoSa is a CMake + vcpkg (manifest mode) project built with Ninja. Everything below
 assumes you run commands from the repository root.
 
+**To install a released binary rather than build one**, see
+[docs/INSTALL.md](INSTALL.md) — one command per platform, verified against the release's
+signed checksum list. Build from source to work on the scanner, to run the test suite, or
+for a platform a release publishes no binary for: macOS and the BSDs.
+
 ## Prerequisites
 
 | Requirement | Notes |

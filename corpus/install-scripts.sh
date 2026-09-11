@@ -52,6 +52,7 @@ BUILD_IDENTITY_CPP="$ROOT/src-lib/cpp/update/BuildIdentity.cpp"
 KEYRING="$ROOT/keys/minisign-trusted.txt"
 WORKFLOW="$ROOT/.github/workflows/build.yml"
 RELEASE_CHECKSUMS="$ROOT/.github/scripts/release-checksums.sh"
+INSTALL_DOC="$ROOT/docs/INSTALL.md"
 
 _ok=0
 _cases=0
@@ -233,6 +234,22 @@ selftest() {
         "$(printf '%s\n' "$BUILTIN_KEYS" | LC_ALL=C sort | tr '\n' ' ')" "$want"
   got="$(ps1_keys | LC_ALL=C sort | tr '\n' ' ')"
   check "install.ps1 carries them too (its TEXT; no PowerShell here)" "$got" "$want"
+  # docs/INSTALL.md prints a key for the by-hand steps, so that a reader can paste it rather
+  # than go and find it. That makes the document a third copy, and a stale key in the one
+  # place somebody reads while verifying by hand is the worst of the three to have wrong.
+  # Every key it quotes must be one the keyring names; it need not quote all of them.
+  local doc_keys stray
+  doc_keys="$(grep -o 'RW[A-Za-z0-9+/]\{54\}' "$INSTALL_DOC" | LC_ALL=C sort -u)"
+  stray=""
+  while IFS= read -r got; do
+    [ -n "$got" ] || continue
+    keyring_keys | grep -qxF "$got" || stray="yes"
+  done <<<"$doc_keys"
+  if [ -n "$doc_keys" ] && [ -z "$stray" ]; then
+    pass "every key quoted in docs/INSTALL.md is one the keyring names"
+  else
+    fail "every key quoted in docs/INSTALL.md is one the keyring names"
+  fi
 
   # Neither script may fetch itself or anything it verifies from a mutable branch path. A
   # file served from a branch is covered by no checksum list and signed by no key.

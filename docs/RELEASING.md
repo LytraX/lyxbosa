@@ -200,7 +200,8 @@ gh run watch
 
 Seven jobs. `test-linux` (amd64 and arm64 matrix), `test-linux-musl` (the same matrix,
 in the Alpine image) and `test-windows` build the tree with `BUILD_TESTS=ON` and run
-`ctest`; they are the same jobs a pull request to `master` runs, and a tag runs them too.
+`ctest` - `test-windows` also runs `scripts/install.ps1 -SelfTest`, which is the only place
+in this project that can execute PowerShell; they are the same jobs a pull request to `master` runs, and a tag runs them too.
 They also run on a push to `master`, where they build nothing anyone downloads: a cache
 saved during a pull request is scoped to that pull request, so only a run on the default
 branch leaves one the next pull request can restore. `build-linux` (amd64 and arm64
@@ -227,11 +228,27 @@ to pass.
 | `lyxbosa-linux-amd64-portable` | `ubuntu-latest`, built in the Alpine container in `docker/build/Linux-musl/` |
 | `lyxbosa-linux-arm64-portable` | `ubuntu-24.04-arm`, same container |
 | `lyxbosa-windows-*.exe` | `windows-latest`, static vcpkg triplet (amd64 and arm64) |
-| `SHA256SUMS` | the release job, over the six binaries |
+| `install.sh` | the release job, copied from `scripts/` in the tagged checkout |
+| `install.ps1` | the release job, copied from `scripts/` in the tagged checkout |
+| `SHA256SUMS` | the release job, over those eight assets |
 | `SHA256SUMS.minisig` | the release job, signing `SHA256SUMS` with the release key |
 
 The last two are [release integrity](#release-integrity-checksums-and-signatures) and they
 are not optional: the job fails rather than publishing a release without them.
+
+**The install scripts are assets and not files served from a branch**, and the step that
+copies them into `artifacts/` runs *before* the checksum step. That ordering is what puts
+them under the same `SHA256SUMS` and the same signature as the binaries; a script served
+from a branch URL would be covered by neither while being the artefact that runs with the
+most privilege. They are copied out of the tagged checkout, so the script a release serves
+is the script that release was cut from. `README.md` under *Installation* and
+[`docs/INSTALL.md`](INSTALL.md) are what a user reads.
+
+`--expect 8` on the checksum step is the count of that list, and it is exact in both
+directions: a build that produced nothing fails there, and so does a release that gained an
+asset without the number being updated. `corpus/install-scripts.sh` asserts that this number
+agrees with what `release-checksums.sh`'s fixture says a release publishes, so the two
+cannot drift.
 
 **Two Linux binaries per architecture, and the difference is the C library.**
 `lyxbosa-linux-<arch>` is dynamically linked against the glibc of `almalinux:8` and needs
@@ -288,7 +305,7 @@ Every `v*` release publishes two files beside the binaries:
 
 | File | What it is |
 |---|---|
-| `SHA256SUMS` | one line per binary, `<hash>  <name>`, bare names in byte order |
+| `SHA256SUMS` | one line per asset, `<hash>  <name>`, bare names in byte order |
 | `SHA256SUMS.minisig` | a [minisign](https://jedisct1.github.io/minisign/) signature over `SHA256SUMS` |
 
 The checksum file alone defends against a corrupted or truncated download. It does **not**
@@ -374,6 +391,14 @@ compromised. The file's own header carries the full reasoning; the procedure is:
 | N+1 | swap the roles - new key `signing`, old key `trusted` |
 | N+2 | delete the old key's line |
 
+**Each of those three steps edits `scripts/install.sh` and `scripts/install.ps1` too.** Both
+pin the key list, because a script that fetched the key from the same place as the list it
+verifies would be checking nothing, and `corpus/install-scripts.sh` fails if either script's
+list is not the set of keys in `keys/minisign-trusted.txt`. So a rotation that forgets them
+stops a pre-report command rather than a release - but it has to be the same commit, and the
+pinned list is why an old `install.sh` somebody saved refuses a release signed by a key added
+after it. The remedy there is the same one the updater gives: take a newer script.
+
 A **compromised** key gets no overlap: delete its line in the next release, announce the new
 key wherever the old one was published, and accept that older installs can no longer verify.
 
@@ -420,7 +445,8 @@ malware corpus can be committed by accident.
 gh release view v1.2.0
 ```
 
-Eight assets, not six: the six binaries, `SHA256SUMS` and `SHA256SUMS.minisig`.
+Ten assets: the six binaries, `install.sh`, `install.ps1`, `SHA256SUMS` and
+`SHA256SUMS.minisig`.
 
 **Verify them the way a user would**, from a fresh download directory rather than from the
 build tree:
@@ -437,6 +463,11 @@ minisign -Vm SHA256SUMS -P "$key"
 # 2. then the checksums, in the directory the assets were downloaded into.
 sha256sum -c SHA256SUMS
 ```
+
+`gh release download` with no `--pattern` fetches every asset, which is what makes the bare
+`sha256sum -c` above check out. Fetching a subset leaves the list naming files that are not
+there, and `-c` reports those as failures; check the lines you have instead - see
+[`docs/INSTALL.md`](INSTALL.md#by-hand).
 
 `minisign -Vm` prints the **trusted comment**, which is covered by the signature and names the
 tag: `LyxBoSa v1.2.0 SHA256SUMS (LytraX/LyxBoSa)`. Read it. A `SHA256SUMS` and
