@@ -22,6 +22,8 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [2.4.0] - 2026-09-11
+
 ### Fixed
 
 - **A deep directory tree can no longer take the scanner off the end of a stack.** The
@@ -134,6 +136,25 @@ commit list that CI generates per tag.
   built there for Ed25519, BLAKE2b-512 and SHA-256, while TLS stays with Schannel and the
   certificate store the OS maintains. The whole chain is the same code on both platforms,
   including the smoke test that runs the download once before installing it.
+
+### Compatibility
+
+- **This is a minor bump, not a patch.** Two of the entries above are new capability rather
+  than repair: a release now publishes a second Linux binary per architecture, and `update`
+  replaces the binary on Windows where it previously refused to. Either alone would be more
+  than a patch.
+- **A release publishes eight files rather than six.** Four binaries become six, beside the
+  unchanged `SHA256SUMS` and its signature. A script that globs the release and expects six
+  names will see eight; one that asks for a binary by name is unaffected.
+- **`--version` gained a suffix.** It now reads `2.4.0 (standard build,
+  lyxbosa-linux-amd64)`. The version is still the first token on the line, so anything
+  cutting on whitespace or matching a leading semver is unaffected.
+- **`lyxbosa update` on Windows now exits 0 having updated, where it exited 1 refusing.**
+  A script that treated that refusal as the normal outcome will see success instead.
+- **Nothing that runs unattended changes.** The portable-build notice is on stderr and only
+  when stdout is a terminal, so a redirected report cannot contain it, and `--quiet`,
+  `--silent`, `--force`, a pipe and CI each suppress it outright. `check`, the exit codes
+  and every report format are byte for byte as before.
 
 ## [2.3.0] - 2026-09-10
 
@@ -810,7 +831,8 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/LytraX/lyxbosa/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/LytraX/lyxbosa/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/LytraX/lyxbosa/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/LytraX/lyxbosa/compare/v2.1.0...v2.2.0
