@@ -16,6 +16,40 @@
 // survived, which leaves the directory entry pointing at the old inode and the new file
 // under a temporary name - recoverable, but not the guarantee this claims to give.
 //
+// THE SAME THING ON WINDOWS, IN TWO MOVES
+// ----------------------------------------
+// Windows will not overwrite or delete a file that is mapped as a running image, and a
+// rename over the running .exe is refused for the same reason. It will RENAME the
+// running file, because that changes the directory entry and not the file. So the
+// replace there is two moves rather than one rename:
+//
+//     lyxbosa.exe          ->  lyxbosa.exe.old      (the running image, moved aside)
+//     lyxbosa.exe.update-N ->  lyxbosa.exe          (the verified download, into place)
+//
+// Both stay inside the install directory, so both stay on one volume; MoveFileExW does
+// not move across volumes with the flags used here, and a copy-and-delete would not be
+// the operation this claims to be. MOVEFILE_WRITE_THROUGH on each move is the directory
+// fsync's counterpart: the call does not return until the rename has reached the disk.
+//
+// Between the two moves the target does not exist. If the second move fails - the
+// volume filled, a real-time scanner grabbed the file, a permission changed - the first
+// is undone: the .old is moved back and the message says what happened. A user left with
+// no lyxbosa.exe at all is a worse outcome than a failed update, and the rollback has a
+// test that drives it rather than a comment that claims it.
+//
+// The .old cannot be deleted by the process running from it, so it is reaped later:
+// every start of the binary removes it if nothing has it open, silently, and the replace
+// itself tries once too for the case where the target was not the running image. Its
+// name is fixed, so at most one of them ever exists - the next update replaces it - and
+// a failure to remove it is never fatal and never printed, because the ordinary reason
+// is that another copy of the old binary is still running.
+//
+// A freshly written executable is opened by Defender's real-time scanner within a
+// moment of being closed, and a move can fail against that open with a sharing
+// violation. Each move is therefore retried against a lock for a bounded time,
+// kReplaceRetryFor, and the real reason is reported on giving up. A lock is never
+// treated as success and the retry never loops without end.
+//
 // REFUSING RATHER THAN ESCALATING
 // --------------------------------
 // If the target cannot be replaced by the current user, `update` says so and stops. It
@@ -28,6 +62,7 @@
 // either reverts the update or fails; either way the user is worse off than with no
 // updater at all.
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -95,8 +130,39 @@ std::string adoptTargetOwnership(const std::filesystem::path& staged,
 //
 // It applies adoptTargetOwnership again rather than assuming a caller did, so that it
 // is correct on its own; doing it twice costs one fchmod.
+//
+// On Windows it is the two moves described at the top of this file, with the same
+// contract: an empty string means the new binary is in place, and anything else means
+// `target` still holds the old one - put back, if it had to be.
 std::string replaceAtomically(const std::filesystem::path& staged,
                               const std::filesystem::path& target);
+
+// Where the running binary is moved to while the new one takes its place: `target`
+// with ".old" appended, in the same directory. Nothing on POSIX ever creates it; it is
+// declared everywhere so that the reaper below has one definition and one test.
+std::filesystem::path movedAsidePathFor(const std::filesystem::path& target);
+
+// Remove the moved-aside copy of `target` if it exists and nothing has it open. Returns
+// true when no such file remains, false when one does - which is not an error and is
+// never reported to a user: the common cause is a copy of the old binary still running.
+// Called on every start (src-cli/lyxbosa.cpp) and after every replace.
+bool reapMovedAsideBinary(const std::filesystem::path& target);
+
+#ifdef _WIN32
+// How long a move is retried against a file something else has open before the reason
+// is reported. The last Windows round measured Defender taking a freshly written file
+// within a second of it being closed; five times that is a bound, not a loop. Each move
+// gets its own budget, so a replace that needs the rollback can take up to three of
+// them.
+inline constexpr std::chrono::milliseconds kReplaceRetryFor{5000};
+
+// The two-move replace, with its retry bound as a parameter so that a test can drive
+// the rollback in a fraction of the time a user would wait. replaceAtomically() is this
+// with kReplaceRetryFor.
+std::string replaceByMovingAside(const std::filesystem::path& staged,
+                                 const std::filesystem::path& target,
+                                 std::chrono::milliseconds retryFor);
+#endif
 
 // Run `binary --version` and report whether it exited 0.
 //
@@ -105,6 +171,12 @@ std::string replaceAtomically(const std::filesystem::path& staged,
 // AlmaLinux 8 and a user may be older still. Without it the update replaces a working
 // scanner with one that will not start, on a host somebody is in the middle of an
 // incident on, and the tool they would use to fix it is the one just broken.
+//
+// On Windows the same, through CreateProcessW with every standard handle on NUL. One
+// thing it can meet there that it cannot on Linux: Defender's cloud check can hold the
+// first execution of a never-seen binary while it asks for a verdict, and if that
+// outlasts the ten-second bound the update refuses with StagedBinaryUnusable. The old
+// binary is untouched by then and a second `update` finds the verdict cached.
 //
 // It executes bytes that have already passed the signature and the hash check, and that
 // are about to be installed and run anyway, so it does not widen what this program will

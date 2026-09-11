@@ -6,8 +6,9 @@ FROM almalinux:8
 # perl and perl-IPC-Cmd are OpenSSL's, not ours. vcpkg builds OpenSSL from source for
 # curl's `ssl` feature on Linux, its Configure is a Perl script, and the port fails
 # outright - "Perl cannot find IPC::Cmd" - if the module is missing. AlmaLinux 8 ships
-# a minimal perl that does not include it, so both are named. Windows needs neither:
-# curl there uses Schannel and no OpenSSL is built at all.
+# a minimal perl that does not include it, so both are named. Windows builds OpenSSL
+# too - for the update verifier, not for curl, which uses Schannel there - and vcpkg
+# fetches a Perl of its own on that platform, so nothing has to be installed for it.
 RUN dnf install -y epel-release dnf-plugins-core \
     && dnf config-manager --set-enabled powertools \
     && dnf install -y \

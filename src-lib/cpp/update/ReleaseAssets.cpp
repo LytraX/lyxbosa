@@ -77,11 +77,10 @@ std::string_view platformAssetName() {
 }
 
 bool platformCanReplaceRunningBinary() {
-#if defined(_WIN32)
-    return false;
-#else
+    // Linux renames over the running inode; Windows moves the running image aside
+    // first. Both are implemented in InstallPath.cpp, and there is no platform this is
+    // built for that has neither.
     return true;
-#endif
 }
 
 std::string releasesLatestUrl() {

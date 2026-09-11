@@ -247,7 +247,11 @@ bad thing to hand somebody in that position.
 What it does not do is make **Windows** trust the binary. That is Authenticode with an EV
 certificate, it is not owned here, and a browser download still shows an unknown-publisher
 warning exactly as it did before. The two answer different questions; see
-[`docs/tasks/UPDATE_PLAN.md`](tasks/UPDATE_PLAN.md) §3.
+[`docs/tasks/UPDATE_PLAN.md`](tasks/UPDATE_PLAN.md) §3. A binary that `lyxbosa update`
+installs is the one case where the certificate's absence costs nothing: SmartScreen raises
+that warning for a file carrying a Mark of the Web, which a browser attaches to what it
+downloads, and the updater writes the file itself and attaches none. Defender's real-time
+scan of a new executable is a separate matter and is unaffected either way.
 
 ### It fails rather than skipping
 
@@ -457,9 +461,13 @@ needs one of:
 - tag a normal patch version from a branch and mark the GitHub release as a
   pre-release afterwards; or
 - run the workflow manually via `workflow_dispatch`, which builds every target and
-  uploads artifacts without publishing a release. The binaries report `0.0.0`
-  because no tag is involved, which makes them fine for testing and unsuitable for
-  distribution.
+  uploads artifacts without publishing a release. Its one input, `version`, is what
+  the binaries report; left empty they report `0.0.0`, which makes them fine for
+  testing a build and unsuitable for distribution. Given a version older than the
+  newest release - `2.2.0`, say - the artefact is a binary that believes an update
+  exists, which is how `lyxbosa update` is proved against the live release without
+  cutting one. A leading `v` is accepted and anything that is not three dot-separated
+  numbers stops the job before the Windows resource compile would.
 
 Supporting real `-rc` tags means making the version parse tolerate a suffix and
 stripping it before the Windows resource is generated. Worth doing if pre-releases

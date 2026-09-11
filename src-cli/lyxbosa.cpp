@@ -20,6 +20,7 @@
 // minimal and static builds - did not compile.
 #include "infrastructure/TerminalInput.h"
 #include "core/Interrupt.h"
+#include "update/InstallPath.h"
 #include "use-cases/ScanUseCase.h"
 #include "use-cases/CheckUseCase.h"
 #include "use-cases/ValidateConfigUseCase.h"
@@ -108,6 +109,15 @@ int main(int argc, char* argv[]) {
     // Set console output to UTF-8 so that fmt::print (which uses WriteConsoleW)
     // correctly handles non-ASCII characters in file paths (e.g., Greek, Cyrillic)
     SetConsoleOutputCP(CP_UTF8);
+
+    // The copy of this binary that `lyxbosa update` moved aside, if one is here and
+    // nothing has it open any more. The process that replaced itself could not delete
+    // its own running image, so the next start does; every start, so that it goes the
+    // first time it can rather than lingering until the next update. One DeleteFileW
+    // on a name that is usually absent, and never a word about it either way - the
+    // ordinary reason it fails is that another copy of the old binary is still running.
+    // InstallPath.h says why the name is fixed and why at most one ever exists.
+    (void)reapMovedAsideBinary(runningExecutablePath());
 #endif
 
     // Probe the streams before anything is written to them; on Windows this also

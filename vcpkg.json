@@ -19,6 +19,10 @@
       "features": [
         "ssl"
       ]
+    },
+    {
+      "$comment": "libcrypto for the update verifier (Ed25519, BLAKE2b-512, SHA-256). Already in the graph on Linux through curl's ssl feature; on Windows curl uses Schannel and this is the only thing that builds it. See CMakeLists.txt.",
+      "name": "openssl"
     }
   ]
 }

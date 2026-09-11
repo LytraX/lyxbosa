@@ -163,8 +163,6 @@ private:
         // previous version of this text said to verify with "the key in
         // keys/minisign-trusted.txt", which is a path in a source checkout: a release
         // publishes four binaries, SHA256SUMS and SHA256SUMS.minisig, and no keyring.
-        // On Windows this is the whole answer a user gets, because `update` refuses
-        // there and hands them this.
         fmt::print(stderr,
                    "\nThe binary you are running has not been changed.\n"
                    "\n"
