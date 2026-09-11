@@ -109,6 +109,33 @@ are correct as of the round that recorded them and are deliberately never regene
   quietly stopped opening `.sh` would satisfy every case that compares the parser only to
   itself, which is the shape §11 keeps recording. 24 cases, from 18.
 
+- **`corpus/verify.py` could not unpack a shard on Windows, and stopped before running a
+  single sample.** It called `tar -C … -I zstd -xf`. `-I` is GNU tar's
+  `--use-compress-program`; bsdtar, which is the tar Windows ships and the one Python finds
+  on `PATH` there, spells that option the same long way but reads `-I` as `--include`, so
+  the command became an inclusion pattern and failed. The suite then called `die()` before
+  executing anything, so the result on Windows was no measurement rather than a degraded
+  one. The GNU form is still tried first and still decides the outcome wherever it works, so
+  Linux runs exactly the command it ran before.
+
+- **The suite's own control was judged against a binary it is not allowed to rebuild.**
+  `verify.py --inject` took the scanner from the module default, `build-release/`, which the
+  conventions file forbids rebuilding mid-round and which is therefore routinely older than
+  the source. The control reported the age of that build as a failure of whatever round was
+  being checked. It now prefers `build/` when `LYXBOSA_BIN` is unset; naming a binary still
+  wins. This was not only a green result: the end-to-end half was being abandoned rather
+  than run, so the same command went from 30 cases to 41, and the eleven recovered are the
+  ones that assert the rule against a real scanner rather than against reports the control
+  wrote itself.
+
+- **The leak gate refuses a minisign secret key by shape**, in a tracked file or in a commit
+  message about to be pushed, naming what it found and where and never the bytes.
+
+- **The regression baseline was re-based at `v2.2.0`.** It had been withheld across roughly
+  thirty rounds, so `recall_delta` reported nothing over that span. Re-basing belongs to
+  cutting a scanner tag rather than to a round, which is why it is recorded here as a fact
+  about the measurement rather than as a result.
+
 ### Added
 
 - **`corpus/release-assets.sh` refuses to print the commands that cut a corpus tag while
