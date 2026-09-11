@@ -270,6 +270,55 @@ of trusting the author: a suppression they did not mean is a `low` finding they 
   while the report accumulates in the file, and the file never contains a single escape
   sequence.
 
+## System support
+
+Every release publishes six binaries. Pick by the system you are on; the table says what
+each one needs from it.
+
+| you are on | download | what it needs from the host |
+|---|---|---|
+| a current Linux distribution — Alma/Rocky/RHEL 8 and newer, Debian 10 and newer, Ubuntu 20.04 and newer | `lyxbosa-linux-amd64` or `lyxbosa-linux-arm64` | glibc 2.28 or newer, and a libstdc++ from GCC 6 or newer |
+| an older Linux — CentOS 7, Ubuntu 16.04 and 18.04, and the shared hosting built on them | `lyxbosa-linux-amd64-portable` or `lyxbosa-linux-arm64-portable` | nothing; it carries its own C library |
+| Windows, 64-bit | `lyxbosa-windows-amd64.exe` or `lyxbosa-windows-arm64.exe` | nothing; the runtime is linked in |
+
+Ubuntu 18.04 is in the second row rather than the first: it ships glibc 2.27, one release
+below what the standard build needs.
+
+Each row offers two architectures. `uname -m` says which: `x86_64` means the `amd64`
+download, `aarch64` means the `arm64` one.
+
+**If you already have an error, it tells you which one you need.** A message like
+
+```
+lyxbosa: /lib64/libc.so.6: version `GLIBC_2.28' not found (required by lyxbosa)
+```
+
+means this host's system libraries are older than the standard build was made against, and
+it will never start here — the version in the message is whichever symbol was missing
+first, so it is not always `2.28`. The same goes for a `GLIBCXX_` message, which is the C++
+library rather than the C one. In both cases the **portable** build is the answer: it needs
+nothing from the host at all. Nothing else needs diagnosing, and there is no configuration
+that makes the standard build load on such a host.
+
+**The portable build costs about 10% on a scan.** Measured container to container over the
+same tree of 53,977 files, twice each, with the page cache warm:
+
+| build | run 1 | run 2 |
+|---|---|---|
+| standard | 7.21 s | 7.24 s |
+| portable | 8.02 s | 8.00 s |
+
+That difference is not the allocator — two different allocators land within a hundredth of
+a second of each other — and no allocator will close it. What remains is that glibc selects
+its byte-searching routines for the instruction set it finds at run time, and the portable
+build's are plain C. It is also about a third larger to download, because the C library is
+inside it.
+
+**What it does not cost is detection.** The two builds report the same findings, byte for
+byte, over the whole reviewed corpus: the same rules, the same files, the same severities,
+with every report compared line by line. If the standard build runs on your host, prefer it
+for the 10%; if it does not, you lose nothing but that.
+
 ## Detection coverage
 
 Every figure here is stated with its denominator, and the two that matter most — detection
@@ -692,23 +741,20 @@ by hand is described in
 
 ### Which Linux binary
 
-A release carries two Linux binaries per architecture, and the difference is the C library:
-
-| asset | needs from the host | for |
-|---|---|---|
-| `lyxbosa-linux-<arch>` | glibc 2.28 or newer and a libstdc++ from GCC 6 or newer | any current distribution |
-| `lyxbosa-linux-<arch>-portable` | nothing - it is statically linked against musl | hosts too old for the first: CentOS 7, Ubuntu 16.04, and the shared hosting built on them |
-
-If the first one prints `GLIBC_2.28' not found` instead of starting, the second one is the
-one to use. It is a static **musl** build rather than a static glibc one because glibc's
-resolver loads the host's own name-service modules even from a static binary, and on a host
-old enough to need it that crashes the network path; musl resolves names itself. It is
-about a third larger, because the C library is inside it, and byte for byte over the
-whole reviewed corpus it reports the same findings as the glibc build.
+[System support](#system-support) is where to choose one. Two things about that choice are
+the updater's rather than yours:
 
 **`update` never crosses between the two.** The standard binary fetches the standard
 asset and the portable binary the portable asset, so the build you installed is the one
 you keep. To move, install the other asset once by hand; updates stay on it from then on.
+
+**The portable build is a static musl binary**, not a static glibc one. glibc's resolver
+loads the host's own name-service modules even from a statically linked binary, and on a
+host old enough to need this build that crashes the network path — so `update --check`
+would segfault on exactly the systems the build exists for. musl resolves names itself.
+This is why the build container and the CMake option say `musl` while the asset says
+`portable`: the asset name is for whoever is choosing a download, and the rest is for
+whoever is maintaining the build.
 
 ### What `update` checks, in this order
 
