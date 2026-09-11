@@ -112,26 +112,36 @@ cmd_write() {
 # Controls.
 # ---------------------------------------------------------------------------------------
 
-# The six names are the six assets a release actually publishes - Linux amd64 and arm64 on
-# glibc, the same two as the portable static build, and Windows amd64 and arm64 - and they
-# are CREATED in an order that is neither the sorted order nor its reverse, so a run that
-# simply echoed readdir order would fail the expected-bytes case rather than pass it by luck.
+# The eight names are the eight assets a release actually publishes - Linux amd64 and arm64
+# on glibc, the same two as the portable static build, Windows amd64 and arm64, and the two
+# install scripts the release job stages beside them - and they are CREATED in an order that
+# is neither the sorted order nor its reverse, so a run that simply echoed readdir order
+# would fail the expected-bytes case rather than pass it by luck.
 #
 # The portable pair earns its place here beyond making the count right: `lyxbosa-linux-amd64`
 # is a strict PREFIX of `lyxbosa-linux-amd64-portable`. Byte order puts the shorter first, and
 # a consumer running `sha256sum -c` matches whole lines, so nothing here is ambiguous - but
 # the fixture had no two names in that relation before, so the ordering it pins was never
 # exercised on the one shape where a sloppier comparison could get it wrong.
-FIXTURE_NAMES=(lyxbosa-windows-arm64.exe lyxbosa-linux-amd64-portable lyxbosa-linux-amd64 \
-               lyxbosa-windows-amd64.exe lyxbosa-linux-arm64-portable lyxbosa-linux-arm64)
+#
+# The install scripts earn theirs for a different reason. They are the first names in byte
+# order, ahead of every binary, so a list that sorted its assets but appended anything
+# afterwards would be caught by case 1 rather than by nobody. They are also what the list
+# has to cover for the one-line install to mean anything: a script served under a signed
+# list it is not itself in is a script nobody can check.
+FIXTURE_NAMES=(lyxbosa-windows-arm64.exe lyxbosa-linux-amd64-portable install.sh \
+               lyxbosa-linux-amd64 lyxbosa-windows-amd64.exe install.ps1 \
+               lyxbosa-linux-arm64-portable lyxbosa-linux-arm64)
 
 fixture() {
   local dir="$1"
   mkdir -p "$dir"
   printf ''     > "$dir/lyxbosa-windows-arm64.exe"
   printf '%s' "$FIPS_TWO_BLOCK" > "$dir/lyxbosa-linux-amd64-portable"
+  printf '#!/bin/sh\n' > "$dir/install.sh"
   printf 'abc'  > "$dir/lyxbosa-linux-amd64"
   printf 'a'    > "$dir/lyxbosa-windows-amd64.exe"
+  printf '# install.ps1\n' > "$dir/install.ps1"
   printf '%s' "$FIPS_MULTI_BLOCK" > "$dir/lyxbosa-linux-arm64-portable"
   printf 'z\n'  > "$dir/lyxbosa-linux-arm64"
 }
@@ -141,12 +151,15 @@ fixture() {
 FIPS_TWO_BLOCK='abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'
 FIPS_MULTI_BLOCK='abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu'
 
-# Known answers, not a re-derivation. Four of the six are the published SHA-256 test vectors
-# from FIPS 180-4 - the empty string, "abc", and the two multi-block messages above - so most
-# of this expectation can be checked against the standard rather than against this
-# repository. The other two, "a" and "z\n", are derived here.
+# Known answers, not a re-derivation. Four of the eight are the published SHA-256 test
+# vectors from FIPS 180-4 - the empty string, "abc", and the two multi-block messages above -
+# so half of this expectation can be checked against the standard rather than against this
+# repository. The other four, "a", "z\n" and the one-line contents of the two install script
+# stand-ins, are derived here.
 expected_sums() {
   cat <<'EXPECTED'
+bacdce0446d0a04fb0702f86b863e8f832f73df2e263c4aa337e24a91f96c430  install.ps1
+a8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf  install.sh
 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  lyxbosa-linux-amd64
 248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1  lyxbosa-linux-amd64-portable
 c865f6c5ab8d1b0bcd383a5e1e3879d22681c96bf462c269b7581d523fbe70ab  lyxbosa-linux-arm64
@@ -169,13 +182,13 @@ selftest() {
   a="$work/a"; b="$work/b"
 
   fixture "$a"
-  cmd_write "$a" --expect 6 >/dev/null
+  cmd_write "$a" --expect 8 >/dev/null
 
   # 1. exact bytes: order, two-space separator, bare names, known hashes.
   if diff -u <(expected_sums) "$a/$SUMS" >/dev/null; then
-    pass "the file is exactly the six known hashes, in byte order"
+    pass "the file is exactly the eight known hashes, in byte order"
   else
-    fail "the file is exactly the six known hashes, in byte order"
+    fail "the file is exactly the eight known hashes, in byte order"
     diff -u <(expected_sums) "$a/$SUMS" | sed 's/^/      /' || true
   fi
 
@@ -212,13 +225,15 @@ selftest() {
   printf 'abc' > "$a/lyxbosa-linux-amd64"
 
   # 5. the same bytes, created in a different order, produce the same file. This is the
-  #    reproducibility claim, tested rather than asserted: b writes its six files in the
+  #    reproducibility claim, tested rather than asserted: b writes its eight files in the
   #    reverse order and in a different directory.
   mkdir -p "$b"
   printf 'z\n' > "$b/lyxbosa-linux-arm64"
   printf '%s' "$FIPS_MULTI_BLOCK" > "$b/lyxbosa-linux-arm64-portable"
+  printf '# install.ps1\n' > "$b/install.ps1"
   printf 'a'   > "$b/lyxbosa-windows-amd64.exe"
   printf 'abc' > "$b/lyxbosa-linux-amd64"
+  printf '#!/bin/sh\n' > "$b/install.sh"
   printf '%s' "$FIPS_TWO_BLOCK" > "$b/lyxbosa-linux-amd64-portable"
   printf ''    > "$b/lyxbosa-windows-arm64.exe"
   cmd_write "$b" >/dev/null
@@ -230,7 +245,7 @@ selftest() {
 
   # 6. self-exclusion, on the second run - the first cannot list a file that does not exist
   #    yet, so a check that only ever ran once would pass while being blind.
-  cmd_write "$a" --expect 6 >/dev/null
+  cmd_write "$a" --expect 8 >/dev/null
   if grep -q "  $SUMS\$" "$a/$SUMS"; then
     fail "a second run does not list $SUMS in itself"
   else
@@ -245,7 +260,7 @@ selftest() {
   # 7. the signature is excluded too. It is written after the list, so a list naming it
   #    could never be true, and `sha256sum -c` would report it FAILED for every consumer.
   printf 'not a real signature\n' > "$a/$SIG"
-  cmd_write "$a" --expect 6 >/dev/null
+  cmd_write "$a" --expect 8 >/dev/null
   if grep -q "  $SIG\$" "$a/$SIG" 2>/dev/null || grep -q "  $SIG\$" "$a/$SUMS"; then
     fail "$SIG is not listed either"
   else
@@ -256,7 +271,7 @@ selftest() {
   # 8. a subdirectory is not an asset. download-artifact without merge-multiple leaves one
   #    directory per artifact, and hashing a directory is an error, not a checksum.
   mkdir -p "$a/lyxbosa-linux-amd64-dir"
-  if ( cmd_write "$a" --expect 6 >/dev/null 2>&1 ); then
+  if ( cmd_write "$a" --expect 8 >/dev/null 2>&1 ); then
     pass "a subdirectory beside the assets is ignored"
   else
     fail "a subdirectory beside the assets is ignored"
@@ -279,25 +294,28 @@ selftest() {
   fi
 
   # 10. --expect, both directions. The count that matters is the one that is wrong.
-  if ( cmd_write "$a" --expect 6 >/dev/null 2>&1 ); then
-    pass "--expect 6 accepts six assets"
+  if ( cmd_write "$a" --expect 8 >/dev/null 2>&1 ); then
+    pass "--expect 8 accepts eight assets"
   else
-    fail "--expect 6 accepts six assets"
+    fail "--expect 8 accepts eight assets"
   fi
-  if ( cmd_write "$a" --expect 7 >/dev/null 2>&1 ); then
-    fail "--expect 7 refuses six assets"
+  if ( cmd_write "$a" --expect 9 >/dev/null 2>&1 ); then
+    fail "--expect 9 refuses eight assets"
   else
-    pass "--expect 7 refuses six assets"
+    pass "--expect 9 refuses eight assets"
   fi
   # And the direction that actually happens: a release GAINS an asset and the workflow's
-  # number is not updated. That is what happened when the portable pair arrived and
-  # `--expect 4` had to become 6, so the case that would have caught a missed update is
-  # worth stating rather than leaving to the pair above.
-  if ( cmd_write "$a" --expect 4 >/dev/null 2>&1 ); then
-    fail "--expect 4 refuses the six assets a release now publishes"
-  else
-    pass "--expect 4 refuses the six assets a release now publishes"
-  fi
+  # number is not updated. It has happened twice - 4 became 6 when the portable pair
+  # arrived, 6 became 8 when the install scripts did - so both superseded counts are
+  # asserted to be refused rather than left to the pair above.
+  local superseded
+  for superseded in 6 4; do
+    if ( cmd_write "$a" --expect "$superseded" >/dev/null 2>&1 ); then
+      fail "--expect $superseded refuses the eight assets a release now publishes"
+    else
+      pass "--expect $superseded refuses the eight assets a release now publishes"
+    fi
+  done
 
   # 11. the ordering itself, fed a scrambled list directly rather than through a directory.
   #     Deterministic: it does not depend on what order a filesystem hands back. Mixed case

@@ -50,6 +50,8 @@ INSTALL_PS1="$ROOT/scripts/install.ps1"
 INSTALL_PATH_CPP="$ROOT/src-lib/cpp/update/InstallPath.cpp"
 BUILD_IDENTITY_CPP="$ROOT/src-lib/cpp/update/BuildIdentity.cpp"
 KEYRING="$ROOT/keys/minisign-trusted.txt"
+WORKFLOW="$ROOT/.github/workflows/build.yml"
+RELEASE_CHECKSUMS="$ROOT/.github/scripts/release-checksums.sh"
 
 _ok=0
 _cases=0
@@ -83,6 +85,28 @@ cpp_loader_paths() {
 cpp_libc_paths() {
   sed -n '/kLibcPaths{/,/};/p' "$BUILD_IDENTITY_CPP" \
     | sed -n 's/^[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
+# The count the release job asserts over its artifacts directory.
+workflow_expect() {
+  sed -n 's/.*release-checksums.sh write artifacts --expect \([0-9][0-9]*\).*/\1/p' \
+      "$WORKFLOW" | head -1
+}
+
+# The names release-checksums.sh's own fixture says a release publishes. That file's controls
+# assert the fixture is exactly right, so it is the nearest thing to a machine-readable
+# manifest this repository has - and asking it, rather than counting to eight here, is what
+# stops a third place from holding the number.
+fixture_names() {
+  sed -n '/^FIXTURE_NAMES=(/,/)$/p' "$RELEASE_CHECKSUMS" \
+    | sed -e 's/FIXTURE_NAMES=(//' -e 's/)//' -e 's/\\$//' \
+    | tr -s ' \t' '\n' | grep .
+}
+
+# The line number of a step's name in the workflow, so that "before" can be asserted rather
+# than assumed.
+workflow_step_line() {
+  grep -n -- "- name: $1" "$WORKFLOW" | head -1 | cut -d: -f1
 }
 
 keyring_keys() {
@@ -225,6 +249,33 @@ selftest() {
        grep -q 'releases/latest/download' "$INSTALL_SH"
   ok   "install.ps1 fetches from releases/latest/download/ (its TEXT)" \
        grep -q 'releases/latest/download' "$INSTALL_PS1"
+
+  # ------------------------------------------------- the release has to publish them
+  echo
+  echo "=== the release job ==="
+  # The whole design rests on these being ASSETS. Served from a branch they would be
+  # covered by no checksum list and signed by no key, and the scripts' own self-check,
+  # their pinned keys and every sentence in docs/INSTALL.md would be describing something
+  # that is not true.
+  ok "the release job stages install.sh into artifacts/" \
+     grep -q 'cp scripts/install.sh scripts/install.ps1 artifacts/' "$WORKFLOW"
+  local staged checksummed
+  staged="$(workflow_step_line 'Stage the install scripts beside the binaries')"
+  checksummed="$(workflow_step_line 'Checksum every asset')"
+  if [ -n "$staged" ] && [ -n "$checksummed" ] && [ "$staged" -lt "$checksummed" ]; then
+    pass "  ...before the checksum step, which is the only ordering that covers them"
+  else
+    fail "  ...before the checksum step, which is the only ordering that covers them"
+    printf '      stage at line %s, checksum at line %s\n' "${staged:-none}" "${checksummed:-none}"
+  fi
+  check "--expect counts every asset the release publishes" \
+        "$(workflow_expect)" "$(fixture_names | wc -l)"
+  ok "  ...and both scripts are among them" \
+     bash -c 'f="$(sed -n "/^FIXTURE_NAMES=(/,/)\$/p" "'"$RELEASE_CHECKSUMS"'")"
+              case "$f" in *install.sh*) ;; *) exit 1 ;; esac
+              case "$f" in *install.ps1*) ;; *) exit 1 ;; esac'
+  ok "the Windows job runs install.ps1's own controls" \
+     grep -q 'install.ps1 -SelfTest' "$WORKFLOW"
 
   # ------------------------------------------------------------------------- refusals
   echo

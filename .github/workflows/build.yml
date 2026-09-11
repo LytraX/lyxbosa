@@ -176,6 +176,14 @@ jobs:
         env:
           VCPKG_ROOT: C:\vcpkg
 
+      # The only place in this project that can run PowerShell, and therefore the only place
+      # install.ps1 is anything but a claim about its text: corpus/install-scripts.sh asserts
+      # the POSIX half for real and can do no more than read this one, which every one of its
+      # labels says. The cases need no network - each is a refusal or a pure function - so
+      # this costs a second and is not gated on the release.
+      - name: Prove the Windows installer's refusals
+        run: ./scripts/install.ps1 -SelfTest
+
   # ---------------------------------------------------------------- release binaries
   build-linux:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -454,6 +462,21 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # The install scripts are release ASSETS, and this step is what makes them so. Staged
+      # into artifacts/ before the checksum step below, they are covered by the same
+      # SHA256SUMS and the same minisign signature as the binaries. Served from a branch URL
+      # instead they would be covered by neither, and they are the one artefact that runs
+      # with the most privilege while being the only one nobody could check.
+      #
+      # They are copied out of the checkout, which is this tag's tree, so the script a
+      # release serves is the script that release was cut from. install.sh re-fetches
+      # itself and compares against the list written below; that only means anything
+      # because these two steps are in this order.
+      - name: Stage the install scripts beside the binaries
+        run: |
+          cp scripts/install.sh scripts/install.ps1 artifacts/
+          ls -l artifacts/
+
       # minisign comes from the distribution rather than a downloaded binary: a release job
       # that fetches an unverified executable to verify things with has an obvious hole in
       # the middle of it.
@@ -472,14 +495,20 @@ jobs:
           .github/scripts/release-checksums.sh --selftest
           .github/scripts/release-sign.sh --selftest --require-minisign
 
-      # --expect 6 is the six binaries the three build jobs publish: linux amd64 and arm64
-      # on glibc, the same two on static musl, and windows amd64 and arm64. It is exact on
-      # purpose. A list that is missing one binary looks finished, and a release that gained
-      # an asset should stop here and be looked at rather than shipping a checksum file that
-      # quietly does not cover it - which is what happened to this number when the musl
-      # pair was added, and why it is 6 and not 4.
+      # --expect 8 is everything a release publishes: the six binaries the three build jobs
+      # produce - linux amd64 and arm64 on glibc, the same two on static musl, and windows
+      # amd64 and arm64 - plus the two install scripts staged by the step above. It is exact
+      # on purpose, and it is a floor as much as a ceiling: a build that produced nothing
+      # fails here loudly rather than shipping a short list.
+      #
+      # A list that is missing one asset looks finished, and a release that gained one
+      # should stop here and be looked at rather than shipping a checksum file that quietly
+      # does not cover it. This number has now been wrong twice in exactly that way - 4 had
+      # to become 6 when the portable pair arrived, and 6 had to become 8 when the install
+      # scripts did - which is why the control in release-checksums.sh asserts the
+      # superseded count is refused rather than only asserting the current one is accepted.
       - name: Checksum every asset
-        run: .github/scripts/release-checksums.sh write artifacts --expect 6
+        run: .github/scripts/release-checksums.sh write artifacts --expect 8
 
       # A checksum file published beside the files it describes is only a defence against a
       # corrupted download - whoever can write to the release can rewrite the list too. This
@@ -495,7 +524,7 @@ jobs:
       # `files: artifacts/*` needs no change to pick the two new files up: measured against
       # glob 13.0.6, the version softprops/action-gh-release@v3 pins, the pattern resolves to
       # every path in the directory, artifacts/SHA256SUMS and artifacts/SHA256SUMS.minisig
-      # included - eight with the six binaries above.
+      # included - ten with the eight assets above.
       #
       # fail_on_unmatched_files is the same argument as --expect above, one level out: a
       # release that attaches nothing is a release that looks published.
