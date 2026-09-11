@@ -28,6 +28,7 @@
 // enumerator rather than as a green bool.
 
 #include "config/Rules.h"
+#include "update/BuildIdentity.h"
 #include "update/Version.h"
 
 #include <cstdint>
@@ -127,6 +128,104 @@ inline UpdateDecision decideUpdateCheck(const UpdateCheckContext& ctx) {
     }
 
     return UpdateDecision::Check;
+}
+
+// ---------------------------------------------------------------------------------------
+// The other thing a scan may say, and the same argument one step further.
+//
+// A portable build running on a host that could have had the faster one is worth one
+// line, because the reader can act on it: their installer fell back further than it
+// needed to, or they fetched the wrong asset by hand. On a host that CANNOT run the
+// standard build the same line is noise about a choice they do not have, and a tool that
+// prints that on every scan is a tool people redirect to /dev/null.
+//
+// So the gates below are the update notice's gates, deliberately: interactive, a
+// terminal, not CI, none of --quiet, --silent or --force, and recorded so it does not
+// repeat. Two are its own. The build has to be the portable one, and the host has to be
+// PROVEN able to run the other - BuildIdentity.h's Unknown is treated exactly like No,
+// which is what keeps a host this cannot read quiet rather than nagged.
+//
+// It is deliberately not gated on updates.check or on being a release build. Neither is
+// about this: the notice reaches no network, and a development portable build is as
+// portable as a released one.
+enum class PortableNoticeDecision {
+    Show,
+    SkipNotPortableBuild,   // the standard build never says anything about itself
+    SkipNotAScan,
+    SkipUnattended,         // --quiet, --silent or --force
+    SkipNotATerminal,
+    SkipCI,
+    SkipAlreadyShown,       // said once, which is the whole contract
+    SkipNoWritableState,    // cannot record it, so would repeat every run: do not start
+    SkipNoAlternative       // this host cannot run the standard build, or cannot be read
+};
+
+struct PortableNoticeContext {
+    UpdateCallSite callSite = UpdateCallSite::OtherCommand;
+    bool portableBuild = false;
+    bool stdoutIsTty = false;
+    bool isCI = false;
+    bool quiet = false;
+    bool silent = false;
+    bool force = false;
+
+    bool stateWritable = false;   // proven by writing, not by looking
+    bool alreadyShown = false;
+
+    // Only consulted once everything above has passed, so a run that was never going to
+    // say anything does not read a single file off the host.
+    StandardBuildHere standardBuild = StandardBuildHere::Unknown;
+};
+
+inline PortableNoticeDecision decidePortableNotice(const PortableNoticeContext& ctx) {
+    // First because it is the most decisive: on the standard build and on every platform
+    // that is not Linux, there is nothing this could be about.
+    if (!ctx.portableBuild) {
+        return PortableNoticeDecision::SkipNotPortableBuild;
+    }
+    if (ctx.callSite != UpdateCallSite::Scan) {
+        return PortableNoticeDecision::SkipNotAScan;
+    }
+    if (ctx.quiet || ctx.silent || ctx.force) {
+        return PortableNoticeDecision::SkipUnattended;
+    }
+    if (!ctx.stdoutIsTty) {
+        return PortableNoticeDecision::SkipNotATerminal;
+    }
+    if (ctx.isCI) {
+        return PortableNoticeDecision::SkipCI;
+    }
+    if (ctx.alreadyShown) {
+        return PortableNoticeDecision::SkipAlreadyShown;
+    }
+    // Before the host is looked at, for the same reason the update check tests it last
+    // and for the opposite ordering reason: a notice that cannot be recorded is a notice
+    // on every single run, which is the thing being avoided.
+    if (!ctx.stateWritable) {
+        return PortableNoticeDecision::SkipNoWritableState;
+    }
+    // Last, because it is the only test that reads the host's own files - and the only
+    // one where not knowing has to mean no. Unknown is not a maybe here.
+    if (ctx.standardBuild != StandardBuildHere::Yes) {
+        return PortableNoticeDecision::SkipNoAlternative;
+    }
+    return PortableNoticeDecision::Show;
+}
+
+constexpr std::string_view portableNoticeReason(PortableNoticeDecision d) {
+    switch (d) {
+        case PortableNoticeDecision::Show:                 return "saying it once";
+        case PortableNoticeDecision::SkipNotPortableBuild: return "not the portable build";
+        case PortableNoticeDecision::SkipNotAScan:         return "not a scan";
+        case PortableNoticeDecision::SkipUnattended:       return "unattended run";
+        case PortableNoticeDecision::SkipNotATerminal:     return "stdout is not a terminal";
+        case PortableNoticeDecision::SkipCI:               return "running in CI";
+        case PortableNoticeDecision::SkipAlreadyShown:     return "already said once";
+        case PortableNoticeDecision::SkipNoWritableState:  return "no writable state file";
+        case PortableNoticeDecision::SkipNoAlternative:
+            return "this host has no faster build to move to";
+    }
+    return "unknown";
 }
 
 // For --verbose and for test failure messages: a decision that reads as a sentence.

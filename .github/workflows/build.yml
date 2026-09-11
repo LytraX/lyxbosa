@@ -251,9 +251,12 @@ jobs:
   # either is retired, and so that a defect in the new one is not also the loss of the
   # old one. docker/build/Linux-musl/Dockerfile says why musl and not a static glibc.
   #
-  # The asset is lyxbosa-linux-<arch>-musl, and that suffix is not decoration: it is what
-  # src-lib/cpp/update/ReleaseAssets.cpp appends for a musl build, so `lyxbosa update`
-  # running from this binary fetches this binary's successor and never the glibc one.
+  # The asset is lyxbosa-linux-<arch>-portable, and that suffix is not decoration: it is
+  # what src-lib/cpp/update/ReleaseAssets.cpp appends for a musl build, so `lyxbosa
+  # update` running from this binary fetches this binary's successor and never the glibc
+  # one. The job and its cache keep `musl` in their names because they are about how the
+  # binary is made; the asset says what it is for, which is what a person downloading it
+  # is choosing between.
   build-linux-musl:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     strategy:
@@ -306,8 +309,8 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: lyxbosa-linux-${{ matrix.arch }}-musl
-          path: dist/lyxbosa-linux-*-musl
+          name: lyxbosa-linux-${{ matrix.arch }}-portable
+          path: dist/lyxbosa-linux-*-portable
 
   build-windows:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <argparse/argparse.hpp>
 #include "config/Types.h"
+#include "update/BuildIdentity.h"
 
 namespace lyxbosa {
 
@@ -64,6 +65,24 @@ struct CliArgs {
     // Get usage/help text (full reference for every command and option)
     static std::string getHelpText();
 };
+
+// What `lyxbosa --version` prints.
+//
+// The version is still the first whitespace-delimited token, and that is a contract
+// rather than a coincidence: `lyxbosa --version | awk '{print $1}'` and a startswith
+// comparison are both things people have written against this, and docs/RELEASING.md
+// tells a releaser to read it to confirm the tag reached CMake.
+//
+// What follows it is which of the published builds this is. It costs nothing, it is
+// certain - the macros are set at configure time, not sniffed at run time - and it is
+// the first question a support conversation asks. Working it out otherwise means
+// knowing what `file` says about a static binary, which is not a thing to ask of
+// somebody whose site is compromised.
+inline std::string versionBanner() {
+    const std::string identity = buildIdentity();
+    if (identity.empty()) return LYXBOSA_VERSION;
+    return std::string(LYXBOSA_VERSION) + " (" + identity + ")";
+}
 
 inline std::string CliArgs::getHelpText() {
     return
@@ -228,8 +247,10 @@ inline std::string CliArgs::getHelpText() {
 inline CliArgs CliArgs::parse(int argc, char* argv[]) {
     CliArgs result;
 
-    // Help is handled by us (getHelpText covers every command), version by argparse
-    argparse::ArgumentParser program("lyxbosa", LYXBOSA_VERSION,
+    // Help is handled by us (getHelpText covers every command), version by argparse,
+    // which prints whatever string it was constructed with. versionBanner() appends
+    // which build this is - see below for why the version stays the first token.
+    argparse::ArgumentParser program("lyxbosa", versionBanner(),
                                      argparse::default_arguments::version);
     program.add_description("Modern malware/bot signature scanner");
 

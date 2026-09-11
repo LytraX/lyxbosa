@@ -63,10 +63,19 @@ std::string_view platformAssetName() {
 #endif
 #elif defined(__linux__)
     // Two Linux builds publish for each architecture, from two C libraries, and the
-    // one this binary was built against decides which it names: a glibc binary names
-    // the glibc asset and a musl binary the musl one, and neither ever fetches the
-    // other. The glibc build needs the host's glibc to be at least the build host's;
-    // the musl build carries its own C library and runs on hosts too old for that.
+    // one this binary was built against decides which it names: the glibc build names
+    // the standard asset and the musl build the portable one, and neither ever fetches
+    // the other. The glibc build needs the host's glibc to be at least the build
+    // host's; the portable build carries its own C library and runs on hosts too old
+    // for that.
+    //
+    // The suffix is `-portable` and not `-musl` because the name is read by whoever is
+    // deciding what to download, and musl is an answer to a question they did not ask:
+    // what they are choosing is a binary that runs on an older host. Which C library
+    // delivers that is this file's problem and the build container's, not theirs. The
+    // implementation keeps its own name everywhere it is the useful one - the CMake
+    // option below is LYXBOSA_LIBC_MUSL, and docker/build/Linux-musl/ is where it is
+    // built - because a maintainer reading those does need to know.
     //
     // Crossing over is a decision for whoever runs the host, made once by downloading
     // the other asset by hand; from then on the updater stays on it. It is not the
@@ -81,7 +90,7 @@ std::string_view platformAssetName() {
     // musl defines no macro of its own. tests/update_apply_test.cpp checks it against
     // __GLIBC__, so a build where the two disagree fails there rather than here.
 #if defined(LYXBOSA_LIBC_MUSL)
-#define LYXBOSA_LINUX_LIBC_SUFFIX "-musl"
+#define LYXBOSA_LINUX_LIBC_SUFFIX "-portable"
 #else
 #define LYXBOSA_LINUX_LIBC_SUFFIX ""
 #endif

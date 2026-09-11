@@ -1915,15 +1915,41 @@ TEST(ApplyTest, TheLinuxAssetNamesTheCLibraryThisBinaryWasBuiltAgainst) {
     // __GLIBC__ and musl's do not. A binary whose asset name disagrees with the C
     // library it links would update itself onto the other one, so the two have to
     // agree here, in both build jobs, before either ships.
+    //
+    // The assertion is the WHOLE name and not just the suffix, because the name is a
+    // contract with three other files - the workflow that uploads it, the checksum
+    // fixture that pins the six, and the build script that renames the binary - and a
+    // suffix check would still pass if the stem drifted. Whichever build is running
+    // these tests asserts its own name exactly; between the two CI jobs, both rows of
+    // the table below are asserted on every release.
 #if defined(__linux__)
     const std::string name(platformAssetName());
-    const bool namesMusl = name.ends_with("-musl");
-#if defined(__GLIBC__)
-    EXPECT_FALSE(namesMusl) << name << " is named as the musl asset by a glibc build";
+    const bool namesPortable = name.ends_with("-portable");
+
+#if defined(__aarch64__)
+    const std::string stem = "lyxbosa-linux-arm64";
+#elif defined(__x86_64__)
+    const std::string stem = "lyxbosa-linux-amd64";
 #else
-    EXPECT_TRUE(namesMusl) << name << " is named as the glibc asset by a build that "
-                                      "does not link glibc";
+    GTEST_SKIP() << "a release publishes no Linux asset for this architecture";
 #endif
+
+#if defined(__GLIBC__)
+    EXPECT_FALSE(namesPortable)
+        << name << " is named as the portable asset by a glibc build";
+    EXPECT_EQ(name, stem) << "the standard build must name the unsuffixed asset";
+#else
+    EXPECT_TRUE(namesPortable) << name << " is named as the standard asset by a build "
+                                          "that does not link glibc";
+    EXPECT_EQ(name, stem + "-portable")
+        << "the portable build must name the -portable asset";
+#endif
+
+    // The stem is shared, which is what makes one name a strict prefix of the other -
+    // the relation .github/scripts/release-checksums.sh's fixture exists to pin, and
+    // the reason `sha256sum -c` matching whole lines is load-bearing rather than
+    // incidental.
+    EXPECT_TRUE(name.starts_with(stem)) << name << " does not share the common stem";
 #else
     GTEST_SKIP() << "the C-library suffix is a rule about Linux asset names";
 #endif

@@ -8,9 +8,14 @@ set -e
 #
 # Same shape as the glibc script deliberately, so the workflow calls the two the same
 # way; what differs is the image (Dockerfile in this directory says why it exists), the
-# tag, and the name the binary is given: lyxbosa-linux-<arch>-musl, the suffix being
+# tag, and the name the binary is given: lyxbosa-linux-<arch>-portable, the suffix being
 # what src-lib/cpp/update/ReleaseAssets.cpp appends for a musl build, so that the
 # updater fetches the asset this script produced and not the glibc one.
+#
+# The asset says `portable` and this directory says `musl` on purpose. The asset name is
+# read by somebody choosing what to download, and what they are choosing is a binary that
+# runs on an older host; everything in here - Alpine, the system gcc, -static - is how
+# that is delivered, and is exactly what a maintainer opening this file needs told.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -50,7 +55,7 @@ OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
 for CURRENT_ARCH in "${ARCHES[@]}"; do
     PLATFORM="linux/${CURRENT_ARCH}"
     TAG_NAME="lyxbosa-build-linux-musl-${CURRENT_ARCH}"
-    BINARY_NAME="lyxbosa-linux-${CURRENT_ARCH}-musl"
+    BINARY_NAME="lyxbosa-linux-${CURRENT_ARCH}-portable"
 
     echo "=== Building LyxBoSa for Linux (${CURRENT_ARCH}, static musl) ==="
 

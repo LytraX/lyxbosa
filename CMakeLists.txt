@@ -79,8 +79,9 @@ message(STATUS "Update verification: OpenSSL ${OPENSSL_VERSION} (Ed25519, BLAKE2
 
 # Which C library a Linux binary is built against decides which release asset it is,
 # and so which asset `lyxbosa update` fetches: a glibc build publishes as
-# lyxbosa-linux-<arch> and a musl build as lyxbosa-linux-<arch>-musl, and
-# ReleaseAssets.cpp says why neither ever fetches the other. The compiler's target
+# lyxbosa-linux-<arch> and a musl build as lyxbosa-linux-<arch>-portable, and
+# ReleaseAssets.cpp says why neither ever fetches the other - and why the asset says
+# `portable` while this option says `musl`. The compiler's target
 # triple is what says which - Alpine's gcc reports x86_64-alpine-linux-musl, AlmaLinux's
 # x86_64-redhat-linux - and it is read here and handed to the code as a definition
 # rather than sniffed from a macro in the source, because musl deliberately defines no
@@ -102,7 +103,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   if(LYXBOSA_TARGET_TRIPLE MATCHES "musl")
     set(LYXBOSA_LIBC_MUSL ON)
     message(STATUS "Linux C library: musl (${LYXBOSA_TARGET_TRIPLE}); "
-                   "release asset lyxbosa-linux-<arch>-musl")
+                   "release asset lyxbosa-linux-<arch>-portable")
   else()
     message(STATUS "Linux C library: glibc (${LYXBOSA_TARGET_TRIPLE}); "
                    "release asset lyxbosa-linux-<arch>")
@@ -111,11 +112,18 @@ endif()
 
 # The allocator the binary carries, if it carries one.
 #
-# musl's allocator is deliberately small and simple, and a scan is malloc-heavy: over
-# 53,977 files the static musl build ran about 40% slower than the glibc build of the
-# same commit, on the same tree, with the cache warm. That difference is the allocator
-# and not the C library in general, and it is the only thing that stops one Linux binary
-# from being the binary everybody gets. mimalloc carries its own free lists and heaps, is
+# musl's allocator is deliberately small and simple, and a scan is malloc-heavy. Measured
+# over 53,977 files with the cache warm, alternating the binaries, both built in their own
+# container so the compiler is not part of the difference: glibc 7.21s and 7.24s, musl
+# 9.60s and 9.50s, musl with mimalloc 8.02s and 8.00s.
+#
+# So mimalloc recovers about two thirds of the gap and roughly 10% remains. That remainder
+# is NOT the allocator: jemalloc lands within a hundredth of a second of mimalloc on every
+# tree tried, and two independent allocators agreeing is the evidence. What is left is the
+# part of a scan that searches bytes, where glibc dispatches routines chosen for the
+# instruction set and musl's are plain C - which is why one Linux binary for everybody is
+# not on the table, and why the portable asset is published beside the standard one rather
+# than instead of it. mimalloc carries its own free lists and heaps, is
 # built with MI_OVERRIDE so the ordinary malloc, free, new and delete entry points are
 # its own, and links into a static binary with nothing to load at run time.
 #
@@ -244,6 +252,7 @@ set(UPDATE_SOURCES
     src-lib/cpp/update/Checksums.cpp
     src-lib/cpp/update/InstallPath.cpp
     src-lib/cpp/update/ReleaseAssets.cpp
+    src-lib/cpp/update/BuildIdentity.cpp
     src-lib/cpp/update/UpdateApply.cpp
 )
 
@@ -383,6 +392,7 @@ if(BUILD_TESTS)
     tests/long_path_test.cpp
     tests/update_test.cpp
     tests/update_apply_test.cpp
+    tests/build_identity_test.cpp
     ${LIB_SOURCES}
     ${UPDATE_SOURCES}
   )

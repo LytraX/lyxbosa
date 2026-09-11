@@ -33,8 +33,9 @@ inline constexpr uint64_t kMaxChecksumListBytes = 256ull * 1024;
 
 // The asset name a release publishes for the platform this binary was built for -
 // and, on Linux, for the C library it was built against: lyxbosa-linux-<arch> is the
-// glibc build and lyxbosa-linux-<arch>-musl the static musl one. ReleaseAssets.cpp
-// says why a binary only ever names its own.
+// glibc build and lyxbosa-linux-<arch>-portable the static musl one. ReleaseAssets.cpp
+// says why a binary only ever names its own, and why the user-facing half of that name
+// says what the build is for rather than which C library it happens to carry.
 //
 // Empty means a release publishes nothing this binary could install, and that is not
 // hypothetical: .github/workflows/build.yml builds Linux amd64/arm64 twice, on glibc
