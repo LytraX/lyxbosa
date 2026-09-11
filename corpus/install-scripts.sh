@@ -298,7 +298,7 @@ selftest() {
   echo
   echo "=== destinations ==="
 
-  local prefix
+  local prefix out
   while IFS= read -r prefix; do
     [ -n "$prefix" ] || continue
     check "$prefix/lyxbosa is refused as a destination" \
@@ -321,6 +321,16 @@ selftest() {
   fi
   check "a relative path is resolved before it is judged" \
         "$(normalise_dir .)" "$(pwd -P)"
+  # The default destination is derived from $HOME, which the environment decides. With no
+  # HOME there is no ~/.local/bin to derive, and inventing one - or letting the path become
+  # the bare "/.local/bin" - is how an installer writes somewhere nobody asked for.
+  out="$(env -u HOME LYXBOSA_INSTALL_ORIGIN="file://$TESTDIR" sh "$INSTALL_SH" 2>&1)"
+  if printf '%s' "$out" | grep -q 'HOME is not set'; then
+    pass "with no HOME and no --dir it refuses rather than inventing a destination"
+  else
+    fail "with no HOME and no --dir it refuses rather than inventing a destination"
+    printf '%s\n' "$out" | sed 's/^/      /' | head -4
+  fi
 
   echo
   echo "=== architectures ==="

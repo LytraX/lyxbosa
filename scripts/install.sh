@@ -625,12 +625,18 @@ main() {
   choose_downloader
   choose_hasher
 
+  # Every branch goes through normalise_dir, the defaults included. $HOME is whatever the
+  # environment says it is - a trailing slash, a relative spelling, a symlink into somewhere
+  # a package manager owns - and the refusal below is only as good as the path it is given.
   if [ -n "$requested_dir" ]; then
     dir="$(normalise_dir "$requested_dir")"
   elif [ "$(id -u)" = "0" ]; then
-    dir="/usr/local/bin"
+    dir="$(normalise_dir /usr/local/bin)"
   else
-    dir="$HOME/.local/bin"
+    [ -n "${HOME:-}" ] || die "HOME is not set, so there is no ~/.local/bin to install into.
+   Pass --dir with somewhere you can write, or run this as root to install to
+   /usr/local/bin."
+    dir="$(normalise_dir "$HOME/.local/bin")"
   fi
   check_destination "$dir"
 
