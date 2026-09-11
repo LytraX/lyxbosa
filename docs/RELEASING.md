@@ -115,6 +115,31 @@ a corpus release — `corpus/release-assets.sh` does that — and a corpus tag d
 `.github/workflows/build.yml`, which only matches `v*`. Close out the changelog that matches
 the tag you are cutting; closing out both is how one round ends up described twice.
 
+**The corpus series closes out the same way, and before its tag for a different reason.**
+Rename the `## Unreleased` heading in [`corpus/CHANGELOG.md`](../corpus/CHANGELOG.md) to
+`## [corpus-YYYY.MM.N] - <date>`, open a fresh empty one above it, and add the compare link
+at the foot beside the others:
+
+```markdown
+## Unreleased
+
+## [corpus-2026.09.3] - 2026-09-14
+```
+```markdown
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/corpus-2026.09.3...HEAD
+[corpus-2026.09.3]: https://github.com/LytraX/lyxbosa/compare/corpus-2026.09.2...corpus-2026.09.3
+```
+
+No CI job reads that file, so the reason is not the release body. A corpus tag publishes
+shards that a stranger downloads and re-runs, and its section is where the counts those
+shards assert are written down — which shard is new, which figure moved, and what moved it.
+Push the tag first and the same section can only be written as history about something
+already public, by somebody who has to reconstruct which side of the tag each entry fell on.
+
+`corpus/release-assets.sh --print-upload <tag>` refuses to print the tag and upload commands
+while `corpus/CHANGELOG.md` has no closed section for that tag, so the ordering is a
+precondition of cutting the release rather than a step to remember.
+
 [`CHANGELOG.md`](../CHANGELOG.md) carries an `## Unreleased` section that is written as
 the work lands, not at release time. Closing it out means renaming that heading to the
 version and the date, and opening a fresh empty one above it:
@@ -139,10 +164,11 @@ Two things to check before you do:
 The README is not the place for this. It describes what the tool does now; the history
 of how it got there lives here.
 
-This step comes before tagging for a mechanical reason, not a tidiness one: CI reads
-the section for the tagged version out of the file *as it exists at the tag*, so an
-entry written afterwards never reaches the release body. See
-[What CI produces](#what-ci-produces).
+For a `v*` tag this step comes before tagging for a mechanical reason, not a tidiness
+one: CI reads the section for the tagged version out of the file *as it exists at the
+tag*, so an entry written afterwards never reaches the release body. See
+[What CI produces](#what-ci-produces). That mechanism is `v*`-only, which is why the
+corpus series above states its own reason and is gated by its own script.
 
 ### 3. Tag
 

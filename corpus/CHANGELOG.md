@@ -109,6 +109,44 @@ are correct as of the round that recorded them and are deliberately never regene
   quietly stopped opening `.sh` would satisfy every case that compares the parser only to
   itself, which is the shape §11 keeps recording. 24 cases, from 18.
 
+### Added
+
+- **`corpus/release-assets.sh` refuses to print the commands that cut a corpus tag while
+  the changelog still says `Unreleased` about what that tag would publish.** A corpus tag
+  publishes shards a stranger downloads and re-runs, and its changelog section is where the
+  counts those shards assert are written down — which shard is new, which figure moved and
+  what moved it. Push the tag first and that section can only be written as history about
+  something already public, by somebody reconstructing which side of the tag each entry fell
+  on. `--print-upload <tag>` is where the refusal belongs: printing is as far as this script
+  goes by design, the commands to tag and to publish come out of there, and refusing to
+  print them is refusing to cut the release.
+
+  **Closed out is four things, each refused by name**, because a heading with nothing under
+  it satisfies a check for the heading and ships a release whose section says nothing.
+  `## [<tag>] - <date>` exists, exactly once; it carries at least one entry; `## Unreleased`
+  is still above it, or the next round writes into a released section and this recurs one
+  round later; and a `[<tag>]:` definition exists at the foot, or the bracketed heading
+  renders as brackets.
+
+- **Seven controls, both directions — and the good case had to be run against real data
+  before it was worth anything.** Five planted defects, one per rule plus the shape this
+  gate exists for: the *previous* tag closed out and the one being cut not, which is what
+  the file looks like every time this has gone wrong and which a check asking only "is any
+  section closed" would pass. Each refusal is asserted to name its own rule, since a
+  function returning 1 unconditionally catches all five and refuses every real release.
+
+  The seventh is the one that earned its place. The emptiness test was
+  `printf '%s\n' "$body" | grep -q '^- '`, and under `set -o pipefail` that pipeline reports
+  the **left** side: `grep -q` exits on the first match and closes the pipe, `printf` takes
+  SIGPIPE and exits 141, and pipefail hands back the 141. Every real section read as empty.
+  The twenty-line fixture passed throughout, because it is small enough that `printf`
+  finishes before `grep` can close the pipe — so the good case is now asserted against
+  **`corpus/CHANGELOG.md` itself**, at the size the sections actually are, with the tag read
+  out of the file rather than named in the control so it needs no editing per release. A
+  good case small enough to win a race has not been observed. Two further instances of the
+  same pipeline shape were repaired beside it; neither fires today, one match each, which is
+  the version of this that gets found much later.
+
 ## [corpus-2026.09.2] - 2026-09-08
 
 ### Added
