@@ -162,7 +162,7 @@ private:
         // It names only things a person holding a downloaded release can reach. The
         // previous version of this text said to verify with "the key in
         // keys/minisign-trusted.txt", which is a path in a source checkout: a release
-        // publishes four binaries, SHA256SUMS and SHA256SUMS.minisig, and no keyring.
+        // publishes six binaries, SHA256SUMS and SHA256SUMS.minisig, and no keyring.
         fmt::print(stderr,
                    "\nThe binary you are running has not been changed.\n"
                    "\n"

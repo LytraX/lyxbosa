@@ -1909,6 +1909,26 @@ TEST(ApplyTest, AShippedBuildTalksToGitHubAndNowhereElse) {
 #endif
 }
 
+TEST(ApplyTest, TheLinuxAssetNamesTheCLibraryThisBinaryWasBuiltAgainst) {
+    // Two independent detections of the same fact. CMake reads the compiler's target
+    // triple and defines LYXBOSA_LIBC_MUSL for a musl build; glibc's own headers define
+    // __GLIBC__ and musl's do not. A binary whose asset name disagrees with the C
+    // library it links would update itself onto the other one, so the two have to
+    // agree here, in both build jobs, before either ships.
+#if defined(__linux__)
+    const std::string name(platformAssetName());
+    const bool namesMusl = name.ends_with("-musl");
+#if defined(__GLIBC__)
+    EXPECT_FALSE(namesMusl) << name << " is named as the musl asset by a glibc build";
+#else
+    EXPECT_TRUE(namesMusl) << name << " is named as the glibc asset by a build that "
+                                      "does not link glibc";
+#endif
+#else
+    GTEST_SKIP() << "the C-library suffix is a rule about Linux asset names";
+#endif
+}
+
 TEST(ApplyTest, ThisPlatformKnowsWhichAssetItWouldInstall) {
     // A platform with no asset must produce an empty name rather than a guess, and the
     // one running these tests is a platform a release publishes for.

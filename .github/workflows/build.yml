@@ -11,8 +11,8 @@ on:
     # leave a cache the next pull request can restore.
     branches:
       - master
-  # Pull requests run the two test jobs and nothing else: the build jobs are gated on the
-  # event below, and `release` on the tag. Tags and manual runs run all five.
+  # Pull requests run the three test jobs and nothing else: the build jobs are gated on the
+  # event below, and `release` on the tag. Tags and manual runs run all seven.
   pull_request:
     branches:
       - master
@@ -33,7 +33,7 @@ on:
 jobs:
   # ---------------------------------------------------------------- tests
   #
-  # These two jobs are the only place the test suite runs anywhere but on somebody's
+  # These three jobs are the only place the test suite runs anywhere but on somebody's
   # desk. They build with BUILD_TESTS=ON and run ctest; the build jobs below build with
   # the tests OFF, because a release should compile only what it ships - and that is
   # exactly why a test target that could not compile on Windows shipped release after
@@ -86,6 +86,42 @@ jobs:
       - name: Reclaim cache ownership
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache || true
+
+  # The same suite under the static musl build. A different C library is a different
+  # allocator, resolver and regex build, so a musl asset whose tests only ever ran on
+  # glibc would ship on an assumption; docker/build/Linux-musl/test.sh says what this
+  # proves. Its own cache key, hashing its own Dockerfile: the compiler is in vcpkg's ABI
+  # hash and Alpine's gcc is not AlmaLinux's, so the two caches cannot share an entry.
+  test-linux-musl:
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: .vcpkg-cache-musl
+          key: vcpkg-linux-musl-tests-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux-musl/Dockerfile') }}
+          restore-keys: |
+            vcpkg-linux-musl-tests-${{ matrix.arch }}-
+            vcpkg-linux-musl-${{ matrix.arch }}-
+
+      - name: Build with tests and run them (${{ matrix.arch }}, static musl)
+        env:
+          VCPKG_BINARY_CACHE: .vcpkg-cache-musl
+        run: docker/build/Linux-musl/test.sh "${{ matrix.arch }}"
+
+      - name: Reclaim cache ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache-musl || true
 
   test-windows:
     runs-on: windows-latest
@@ -208,6 +244,71 @@ jobs:
           name: lyxbosa-linux-${{ matrix.arch }}
           path: dist/lyxbosa-linux-*
 
+  # The static musl build, published BESIDE the glibc one and not instead of it. The
+  # glibc binary needs the host's glibc to be at least almalinux:8's and does not start
+  # on the older hosting where compromised sites actually live; this one carries its own
+  # C library and does. Both ship so that the two can be compared on real hosts before
+  # either is retired, and so that a defect in the new one is not also the loss of the
+  # old one. docker/build/Linux-musl/Dockerfile says why musl and not a static glibc.
+  #
+  # The asset is lyxbosa-linux-<arch>-musl, and that suffix is not decoration: it is what
+  # src-lib/cpp/update/ReleaseAssets.cpp appends for a musl build, so `lyxbosa update`
+  # running from this binary fetches this binary's successor and never the glibc one.
+  build-linux-musl:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # The same three-way answer as build-linux's step of the same name.
+      - name: Work out the version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${REQUESTED#v}"
+            if [[ -n "$version" && ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::version '${REQUESTED}' is not three dot-separated numbers"
+              exit 1
+            fi
+          fi
+          echo "value=${version}" >> "$GITHUB_OUTPUT"
+
+      # Keyed on this job's own Dockerfile, for the reason build-linux's note gives, and
+      # apart from the glibc cache because the compiler is in the ABI hash.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: .vcpkg-cache-musl
+          key: vcpkg-linux-musl-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux-musl/Dockerfile') }}
+          restore-keys: |
+            vcpkg-linux-musl-${{ matrix.arch }}-
+
+      - name: Build for Linux (${{ matrix.arch }}, static musl)
+        env:
+          VCPKG_BINARY_CACHE: .vcpkg-cache-musl
+        run: docker/build/Linux-musl/build.sh "${{ matrix.arch }}" dist "${{ steps.version.outputs.value }}"
+
+      - name: Reclaim cache ownership
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache-musl || true
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: lyxbosa-linux-${{ matrix.arch }}-musl
+          path: dist/lyxbosa-linux-*-musl
+
   build-windows:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
@@ -272,7 +373,7 @@ jobs:
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-linux-musl, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -368,12 +469,14 @@ jobs:
           .github/scripts/release-checksums.sh --selftest
           .github/scripts/release-sign.sh --selftest --require-minisign
 
-      # --expect 4 is the four binaries the two build jobs publish: linux amd64 and arm64,
-      # windows amd64 and arm64. It is exact on purpose. A list that is missing one binary
-      # looks finished, and a release that gained an asset should stop here and be looked at
-      # rather than shipping a checksum file that quietly does not cover it.
+      # --expect 6 is the six binaries the three build jobs publish: linux amd64 and arm64
+      # on glibc, the same two on static musl, and windows amd64 and arm64. It is exact on
+      # purpose. A list that is missing one binary looks finished, and a release that gained
+      # an asset should stop here and be looked at rather than shipping a checksum file that
+      # quietly does not cover it - which is what happened to this number when the musl
+      # pair was added, and why it is 6 and not 4.
       - name: Checksum every asset
-        run: .github/scripts/release-checksums.sh write artifacts --expect 4
+        run: .github/scripts/release-checksums.sh write artifacts --expect 6
 
       # A checksum file published beside the files it describes is only a defence against a
       # corrupted download - whoever can write to the release can rewrite the list too. This
@@ -388,7 +491,8 @@ jobs:
 
       # `files: artifacts/*` needs no change to pick the two new files up: measured against
       # glob 13.0.6, the version softprops/action-gh-release@v3 pins, the pattern resolves to
-      # six paths including artifacts/SHA256SUMS and artifacts/SHA256SUMS.minisig.
+      # every path in the directory, artifacts/SHA256SUMS and artifacts/SHA256SUMS.minisig
+      # included - eight with the six binaries above.
       #
       # fail_on_unmatched_files is the same argument as --expect above, one level out: a
       # release that attaches nothing is a release that looks published.

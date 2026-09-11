@@ -50,7 +50,7 @@ bool usingTestOrigin() {
 }
 
 std::string_view platformAssetName() {
-    // The four names .github/workflows/build.yml publishes, and nothing else. A
+    // The six names .github/workflows/build.yml publishes, and nothing else. A
     // platform not listed here gets an empty string and `update` refuses, which is the
     // honest answer when there is no asset to fetch.
 #if defined(_WIN32)
@@ -62,13 +62,37 @@ std::string_view platformAssetName() {
     return "";
 #endif
 #elif defined(__linux__)
+    // Two Linux builds publish for each architecture, from two C libraries, and the
+    // one this binary was built against decides which it names: a glibc binary names
+    // the glibc asset and a musl binary the musl one, and neither ever fetches the
+    // other. The glibc build needs the host's glibc to be at least the build host's;
+    // the musl build carries its own C library and runs on hosts too old for that.
+    //
+    // Crossing over is a decision for whoever runs the host, made once by downloading
+    // the other asset by hand; from then on the updater stays on it. It is not the
+    // updater's to make, in either direction, and the smoke test in UpdateApply.cpp is
+    // not what makes it: that test refuses a glibc release that will not start, which
+    // is a safety net under this rule and not the rule. On a current host both builds
+    // start, and before this suffix existed a musl binary asked to update there
+    // fetched the glibc asset, passed the smoke test, and installed it - a different C
+    // library under the user, without a word. Measured 2026-09-11 on ubuntu:24.04.
+    //
+    // LYXBOSA_LIBC_MUSL comes from CMake, which reads the compiler's target triple;
+    // musl defines no macro of its own. tests/update_apply_test.cpp checks it against
+    // __GLIBC__, so a build where the two disagree fails there rather than here.
+#if defined(LYXBOSA_LIBC_MUSL)
+#define LYXBOSA_LINUX_LIBC_SUFFIX "-musl"
+#else
+#define LYXBOSA_LINUX_LIBC_SUFFIX ""
+#endif
 #if defined(__aarch64__)
-    return "lyxbosa-linux-arm64";
+    return "lyxbosa-linux-arm64" LYXBOSA_LINUX_LIBC_SUFFIX;
 #elif defined(__x86_64__)
-    return "lyxbosa-linux-amd64";
+    return "lyxbosa-linux-amd64" LYXBOSA_LINUX_LIBC_SUFFIX;
 #else
     return "";
 #endif
+#undef LYXBOSA_LINUX_LIBC_SUFFIX
 #else
     // macOS, the BSDs, anything else. A release publishes no binary for them, so there
     // is nothing an updater could install even though the replace itself would work.

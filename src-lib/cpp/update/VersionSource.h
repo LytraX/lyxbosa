@@ -18,8 +18,8 @@
 //   The release job cannot be rehearsed. `.github/scripts/release-checksums.sh` says
 //   so at length, and it is gated on a `v*` tag, so any change to it is code that
 //   ships without ever having run. Publishing a manifest means changing that job and
-//   changing `--expect 4`, whose entire design is to STOP when the asset set changes.
-//   The API needs no release change at all.
+//   changing its `--expect` count, whose entire design is to STOP when the asset set
+//   changes. The API needs no release change at all.
 //
 //   A manifest does not exist for any release already published. Shipping one would
 //   leave the check inert until the release after next, which is a feature that looks

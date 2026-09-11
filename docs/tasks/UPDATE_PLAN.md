@@ -213,8 +213,8 @@ release CDN, no rate limit — and it lost on three specifics:
 - The release job cannot be rehearsed. It is gated on a `v*` tag, and
   `.github/scripts/release-checksums.sh` says at length why that makes any change to it code
   that ships without ever having run. Publishing a manifest means changing that job *and*
-  changing `--expect 4`, whose entire design is to stop when the asset set changes. The API
-  needs no release change at all.
+  changing its `--expect` count, whose entire design is to stop when the asset set changes.
+  The API needs no release change at all.
 - A manifest exists for no release already published, so shipping one would leave the check
   inert until the release after next — a feature that looks like it works and does nothing.
 - Both of the API's real drawbacks fail in the safe direction. The unauthenticated rate limit

@@ -436,6 +436,16 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
         result.detail =
             "it did not start when asked for its version, so it has not been installed - "
             "the most likely cause is a C library older here than on the build host";
+#if defined(__linux__) && !defined(LYXBOSA_LIBC_MUSL)
+        // A glibc build on a host whose glibc the release has outgrown. The release also
+        // publishes a build that carries its own C library, and naming it here is the
+        // difference between a refusal and a way forward; installing it is still by
+        // hand, for the reason platformAssetName() gives.
+        result.detail += fmt::format(
+            "; the same release's {}-musl asset carries its own C library and is built "
+            "for a host like this one - install it by hand, and updates stay on it",
+            assetName);
+#endif
         return result;
     }
 

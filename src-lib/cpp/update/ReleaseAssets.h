@@ -31,13 +31,16 @@ inline constexpr uint64_t kMaxAssetBytes = 64ull * 1024 * 1024;
 // The list and its signature are a few hundred bytes each.
 inline constexpr uint64_t kMaxChecksumListBytes = 256ull * 1024;
 
-// The asset name a release publishes for the platform this binary was built for.
+// The asset name a release publishes for the platform this binary was built for -
+// and, on Linux, for the C library it was built against: lyxbosa-linux-<arch> is the
+// glibc build and lyxbosa-linux-<arch>-musl the static musl one. ReleaseAssets.cpp
+// says why a binary only ever names its own.
 //
 // Empty means a release publishes nothing this binary could install, and that is not
-// hypothetical: .github/workflows/build.yml builds Linux amd64/arm64 and Windows
-// amd64/arm64, four assets, which `release-checksums.sh --expect 4` exists to hold it
-// to. There is no macOS asset, so an updater running there has nothing to fetch and
-// says so rather than guessing at a name.
+// hypothetical: .github/workflows/build.yml builds Linux amd64/arm64 twice, on glibc
+// and on musl, and Windows amd64/arm64 - six assets, which `release-checksums.sh
+// --expect 6` exists to hold it to. There is no macOS asset, so an updater running
+// there has nothing to fetch and says so rather than guessing at a name.
 std::string_view platformAssetName();
 
 // Whether a running executable can be replaced on this platform. True everywhere a
