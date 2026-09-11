@@ -270,6 +270,41 @@ of trusting the author: a suppression they did not mean is a `low` finding they 
   while the report accumulates in the file, and the file never contains a single escape
   sequence.
 
+## Installation
+
+One command per platform.
+
+**Linux**
+
+```bash
+curl -fsSL https://github.com/LytraX/lyxbosa/releases/latest/download/install.sh | sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://github.com/LytraX/lyxbosa/releases/latest/download/install.ps1 | iex
+```
+
+Both scripts are release assets, so each is covered by the release's `SHA256SUMS` and by the
+minisign signature over that list — the same list and the same signature as the binaries. The
+script checks every download against it, verifies the signature when minisign is installed,
+and says which of the two levels of checking you got rather than implying the stronger one.
+
+Piping a script into a shell runs bytes you have not read, chosen by whoever controls the
+release. That is the same trust you extend to the binary, which you are about to run as root
+on a compromised host. What it cannot give you is proof that the bytes your shell is
+executing are the ones in the signed list; **no script can establish its own integrity.**
+
+On Linux it picks between the four Linux binaries for you, installs to `/usr/local/bin` as
+root or `~/.local/bin` otherwise, and refuses any destination `lyxbosa update` would later
+decline to write. On Windows it installs to `%LOCALAPPDATA%\Programs\lyxbosa` and adds it to
+your user PATH.
+
+**[docs/INSTALL.md](docs/INSTALL.md)** has the rest: how the build is chosen, what each level
+of verification does and does not defend against, the options, and the same steps written out
+by hand for anyone who would rather not pipe.
+
 ## System support
 
 Every release publishes six binaries. Pick by the system you are on; the table says what
@@ -764,8 +799,7 @@ lyxbosa update
 It downloads the newest release, checks it, and replaces the binary you are running. Or
 fetch it yourself from [the releases page](https://github.com/LytraX/lyxbosa/releases):
 every release publishes `SHA256SUMS` and a `minisign` signature over it, and verifying both
-by hand is described in
-[docs/RELEASING.md](docs/RELEASING.md#release-integrity-checksums-and-signatures).
+by hand is written out in [docs/INSTALL.md](docs/INSTALL.md#by-hand).
 
 ### Which Linux binary
 
@@ -906,7 +940,8 @@ that kind.
 
 ## Building
 
-See [docs/BUILDING.md](docs/BUILDING.md).
+See [docs/BUILDING.md](docs/BUILDING.md). Installing a released binary instead is
+[docs/INSTALL.md](docs/INSTALL.md).
 
 ## Changes
 

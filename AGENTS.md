@@ -185,10 +185,10 @@ suites that broke this month and leave the other thirty-eight exactly as unwatch
 instance of that round already scheduled. Five commands is a list somebody runs; twenty is a
 list that gets skipped and then quoted as green. So the list grows by one, the runner
 **discovers** the suites by reading every `corpus/*.py` and every `corpus/*.sh` rather than
-holding a list of its own, and coverage stops depending on anybody's memory. It takes 27
-seconds warm (46 on the first run after a reboot — page cache over the 62 MB index, not the
-tools), of which 7.8 seconds is `classify-known-miss.py` and 5.6 is `field-provenance.py`,
-plus about a second for the three shell suites.
+holding a list of its own, and coverage stops depending on anybody's memory. It takes about
+34 seconds warm over 46 suites (roughly twice that on a cold run — page cache over the 62 MB
+index, not the tools), of which 7.8 seconds is `classify-known-miss.py` and 5.6 is
+`field-provenance.py`, plus about a second each for the shell suites.
 
 The two suffixes are read by different means and it is the same argument twice. A Python
 suite is found by parsing, because a text sweep cannot tell `"--inject"` in an `add_argument`

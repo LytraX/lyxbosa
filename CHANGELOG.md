@@ -22,6 +22,42 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Added
+
+- **One command installs the scanner, on Linux and on Windows.**
+  `curl -fsSL https://github.com/LytraX/lyxbosa/releases/latest/download/install.sh | sh`,
+  and `irm .../install.ps1 | iex` in PowerShell. Both scripts are published as release
+  assets, so each is covered by the release's `SHA256SUMS` and by the minisign signature
+  over that list — the same list and the same signature as the binaries. Every download is
+  checked against it; the signature is verified when minisign is installed, and the script
+  says which of the two levels of checking was achieved rather than implying the stronger
+  one. `docs/INSTALL.md` writes the same steps out by hand, and says what piping a script
+  into a shell does and does not give you.
+
+  On Linux the script picks between the four Linux binaries without asking: architecture
+  from `uname -m`, and the C library by finding the dynamic loader at the path the ABI fixes
+  and reading the highest `GLIBC_2.N` out of the first readable `libc.so.6` — the same
+  method, the same four paths and the same 2.28 floor the binary uses to decide whether to
+  print its portable-build notice. A host it cannot read gets the portable build, which runs
+  everywhere. The verified download is also run once before it is installed, so a standard
+  build that will not start here is replaced by the portable one rather than installed.
+
+  It installs to `/usr/local/bin` as root and `~/.local/bin` otherwise, and **refuses any
+  destination under the twelve prefixes `lyxbosa update` declines to write** — an install
+  under `/usr/bin` is a binary that can never update itself. On Windows it installs to
+  `%LOCALAPPDATA%\Programs\lyxbosa`, which is per-user and writable for the same reason,
+  and adds it to the user PATH.
+
+  It never quietly replaces a `lyxbosa` found elsewhere on PATH, and it never crosses
+  between the standard and the portable build on its own: `lyxbosa update` deliberately
+  never crosses either, so a host already running the portable build keeps it and is told
+  the faster one is available. `--standard` and `--portable` are how somebody crosses on
+  purpose.
+
+- **A release now publishes eight assets.** The six binaries, plus `install.sh` and
+  `install.ps1`. `SHA256SUMS` covers all eight and `SHA256SUMS.minisig` signs it, so a
+  release carries ten files in total.
+
 ### Changed
 
 - **The portable-build notice no longer quotes a speed figure, and no longer claims to be
