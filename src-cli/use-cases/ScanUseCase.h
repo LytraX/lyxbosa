@@ -11,6 +11,7 @@
 #include "config/Config.h"
 #include "core/Scanner.h"
 #include "system/CliArgs.h"
+#include "update/BuildIdentity.h"
 #include "update/UpdateCheck.h"
 #include "update/UpdateState.h"
 #include "update/VersionSource.h"
@@ -588,6 +589,12 @@ private:
             }
         }
 
+        // And the once-ever line about being the portable build on a host that did not
+        // need it. Its own block rather than the one above, because it is not gated on
+        // updates.check: it reaches no network, so the setting that says "do not touch
+        // the network" has no opinion about it.
+        maybeSayThisIsThePortableBuild(args);
+
         // The refusal in execute() proves every named root was there when the command
         // started. This is the race that one cannot cover: a root taken away while the
         // scan was running. Not the operator's mistake, so the findings stand and are
@@ -616,6 +623,54 @@ private:
             return 1;
         }
         return result.filesWithMatches > 0 ? 2 : 0;
+    }
+
+    // The portable build, once, on a host that could have run the faster one.
+    //
+    // The order here is the order of decidePortableNotice(), and it matters for more
+    // than tidiness: the host is not read from disk until every other gate has passed,
+    // and the state file is written BEFORE the line is printed. A notice recorded only
+    // after a successful print is a notice that repeats forever the first time the
+    // terminal goes away mid-write - the same failure the update check's reserve-first
+    // write exists for.
+    void maybeSayThisIsThePortableBuild(const CliArgs& args) const {
+        PortableNoticeContext ctx;
+        ctx.callSite = UpdateCallSite::Scan;
+        ctx.portableBuild = isPortableBuild();
+        ctx.stdoutIsTty = caps_.stdoutIsTty();
+        ctx.isCI = caps_.isCI();
+        ctx.quiet = args.quiet;
+        ctx.silent = args.silent;
+        ctx.force = args.force;
+
+        // Reading the state has no side effect, so it happens before the decision.
+        const std::filesystem::path statePath = defaultUpdateStatePath();
+        const auto state = readUpdateState(statePath);
+        ctx.alreadyShown = state && state->portableNoticeShown;
+
+        // Everything except the two tests that cost something - reading the host's
+        // files, and writing the state - which are assumed to pass here and are each
+        // actually performed below. startUpdateCheck() sets stateWritable the same way
+        // and for the same reason: a run that fails on a cheap gate must not have
+        // touched anything.
+        ctx.stateWritable = true;
+        ctx.standardBuild = StandardBuildHere::Yes;
+        if (decidePortableNotice(ctx) != PortableNoticeDecision::Show) return;
+
+        // The first thing that costs: the host's own files. Unknown is not a maybe -
+        // it is treated as No by the policy, so a host this cannot read stays quiet.
+        ctx.standardBuild = standardBuildHere();
+        if (decidePortableNotice(ctx) != PortableNoticeDecision::Show) return;
+
+        const std::string notice = portableBuildNotice();
+        if (notice.empty()) return;
+
+        // The second: the write that is also the probe. It happens BEFORE the line is
+        // printed, so a failure here is one silent run rather than a notice that
+        // repeats forever.
+        if (!recordPortableNoticeShown(statePath)) return;
+
+        terminal_.printErr(Terminal::warning(), "\nNote: {}", notice);
     }
 
     // Everything this command knows that the policy needs, and nothing else.

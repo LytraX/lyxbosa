@@ -245,6 +245,7 @@ set(UPDATE_SOURCES
     src-lib/cpp/update/Checksums.cpp
     src-lib/cpp/update/InstallPath.cpp
     src-lib/cpp/update/ReleaseAssets.cpp
+    src-lib/cpp/update/BuildIdentity.cpp
     src-lib/cpp/update/UpdateApply.cpp
 )
 
@@ -384,6 +385,7 @@ if(BUILD_TESTS)
     tests/long_path_test.cpp
     tests/update_test.cpp
     tests/update_apply_test.cpp
+    tests/build_identity_test.cpp
     ${LIB_SOURCES}
     ${UPDATE_SOURCES}
   )

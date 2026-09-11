@@ -56,6 +56,27 @@ commit list that CI generates per tag.
   glibc build. The glibc binary is unaffected; only the static build links it, because
   only the static build needed it.
 
+- **`--version` says which build it is.** It now reads
+  `2.3.0 (portable build, lyxbosa-linux-amd64-portable)` or
+  `2.3.0 (standard build, lyxbosa-linux-amd64)`, which is the first question any support
+  conversation asks and was previously answerable only by knowing what `file` says about
+  a static binary. The version is still the first whitespace-delimited token, so a script
+  reading it is unaffected.
+
+- **A portable build on a host that did not need one says so, once.** After a scan, and
+  only where the reader can act on it: somebody whose installer fell back further than it
+  had to, or who fetched the wrong asset by hand. It names the standard asset, says it is
+  about 10% faster, and is not repeated.
+
+  On a host that cannot run the standard build it stays silent, because there is no choice
+  to offer - and so it does not become a line about a decision the reader does not have.
+  Answering that needs the host examined, which the portable build does by looking for the
+  dynamic loader and reading a version out of the host's own C library. It acts only on a
+  proven yes: a host it cannot read is treated exactly like one with no alternative. It is
+  also silent under `--quiet`, `--silent` and `--force`, when stdout is not a terminal, in
+  CI, and on any run whose state file cannot be written - the same conditions as the
+  update notice, and the same state file, so there is one mechanism rather than two.
+
 - **A portable build of the Linux binary, published beside the standard one.** Every
   release now carries `lyxbosa-linux-<arch>-portable` for amd64 and arm64 as well as
   `lyxbosa-linux-<arch>`. The standard build is linked against the glibc of AlmaLinux 8 and

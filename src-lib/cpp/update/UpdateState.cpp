@@ -118,6 +118,12 @@ std::optional<UpdateState> readUpdateState(const std::filesystem::path& path) {
                 state.latestVersion.assign(value);
                 sawAnything = true;
             }
+        } else if (key == "portable_notice_shown") {
+            // Only the exact value this file writes counts as yes. Anything else -
+            // a truncated line, a hand-edit, a value from a later version of this
+            // file - means "not shown", which costs at most one extra line once.
+            state.portableNoticeShown = (value == "1");
+            sawAnything = true;
         }
         // Anything else is a key from a later version of this file. Ignored, not an
         // error: a newer binary's state file must not make an older one check on
@@ -151,6 +157,9 @@ bool writeUpdateState(const std::filesystem::path& path, const UpdateState& stat
             state.latestVersion.size() <= kMaxVersionChars) {
             out << "latest_version=" << state.latestVersion << '\n';
         }
+        if (state.portableNoticeShown) {
+            out << "portable_notice_shown=1\n";
+        }
         out.flush();
         if (!out) {
             fs::remove(tmp, ec);
@@ -172,6 +181,15 @@ bool reserveUpdateCheck(const std::filesystem::path& path, uint64_t nowEpoch) {
         state = *existing;
     }
     state.lastCheckEpoch = nowEpoch;
+    return writeUpdateState(path, state);
+}
+
+bool recordPortableNoticeShown(const std::filesystem::path& path) {
+    UpdateState state;
+    if (const auto existing = readUpdateState(path)) {
+        state = *existing;
+    }
+    state.portableNoticeShown = true;
     return writeUpdateState(path, state);
 }
 

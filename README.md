@@ -287,6 +287,15 @@ below what the standard build needs.
 Each row offers two architectures. `uname -m` says which: `x86_64` means the `amd64`
 download, `aarch64` means the `arm64` one.
 
+**To find out which one you already have**, ask it:
+
+```
+$ lyxbosa --version
+2.3.0 (portable build, lyxbosa-linux-amd64-portable)
+```
+
+The version is still the first thing on the line, so a script reading it is unaffected.
+
 **If you already have an error, it tells you which one you need.** A message like
 
 ```
@@ -318,6 +327,12 @@ inside it.
 byte, over the whole reviewed corpus: the same rules, the same files, the same severities,
 with every report compared line by line. If the standard build runs on your host, prefer it
 for the 10%; if it does not, you lose nothing but that.
+
+A portable build that finds itself on a host which could have run the standard one says so
+once, after a scan, and never again. It stays quiet on a host that could not — there is no
+choice to offer there — and it is silent under `--quiet`, `--silent` and `--force`, when
+output is redirected, and in CI. If it cannot establish what the host could run, it says
+nothing: not knowing is treated as no.
 
 ## Detection coverage
 

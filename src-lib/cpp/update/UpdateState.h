@@ -30,6 +30,11 @@ namespace lyxbosa {
 struct UpdateState {
     uint64_t lastCheckEpoch = 0;   // when we last asked, 0 for never
     std::string latestVersion;     // what the answer was, empty when we never got one
+
+    // Whether the "this host could run the standard build" line has been said. It is
+    // said once and never again, so this is a flag and not a timestamp: there is no
+    // interval after which repeating it would be more use than the first time was.
+    bool portableNoticeShown = false;
 };
 
 // Where the state lives when nothing overrides it.
@@ -54,6 +59,15 @@ bool writeUpdateState(const std::filesystem::path& path, const UpdateState& stat
 // state knew about. Returns false when the file could not be written - which is the
 // answer to "is the state writable", and the caller must then not check at all.
 bool reserveUpdateCheck(const std::filesystem::path& path, uint64_t nowEpoch);
+
+// Record that the portable-build notice has been said, keeping everything else the
+// file already holds. Returns false when it could not be written, which is the answer
+// to "is the state writable" for a run that is not also doing an update check - and a
+// notice that cannot be recorded must not be printed, or it prints on every run.
+//
+// Written BEFORE the line reaches the terminal, for the same reason the update check
+// reserves before it asks: the failure that matters is the one that repeats.
+bool recordPortableNoticeShown(const std::filesystem::path& path);
 
 // Seconds since the Unix epoch. A free function so tests drive time explicitly.
 uint64_t currentEpochSeconds();
