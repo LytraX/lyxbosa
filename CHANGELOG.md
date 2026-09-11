@@ -22,6 +22,8 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [2.5.0] - 2026-09-11
+
 ### Added
 
 - **One command installs the scanner, on Linux and on Windows.**
@@ -103,6 +105,22 @@ commit list that CI generates per tag.
   network cleared the record of when that notice was last said and the line came back early.
   All three now go through one function that reads the file before changing it, which is
   also why there is one function rather than three corrected copies.
+
+### Compatibility
+
+- **This is a minor bump, not a patch.** A release gained two assets and the project gained
+  an install method, which is new surface rather than repair.
+- **A release publishes ten files rather than eight.** Six binaries and the two install
+  scripts, beside the unchanged `SHA256SUMS` and its signature. A script globbing the release
+  and expecting eight names will see ten; one asking for a binary by name is unaffected.
+- **`install.sh` and `install.ps1` are covered by the same signature as the binaries**, so a
+  reader who verifies the checksum list can verify the installer with it. Being a release
+  asset does not make piping into a shell safe, and `docs/INSTALL.md` says what it does and
+  does not give you.
+- **Nothing about scanning changes.** Detection, the exit codes, every report format, and
+  everything that runs unattended are byte for byte as before. The portable-build notice
+  changed its wording and its cadence, and it remains on stderr and only when stdout is a
+  terminal, so a redirected report still cannot contain it.
 
 ## [2.4.0] - 2026-09-11
 
@@ -913,7 +931,8 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/LytraX/lyxbosa/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/LytraX/lyxbosa/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/LytraX/lyxbosa/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/LytraX/lyxbosa/compare/v2.2.0...v2.2.1
