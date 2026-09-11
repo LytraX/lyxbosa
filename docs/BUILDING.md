@@ -225,6 +225,25 @@ docker/build/Linux/build.sh all dist 1.1.0
 Requires Docker with buildx (and qemu for cross-arch builds). Output is
 `dist/lyxbosa-linux-<arch>`.
 
+### Linux, static musl (Docker, Alpine)
+
+A second Linux binary that needs nothing from the host it runs on, for hosts too old
+for the glibc one - the glibc build needs glibc 2.28 and refuses to load on anything
+older. The same arguments as the glibc script:
+
+```bash
+docker/build/Linux-musl/build.sh [amd64|arm64|all] [output-dir] [version]
+```
+
+Output is `dist/lyxbosa-linux-<arch>-musl`. The image is Alpine, which is musl
+natively, so it is the system compiler and not a cross toolchain; vcpkg is told to use
+the system cmake and ninja (`VCPKG_FORCE_SYSTEM_BINARIES`), because the ones it would
+download are glibc binaries. The build passes `-static` on the executable link and
+refuses its own output if it is not statically linked. Tests run in the same image
+through `docker/build/Linux-musl/test.sh`, and CMake reports which C library it
+detected — the line `Linux C library: musl` — because that detection is what sets the
+`-musl` suffix the updater fetches by.
+
 ### Windows (PowerShell, static MSVC runtime)
 
 ```powershell
@@ -248,9 +267,10 @@ machine allows it and skips, naming the half it could not meet, where it does no
 
 ### CI
 
-[`.github/workflows/build.yml`](../.github/workflows/build.yml) runs both of the above
-on a `v*` tag push (Linux amd64/arm64 and Windows), then publishes a GitHub release
-with the binaries. `workflow_dispatch` builds artifacts without releasing.
+[`.github/workflows/build.yml`](../.github/workflows/build.yml) runs all three of the
+above on a `v*` tag push (Linux amd64/arm64 on glibc and on musl, and Windows), then
+publishes a GitHub release with the binaries. `workflow_dispatch` builds artifacts
+without releasing.
 
 ## Build directories at a glance
 

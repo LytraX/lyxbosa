@@ -24,6 +24,31 @@ commit list that CI generates per tag.
 
 ### Added
 
+- **A static musl build of the Linux binary, published beside the glibc one.** Every
+  release now carries `lyxbosa-linux-<arch>-musl` for amd64 and arm64 as well as
+  `lyxbosa-linux-<arch>`. The glibc build is linked against the glibc of AlmaLinux 8 and
+  refuses to load on anything older - CentOS 7 and Ubuntu 16.04 print `GLIBC_2.28' not
+  found` and never start - which is the hosting where compromised sites tend to live. The
+  musl build is statically linked, needs nothing from the host, and runs there; it is musl
+  rather than a static glibc because a static glibc binary still loads the host's
+  name-service modules and segfaults in `update --check` on CentOS 7. Measured on
+  `centos:7`, `ubuntu:16.04` and `ubuntu:24.04`: the musl build scans, reports the same
+  findings byte for byte over the whole reviewed corpus - detection 730 of 1,299,
+  regression 131 of 131, 44 benign findings in 197,559 files read, identical to the glibc
+  build - and completes `update --check` on all three. It is about a third larger,
+  because the C library is inside it.
+
+  `lyxbosa update` stays on the C library it was built with: a glibc binary fetches the
+  glibc asset and a musl binary the `-musl` one, never the other. Before the suffix
+  existed a musl binary asked to update on a current host fetched the glibc asset, passed
+  the start-up check and installed it, silently swapping the C library; now the asset
+  name carries the C library and the updater cannot. Moving between the two is done once,
+  by hand. When a glibc build's update is refused because the download will not start on
+  the host, the message now names the `-musl` asset as the way forward.
+
+  A release publishes eight assets rather than six, and the release job's asset count
+  moves with it.
+
 - **`lyxbosa update` replaces the binary on Windows.** A running `.exe` cannot be
   overwritten or deleted, but it can be renamed, so the replace there is two moves inside
   the install directory: the running `lyxbosa.exe` is moved aside to `lyxbosa.exe.old`, and

@@ -690,6 +690,26 @@ every release publishes `SHA256SUMS` and a `minisign` signature over it, and ver
 by hand is described in
 [docs/RELEASING.md](docs/RELEASING.md#release-integrity-checksums-and-signatures).
 
+### Which Linux binary
+
+A release carries two Linux binaries per architecture, and the difference is the C library:
+
+| asset | needs from the host | for |
+|---|---|---|
+| `lyxbosa-linux-<arch>` | glibc 2.28 or newer and a libstdc++ from GCC 6 or newer | any current distribution |
+| `lyxbosa-linux-<arch>-musl` | nothing - it is statically linked against musl | hosts too old for the first: CentOS 7, Ubuntu 16.04, and the shared hosting built on them |
+
+If the first one prints `GLIBC_2.28' not found` instead of starting, the second one is the
+one to use. It is a static **musl** build rather than a static glibc one because glibc's
+resolver loads the host's own name-service modules even from a static binary, and on a host
+old enough to need it that crashes the network path; musl resolves names itself. It is
+about a third larger, because the C library is inside it, and byte for byte over the
+whole reviewed corpus it reports the same findings as the glibc build.
+
+**`update` never crosses between the two.** A glibc binary fetches the glibc asset and a
+musl binary the musl asset, so the C library you installed is the one you keep. To move,
+install the other asset once by hand; updates stay on it from then on.
+
 ### What `update` checks, in this order
 
 1. The **signature** over the release's `SHA256SUMS` is verified against a list of keys
@@ -727,7 +747,7 @@ unknown-publisher warning on it that a browser download gets.
 | signed by a key this binary does not carry | refused, with instructions to download and verify by hand |
 | the binary sits under a path a package manager owns | declined: an updater fighting `apt` leaves its database describing a file that is not there |
 | you cannot write the install directory | refused, with the reason. It never re-runs itself under `sudo` |
-| the download will not start on this host | refused before anything is replaced |
+| the download will not start on this host | refused before anything is replaced; a glibc build names the `-musl` asset as the way forward |
 | on Windows, the install directory needs elevation to write | refused, with the reason. It never relaunches itself as administrator |
 | macOS and other platforms | refused: a release publishes Linux and Windows binaries only |
 

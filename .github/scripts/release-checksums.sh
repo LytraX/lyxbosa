@@ -112,27 +112,45 @@ cmd_write() {
 # Controls.
 # ---------------------------------------------------------------------------------------
 
-# The four names are the four assets a release actually publishes, and they are CREATED in an
+# The six names are the six assets a release actually publishes - Linux amd64 and arm64 on
+# glibc, the same two on musl, and Windows amd64 and arm64 - and they are CREATED in an
 # order that is neither the sorted order nor its reverse, so a run that simply echoed readdir
 # order would fail the expected-bytes case rather than pass it by luck.
-FIXTURE_NAMES=(lyxbosa-windows-arm64.exe lyxbosa-linux-amd64 lyxbosa-windows-amd64.exe lyxbosa-linux-arm64)
+#
+# The musl pair earns its place here beyond making the count right: `lyxbosa-linux-amd64` is
+# a strict PREFIX of `lyxbosa-linux-amd64-musl`. Byte order puts the shorter first, and a
+# consumer running `sha256sum -c` matches whole lines, so nothing here is ambiguous - but
+# the fixture had no two names in that relation before, so the ordering it pins was never
+# exercised on the one shape where a sloppier comparison could get it wrong.
+FIXTURE_NAMES=(lyxbosa-windows-arm64.exe lyxbosa-linux-amd64-musl lyxbosa-linux-amd64 \
+               lyxbosa-windows-amd64.exe lyxbosa-linux-arm64-musl lyxbosa-linux-arm64)
 
 fixture() {
   local dir="$1"
   mkdir -p "$dir"
   printf ''     > "$dir/lyxbosa-windows-arm64.exe"
+  printf '%s' "$FIPS_TWO_BLOCK" > "$dir/lyxbosa-linux-amd64-musl"
   printf 'abc'  > "$dir/lyxbosa-linux-amd64"
   printf 'a'    > "$dir/lyxbosa-windows-amd64.exe"
+  printf '%s' "$FIPS_MULTI_BLOCK" > "$dir/lyxbosa-linux-arm64-musl"
   printf 'z\n'  > "$dir/lyxbosa-linux-arm64"
 }
 
-# Known answers, not a re-derivation. The first two are the published SHA-256 test vectors
-# for the empty string and for "abc", so half of this expectation can be checked against
-# FIPS 180-4 rather than against this repository.
+# The two multi-block messages from FIPS 180-4's SHA-256 examples, named so that the
+# fixture and the expectation below cannot drift apart.
+FIPS_TWO_BLOCK='abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'
+FIPS_MULTI_BLOCK='abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu'
+
+# Known answers, not a re-derivation. Four of the six are the published SHA-256 test vectors
+# from FIPS 180-4 - the empty string, "abc", and the two multi-block messages above - so most
+# of this expectation can be checked against the standard rather than against this
+# repository. The other two, "a" and "z\n", are derived here.
 expected_sums() {
   cat <<'EXPECTED'
 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  lyxbosa-linux-amd64
+248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1  lyxbosa-linux-amd64-musl
 c865f6c5ab8d1b0bcd383a5e1e3879d22681c96bf462c269b7581d523fbe70ab  lyxbosa-linux-arm64
+cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1  lyxbosa-linux-arm64-musl
 ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb  lyxbosa-windows-amd64.exe
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  lyxbosa-windows-arm64.exe
 EXPECTED
@@ -151,13 +169,13 @@ selftest() {
   a="$work/a"; b="$work/b"
 
   fixture "$a"
-  cmd_write "$a" --expect 4 >/dev/null
+  cmd_write "$a" --expect 6 >/dev/null
 
   # 1. exact bytes: order, two-space separator, bare names, known hashes.
   if diff -u <(expected_sums) "$a/$SUMS" >/dev/null; then
-    pass "the file is exactly the four known hashes, in byte order"
+    pass "the file is exactly the six known hashes, in byte order"
   else
-    fail "the file is exactly the four known hashes, in byte order"
+    fail "the file is exactly the six known hashes, in byte order"
     diff -u <(expected_sums) "$a/$SUMS" | sed 's/^/      /' || true
   fi
 
@@ -194,12 +212,14 @@ selftest() {
   printf 'abc' > "$a/lyxbosa-linux-amd64"
 
   # 5. the same bytes, created in a different order, produce the same file. This is the
-  #    reproducibility claim, tested rather than asserted: b writes its four files in the
+  #    reproducibility claim, tested rather than asserted: b writes its six files in the
   #    reverse order and in a different directory.
   mkdir -p "$b"
   printf 'z\n' > "$b/lyxbosa-linux-arm64"
+  printf '%s' "$FIPS_MULTI_BLOCK" > "$b/lyxbosa-linux-arm64-musl"
   printf 'a'   > "$b/lyxbosa-windows-amd64.exe"
   printf 'abc' > "$b/lyxbosa-linux-amd64"
+  printf '%s' "$FIPS_TWO_BLOCK" > "$b/lyxbosa-linux-amd64-musl"
   printf ''    > "$b/lyxbosa-windows-arm64.exe"
   cmd_write "$b" >/dev/null
   if cmp -s "$a/$SUMS" "$b/$SUMS"; then
@@ -210,7 +230,7 @@ selftest() {
 
   # 6. self-exclusion, on the second run - the first cannot list a file that does not exist
   #    yet, so a check that only ever ran once would pass while being blind.
-  cmd_write "$a" --expect 4 >/dev/null
+  cmd_write "$a" --expect 6 >/dev/null
   if grep -q "  $SUMS\$" "$a/$SUMS"; then
     fail "a second run does not list $SUMS in itself"
   else
@@ -225,7 +245,7 @@ selftest() {
   # 7. the signature is excluded too. It is written after the list, so a list naming it
   #    could never be true, and `sha256sum -c` would report it FAILED for every consumer.
   printf 'not a real signature\n' > "$a/$SIG"
-  cmd_write "$a" --expect 4 >/dev/null
+  cmd_write "$a" --expect 6 >/dev/null
   if grep -q "  $SIG\$" "$a/$SIG" 2>/dev/null || grep -q "  $SIG\$" "$a/$SUMS"; then
     fail "$SIG is not listed either"
   else
@@ -236,7 +256,7 @@ selftest() {
   # 8. a subdirectory is not an asset. download-artifact without merge-multiple leaves one
   #    directory per artifact, and hashing a directory is an error, not a checksum.
   mkdir -p "$a/lyxbosa-linux-amd64-dir"
-  if ( cmd_write "$a" --expect 4 >/dev/null 2>&1 ); then
+  if ( cmd_write "$a" --expect 6 >/dev/null 2>&1 ); then
     pass "a subdirectory beside the assets is ignored"
   else
     fail "a subdirectory beside the assets is ignored"
@@ -259,15 +279,24 @@ selftest() {
   fi
 
   # 10. --expect, both directions. The count that matters is the one that is wrong.
-  if ( cmd_write "$a" --expect 4 >/dev/null 2>&1 ); then
-    pass "--expect 4 accepts four assets"
+  if ( cmd_write "$a" --expect 6 >/dev/null 2>&1 ); then
+    pass "--expect 6 accepts six assets"
   else
-    fail "--expect 4 accepts four assets"
+    fail "--expect 6 accepts six assets"
   fi
-  if ( cmd_write "$a" --expect 5 >/dev/null 2>&1 ); then
-    fail "--expect 5 refuses four assets"
+  if ( cmd_write "$a" --expect 7 >/dev/null 2>&1 ); then
+    fail "--expect 7 refuses six assets"
   else
-    pass "--expect 5 refuses four assets"
+    pass "--expect 7 refuses six assets"
+  fi
+  # And the direction that actually happens: a release GAINS an asset and the workflow's
+  # number is not updated. That is this round's change seen from the other side - the musl
+  # pair arrived and `--expect 4` had to become 6 - so the case that would have caught a
+  # missed update is worth stating rather than leaving to the pair above.
+  if ( cmd_write "$a" --expect 4 >/dev/null 2>&1 ); then
+    fail "--expect 4 refuses the six assets a release now publishes"
+  else
+    pass "--expect 4 refuses the six assets a release now publishes"
   fi
 
   # 11. the ordering itself, fed a scrambled list directly rather than through a directory.

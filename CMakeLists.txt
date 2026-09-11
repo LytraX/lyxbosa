@@ -77,6 +77,38 @@ find_package(OpenSSL REQUIRED)
 set(LYXBOSA_UPDATE_VERIFY ON)
 message(STATUS "Update verification: OpenSSL ${OPENSSL_VERSION} (Ed25519, BLAKE2b-512)")
 
+# Which C library a Linux binary is built against decides which release asset it is,
+# and so which asset `lyxbosa update` fetches: a glibc build publishes as
+# lyxbosa-linux-<arch> and a musl build as lyxbosa-linux-<arch>-musl, and
+# ReleaseAssets.cpp says why neither ever fetches the other. The compiler's target
+# triple is what says which - Alpine's gcc reports x86_64-alpine-linux-musl, AlmaLinux's
+# x86_64-redhat-linux - and it is read here and handed to the code as a definition
+# rather than sniffed from a macro in the source, because musl deliberately defines no
+# macro of its own. tests/update_apply_test.cpp checks the result against __GLIBC__, so
+# a build where this detection and the headers disagree fails its tests rather than
+# naming the wrong asset.
+set(LYXBOSA_LIBC_MUSL OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  execute_process(
+    COMMAND ${CMAKE_CXX_COMPILER} -dumpmachine
+    OUTPUT_VARIABLE LYXBOSA_TARGET_TRIPLE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _dumpmachine_result
+  )
+  if(NOT _dumpmachine_result EQUAL 0)
+    message(FATAL_ERROR "${CMAKE_CXX_COMPILER} -dumpmachine failed; the C library of a "
+                        "Linux build decides its release asset name and cannot be guessed")
+  endif()
+  if(LYXBOSA_TARGET_TRIPLE MATCHES "musl")
+    set(LYXBOSA_LIBC_MUSL ON)
+    message(STATUS "Linux C library: musl (${LYXBOSA_TARGET_TRIPLE}); "
+                   "release asset lyxbosa-linux-<arch>-musl")
+  else()
+    message(STATUS "Linux C library: glibc (${LYXBOSA_TARGET_TRIPLE}); "
+                   "release asset lyxbosa-linux-<arch>")
+  endif()
+endif()
+
 # The keys a released binary trusts, compiled in from the one file that
 # keys/minisign-trusted.txt's header, docs/RELEASING.md and release-sign.sh all describe.
 # A verifier that read its keyring from disk at run time would be a verifier an attacker
@@ -181,6 +213,9 @@ function(lyxbosa_configure_update target)
   endif()
   if(LYXBOSA_UPDATE_TEST_ORIGIN)
     target_compile_definitions(${target} PRIVATE LYXBOSA_UPDATE_TEST_ORIGIN)
+  endif()
+  if(LYXBOSA_LIBC_MUSL)
+    target_compile_definitions(${target} PRIVATE LYXBOSA_LIBC_MUSL)
   endif()
 endfunction()
 
