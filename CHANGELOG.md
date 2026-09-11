@@ -42,6 +42,20 @@ commit list that CI generates per tag.
 
 ### Added
 
+- **The musl binary carries its own allocator**, which is most of what made it slower
+  than the glibc one. musl's allocator is deliberately small and simple and a scan asks a
+  great deal of it; mimalloc is now linked into the static build in its place. Measured
+  over 53,977 files with the page cache warm, alternating the two binaries: the musl
+  build went from 9.32, 9.38 and 9.33 seconds to 8.04, 8.11 and 8.07, against 7.43, 7.37
+  and 7.39 for the glibc binary of the same commit. On a tree of small files, where
+  allocation is most of the work, it is nearly all of the difference: 0.20 seconds
+  becomes 0.13 against glibc's 0.11. What remains is not the allocator: jemalloc,
+  linked the same way, lands on the same numbers to within a hundredth of a second on
+  all three trees, and on large files neither moves much. Detection is unchanged - 730 of
+  1,299, regression 131 of 131, 44 benign findings in 197,559 files read, the same as the
+  glibc build. The glibc binary is unaffected; only the static build links it, because
+  only the static build needed it.
+
 - **A static musl build of the Linux binary, published beside the glibc one.** Every
   release now carries `lyxbosa-linux-<arch>-musl` for amd64 and arm64 as well as
   `lyxbosa-linux-<arch>`. The glibc build is linked against the glibc of AlmaLinux 8 and

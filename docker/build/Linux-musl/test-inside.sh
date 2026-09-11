@@ -9,6 +9,10 @@ set -e
 # skipped as root. That file's header carries the argument for keeping the test build
 # and the release build as two configures; it is not repeated here.
 #
+# And the allocator, for the same reason: the released musl binary carries mimalloc, and
+# a suite run against a different allocator from the shipped binary is a suite that
+# cannot see an allocator's effects at all.
+#
 # What differs from the glibc one is what differs about the platform. -static on the
 # link, exactly as build-inside.sh passes it, because the test binary should be the
 # thing being shipped and not a dynamically linked cousin of it: the update tests run
@@ -22,6 +26,8 @@ cmake -B /build-tests -S /src \
     -DCMAKE_EXE_LINKER_FLAGS=-static \
     -DBUILD_TESTS=ON \
     -DVCPKG_OVERLAY_TRIPLETS=/src/triplets \
+    -DVCPKG_MANIFEST_FEATURES=bundled-allocator \
+    -DLYXBOSA_BUNDLED_ALLOCATOR=ON \
     -DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake
 
 cmake --build /build-tests
