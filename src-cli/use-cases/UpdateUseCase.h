@@ -82,11 +82,11 @@ private:
         }
 
         // Best effort: an explicit check that cannot write the cache still answers,
-        // it just does not spare the next scan a request.
-        UpdateState state;
-        state.lastCheckEpoch = currentEpochSeconds();
-        state.latestVersion = toString(*result.latest);
-        writeUpdateState(defaultUpdateStatePath(), state);
+        // it just does not spare the next scan a request. It keeps the rest of the file,
+        // which a typed `update --check` has even less business resetting than a scan's
+        // own check does - see recordLatestVersion().
+        recordLatestVersion(defaultUpdateStatePath(), currentEpochSeconds(),
+                            toString(*result.latest));
 
         if (result.newerAvailable) {
             terminal_.print(Terminal::warning(),

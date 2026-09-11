@@ -223,11 +223,9 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
     // refuse still learned what the newest release is, and a scan later today should
     // not have to ask again.
     if (options.now) {
-        UpdateState state;
-        state.lastCheckEpoch = options.now();
-        state.latestVersion = toString(*check.latest);
-        writeUpdateState(
-            options.statePath.empty() ? defaultUpdateStatePath() : options.statePath, state);
+        recordLatestVersion(
+            options.statePath.empty() ? defaultUpdateStatePath() : options.statePath,
+            options.now(), toString(*check.latest));
     }
 
     const std::string tag = check.outcome.version;

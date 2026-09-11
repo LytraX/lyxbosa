@@ -68,8 +68,10 @@ std::string buildIdentity();
 //   somewhere this does not look - a Nix or Guix store, a container's second root - is
 //   answered No or Unknown and stays silent.
 //
-//   It is a fact about the host at the moment it is asked. A host whose glibc is
-//   upgraded afterwards is not re-asked, because the notice is shown at most once.
+//   It is a fact about the host at the moment it is asked, and only a run that is
+//   about to print asks. A host whose glibc is upgraded is therefore re-asked on the
+//   next run past the notice's interval rather than never - see the interval in
+//   UpdatePolicy.h - so an upgrade that creates the alternative is eventually noticed.
 enum class StandardBuildHere { Yes, No, Unknown };
 
 StandardBuildHere standardBuildHere();
@@ -100,5 +102,17 @@ constexpr std::string_view standardBuildHereReason(StandardBuildHere a) {
 // had the faster one. Empty for every other case, including the one that matters most:
 // a host with no alternative is told nothing, because there is nothing it could do.
 std::string portableBuildNotice();
+
+// The same sentence built for a named standard asset, with neither gate applied.
+//
+// It exists for the same reason standardBuildHereAt() does: the sentence the shipped
+// binary produces is observable on almost no machine. It needs a musl build, and a musl
+// build's natural home - Alpine - has no glibc, so portableBuildNotice() is empty there
+// and every assertion about the wording SKIPS in the one container that runs the
+// portable build's own tests. This one answers on any host and in any build, so the
+// claims the wording has to keep - that it names the standard asset, that it does not
+// name the one the reader already has, and that it quotes no percentage - are asserted
+// wherever the suite runs rather than nowhere.
+std::string portableBuildNoticeFor(std::string_view standardAsset);
 
 }  // namespace lyxbosa

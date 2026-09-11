@@ -309,30 +309,43 @@ library rather than the C one. In both cases the **portable** build is the answe
 nothing from the host at all. Nothing else needs diagnosing, and there is no configuration
 that makes the standard build load on such a host.
 
-**The portable build costs about 10% on a scan.** Measured container to container over the
-same tree of 53,977 files, twice each, with the page cache warm:
+**The portable build costs time on a scan, and how much depends on the work.** Three
+measurements, each over a different tree:
 
-| build | run 1 | run 2 |
-|---|---|---|
-| standard | 7.21 s | 7.24 s |
-| portable | 8.02 s | 8.00 s |
+| what was scanned | portable against standard |
+|---|---|
+| 53,977 files, almost all of them small | +11% |
+| 136 archives, 991 MB in total | +9% |
+| a live server: 81,701 files, including 301 MB of archive expansion | +2.5% |
 
-That difference is not the allocator — two different allocators land within a hundredth of
-a second of each other — and no allocator will close it. What remains is that glibc selects
-its byte-searching routines for the instruction set it finds at run time, and the portable
-build's are plain C. It is also about a third larger to download, because the C library is
-inside it.
+**These are three points and not a range.** They are two machines and three workloads, so
+they say what the difference has been on the trees somebody put a stopwatch on — not what it
+will be on yours, which may fall outside all three. The first row is container to container,
+twice each with the page cache warm: 7.21 s and 7.24 s standard against 8.02 s and 8.00 s
+portable. The last row is a real workload on a real host, warm against warm, and it is the
+one to plan from if you are sizing a server scan: it is nearly four times smaller than the
+small-file figure.
+
+The direction of that spread is what the cause predicts. The difference is not the
+allocator — two different allocators land within a hundredth of a second of each other — and
+no allocator will close it. What remains is that glibc selects its byte-searching routines
+for the instruction set it finds at run time, and the portable build's are plain C. So a
+scan whose time goes into short reads over many small files pays most of it, and one whose
+time goes into decompressing archives — the same library in both builds — pays least. The
+portable build is also about a third larger to download, because the C library is inside it.
 
 **What it does not cost is detection.** The two builds report the same findings, byte for
 byte, over the whole reviewed corpus: the same rules, the same files, the same severities,
 with every report compared line by line. If the standard build runs on your host, prefer it
-for the 10%; if it does not, you lose nothing but that.
+for the time; if it does not, you lose nothing but that.
 
 A portable build that finds itself on a host which could have run the standard one says so
-once, after a scan, and never again. It stays quiet on a host that could not — there is no
-choice to offer there — and it is silent under `--quiet`, `--silent` and `--force`, when
-output is redirected, and in CI. If it cannot establish what the host could run, it says
-nothing: not knowing is treated as no.
+after a scan, at most once every 30 days. It repeats rather than saying it once because a
+server scan's output scrolls past and the person reading it is often not the person who
+installed the binary. It stays quiet on a host that could not — there is no choice to offer
+there — and it is silent under `--quiet`, `--silent` and `--force`, when output is
+redirected, and in CI. If it cannot establish what the host could run, it says nothing: not
+knowing is treated as no.
 
 ## Detection coverage
 

@@ -97,10 +97,12 @@ BackgroundUpdateCheck::BackgroundUpdateCheck(std::shared_ptr<VersionSource> sour
                     // on, and every later scan inside the interval does. It is the
                     // only record of it, which is why the destructor now gives this
                     // line a chance to run rather than cancelling on top of it.
-                    UpdateState state;
-                    state.lastCheckEpoch = startedAtEpoch_;
-                    state.latestVersion = toString(*parsed);
-                    writeUpdateState(statePath_, state);
+                    //
+                    // Through recordLatestVersion() rather than by building a state and
+                    // writing it: this file is not only ours, and a whole-file rewrite
+                    // from a fresh in-memory copy erased the portable-build notice's
+                    // timestamp. See that function for why all three writers share it.
+                    recordLatestVersion(statePath_, startedAtEpoch_, toString(*parsed));
                 } else {
                     result.outcome.status = FetchOutcome::Status::BadResponse;
                 }
