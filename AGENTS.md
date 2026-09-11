@@ -65,10 +65,23 @@ nothing pushed*. That tree is the sole copy. `git checkout -- <file>`, `git rese
 mishandled `git stash` destroy it with no way back — it was never staged, so it is not in the
 object database and `git fsck` will not find it.
 
-This has cost real work. Reverting one file to undo an experiment of one's own also discarded
-that round's changes to the same file — a generator repair and fifteen control cases — which
-had to be written a second time. **Commit or stash before experimenting in a tree somebody else
-filled**, and revert your own hunks rather than the file.
+This has cost real work three times. Reverting one file to undo an experiment of one's own also
+discarded that round's changes to the same file — a generator repair and fifteen control cases
+— which had to be written a second time. Twice more in a single round, to a harness that
+planted mutations to prove a check could fail and restored them with `git checkout --`: it
+reverted uncommitted workflow and checksum edits, was rewritten, and then did it again to the
+destination fix, *after* that round had already been bitten once.
+
+**Commit or stash before experimenting in a tree somebody else filled**, and revert your own
+hunks rather than the file.
+
+**A harness that mutates tracked files works on a copy.** That third instance is why this is a
+rule and not advice. Planting a defect to watch a check catch it is exactly the right way to
+build a control, and `git checkout --` is the obvious way to undo it — which is the trap,
+because the obvious undo cannot tell your mutation from the round's unpushed work. Copy the
+tree, or the file, into the scratchpad and mutate that; or commit first so the undo has
+somewhere to go. A harness that restores by reverting is one interruption away from destroying
+whatever else was in flight.
 
 ## A check that has never been observed to fail is not yet a check
 
@@ -273,6 +286,42 @@ What remains listed is what is used: `/build/`, `/build-release/`, `/build-stati
 `/build-win-release*/`. Note that only the first two appear in `RELEASING.md`'s preset table —
 `build-static/` is for testing static linking and `build-win-release*` for Windows packaging, so
 neither is reachable by `cmake --preset`, and neither is a precedent for adding your own.
+
+## Linux ships two binaries, and the difference is measured
+
+A release publishes, per architecture, `lyxbosa-linux-<arch>` linked against the glibc of
+AlmaLinux 8, and `lyxbosa-linux-<arch>-portable`, statically linked against musl with mimalloc
+in place of musl's allocator. Both come out of containers under `docker/build/`. They detect
+identically: byte for byte over the reviewed corpus, and over 109,987 files of the three
+`trail-data` trees.
+
+**Why two rather than one portable binary.** The portable build is slower, and by an amount
+that depends on the work rather than on the binaries: 2.5% on a real server scan of 81,701
+files, 9% over 136 archives, 11% on a tree of small files. Two independent allocators land
+within a hundredth of a second of each other, which is the evidence that what remains is not
+allocation — it is the part of a scan that searches bytes, where glibc dispatches routines
+chosen for the instruction set at load time and musl's are plain C. That gap widens with how
+much of a scan is byte-searching, and it has never been measured on an old CPU, which is
+precisely the host that has to run the portable build. A figure that varies from 2% to 11%
+across three trees is not a figure you retire a build on.
+
+**Why musl rather than a static glibc.** A statically linked glibc still `dlopen`s the host's
+name-service modules to resolve a name. On CentOS 7 the glibc build does not load at all, the
+static glibc build scans correctly and then **segfaults** in `update --check`, and the musl
+build answers. A scanner that segfaults is worse than one that refuses.
+
+**Nothing crosses by itself.** `update` fetches the asset matching the C library it was built
+with, always: `platformAssetName()` appends the suffix from `LYXBOSA_LIBC_MUSL`, and a test
+cross-checks that against `__GLIBC__` so a build whose two answers disagree fails in the suite
+rather than in the field. That rule exists because before it, a portable binary on a current
+host fetched the glibc asset, passed the start-up smoke test and installed it — swapping the C
+library under the user without a word. The smoke test is the net, not the rule.
+
+So the choice is made once, by `scripts/install.sh` and `scripts/install.ps1`, which read the
+host's glibc the same way `BuildIdentity.cpp` does and refuse any destination under the twelve
+prefixes `update` declines. A user never types the word musl, and never sees a percentage from
+a binary that cannot be corrected without a release — the measurements live in `README.md`
+under *System support*, where they can be added to.
 
 ## Index writes
 
