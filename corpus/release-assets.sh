@@ -31,6 +31,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARDS="$HERE/shards"
+CHANGELOG="$HERE/CHANGELOG.md"
 : "${SHARD_PASSPHRASE:=infected}"
 : "${SOURCE_DATE_EPOCH:=0}"
 
@@ -63,6 +64,87 @@ trap _cleanup EXIT
 scratch() {
   _LAST_SCRATCH="$(mktemp -d)"
   _SCRATCH+=("$_LAST_SCRATCH")
+}
+
+# Is corpus/CHANGELOG.md closed out for the tag about to be cut?
+#
+# WHY A CHANGELOG CHECK BELONGS IN A RELEASE SCRIPT
+# --------------------------------------------------
+# The section for a tag is where the counts that tag's shards assert are written down: which
+# shard is new, which figure moved and what moved it. A tag cannot be rewritten once it is
+# pushed, and a section written afterwards is history about something already public, by
+# somebody reconstructing which side of the tag each entry fell on. So the ordering is worth
+# enforcing, and "close out the changelog first" written in a document is the instruction
+# that has already failed - the note explaining it was in the file the second time.
+#
+# It gates `--print-upload` because printing is as far as this script goes by design, and a
+# gate is worth exactly what the step it stands in front of is worth. The commands to tag and
+# to publish come out of here; refusing to print them is refusing to cut the release.
+#
+# CLOSED OUT IS FOUR THINGS, EACH REFUSED BY NAME
+# ------------------------------------------------
+#   1. `## [<tag>] - <date>` exists, exactly once.
+#   2. It has at least one entry under it. A heading with nothing beneath satisfies a check
+#      for the heading and ships a release whose section says nothing - the check that
+#      passes while blind.
+#   3. `## Unreleased` is still above it. Rename it without opening a fresh one and the next
+#      round writes into a released section, which is this defect one round later.
+#   4. A `[<tag>]:` link definition exists, or the bracketed heading renders as brackets.
+changelog_closed() {
+  local tag="$1" rc=0 tag_re body tag_line unrel_line n
+  tag_re="${tag//./\\.}"
+
+  if [ ! -f "$CHANGELOG" ]; then
+    echo "  there is no changelog at $CHANGELOG" >&2
+    return 1
+  fi
+
+  n="$(command grep -c "^## \[$tag_re\] - [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\$" "$CHANGELOG" || true)"
+  if [ "$n" -eq 0 ]; then
+    echo "  NO SECTION: the changelog has no '## [$tag] - <date>', so it still says" >&2
+    echo "  Unreleased about whatever this tag would publish." >&2
+    return 1
+  fi
+  if [ "$n" -ne 1 ]; then
+    echo "  $n sections are headed '## [$tag]'; there can be one." >&2
+    return 1
+  fi
+
+  # 2. the section is not empty.
+  body="$(awk -v t="## [$tag] - " 'index($0, t) == 1 { inx = 1; next }
+                                   inx && /^## / { exit }
+                                   inx { print }' "$CHANGELOG")"
+  # A here-string and not `printf ... | grep -q`. Under `set -o pipefail` that pipeline
+  # reports the LEFT side: `grep -q` exits on the first match and closes the pipe, `printf`
+  # takes SIGPIPE and exits 141, and pipefail hands back the 141. It reads as "no entries"
+  # on exactly the sections big enough for printf to still be writing - which is every real
+  # one. Caught by running this against the repository's own changelog; the fixture below
+  # is twenty lines and won the race every time.
+  if ! command grep -q '^- ' <<<"$body"; then
+    echo "  EMPTY SECTION: '## [$tag]' has no entries under it." >&2
+    rc=1
+  fi
+
+  # 3. a fresh Unreleased is still above it.
+  # `grep -m1` rather than `grep | head -1`, for the reason above: `head` exiting first
+  # SIGPIPEs grep and pipefail hands back the 141. One match each today, so it would not
+  # fire yet - which is the version of this that gets found much later.
+  tag_line="$(command grep -n -m1 "^## \[$tag_re\] - " "$CHANGELOG" | cut -d: -f1)"
+  unrel_line="$(command grep -n -m1 '^## Unreleased$' "$CHANGELOG" | cut -d: -f1 || true)"
+  if [ -z "$unrel_line" ] || [ "$unrel_line" -gt "$tag_line" ]; then
+    echo "  NO UNRELEASED: there is no '## Unreleased' heading above '## [$tag]', so the" >&2
+    echo "  next round has nowhere to write and lands inside a released section." >&2
+    rc=1
+  fi
+
+  # 4. the bracketed heading resolves.
+  if ! command grep -q "^\[$tag_re\]: " "$CHANGELOG"; then
+    echo "  NO LINK: no '[$tag]:' definition at the foot, so the heading renders as" >&2
+    echo "  literal brackets." >&2
+    rc=1
+  fi
+
+  return $rc
 }
 
 rebuild() {
@@ -198,6 +280,100 @@ selftest() {
   fi
 
   SHARDS="$OLD"
+
+  # --- the changelog gate ---------------------------------------------------------
+  # Five ways to be not closed out. Each must be caught AND must say which one, because a
+  # function that returned 1 unconditionally would pass every refusal case here and refuse
+  # every real release. The good case is asserted first and again last, so a refusal that
+  # crept in is the failure and not the silence.
+  local OLDCL="$CHANGELOG" T="corpus-2026.09.9" good="$work/good.md"
+  cat > "$good" <<'EOF'
+# Corpus changelog
+
+## Unreleased
+
+### Fixed
+
+- **Something that landed after the tag.** Words.
+
+## [corpus-2026.09.9] - 2026-09-14
+
+### Added
+
+- **Something the tag published.** Words.
+
+## [corpus-2026.09.1] - 2026-09-07
+
+### Added
+
+- **Earlier.** Words.
+
+---
+
+[Unreleased]: https://example.invalid/compare/corpus-2026.09.9...HEAD
+[corpus-2026.09.9]: https://example.invalid/compare/corpus-2026.09.1...corpus-2026.09.9
+[corpus-2026.09.1]: https://example.invalid/releases/tag/corpus-2026.09.1
+EOF
+
+  _cl_case() {  # label, expected reason ('' = must pass), changelog, tag
+    local label="$1" want="$2" out
+    CHANGELOG="$3"
+    if out="$(changelog_closed "$4" 2>&1)"; then
+      if [ -z "$want" ]; then echo "  $(printf '%-64s' "$label") correct"
+      else echo "  $(printf '%-64s' "$label") MISSED"; rc=1; fi
+    elif [ -z "$want" ]; then
+      echo "  $(printf '%-64s' "$label") WRONG, refused a closed changelog"; rc=1
+    elif [[ "$out" == *"$want"* ]]; then
+      echo "  $(printf '%-64s' "$label") caught"
+    else
+      echo "  $(printf '%-64s' "$label") caught, BUT NOT BY THE STATED RULE"; rc=1
+    fi
+  }
+
+  echo
+  _cl_case "a changelog closed out for the tag is accepted" "" "$good" "$T"
+
+  # And against the repository's OWN changelog, which is the case a fixture cannot stand in
+  # for. The fixture above is twenty lines; the real sections are several hundred, and the
+  # emptiness test read every one of them as empty until that was fixed. A good case small
+  # enough to win a race has not been observed. The tag is read out of the file rather than
+  # named here, so this does not need editing at each release.
+  local real_tag
+  real_tag="$(command grep -m1 -o '^## \[[^]]*\] - [0-9][0-9-]*' "$OLDCL" \
+              | sed 's/^## \[//; s/\] - .*//' || true)"
+  if [ -n "$real_tag" ]; then
+    _cl_case "corpus/CHANGELOG.md itself, closed out for $real_tag" "" "$OLDCL" "$real_tag"
+  else
+    echo "  $(printf '%-64s' "corpus/CHANGELOG.md carries a closed section") WRONG, none found"
+    rc=1
+  fi
+
+  command grep -v "^## \[$T\] - " "$good"                  > "$work/nosection.md"
+  _cl_case "the tag's work still sitting under Unreleased" \
+           "NO SECTION" "$work/nosection.md" "$T"
+
+  command grep -v '^- \*\*Something the tag published\.\*\*' "$good" > "$work/empty.md"
+  _cl_case "a heading closed over an empty section" \
+           "EMPTY SECTION" "$work/empty.md" "$T"
+
+  command grep -v '^## Unreleased$' "$good"                > "$work/nounrel.md"
+  _cl_case "Unreleased renamed without a fresh one opened above" \
+           "NO UNRELEASED" "$work/nounrel.md" "$T"
+
+  command grep -v "^\[$T\]: " "$good"                      > "$work/nolink.md"
+  _cl_case "a bracketed heading with no link to resolve to" \
+           "NO LINK" "$work/nolink.md" "$T"
+
+  # The recurrence shape, and the one this gate exists for: the PREVIOUS tag is closed out
+  # and the current one is not, which is what a changelog looks like every time this has
+  # gone wrong. A check that asked only "does this file contain any closed section" would
+  # pass here, and it is the case a reader is least likely to think of.
+  _cl_case "the previous tag closed out, and not the one being cut" \
+           "NO SECTION" "$good" "corpus-2026.09.10"
+
+  _cl_case "...and the closed changelog is still accepted afterwards" "" "$good" "$T"
+  CHANGELOG="$OLDCL"
+
   [ $rc -eq 0 ] && echo "controls: every planted defect was caught, and the good case still passes" \
                 || echo "controls: AT LEAST ONE CONTROL MISSED"
   return $rc
@@ -213,6 +389,17 @@ case "${1:-}" in
     ;;
   --print-upload)
     TAG="${2:?usage: --print-upload <tag>}"
+    # Before anything is printed. A refusal that arrives under the commands it is refusing
+    # is a warning, and a warning at the bottom of a block somebody is about to paste is
+    # not a gate.
+    if ! changelog_closed "$TAG"; then
+      echo >&2
+      echo "REFUSING to print the tag and upload commands for $TAG." >&2
+      echo "Close out corpus/CHANGELOG.md first - docs/RELEASING.md, 'Close out the" >&2
+      echo "changelog'. The tag cannot be rewritten once it is pushed, which is the" >&2
+      echo "whole reason the section is written before it rather than after." >&2
+      exit 1
+    fi
     HEAD_SHA="$(git rev-parse HEAD)"
     # Read from the API rather than assumed: there is no repo-level 'latest' pin to check,
     # so what a new release would displace is whatever GitHub computes today.

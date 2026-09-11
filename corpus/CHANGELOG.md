@@ -36,6 +36,146 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ## Unreleased
 
+### Fixed
+
+- **`corpus/verify.py` reported a false-positive rate over whatever the host let the scanner
+  open, and counted what it could not open as clean.** The denominator was `totalFilesScanned`,
+  which counts a file the scanner reached and could not read; the clean count was that minus
+  the matches. A file the host withheld was therefore in the denominator with no finding
+  against it — clean without a byte read. A directory the walk could not list, a root gone
+  mid-scan and an interrupted walk were recorded and asserted nothing, and a scan refused
+  before it started for a missing root was read as zero samples and `n/a` with no failure.
+  Harmless on Linux today — zero unreadable entries under the pinned trees, by `find` — and
+  not on Windows, where Defender withholds files during the scan and chooses which.
+
+  The suite now **refuses the figure** and records a failure when the report carries any
+  unreadable file, any unlistable directory, a missing root, an interruption, or when there is
+  no report; and discloses, without refusing, what the scanner's own policy declined — over
+  the size cap, excluded — which leaves the denominator. The rule is who chose the shortfall:
+  policy is reproducible and part of the figure's definition, a host's refusal is neither.
+  **The denominator is now files read**, so the next measurement will be smaller than the
+  197,559 in `README.md` by the count of files over the size cap; that difference is
+  attributed here in advance and is not a change in the scanner.
+
+  The malicious half had the same defect one level down: `check` exits 1 for a file it cannot
+  read, and the suite read only the rule list off stdout, so an unreadable sample was an empty
+  list — a miss on a `must_detect` row, *still missed* on a `known_miss` row, clean on a
+  `must_not_detect` row and *newly fixed* on a known false positive, three of the four green.
+  The exit code is read first now; an error is counted under `unscanned`, listed under
+  failures, and is never a verdict. `--inject` (41 cases) asserts every refusing channel
+  refuses, every policy channel does not, and — with the real scanner over a real tree — that a
+  file the user cannot read refuses the figure and the same tree with access restored reports
+  again. `control-suites.py` discovers it on its own: 42 suites, from 41. CORPUS_PLAN §11
+  records this as the fourteenth instance.
+
+  **A report that lacks a channel is refused too, and the control found why that matters.**
+  Run against `build-release/`, the first end-to-end case took a path the rule had not covered:
+  that binary predates `rootsMissing`, steps over a root that is not there, exits 0 and writes
+  a report indistinguishable from a clean scan of a tree that was there. Absence of the channel
+  is not evidence of coverage, so a report missing `interrupted`, `filesSkipped`,
+  `directoriesUnreadable` or `rootsMissing` is refused by name, and the control fails loudly —
+  naming the binary and the channel it lacks — rather than skipping, until the scanner under
+  test is one that reports them. So the control takes `build/` when `LYXBOSA_BIN` is unset,
+  and an explicit `LYXBOSA_BIN` still wins, because naming a binary means that binary. A
+  control is not a measurement and the two want different defaults: a published figure has to
+  come from `build-release/`, which `AGENTS.md` forbids rebuilding mid-round, so a control
+  insisting on it would report the age of a build as a failure of whatever round was being
+  checked — and a gate people have to work around is one they learn to skip. This does not
+  merely turn the result green: the end-to-end section was being abandoned rather than
+  executed, **30 cases ran before and 41 run now**, and the eleven recovered are the ones
+  asserting the rule against a real scanner over a real tree rather than against reports the
+  control wrote itself.
+
+- **Three control suites had never been run by anything, because the runner only read
+  `.py`.** `control-suites.py` is the one command `AGENTS.md` puts on the pre-report list so
+  that coverage stops depending on anybody's memory, and its own docstring argues that a
+  hardcoded list would be that memory dependency one level up. It discovered by suffix, and
+  `build-shard.sh --selftest`, `fetch-benign.sh --inject` and `release-assets.sh --selftest`
+  fell outside it — not failing and not skipped, simply never asked. All three pass, and all
+  three together cost about a second: **45 suites, from 42.**
+
+  The shell half is read by a different means, for the same reason the Python half is parsed
+  rather than grepped. There is no AST to ask, so the question put to a shell script is
+  whether the flag stands in a **dispatch position** — a `case` pattern, or compared against
+  a positional — rather than whether it appears. That distinction is load-bearing here rather
+  than theoretical: all three of those tools name their own flag in a comment or a usage
+  string as well as dispatching on it, so *appears in the file* would have been true of the
+  prose in every one of them.
+
+  Six new cases, both directions: a `case` pattern is discovered, a comparison against `$1`
+  is discovered, a script naming the flag only in a comment and a usage line is **not**, a
+  failing shell suite is reported `FAILED` rather than skipped, a passing one reads ok, and
+  the three real shell suites are asserted present **by name** — because a discovery that
+  quietly stopped opening `.sh` would satisfy every case that compares the parser only to
+  itself, which is the shape §11 keeps recording. 24 cases, from 18.
+
+- **`corpus/verify.py` could not unpack a shard on Windows, and stopped before running a
+  single sample.** It called `tar -C … -I zstd -xf`. `-I` is GNU tar's
+  `--use-compress-program`; bsdtar, which is the tar Windows ships and the one Python finds
+  on `PATH` there, spells that option the same long way but reads `-I` as `--include`, so
+  the command became an inclusion pattern and failed. The suite then called `die()` before
+  executing anything, so the result on Windows was no measurement rather than a degraded
+  one. The GNU form is still tried first and still decides the outcome wherever it works, so
+  Linux runs exactly the command it ran before.
+
+- **The suite's own control was judged against a binary it is not allowed to rebuild.**
+  `verify.py --inject` took the scanner from the module default, `build-release/`, which the
+  conventions file forbids rebuilding mid-round and which is therefore routinely older than
+  the source. The control reported the age of that build as a failure of whatever round was
+  being checked. It now prefers `build/` when `LYXBOSA_BIN` is unset; naming a binary still
+  wins. This was not only a green result: the end-to-end half was being abandoned rather
+  than run, so the same command went from 30 cases to 41, and the eleven recovered are the
+  ones that assert the rule against a real scanner rather than against reports the control
+  wrote itself.
+
+- **The leak gate refuses a minisign secret key by shape**, in a tracked file or in a commit
+  message about to be pushed, naming what it found and where and never the bytes.
+
+- **The regression baseline was re-based at `v2.2.0`.** It had been withheld across roughly
+  thirty rounds, so `recall_delta` reported nothing over that span. Re-basing belongs to
+  cutting a scanner tag rather than to a round, which is why it is recorded here as a fact
+  about the measurement rather than as a result.
+
+### Added
+
+- **`corpus/release-assets.sh` refuses to print the commands that cut a corpus tag while
+  the changelog still says `Unreleased` about what that tag would publish.** A corpus tag
+  publishes shards a stranger downloads and re-runs, and its changelog section is where the
+  counts those shards assert are written down — which shard is new, which figure moved and
+  what moved it. Push the tag first and that section can only be written as history about
+  something already public, by somebody reconstructing which side of the tag each entry fell
+  on. `--print-upload <tag>` is where the refusal belongs: printing is as far as this script
+  goes by design, the commands to tag and to publish come out of there, and refusing to
+  print them is refusing to cut the release.
+
+  **Closed out is four things, each refused by name**, because a heading with nothing under
+  it satisfies a check for the heading and ships a release whose section says nothing.
+  `## [<tag>] - <date>` exists, exactly once; it carries at least one entry; `## Unreleased`
+  is still above it, or the next round writes into a released section and this recurs one
+  round later; and a `[<tag>]:` definition exists at the foot, or the bracketed heading
+  renders as brackets.
+
+- **Seven controls, both directions — and the good case had to be run against real data
+  before it was worth anything.** Five planted defects, one per rule plus the shape this
+  gate exists for: the *previous* tag closed out and the one being cut not, which is what
+  the file looks like every time this has gone wrong and which a check asking only "is any
+  section closed" would pass. Each refusal is asserted to name its own rule, since a
+  function returning 1 unconditionally catches all five and refuses every real release.
+
+  The seventh is the one that earned its place. The emptiness test was
+  `printf '%s\n' "$body" | grep -q '^- '`, and under `set -o pipefail` that pipeline reports
+  the **left** side: `grep -q` exits on the first match and closes the pipe, `printf` takes
+  SIGPIPE and exits 141, and pipefail hands back the 141. Every real section read as empty.
+  The twenty-line fixture passed throughout, because it is small enough that `printf`
+  finishes before `grep` can close the pipe — so the good case is now asserted against
+  **`corpus/CHANGELOG.md` itself**, at the size the sections actually are, with the tag read
+  out of the file rather than named in the control so it needs no editing per release. A
+  good case small enough to win a race has not been observed. Two further instances of the
+  same pipeline shape were repaired beside it; neither fires today, one match each, which is
+  the version of this that gets found much later.
+
+## [corpus-2026.09.2] - 2026-09-08
+
 ### Added
 
 - **29 samples that the scanner already detected can now be re-run by a stranger, and the
@@ -99,46 +239,6 @@ are correct as of the round that recorded them and are deliberately never regene
   a mover whose checks all passed vacuously would publish everything and report success.
 
 ### Fixed
-
-- **`corpus/verify.py` reported a false-positive rate over whatever the host let the scanner
-  open, and counted what it could not open as clean.** The denominator was `totalFilesScanned`,
-  which counts a file the scanner reached and could not read; the clean count was that minus
-  the matches. A file the host withheld was therefore in the denominator with no finding
-  against it — clean without a byte read. A directory the walk could not list, a root gone
-  mid-scan and an interrupted walk were recorded and asserted nothing, and a scan refused
-  before it started for a missing root was read as zero samples and `n/a` with no failure.
-  Harmless on Linux today — zero unreadable entries under the pinned trees, by `find` — and
-  not on Windows, where Defender withholds files during the scan and chooses which.
-
-  The suite now **refuses the figure** and records a failure when the report carries any
-  unreadable file, any unlistable directory, a missing root, an interruption, or when there is
-  no report; and discloses, without refusing, what the scanner's own policy declined — over
-  the size cap, excluded — which leaves the denominator. The rule is who chose the shortfall:
-  policy is reproducible and part of the figure's definition, a host's refusal is neither.
-  **The denominator is now files read**, so the next measurement will be smaller than the
-  197,559 in `README.md` by the count of files over the size cap; that difference is
-  attributed here in advance and is not a change in the scanner.
-
-  The malicious half had the same defect one level down: `check` exits 1 for a file it cannot
-  read, and the suite read only the rule list off stdout, so an unreadable sample was an empty
-  list — a miss on a `must_detect` row, *still missed* on a `known_miss` row, clean on a
-  `must_not_detect` row and *newly fixed* on a known false positive, three of the four green.
-  The exit code is read first now; an error is counted under `unscanned`, listed under
-  failures, and is never a verdict. `--inject` (41 cases) asserts every refusing channel
-  refuses, every policy channel does not, and — with the real scanner over a real tree — that a
-  file the user cannot read refuses the figure and the same tree with access restored reports
-  again. `control-suites.py` discovers it on its own: 42 suites, from 41. CORPUS_PLAN §11
-  records this as the fourteenth instance.
-
-  **A report that lacks a channel is refused too, and the control found why that matters.**
-  Run against `build-release/`, the first end-to-end case took a path the rule had not covered:
-  that binary predates `rootsMissing`, steps over a root that is not there, exits 0 and writes
-  a report indistinguishable from a clean scan of a tree that was there. Absence of the channel
-  is not evidence of coverage, so a report missing `interrupted`, `filesSkipped`,
-  `directoriesUnreadable` or `rootsMissing` is refused by name, and the control fails loudly —
-  naming the binary and the channel it lacks — rather than skipping, until the scanner under
-  test is one that reports them. `control-suites.py` therefore reports `verify.py` as FAILED
-  on a machine whose `build-release/` predates that channel, and says so in one line.
 
 - **A promotion wrote "no rule fired" onto 29 rows the scanner detects.**
   `promote-pending.closed_expect()` recorded `closed_known_miss.was` from the row's prose
@@ -2910,3 +3010,9 @@ a human assessment and the row waits for one.
 
 - **Known false positives stay counted in the false-positive total.** Pinning a defect
   records it; it does not remove it from the number it belongs to.
+
+---
+
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/corpus-2026.09.2...HEAD
+[corpus-2026.09.2]: https://github.com/LytraX/lyxbosa/compare/corpus-2026.09.1...corpus-2026.09.2
+[corpus-2026.09.1]: https://github.com/LytraX/lyxbosa/releases/tag/corpus-2026.09.1
