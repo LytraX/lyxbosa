@@ -35,25 +35,30 @@
 //   deliberately not in minisign's secret-key format, which corpus/pre-push-check.py
 //   refuses by shape.
 //
-// TWO PLATFORM FACTS DECIDE WHICH CASES CAN BE BUILT
-// ---------------------------------------------------
-// They are separate reasons and are written separately, even though CMakeLists.txt
-// makes them true on the same platforms today - it turns the verifier off exactly when
-// WIN32, because curl there uses Schannel and no OpenSSL is built at all.
+// WHAT THE STAND-IN BINARY IS, PER PLATFORM
+// ------------------------------------------
+// Every case that installs something needs an "old binary" that really runs, because
+// the smoke test really executes it and expectNothingHappened() asserts afterwards that
+// it still does. On POSIX that is a shell script. On Windows a script is not an
+// executable, and the only executable a test can count on finding is itself: the test
+// binary answers --version (tests/test_main.cpp), so a copy of it is the old binary and
+// the same bytes with a few appended past the last section - which the loader ignores
+// and the hash does not - are the new one. oldBinaryBytes() and newBinaryBytes() are
+// those two, and the cases never say which platform they are on.
 //
-//   LYXBOSA_UPDATE_VERIFY. A build with no Ed25519 cannot BUILD a signature to
-//   present, so every case whose subject is a signature has nothing to hand the
-//   verifier. Guarded with the same switch src-lib/cpp/update/Minisign.cpp uses for
-//   the verifier itself, rather than a second one that could disagree with it.
+// The Windows replace is two moves rather than one rename, and the cases about it are
+// Windows-only because they are about what Windows does: a running image can be
+// renamed and cannot be deleted, a file something has open without share-delete cannot
+// be moved, and a rollback exists because between the two moves there is no binary.
+// Each of those is observed on a real filesystem, with a real running process where the
+// subject is a running process, and never assumed from documentation.
 //
-//   _WIN32. There are no POSIX mode bits for chmod to set and no #!/bin/sh for the
-//   smoke test to run, so every case whose subject is a permission or a runnable
-//   stand-in binary has nothing to write.
-//
-// Where a region is compiled out, what replaces it asserts THIS platform's contract -
-// that the verifier refuses rather than accepts, that the hasher answers nothing
-// rather than zero, that the updater refuses before it fetches a byte. A suite that
-// silently contains nothing reports no failures, and no failures reads as green.
+// LYXBOSA_UPDATE_VERIFY guards every case whose subject is a signature, because a build
+// with no Ed25519 cannot BUILD one to present. CMakeLists.txt sets it on every platform
+// it configures; the #else arms below are what a build without it would owe - that the
+// verifier refuses rather than accepts, that the hasher answers nothing rather than
+// zero, that the updater refuses before it fetches a byte - so that a suite which
+// silently contained nothing could never report no failures and read as green.
 
 #include <gtest/gtest.h>
 
@@ -82,9 +87,13 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#include <aclapi.h>
+#else
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -140,13 +149,204 @@ std::string executableText(std::string_view says) {
 
 #ifndef _WIN32
 // A stand-in for an installed binary: a script that runs and prints something. It has
-// to be a real executable, because the smoke test really execs it - which is why there
-// is no Windows version of this rather than one that writes a .bat and hopes.
+// to be a real executable, because the smoke test really execs it.
 void writeExecutable(const fs::path& path, std::string_view says, uint32_t mode = 0755) {
     writeFile(path, executableText(says));
     ::chmod(path.string().c_str(), static_cast<mode_t>(mode));
 }
 #endif
+
+// The installed binary's name, the mode it is installed with, and two sets of bytes
+// that both really run on this host - see the top of this file for why they are what
+// they are on each platform.
+#ifdef _WIN32
+constexpr const char* kTargetName = "lyxbosa.exe";
+constexpr uint32_t kInstalledMode = 0;
+#else
+constexpr const char* kTargetName = "lyxbosa";
+constexpr uint32_t kInstalledMode = 0755;
+#endif
+
+const std::string& oldBinaryBytes() {
+#ifdef _WIN32
+    static const std::string bytes = readFile(runningExecutablePath());
+#else
+    static const std::string bytes = executableText("old");
+#endif
+    return bytes;
+}
+
+const std::string& newBinaryBytes() {
+#ifdef _WIN32
+    // Past the last section, so the loader never maps it and the file still runs;
+    // different bytes, so the hash and the byte comparison both tell the two apart.
+    static const std::string bytes = oldBinaryBytes() + "\r\n[lyxbosa test: new]\r\n";
+#else
+    static const std::string bytes = executableText("new");
+#endif
+    return bytes;
+}
+
+void installBinary(const fs::path& path, const std::string& bytes) {
+    writeFile(path, bytes);
+#ifndef _WIN32
+    ::chmod(path.string().c_str(), 0755);
+#endif
+}
+
+#ifdef _WIN32
+
+// A handle that shares reads and writes and NOT deletion, which is how a real-time
+// scanner holds a file it is looking at and exactly what makes a rename of that file
+// fail with a sharing violation - a rename needs DELETE access to the file, and nothing
+// else about it is refused. Closed on destruction or on demand.
+class OpenWithoutShareDelete {
+public:
+    explicit OpenWithoutShareDelete(const fs::path& path)
+        : handle_(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)) {}
+    ~OpenWithoutShareDelete() { close(); }
+    OpenWithoutShareDelete(const OpenWithoutShareDelete&) = delete;
+    OpenWithoutShareDelete& operator=(const OpenWithoutShareDelete&) = delete;
+
+    bool ok() const { return handle_ != INVALID_HANDLE_VALUE; }
+    void close() {
+        if (handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle_);
+            handle_ = INVALID_HANDLE_VALUE;
+        }
+    }
+
+private:
+    HANDLE handle_;
+};
+
+// A process running from `image` - a copy of this test binary - which tests/test_main.cpp
+// keeps alive until `stopFile` appears. While it runs, `image` is a mapped executable
+// exactly the way an installed lyxbosa.exe is while `lyxbosa update` runs from it.
+class RunningImage {
+public:
+    RunningImage(const fs::path& image, fs::path stopFile) : stopFile_(std::move(stopFile)) {
+        std::wstring commandLine =
+            L"\"" + image.wstring() + L"\" --hold-open \"" + stopFile_.wstring() + L"\"";
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        if (CreateProcessW(image.c_str(), commandLine.data(), nullptr, nullptr, FALSE,
+                           CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+            CloseHandle(process.hThread);
+            process_ = process.hProcess;
+        }
+    }
+    ~RunningImage() { stop(); }
+    RunningImage(const RunningImage&) = delete;
+    RunningImage& operator=(const RunningImage&) = delete;
+
+    bool running() const { return process_ != nullptr; }
+
+    // Tell the child to exit and wait until it has. The image stops being mapped only
+    // once the process is gone, which is why this waits rather than returns.
+    void stop() {
+        if (process_ == nullptr) return;
+        writeFile(stopFile_, "stop");
+        if (WaitForSingleObject(process_, 30 * 1000) != WAIT_OBJECT_0) {
+            TerminateProcess(process_, 1);
+            WaitForSingleObject(process_, 5 * 1000);
+        }
+        CloseHandle(process_);
+        process_ = nullptr;
+    }
+
+private:
+    fs::path stopFile_;
+    HANDLE process_ = nullptr;
+};
+
+// The Mark of the Web is a Zone.Identifier alternate data stream, and this is the whole
+// of how it is read and written: a browser attaches one to what it downloads, and
+// SmartScreen consults it when the file is launched.
+bool hasZoneIdentifier(const fs::path& path) {
+    const std::wstring stream = path.wstring() + L":Zone.Identifier";
+    const HANDLE handle = CreateFileW(stream.c_str(), GENERIC_READ,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                      nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(handle);
+    return true;
+}
+
+bool writeZoneIdentifier(const fs::path& path) {
+    const std::wstring stream = path.wstring() + L":Zone.Identifier";
+    const HANDLE handle = CreateFileW(stream.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                      FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    const char body[] = "[ZoneTransfer]\r\nZoneId=3\r\n";
+    DWORD written = 0;
+    const bool ok = WriteFile(handle, body, static_cast<DWORD>(sizeof(body) - 1), &written,
+                              nullptr) &&
+                    written == sizeof(body) - 1;
+    CloseHandle(handle);
+    return ok;
+}
+
+// Deny this user the right to create files in `directory`, by an explicit deny entry in
+// its DACL for this process's own SID. A deny entry is honoured ahead of every allow,
+// an administrator's included, which is what makes the case observable on a CI runner
+// that runs elevated - and is also exactly the shape of a directory under Program Files
+// seen from a process that is not elevated. PlatformSkips.h is right that
+// std::filesystem::permissions cannot do this; the security API can.
+bool denyAddingFilesTo(const fs::path& directory) {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::vector<char> user(size);
+    const BOOL haveUser = GetTokenInformation(token, TokenUser, user.data(), size, &size);
+    CloseHandle(token);
+    if (!haveUser) return false;
+
+    std::wstring name = directory.wstring();
+    PACL oldDacl = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (GetNamedSecurityInfoW(name.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr,
+                              nullptr, &oldDacl, nullptr, &descriptor) != ERROR_SUCCESS) {
+        return false;
+    }
+
+    EXPLICIT_ACCESS_W deny{};
+    deny.grfAccessPermissions = FILE_ADD_FILE;
+    deny.grfAccessMode = DENY_ACCESS;
+    deny.grfInheritance = NO_INHERITANCE;
+    deny.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    deny.Trustee.TrusteeType = TRUSTEE_IS_USER;
+    deny.Trustee.ptstrName =
+        reinterpret_cast<LPWSTR>(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid);
+
+    PACL newDacl = nullptr;
+    bool ok = false;
+    if (SetEntriesInAclW(1, &deny, oldDacl, &newDacl) == ERROR_SUCCESS) {
+        ok = SetNamedSecurityInfoW(name.data(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                                   nullptr, nullptr, newDacl, nullptr) == ERROR_SUCCESS;
+        LocalFree(newDacl);
+    }
+    LocalFree(descriptor);
+    return ok;
+}
+
+// Reap, and keep trying for a moment. A moved-aside copy that nothing runs is deleted
+// on the first attempt everywhere this suite has run; the retry is for a host whose
+// real-time scanner opens the file first, which a single attempt would report as the
+// replace having left something behind when it had not.
+bool reapedWithin(const fs::path& target, std::chrono::milliseconds patience) {
+    const auto deadline = std::chrono::steady_clock::now() + patience;
+    for (;;) {
+        if (reapMovedAsideBinary(target)) return true;
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
+#endif  // _WIN32
 
 std::vector<std::string> namesIn(const fs::path& directory) {
     std::vector<std::string> names;
@@ -395,10 +595,10 @@ public:
 
 // ---------------------------------------------------------------------------
 // A whole release, and the one thing each case spoils. Needs the verifier to sign
-// with and to hash with, and POSIX modes for the binary it installs over.
+// with and to hash with.
 // ---------------------------------------------------------------------------
 
-#if defined(LYXBOSA_UPDATE_VERIFY) && !defined(_WIN32)
+#ifdef LYXBOSA_UPDATE_VERIFY
 
 std::string sha256Hex(const std::string& content) {
     TempDir dir;
@@ -409,7 +609,7 @@ std::string sha256Hex(const std::string& content) {
 
 struct Release {
     std::string tag = "v2.3.0";
-    std::string assetBody = executableText("new");
+    std::string assetBody = newBinaryBytes();
     std::string list;
     std::string signature;
     std::string trustedComment;
@@ -419,7 +619,7 @@ struct Release {
 Release goodRelease(const TestKey& key, const std::string& tag = "v2.3.0") {
     Release release;
     release.tag = tag;
-    release.assetBody = executableText("new");
+    release.assetBody = newBinaryBytes();
     release.list = sha256Hex(release.assetBody) + "  " + std::string(platformAssetName()) +
                    "\n" +
                    "0000000000000000000000000000000000000000000000000000000000000000  "
@@ -440,12 +640,11 @@ void serve(FakeAssetSource& assets, const Release& release) {
 struct Fixture {
     TempDir dir;
     fs::path target;
-    std::string oldBinary = executableText("old");
+    std::string oldBinary = oldBinaryBytes();
 
     Fixture() {
-        target = dir.file("lyxbosa");
-        writeFile(target, oldBinary);
-        ::chmod(target.string().c_str(), 0755);
+        target = dir.file(kTargetName);
+        installBinary(target, oldBinary);
     }
 
     ApplyOptions options(const minisign::Keyring& keyring, Version running = Version{2, 2, 1}) {
@@ -464,7 +663,7 @@ struct Fixture {
         EXPECT_EQ(readFile(target), oldBinary) << "the old binary was modified";
         EXPECT_TRUE(stagedBinaryRuns(target)) << "the old binary no longer runs";
         // The state file is the only other thing a run is allowed to leave here.
-        std::vector<std::string> allowed{"lyxbosa", "state"};
+        std::vector<std::string> allowed{kTargetName, "state"};
         auto found = namesIn(dir.path());
         for (const auto& name : found) {
             EXPECT_NE(std::find(allowed.begin(), allowed.end(), name), allowed.end())
@@ -473,7 +672,7 @@ struct Fixture {
     }
 };
 
-#endif  // LYXBOSA_UPDATE_VERIFY && !_WIN32
+#endif  // LYXBOSA_UPDATE_VERIFY
 
 }  // namespace
 
@@ -890,6 +1089,24 @@ TEST(InstallPathTest, StagingSitsBesideTheTargetSoTheRenameStaysOnOneFilesystem)
     const auto staged = stagingPathFor("/opt/lyxbosa/bin/lyxbosa");
     EXPECT_EQ(staged.parent_path(), fs::path("/opt/lyxbosa/bin"));
     EXPECT_NE(staged.filename(), fs::path("lyxbosa"));
+
+    // And the name the running image is moved to on Windows, for the same reason: a
+    // move that left the directory could leave the volume, and a move across volumes
+    // is a copy wearing a rename's name.
+    const auto aside = movedAsidePathFor("/opt/lyxbosa/bin/lyxbosa.exe");
+    EXPECT_EQ(aside.parent_path(), fs::path("/opt/lyxbosa/bin"));
+    EXPECT_EQ(aside.filename(), fs::path("lyxbosa.exe.old"));
+}
+
+TEST(InstallPathTest, ReapingRemovesAMovedAsideCopyAndIsQuietAboutItsAbsence) {
+    TempDir dir;
+    const auto target = dir.file(kTargetName);
+    EXPECT_TRUE(reapMovedAsideBinary(target)) << "nothing to reap is not a failure";
+
+    writeFile(movedAsidePathFor(target), "an old binary nobody is running");
+    EXPECT_TRUE(reapMovedAsideBinary(target));
+    EXPECT_FALSE(fs::exists(movedAsidePathFor(target)));
+    EXPECT_TRUE(namesIn(dir.path()).empty());
 }
 
 #ifndef _WIN32
@@ -929,31 +1146,246 @@ TEST(InstallPathTest, TheSmokeTestTellsARunnableBinaryFromOneThatIsNot) {
 
 #else  // _WIN32
 
-// The two cases above are about POSIX mode bits: that a download arriving 0644 is
-// installed with the target's own 0700, and that a file which is present, executable
-// and exits non-zero is not a binary to install. Neither can be set up here, and the
-// contract instead is that fileMode() says there is no mode rather than guessing one -
-// because replaceAtomically() carries whatever it returns onto the new binary.
+// The first of the two POSIX cases above is about mode bits, which this platform has
+// none of. The contract instead is that fileMode() says there is no mode rather than
+// guessing one, because replaceAtomically() carries whatever it returns onto the new
+// binary.
 TEST(InstallPathTest, ThereAreNoModeBitsToCarryOnThisPlatform) {
     TempDir dir;
-    writeFile(dir.file("lyxbosa"), "x");
-    const auto mode = fileMode(dir.file("lyxbosa"));
+    writeFile(dir.file(kTargetName), "x");
+    const auto mode = fileMode(dir.file(kTargetName));
     ASSERT_TRUE(mode.has_value()) << "a file that is there has an answer";
     EXPECT_EQ(*mode, 0u) << "and the answer is that there is no mode to carry over";
     EXPECT_FALSE(fileMode(dir.file("absent")).has_value());
+}
 
-    EXPECT_FALSE(stagedBinaryRuns(dir.file("absent")));
+TEST(InstallPathTest, TheSmokeTestTellsARunnableBinaryFromOneThatIsNot) {
+    TempDir dir;
+    installBinary(dir.file("runs.exe"), oldBinaryBytes());
+    EXPECT_TRUE(stagedBinaryRuns(dir.file("runs.exe")))
+        << "a copy of this very test binary did not answer --version";
+
+    installBinary(dir.file("overlay.exe"), newBinaryBytes());
+    EXPECT_TRUE(stagedBinaryRuns(dir.file("overlay.exe")))
+        << "bytes appended past the last section stop the loader, and the cases that "
+           "install newBinaryBytes() would be installing something that cannot run";
+
+    // Present, named like an executable, and not one: the loader refuses it before it
+    // starts, which is the shape a download for the wrong architecture takes.
+    writeFile(dir.file("garbage.exe"), "this is not a program");
+    EXPECT_FALSE(stagedBinaryRuns(dir.file("garbage.exe")));
+
+    EXPECT_FALSE(stagedBinaryRuns(dir.file("absent.exe")));
+}
+
+// ---------------------------------------------------------------------------
+// The two moves. Each case here is about something Windows does that Linux does not,
+// and each observes it on the real filesystem rather than through a fake.
+// ---------------------------------------------------------------------------
+
+TEST(InstallPathTest, ReplacesARunningImageByMovingItAsideAndReapsItOnceItHasExited) {
+    // The premise the whole Windows design rests on, observed on a real running
+    // process: its image can be renamed, cannot be deleted, and can be deleted once
+    // the process is gone.
+    TempDir dir;
+    const auto target = dir.file(kTargetName);
+    installBinary(target, oldBinaryBytes());
+    const auto staged = stagingPathFor(target);
+    writeFile(staged, newBinaryBytes());
+    const auto aside = movedAsidePathFor(target);
+
+    RunningImage running(target, dir.file("stop"));
+    ASSERT_TRUE(running.running()) << "the copy of this test binary did not start";
+
+    EXPECT_EQ(replaceAtomically(staged, target), "");
+    EXPECT_EQ(readFile(target), newBinaryBytes()) << "the new binary is not in place";
+    EXPECT_TRUE(fs::exists(aside)) << "the running image should have been moved aside";
+    EXPECT_EQ(readFile(aside), oldBinaryBytes());
+    EXPECT_FALSE(fs::exists(staged));
+
+    // Still running from the moved-aside file, so it cannot go yet - and that is
+    // reported as "not reaped", never as an error.
+    EXPECT_FALSE(reapMovedAsideBinary(target));
+    EXPECT_TRUE(fs::exists(aside)) << "a running image was deleted, which Windows does not allow";
+    EXPECT_TRUE(stagedBinaryRuns(target)) << "the new binary does not run";
+
+    running.stop();
+    EXPECT_TRUE(reapedWithin(target, std::chrono::seconds(5)))
+        << "once nothing has it open the moved-aside copy has to go";
+    EXPECT_FALSE(fs::exists(aside));
+    EXPECT_EQ(namesIn(dir.path()), (std::vector<std::string>{kTargetName, "stop"}));
+}
+
+TEST(InstallPathTest, RollsBackWhenTheSecondMoveFailsSoThereIsAlwaysABinary) {
+    // Between the two moves the target does not exist. The staged file is held open
+    // without share-delete - which is how a real-time scanner holds a file - so move
+    // two fails after its retries, and the assertion is that move one was undone: the
+    // old binary is back under its own name, byte for byte, and runs.
+    TempDir dir;
+    const auto target = dir.file(kTargetName);
+    installBinary(target, oldBinaryBytes());
+    const auto staged = stagingPathFor(target);
+    writeFile(staged, newBinaryBytes());
+    const auto aside = movedAsidePathFor(target);
+
+    OpenWithoutShareDelete lock(staged);
+    ASSERT_TRUE(lock.ok());
+
+    const auto started = std::chrono::steady_clock::now();
+    const std::string failure = replaceByMovingAside(staged, target, std::chrono::milliseconds(300));
+    const auto took = std::chrono::steady_clock::now() - started;
+
+    ASSERT_FALSE(failure.empty()) << "a move against a held-open file cannot have succeeded";
+    EXPECT_NE(failure.find("put back"), std::string::npos) << failure;
+    EXPECT_NE(failure.find("error 32"), std::string::npos)
+        << "the real reason - a sharing violation - has to be in the message: " << failure;
+    EXPECT_GE(took, std::chrono::milliseconds(300))
+        << "it gave up before the retry bound, so the bound was not what was retried";
+
+    EXPECT_TRUE(fs::exists(target)) << "no binary at all is the outcome the rollback exists to prevent";
+    EXPECT_EQ(readFile(target), oldBinaryBytes()) << "the old binary was not put back intact";
+    EXPECT_FALSE(fs::exists(aside)) << "the rollback left the moved-aside copy behind";
+    EXPECT_TRUE(fs::exists(staged)) << "the staged file is the caller's to remove, not this function's";
+    EXPECT_TRUE(stagedBinaryRuns(target));
+}
+
+TEST(InstallPathTest, LeavesEverythingAloneWhenTheFirstMoveFails) {
+    TempDir dir;
+    const auto target = dir.file(kTargetName);
+    installBinary(target, oldBinaryBytes());
+    const auto staged = stagingPathFor(target);
+    writeFile(staged, newBinaryBytes());
+
+    OpenWithoutShareDelete lock(target);
+    ASSERT_TRUE(lock.ok());
+
+    const std::string failure = replaceByMovingAside(staged, target, std::chrono::milliseconds(300));
+    ASSERT_FALSE(failure.empty());
+    EXPECT_NE(failure.find("nothing was changed"), std::string::npos) << failure;
+    EXPECT_NE(failure.find("error 32"), std::string::npos) << failure;
+
+    EXPECT_EQ(readFile(target), oldBinaryBytes());
+    EXPECT_FALSE(fs::exists(movedAsidePathFor(target)));
+    EXPECT_TRUE(fs::exists(staged));
+}
+
+TEST(InstallPathTest, RetriesAgainstALockThatIsReleasedInTime) {
+    // The positive control for the retry: the same lock as above, released after a
+    // fraction of the bound, and the replace succeeds where the case above failed.
+    // Without this the bound could be a sleep followed by one attempt and nothing
+    // here would know.
+    TempDir dir;
+    const auto target = dir.file(kTargetName);
+    installBinary(target, oldBinaryBytes());
+    const auto staged = stagingPathFor(target);
+    writeFile(staged, newBinaryBytes());
+
+    OpenWithoutShareDelete lock(staged);
+    ASSERT_TRUE(lock.ok());
+    std::thread releaser([&lock] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(350));
+        lock.close();
+    });
+
+    const auto started = std::chrono::steady_clock::now();
+    const std::string failure = replaceByMovingAside(staged, target, std::chrono::seconds(3));
+    const auto took = std::chrono::steady_clock::now() - started;
+    releaser.join();
+
+    EXPECT_EQ(failure, "");
+    EXPECT_GE(took, std::chrono::milliseconds(300)) << "it did not wait for the lock to go";
+    EXPECT_EQ(readFile(target), newBinaryBytes());
+    EXPECT_FALSE(fs::exists(movedAsidePathFor(target)))
+        << "nothing was running from the moved-aside copy, so the replace reaps it itself";
+    EXPECT_FALSE(fs::exists(staged));
+}
+
+TEST(InstallPathTest, TheRetryBoundIsAFewSecondsAndNotForever) {
+    // Where the number comes from is in InstallPath.h. What this asserts is that it is
+    // a bound a person watching would sit through and that it is not zero, because a
+    // zero bound is one attempt and the retry would be decoration.
+    EXPECT_GE(kReplaceRetryFor, std::chrono::seconds(1));
+    EXPECT_LE(kReplaceRetryFor, std::chrono::seconds(30));
+}
+
+TEST(InstallPathTest, AMovedAsideCopyLeftByAnEarlierUpdateIsReplacedByTheNext) {
+    // The reaper failed on every start since the last update - say the old binary was
+    // still running each time - and now another update runs. Its first move lands on
+    // the existing name, and MOVEFILE_REPLACE_EXISTING is what makes that a
+    // replacement rather than a refusal.
+    TempDir dir;
+    const auto target = dir.file(kTargetName);
+    installBinary(target, oldBinaryBytes());
+    const auto aside = movedAsidePathFor(target);
+    writeFile(aside, "the update before this one");
+    const auto staged = stagingPathFor(target);
+    writeFile(staged, newBinaryBytes());
+
+    EXPECT_EQ(replaceAtomically(staged, target), "");
+    EXPECT_EQ(readFile(target), newBinaryBytes());
+    EXPECT_FALSE(fs::exists(aside)) << "reaped: nothing was running from it";
+    EXPECT_EQ(namesIn(dir.path()), (std::vector<std::string>{kTargetName}))
+        << "one .old at most, ever; a stale one does not accumulate beside a new one";
+}
+
+TEST(InstallPathTest, AFileTheUpdaterWritesCarriesNoMarkOfTheWeb) {
+    // SmartScreen's unknown-publisher warning is raised for a file that carries a
+    // Zone.Identifier stream, which a browser attaches to what it downloads. The
+    // updater writes its download through std::fopen, the call HttpAssetSource::fetch
+    // makes, and this is the evidence that nothing attaches one on the way: the file
+    // that ends up installed has no mark, even where the binary it replaced had one.
+    TempDir dir;
+    const auto target = dir.file(kTargetName);
+    installBinary(target, oldBinaryBytes());
+
+    // The positive control first. A filesystem that cannot carry the stream at all
+    // cannot observe anything here, and says so.
+    if (!writeZoneIdentifier(target)) {
+        GTEST_SKIP() << "this filesystem does not carry alternate data streams (error "
+                     << GetLastError() << "), so a Mark of the Web cannot be observed on it";
+    }
+    ASSERT_TRUE(hasZoneIdentifier(target)) << "the stream just written cannot be read back";
+
+    const auto staged = stagingPathFor(target);
+    const std::string& body = newBinaryBytes();
+    std::FILE* out = std::fopen(staged.string().c_str(), "wb");
+    ASSERT_NE(out, nullptr);
+    ASSERT_EQ(std::fwrite(body.data(), 1, body.size(), out), body.size());
+    std::fclose(out);
+    EXPECT_FALSE(hasZoneIdentifier(staged)) << "fopen attached a zone identifier";
+
+    EXPECT_EQ(replaceAtomically(staged, target), "");
+    EXPECT_EQ(readFile(target), body);
+    EXPECT_FALSE(hasZoneIdentifier(target))
+        << "the installed binary carries a Mark of the Web, so SmartScreen would engage";
+}
+
+TEST(InstallPathTest, ADirectoryThisUserMayNotWriteIsRefusedWithTheReason) {
+    // What Program Files looks like from a process that is not elevated, built here
+    // with an explicit deny so that it is observed on a runner that IS elevated. The
+    // positive control is the same directory a moment earlier, before the deny.
+    TempDir dir;
+    const auto locked = dir.file("locked");
+    fs::create_directories(locked);
+    ASSERT_TRUE(canReplace(locked / kTargetName).ok) << "writable before the deny, or the case observes nothing";
+
+    ASSERT_TRUE(denyAddingFilesTo(locked)) << "the DACL could not be changed (error " << GetLastError() << ")";
+
+    const auto access = canReplace(locked / kTargetName);
+    EXPECT_FALSE(access.ok) << "the deny entry was not honoured";
+    EXPECT_NE(access.reason.find("not writable by this user"), std::string::npos) << access.reason;
+    EXPECT_TRUE(namesIn(locked).empty()) << "a refused probe left something behind";
 }
 
 #endif  // _WIN32
 
 // ===========================================================================
 // The whole thing: one case per way of refusing. Each one builds a whole release and
-// installs it over a stand-in binary, so it needs Ed25519 to sign with and POSIX modes
-// to install with. The #else below is what this platform owes instead.
+// installs it over a stand-in binary that really runs, so it needs Ed25519 to sign
+// with. The #else below is what a build without a verifier owes instead.
 // ===========================================================================
 
-#if defined(LYXBOSA_UPDATE_VERIFY) && !defined(_WIN32)
+#ifdef LYXBOSA_UPDATE_VERIFY
 
 TEST(ApplyTest, ReplacesTheBinaryWhenEverythingChecksOut) {
     TestKey key(1);
@@ -968,14 +1400,18 @@ TEST(ApplyTest, ReplacesTheBinaryWhenEverythingChecksOut) {
 
     ASSERT_EQ(result.outcome, ApplyOutcome::Replaced) << result.detail;
     EXPECT_EQ(readFile(fixture.target), release.assetBody);
-    EXPECT_EQ(fileMode(fixture.target).value_or(0), 0755u);
+    EXPECT_EQ(fileMode(fixture.target).value_or(0), kInstalledMode);
     EXPECT_TRUE(stagedBinaryRuns(fixture.target));
     EXPECT_EQ(result.trustedComment, release.trustedComment);
     ASSERT_TRUE(result.plan.has_value());
     EXPECT_EQ(toString(result.plan->to), "2.3.0");
 
-    // The list, the signature and the staging file are all gone.
-    EXPECT_EQ(namesIn(fixture.dir.path()), (std::vector<std::string>{"lyxbosa", "state"}));
+    // The list, the signature and the staging file are all gone - and on Windows the
+    // moved-aside copy too, because nothing was running from it.
+#ifdef _WIN32
+    EXPECT_TRUE(reapedWithin(fixture.target, std::chrono::seconds(5)));
+#endif
+    EXPECT_EQ(namesIn(fixture.dir.path()), (std::vector<std::string>{kTargetName, "state"}));
 
     // The signature was fetched and checked before the binary was, which is the order
     // the whole round is about. Asserted on what was actually requested, in sequence.
@@ -1244,11 +1680,50 @@ TEST(ApplyTest, RefusesAnUnwritableTarget) {
     const auto result = applyUpdate(versions, assets, options);
 
     EXPECT_EQ(result.outcome, ApplyOutcome::NotWritable) << result.detail;
+#ifdef _WIN32
+    EXPECT_NE(result.detail.find("administrator"), std::string::npos)
+        << "the refusal has to say why it is not escalating";
+#else
     EXPECT_NE(result.detail.find("sudo"), std::string::npos)
         << "the refusal has to say why it is not escalating";
+#endif
     EXPECT_TRUE(assets.fetched.empty());
     fixture.expectNothingHappened();
 }
+
+#ifdef _WIN32
+
+TEST(ApplyTest, RefusesADirectoryThisUserMayNotWriteBeforeFetchingAByte) {
+    // The Program Files question, end to end: a binary in a directory this user may
+    // not add files to - built with a deny entry, so that it is observed on a runner
+    // that runs elevated - is refused by the same guard as on Linux, before the
+    // network is asked anything, and the refusal says it will not elevate itself.
+    TestKey key(1);
+    Fixture fixture;
+    FakeVersionSource versions("v2.3.0");
+    FakeAssetSource assets;
+    serve(assets, goodRelease(key));
+
+    const auto locked = fixture.dir.file("program-files");
+    fs::create_directories(locked);
+    installBinary(locked / kTargetName, oldBinaryBytes());
+    ASSERT_TRUE(denyAddingFilesTo(locked)) << "the DACL could not be changed";
+
+    const auto keyring = keyringOf(key);
+    auto options = fixture.options(keyring);
+    options.target = locked / kTargetName;
+
+    const auto result = applyUpdate(versions, assets, options);
+
+    EXPECT_EQ(result.outcome, ApplyOutcome::NotWritable) << result.detail;
+    EXPECT_NE(result.detail.find("administrator"), std::string::npos) << result.detail;
+    EXPECT_TRUE(assets.fetched.empty()) << "a user who cannot install is not made to download";
+    EXPECT_EQ(versions.calls.load(), 0) << "and is not made to ask what is newest";
+    EXPECT_EQ(readFile(locked / kTargetName), oldBinaryBytes());
+    EXPECT_EQ(namesIn(locked), (std::vector<std::string>{kTargetName}));
+}
+
+#endif  // _WIN32
 
 TEST(ApplyTest, DeclinesAPackageManagedInstall) {
     TestKey key(1);
@@ -1393,14 +1868,15 @@ TEST(ApplyTest, TheDefaultKeyringIsTheOneCompiledIn) {
     fixture.expectNothingHappened();
 }
 
-#else  // LYXBOSA_UPDATE_VERIFY && !_WIN32
+#else  // LYXBOSA_UPDATE_VERIFY
 
-// The refusals above cannot be built here, and the one that matters on this platform
-// is a different one: applyUpdate refuses on its first guard, before it asks anything
-// or fetches anything. The assertion is that no byte was requested - a build that
-// downloaded a release it then declined to install would be reaching the network on
-// every `lyxbosa update` for nothing, and would look identical in the exit code.
-TEST(ApplyTest, ThisPlatformRefusesBeforeItFetchesAByte) {
+// The refusals above cannot be built without a verifier, and the one that matters in
+// such a build is a different one: applyUpdate refuses on its NoVerifier guard, before
+// it asks anything or fetches anything. The assertion is that no byte was requested - a
+// build that downloaded a release it then declined to install would be reaching the
+// network on every `lyxbosa update` for nothing, and would look identical in the exit
+// code.
+TEST(ApplyTest, ABuildWithNoVerifierRefusesBeforeItFetchesAByte) {
     FakeVersionSource versions("v2.3.0");
     FakeAssetSource assets;
 
@@ -1416,7 +1892,7 @@ TEST(ApplyTest, ThisPlatformRefusesBeforeItFetchesAByte) {
     EXPECT_EQ(versions.calls.load(), 0) << "and before it asks what the newest is";
 }
 
-#endif  // LYXBOSA_UPDATE_VERIFY && !_WIN32
+#endif  // LYXBOSA_UPDATE_VERIFY
 
 TEST(ApplyTest, AShippedBuildTalksToGitHubAndNowhereElse) {
     // The origin override is compiled out unless a local demo build asks for it, and a
@@ -1439,19 +1915,15 @@ TEST(ApplyTest, ThisPlatformKnowsWhichAssetItWouldInstall) {
     EXPECT_FALSE(platformAssetName().empty());
     EXPECT_FALSE(runningExecutablePath().empty());
 
-    // Both arms are asserted rather than one being skipped. "Cannot" is as much this
-    // platform's contract as "can", and a build that quietly gained or lost either
-    // ability should fail here and be looked at rather than be discovered by a user.
-#ifdef _WIN32
-    EXPECT_FALSE(platformCanReplaceRunningBinary())
-        << "a running .exe is locked, so it cannot be replaced in place";
-#else
+    // Every platform a release is built for can replace its running binary - Linux by
+    // a rename over the inode, Windows by moving the image aside - and every one has
+    // the verifier compiled in. A build that quietly lost either should fail here and
+    // be looked at rather than be discovered by a user typing `update`.
     EXPECT_TRUE(platformCanReplaceRunningBinary());
-#endif
 #ifdef LYXBOSA_UPDATE_VERIFY
     EXPECT_TRUE(minisign::verifierAvailable());
 #else
     EXPECT_FALSE(minisign::verifierAvailable())
-        << "no OpenSSL is built on this platform; update refuses rather than degrading";
+        << "a build without OpenSSL refuses rather than degrading";
 #endif
 }

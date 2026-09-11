@@ -22,6 +22,34 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Added
+
+- **`lyxbosa update` replaces the binary on Windows.** A running `.exe` cannot be
+  overwritten or deleted, but it can be renamed, so the replace there is two moves inside
+  the install directory: the running `lyxbosa.exe` is moved aside to `lyxbosa.exe.old`, and
+  the verified download is moved into its place. Between the two there is a moment with no
+  `lyxbosa.exe`; if the second move fails the first is undone and the message says so, and
+  a failure to undo it names exactly where the old binary is and what to rename it to. Each
+  move is retried against a file something else has open - a real-time scanner reading a
+  freshly written executable is the ordinary cause - for up to five seconds, and the real
+  reason is reported on giving up. A lock is never treated as success.
+
+  `lyxbosa.exe.old` is removed the next time `lyxbosa` starts, whichever command that is,
+  once nothing is running from it. Its name is fixed, so at most one ever exists: the next
+  update replaces it. A failure to remove it is silent, because the usual reason is that a
+  copy of the old binary is still running.
+
+  The binary the updater installs carries no Mark of the Web - the updater writes it
+  itself and attaches no zone identifier - so SmartScreen does not raise the
+  unknown-publisher warning on it that a browser download gets. Under `Program Files` a
+  process that is not elevated is refused exactly as an unprivileged user is on Linux,
+  with the reason, and it never relaunches itself as administrator.
+
+  The signature verifier is now compiled into the Windows binary as well: libcrypto is
+  built there for Ed25519, BLAKE2b-512 and SHA-256, while TLS stays with Schannel and the
+  certificate store the OS maintains. The whole chain is the same code on both platforms,
+  including the smoke test that runs the download once before installing it.
+
 ## [2.3.0] - 2026-09-10
 
 The scanner can tell you a newer release exists, and now fetch it, check it and replace

@@ -40,10 +40,12 @@ inline constexpr uint64_t kMaxChecksumListBytes = 256ull * 1024;
 // says so rather than guessing at a name.
 std::string_view platformAssetName();
 
-// Whether a running executable can be replaced in place on this platform. False on
-// Windows, where a running .exe is locked and the replacement has to happen on the next
-// start - docs/tasks/UPDATE_PLAN.md phase 4, and the one place the platforms genuinely
-// differ. `update` refuses there rather than pretending.
+// Whether a running executable can be replaced on this platform. True everywhere a
+// release publishes a binary: by an atomic rename on Linux, and on Windows by moving
+// the running image aside and the verified download into its place - InstallPath.h
+// describes both. It stays a function rather than a constant because it is the seam
+// `update` refuses through: a platform added without a replace of its own returns
+// false here and is told so, rather than failing inside the replace.
 bool platformCanReplaceRunningBinary();
 
 // Where the releases API and the release downloads live.

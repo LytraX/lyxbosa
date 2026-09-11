@@ -709,6 +709,16 @@ confirm it starts on this host, flushed to disk, and only then renamed over the 
 The rename is atomic, so a failure at any point leaves the binary you are running exactly
 where it was.
 
+On Windows a running `.exe` cannot be overwritten, but it can be renamed, so the last step
+is two moves inside the install directory: the running `lyxbosa.exe` is moved aside to
+`lyxbosa.exe.old` and the verified download is moved into its place. If the second move
+fails the first is undone, so there is a `lyxbosa.exe` at the end either way. The `.old`
+is removed the next time `lyxbosa` starts, once nothing is running from it. A file that
+something else has open - a real-time scanner reading a freshly written executable is the
+usual case - is retried for a few seconds and then refused with the reason. The binary the
+updater installs carries no Mark of the Web, so SmartScreen does not raise the
+unknown-publisher warning on it that a browser download gets.
+
 ### What it refuses to do
 
 | situation | what happens |
@@ -718,7 +728,7 @@ where it was.
 | the binary sits under a path a package manager owns | declined: an updater fighting `apt` leaves its database describing a file that is not there |
 | you cannot write the install directory | refused, with the reason. It never re-runs itself under `sudo` |
 | the download will not start on this host | refused before anything is replaced |
-| Windows | refused: a running `.exe` is locked and cannot be overwritten in place |
+| on Windows, the install directory needs elevation to write | refused, with the reason. It never relaunches itself as administrator |
 | macOS and other platforms | refused: a release publishes Linux and Windows binaries only |
 
 There is no `--to VERSION`. It is the one option that would put a hole in the downgrade

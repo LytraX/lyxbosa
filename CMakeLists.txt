@@ -59,27 +59,23 @@ find_package(CURL CONFIG REQUIRED)
 # Ed25519, BLAKE2b-512 and SHA-256 for `lyxbosa update`: the signature over SHA256SUMS,
 # and the hash of the asset that list describes.
 #
-# It is REQUIRED rather than optional wherever it exists at all, and the asymmetry is
-# deliberate. On Linux and macOS the `ssl` feature of curl above already builds OpenSSL,
-# so this finds a library that is in the build either way and a failure here means
-# something is genuinely wrong. On Windows curl uses Schannel and no OpenSSL is built at
-# all - docker/build/Linux/Dockerfile's own comment records it - so there is nothing to
-# find, `update` refuses on that platform with a reason, and phase 4 is where Windows
-# gets its own answer. Refusing is a legitimate outcome; a second crypto path nobody
-# exercises is not.
+# REQUIRED on every platform, and not optional anywhere. On Linux and macOS the `ssl`
+# feature of curl above already builds OpenSSL, so this finds a library that is in the
+# build either way. On Windows curl uses Schannel for TLS and would build no OpenSSL of
+# its own, so vcpkg.json names openssl as a dependency in its own right there: libcrypto
+# only, for the three primitives above, linked statically like everything else. The TLS
+# stack and the certificate store on Windows stay the OS's - HttpTransport.cpp says why -
+# and the verifier is the same Minisign.cpp on every platform rather than a second crypto
+# path nobody exercises.
 #
-# A quiet find that silently disabled verification would be the worst of the three: it
-# would ship a binary whose updater refuses for a reason nobody chose, and nothing would
-# say so. So the only two states are "verification is compiled in" and "this platform is
-# known not to have it".
-if(WIN32)
-  set(LYXBOSA_UPDATE_VERIFY OFF)
-  message(STATUS "Update verification: off (Windows uses Schannel; no OpenSSL is built)")
-else()
-  find_package(OpenSSL REQUIRED)
-  set(LYXBOSA_UPDATE_VERIFY ON)
-  message(STATUS "Update verification: OpenSSL ${OPENSSL_VERSION} (Ed25519, BLAKE2b-512)")
-endif()
+# A quiet find that silently disabled verification would be the worst outcome: it would
+# ship a binary whose updater refuses for a reason nobody chose, and nothing would say so.
+# LYXBOSA_UPDATE_VERIFY is therefore always ON; the `#ifndef` arms it guards in
+# Minisign.cpp and Checksums.cpp are what a build without a verifier owes - refuse,
+# never accept - and no configuration this file produces is one.
+find_package(OpenSSL REQUIRED)
+set(LYXBOSA_UPDATE_VERIFY ON)
+message(STATUS "Update verification: OpenSSL ${OPENSSL_VERSION} (Ed25519, BLAKE2b-512)")
 
 # The keys a released binary trusts, compiled in from the one file that
 # keys/minisign-trusted.txt's header, docs/RELEASING.md and release-sign.sh all describe.
@@ -288,7 +284,13 @@ if(BUILD_TESTS)
   enable_testing()
   find_package(GTest CONFIG REQUIRED)
 
+  # tests/test_main.cpp rather than GTest::gtest_main: the test binary answers --version
+  # like the scanner does, so that the smoke test in InstallPath.cpp has a real
+  # executable to run on a platform where a shell script is not one, and it can hold
+  # its own image open so that replacing a RUNNING binary is observed rather than
+  # reasoned about. The file says which arguments do what.
   add_executable(lyxbosa_tests
+    tests/test_main.cpp
     tests/rules_test.cpp
     tests/path_filter_test.cpp
     tests/location_prior_test.cpp
@@ -320,7 +322,6 @@ if(BUILD_TESTS)
       ZLIB::ZLIB
       Threads::Threads
       GTest::gtest
-      GTest::gtest_main
   )
   lyxbosa_configure_update(lyxbosa_tests)
 

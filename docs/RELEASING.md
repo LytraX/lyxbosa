@@ -247,7 +247,11 @@ bad thing to hand somebody in that position.
 What it does not do is make **Windows** trust the binary. That is Authenticode with an EV
 certificate, it is not owned here, and a browser download still shows an unknown-publisher
 warning exactly as it did before. The two answer different questions; see
-[`docs/tasks/UPDATE_PLAN.md`](tasks/UPDATE_PLAN.md) §3.
+[`docs/tasks/UPDATE_PLAN.md`](tasks/UPDATE_PLAN.md) §3. A binary that `lyxbosa update`
+installs is the one case where the certificate's absence costs nothing: SmartScreen raises
+that warning for a file carrying a Mark of the Web, which a browser attaches to what it
+downloads, and the updater writes the file itself and attaches none. Defender's real-time
+scan of a new executable is a separate matter and is unaffected either way.
 
 ### It fails rather than skipping
 

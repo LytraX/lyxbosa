@@ -136,13 +136,13 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
                         const ApplyOptions& options) {
     // ---------------------------------------------------------------------------
     // Guards that fire before a single byte is fetched. Cheap first, and ordered so
-    // that the reason a user is told is the one they can act on: a Windows user needs
-    // to hear about Windows, not about a verifier that is absent because of it.
+    // that the reason a user is told is the one they can act on: a platform with no
+    // replace needs to hear that, not about a verifier that is absent because of it.
     // ---------------------------------------------------------------------------
     if (!platformCanReplaceRunningBinary()) {
         return refuse(ApplyOutcome::PlatformCannotReplace,
-                      "a running executable is locked on Windows, so it cannot be "
-                      "replaced in place");
+                      "this build has no way to replace a running executable on this "
+                      "platform");
     }
     if (!minisign::verifierAvailable()) {
         // Never degrade to "download it anyway". A program that runs as root on
@@ -188,12 +188,20 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
     // update is not made to fetch it first. It is asked again, implicitly, by the write
     // itself - a filesystem can go read-only between the two.
     if (const ReplaceAccess access = canReplace(target); !access.ok) {
+        // The same refusal under Program Files as under /usr/local/bin, and the same
+        // reason for not elevating: on Windows the guard is the probe's write into the
+        // install directory, which an unelevated process is denied there exactly as it
+        // is denied here without sudo.
+#ifdef _WIN32
+        constexpr std::string_view kEscalation = "re-running this as an administrator";
+#else
+        constexpr std::string_view kEscalation = "re-running this under sudo";
+#endif
         return refuse(ApplyOutcome::NotWritable,
                       fmt::format("{}. Download the release and install it yourself "
-                                  "rather than re-running this under sudo: a scanner "
-                                  "that rewrites a system binary because a version "
-                                  "check said so is a footgun",
-                                  access.reason));
+                                  "rather than {}: a scanner that rewrites a system "
+                                  "binary because a version check said so is a footgun",
+                                  access.reason, kEscalation));
     }
 
     // ---------------------------------------------------------------------------
@@ -441,6 +449,16 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
 
     result.outcome = ApplyOutcome::Replaced;
     result.detail = fmt::format("{} is now {}", target.string(), toString(plan.to));
+#ifdef _WIN32
+    // The process printing this is still the old image, moved aside under a name the
+    // next start removes. Said here so that a directory listing taken in the meantime
+    // is not a surprise, and said once rather than on every start that reaps it.
+    if (!reapMovedAsideBinary(target)) {
+        result.detail += fmt::format("; the copy you are running was moved to {} and is "
+                                     "removed the next time lyxbosa starts",
+                                     movedAsidePathFor(target).filename().string());
+    }
+#endif
     return result;
 }
 

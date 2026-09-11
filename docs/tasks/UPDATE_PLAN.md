@@ -1,12 +1,12 @@
 # Updating the binary
 
-A plan, and most of it is now built. **Phases 0 to 3 are built**: a release publishes
+A plan, and all of it is now built. **Phases 0 to 4 are built**: a release publishes
 `SHA256SUMS` and a signature over it, the binary carries the trusted keys and verifies both
 before it will install anything, and `lyxbosa update` downloads, verifies and replaces
-itself on Linux. Phase 4 - Windows, where a running `.exe` is locked and the replacement has
-to happen on the next start - is what remains. What shipped is described in
+itself on Linux and on Windows. What shipped is described in
 [`docs/RELEASING.md`](../RELEASING.md) under *Release integrity* and in the README under
-*Updating*.
+*Updating*; the two replace mechanisms and why they differ are in
+`src-lib/cpp/update/InstallPath.h`.
 
 ## 1. The problem, and what is not the problem
 
@@ -141,9 +141,14 @@ parsing output, which is the same discipline the scan exit codes already follow.
   keeps its inode. Write the new binary beside the old one, verify it, `fsync`, then
   `os.replace` — atomic, and a crash mid-update leaves the old binary in place. Same discipline
   as `indexio.write_jsonl_atomic`.
-- **Windows.** A running `.exe` cannot be replaced. The update writes `lyxbosa.exe.new` and
-  renames on next start, or spawns a short-lived helper. This is the one place the platforms
-  genuinely differ and it needs its own testing.
+- **Windows.** A running `.exe` cannot be overwritten or deleted, but it can be renamed,
+  because that changes the directory entry rather than the file. So the replace is two moves
+  inside the install directory: the running binary aside to `lyxbosa.exe.old`, then the
+  verified download into its place, with the first undone if the second fails so that there
+  is always a `lyxbosa.exe`. Neither a rename on next start nor a helper process was needed:
+  the running process can do both moves itself, and the only thing it cannot do is delete
+  its own image, which the next start does. This is the one place the platforms genuinely
+  differ, and its cases run on a real running process on the Windows CI job.
 - **Permissions.** If the binary is not writable by the current user, refuse with the reason
   rather than escalating. A scanner run under `sudo` that rewrites a system binary because a
   check said so is a footgun.
@@ -183,7 +188,7 @@ than left to be discovered: a version check reveals an IP, a version and a times
 | 1 | minisign signature + rotation list | a checksum an attacker can rewrite is not integrity | **done**, except the key itself: the list is `keys/minisign-trusted.txt`, it is not embedded in the binary because nothing in the binary verifies anything yet, and that happens in phase 3 |
 | 2 | `update --check`, config, caching | most of the value, none of the replace risk | **done**; the version source is the releases API, settled in §10 |
 | 3 | `update` — download, verify, atomic replace | Linux | **done**; the keyring is compiled in from `keys/minisign-trusted.txt`, and macOS refuses because a release publishes no asset for it |
-| 4 | Windows replace-on-restart | the one genuinely different platform | |
+| 4 | Windows: the running image moved aside, the download moved into place | the one genuinely different platform | **done**; libcrypto is built on Windows for the verifier, and TLS stays with Schannel |
 
 Each phase is useful alone, and phase 2 could be where this stops if nobody wants
 self-replacement.
