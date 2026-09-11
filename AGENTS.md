@@ -184,10 +184,18 @@ said so, because nothing ran them.
 suites that broke this month and leave the other thirty-eight exactly as unwatched — the next
 instance of that round already scheduled. Five commands is a list somebody runs; twenty is a
 list that gets skipped and then quoted as green. So the list grows by one, the runner
-**discovers** the suites by parsing every `corpus/*.py` rather than holding a list of its own,
-and coverage stops depending on anybody's memory. It takes 27 seconds warm (46 on the first
-run after a reboot — page cache over the 62 MB index, not the tools), of which 7.8 seconds is
-`classify-known-miss.py` and 5.6 is `field-provenance.py`.
+**discovers** the suites by reading every `corpus/*.py` and every `corpus/*.sh` rather than
+holding a list of its own, and coverage stops depending on anybody's memory. It takes 27
+seconds warm (46 on the first run after a reboot — page cache over the 62 MB index, not the
+tools), of which 7.8 seconds is `classify-known-miss.py` and 5.6 is `field-provenance.py`,
+plus about a second for the three shell suites.
+
+The two suffixes are read by different means and it is the same argument twice. A Python
+suite is found by parsing, because a text sweep cannot tell `"--inject"` in an `add_argument`
+call from `--inject` written in a docstring about somebody else's tool. A shell suite has no
+AST, so the question asked of it is whether the flag stands in a **dispatch position** — a
+`case` pattern, or compared against a positional — and not whether it appears; all three
+shell tools name their own flag in prose as well as dispatching on it.
 
 It reports three ways to be not-ok and they are different problems: `FAILED` (ran, cases
 disagree), `CANNOT INVOKE` (needs arguments — worse, it has never run, and the repair is a row

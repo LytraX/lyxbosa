@@ -86,6 +86,29 @@ are correct as of the round that recorded them and are deliberately never regene
   asserting the rule against a real scanner over a real tree rather than against reports the
   control wrote itself.
 
+- **Three control suites had never been run by anything, because the runner only read
+  `.py`.** `control-suites.py` is the one command `AGENTS.md` puts on the pre-report list so
+  that coverage stops depending on anybody's memory, and its own docstring argues that a
+  hardcoded list would be that memory dependency one level up. It discovered by suffix, and
+  `build-shard.sh --selftest`, `fetch-benign.sh --inject` and `release-assets.sh --selftest`
+  fell outside it — not failing and not skipped, simply never asked. All three pass, and all
+  three together cost about a second: **45 suites, from 42.**
+
+  The shell half is read by a different means, for the same reason the Python half is parsed
+  rather than grepped. There is no AST to ask, so the question put to a shell script is
+  whether the flag stands in a **dispatch position** — a `case` pattern, or compared against
+  a positional — rather than whether it appears. That distinction is load-bearing here rather
+  than theoretical: all three of those tools name their own flag in a comment or a usage
+  string as well as dispatching on it, so *appears in the file* would have been true of the
+  prose in every one of them.
+
+  Six new cases, both directions: a `case` pattern is discovered, a comparison against `$1`
+  is discovered, a script naming the flag only in a comment and a usage line is **not**, a
+  failing shell suite is reported `FAILED` rather than skipped, a passing one reads ok, and
+  the three real shell suites are asserted present **by name** — because a discovery that
+  quietly stopped opening `.sh` would satisfy every case that compares the parser only to
+  itself, which is the shape §11 keeps recording. 24 cases, from 18.
+
 ## [corpus-2026.09.2] - 2026-09-08
 
 ### Added

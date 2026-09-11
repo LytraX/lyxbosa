@@ -45,10 +45,22 @@ against.
 
 DISCOVERED, NOT LISTED
 ----------------------
-The suites are found by parsing every `corpus/*.py` and asking whether it names `--inject` or
-`--selftest` as a string constant. A hardcoded list would be the same memory dependency one
-level up: a tool that grows a control suite would be watched only if somebody remembered to
-add it here, which is precisely the thing that did not happen.
+The suites are found by reading every `corpus/*.py` and every `corpus/*.sh` and asking
+whether it dispatches on `--inject` or `--selftest`. A hardcoded list would be the same
+memory dependency one level up: a tool that grows a control suite would be watched only if
+somebody remembered to add it here, which is precisely the thing that did not happen.
+
+`.sh` is read by a different means and for the same reason the Python half is parsed rather
+than grepped. There is no AST to ask, so the question asked of a shell script is whether the
+flag stands in a DISPATCH position - a `case` pattern, or compared against a positional -
+rather than whether it appears. All three shell tools here name their own flag in a comment
+or a usage string as well as dispatching on it, and two of them name it in both, so "appears
+in the file" would have been true of the prose and is not the question.
+
+That the reader had to be written at all is the finding: `build-shard.sh --selftest`,
+`fetch-benign.sh --inject` and `release-assets.sh --selftest` are controls this runner could
+not see, on the same argument it exists to make. All three pass, and all three together cost
+about a second.
 
 Discovery has its own failure mode and it is the dangerous direction: a discovery that finds
 nothing reports zero failures, and zero failures reads as green. That is the same shape as the
@@ -70,7 +82,7 @@ THREE WAYS TO BE NOT-OK, AND THEY ARE DIFFERENT PROBLEMS
 All three exit non-zero. None of them is a skip: a suite this runner cannot deal with is
 reported loudly, because a quiet skip is how a control suite fails for six rounds.
 """
-import argparse, ast, os, subprocess, sys, tempfile, time
+import argparse, ast, os, re, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -155,16 +167,61 @@ def _non_docstring_flags(tree):
     return out
 
 
+def _sh_dispatch(flag):
+    """Patterns that put `flag` in a dispatch position in a shell script.
+
+    Two shapes, because the tools here use both: a `case` pattern (`--selftest)`, possibly
+    one alternative of several) and a comparison against a positional (`[ "$1" = "--inject" ]`).
+    Anything else - a comment, a usage string, an error message quoting the flag - is prose.
+    """
+    f = re.escape(flag)
+    return (re.compile(r'(?:^|\|)\s*' + f + r'\)'),          # case pattern
+            re.compile(r'[=!]=?\s*"?' + f + r'"?\s*(?:\]|;|\)|$)'))  # compared to a positional
+
+
+def sh_suite_flag(path):
+    """The flag a shell script dispatches its control suite on, or None.
+
+    Comment lines are dropped first. A shell script has no AST to ask, and the Python half
+    of this runner exists because a text sweep cannot tell a flag a tool DISPATCHES on from
+    one it merely names; the same distinction is drawn here by position instead of by node.
+    """
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except OSError:                                                  # pragma: no cover
+        return None
+    lines = [l for l in text.split("\n") if not l.lstrip().startswith("#")]
+    for flag in FLAGS:
+        pats = _sh_dispatch(flag)
+        if any(p.search(l) for l in lines for p in pats):
+            return flag
+    return None
+
+
+def flag_of(path):
+    """The control flag `path` runs under, by the reader its suffix calls for."""
+    if path.endswith(".sh"):
+        return sh_suite_flag(path)
+    return suite_flag(path)
+
+
 def discover(root=HERE, skip=(SELF,)):
     """[(filename, flag)] for every control suite in `root`, sorted."""
     out = []
     for fn in sorted(os.listdir(root)):
-        if not fn.endswith(".py") or fn in skip:
+        if not fn.endswith((".py", ".sh")) or fn in skip:
             continue
-        flag = suite_flag(os.path.join(root, fn))
+        flag = flag_of(os.path.join(root, fn))
         if flag:
             out.append((fn, flag))
     return out
+
+
+def interpreter(fn):
+    """How a suite is invoked. A `.sh` suite runs through `bash` rather than on its exec
+    bit, so a mode that did not survive a checkout cannot quietly turn a control into a
+    CANNOT INVOKE - which reads, from the summary, like a tool that needs an argument."""
+    return ["bash"] if fn.endswith(".sh") else [sys.executable]
 
 
 def argv_for(fn, flag, tmpdir, index):
@@ -189,7 +246,7 @@ def classify(rc, out):
 
 
 def run_one(root, fn, flag, tmpdir, index, timeout=TIMEOUT):
-    argv = [sys.executable, os.path.join(root, fn)] + argv_for(fn, flag, tmpdir, index)
+    argv = interpreter(fn) + [os.path.join(root, fn)] + argv_for(fn, flag, tmpdir, index)
     t0 = time.time()
     try:
         r = subprocess.run(argv, capture_output=True, text=True, cwd=ROOT, timeout=timeout)
@@ -296,6 +353,22 @@ def inject():
         plant("selftester.py", "import sys\n"
                                "if '--selftest' in sys.argv:\n"
                                "    sys.exit(0)\n")
+        # The two dispatch shapes the shell tools here actually use, and the prose that
+        # looks identical to a substring sweep. `shprose.sh` names one flag in a comment
+        # and the other in a usage string, which is how all three real ones are written.
+        plant("shpassing.sh", '#!/usr/bin/env bash\n'
+                              'case "${1:-}" in\n'
+                              '  --selftest) echo "  a case  ok"; exit 0 ;;\n'
+                              'esac\n')
+        plant("shfailing.sh", '#!/usr/bin/env bash\n'
+                              'if [ "${1:-}" = "--inject" ]; then\n'
+                              '  echo "  a case  WRONG"\n'
+                              '  echo "control: 1 passed, 1 failed"\n'
+                              '  exit 1\n'
+                              'fi\n')
+        plant("shprose.sh", '#!/usr/bin/env bash\n'
+                            "# --selftest is somebody else's flag, named in a comment.\n"
+                            'echo "usage: shprose.sh --inject" >&2\n')
 
         found = dict(discover(tmp, skip=()))
         print("=== discovery ===")
@@ -306,6 +379,12 @@ def inject():
         # A docstring naming another tool's flag is not a control suite. This file's own
         # docstring names four, and a substring sweep would have enrolled it.
         case("a docstring mentioning --inject is not a suite", "mentions.py" not in found)
+        case("a shell tool dispatching on a case pattern is discovered",
+             found.get("shpassing.sh") == "--selftest")
+        case("a shell tool comparing $1 to the flag is discovered",
+             found.get("shfailing.sh") == "--inject")
+        case("a shell tool naming it only in a comment and a usage line is not",
+             "shprose.sh" not in found)
 
         print()
         print("=== a non-zero exit is never read as success ===")
@@ -335,7 +414,7 @@ def inject():
         # assertion keyed to column padding breaks when a label changes width and says nothing
         # about whether the verdict was right.
         summary = dict(reversed(l.strip().rsplit(None, 1)) for l in text.split("\n")
-                       if l.startswith("  ") and l.strip().endswith(".py")
+                       if l.startswith("  ") and l.strip().endswith((".py", ".sh"))
                        and l.strip().split()[0] in ("FAILED", "CANNOT", "CRASHED", "TIMEOUT"))
         case("  ...and the failing one as FAILED", summary.get("failing.py") == "FAILED")
         case("  ...and quotes its output, so the reader is not sent hunting",
@@ -346,8 +425,15 @@ def inject():
              summary.get("needsargs.py") == "CANNOT INVOKE")
         case("  ...and one that raises before its cases is CRASHED",
              summary.get("crashing.py") == "CRASHED")
-        case("  ...and none of the three is silently skipped",
-             text.count("not ok: 3") == 1 and len(summary) == 3)
+        # A shell suite is run, read and counted exactly as a Python one. Discovering it
+        # and then not counting its exit code would be the quiet skip one suffix over.
+        case("  ...and a failing SHELL suite is FAILED, not skipped",
+             summary.get("shfailing.sh") == "FAILED")
+        case("  ...and the passing shell one is ok",
+             any(l.startswith("  shpassing.sh") and l.rstrip().endswith("ok")
+                 for l in text.split("\n")))
+        case("  ...and none of the four is silently skipped",
+             text.count("not ok: 4") == 1 and len(summary) == 4)
 
         print()
         print("=== and on the real directory ===")
@@ -366,17 +452,32 @@ def inject():
         # so the two halves are asserted separately rather than as one equality.
         by_text = set()
         for fn in sorted(os.listdir(HERE)):
-            if fn.endswith(".py") and fn != SELF:
-                if any(f in open(os.path.join(HERE, fn), encoding="utf-8").read()
+            if fn.endswith((".py", ".sh")) and fn != SELF:
+                if any(f in open(os.path.join(HERE, fn), encoding="utf-8",
+                                 errors="replace").read()
                        for f in FLAGS):
                     by_text.add(fn)
         names = {fn for fn, _f in real}
         case("  ...and the parser invents no suite a text sweep cannot see",
              names <= by_text)
+
+        def _is_prose(fn):
+            """True when `fn` names a flag but dispatches on none - the only direction the
+            sweep is allowed to disagree in. Asked by the reader that suffix uses, because
+            `ast.parse` on a shell script raises rather than answering."""
+            path = os.path.join(HERE, fn)
+            if fn.endswith(".sh"):
+                return sh_suite_flag(path) is None
+            return not _non_docstring_flags(
+                ast.parse(open(path, encoding="utf-8").read()))
+
         case("  ...and misses none: every extra the sweep reports is prose",
-             all(not _non_docstring_flags(
-                     ast.parse(open(os.path.join(HERE, fn), encoding="utf-8").read()))
-                 for fn in sorted(by_text - names)))
+             all(_is_prose(fn) for fn in sorted(by_text - names)))
+        # The shell half is asserted by name as well as by the set algebra above: it is new,
+        # and a discovery that quietly stopped opening `.sh` would satisfy every case that
+        # only compares the parser to itself.
+        case("  ...and all three shell control suites are among them",
+             {"build-shard.sh", "fetch-benign.sh", "release-assets.sh"} <= names)
         # Every declared invocation still names a tool that is here and still needs it.
         case("every INVOCATION row names a discovered suite",
              set(INVOCATION) <= {fn for fn, _f in real})
@@ -395,8 +496,8 @@ def inject():
 
 def _bare(fn):
     """(rc, output) from running `fn`'s suite with no arguments - the state it was found in."""
-    flag = suite_flag(os.path.join(HERE, fn))
-    r = subprocess.run([sys.executable, os.path.join(HERE, fn), flag],
+    flag = flag_of(os.path.join(HERE, fn))
+    r = subprocess.run(interpreter(fn) + [os.path.join(HERE, fn), flag],
                        capture_output=True, text=True, cwd=ROOT, timeout=TIMEOUT)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
