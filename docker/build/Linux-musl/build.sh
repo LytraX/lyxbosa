@@ -7,10 +7,12 @@ set -e
 #   docker/build/Linux-musl/build.sh [amd64|arm64|all] [output-dir] [version]
 #
 # Same shape as the glibc script deliberately, so the workflow calls the two the same
-# way; what differs is the image (Dockerfile in this directory says why it exists), the
-# tag, and the name the binary is given: lyxbosa-linux-<arch>-portable, the suffix being
-# what src-lib/cpp/update/ReleaseAssets.cpp appends for a musl build, so that the
-# updater fetches the asset this script produced and not the glibc one.
+# way: one configure with the tests in it, the tests run when this machine can execute
+# the architecture being built, and the binary that passed them copied out. What differs
+# is the image (Dockerfile in this directory says why it exists), the tag, and the name
+# the binary is given: lyxbosa-linux-<arch>-portable, the suffix being what
+# src-lib/cpp/update/ReleaseAssets.cpp appends for a musl build, so that the updater
+# fetches the asset this script produced and not the glibc one.
 #
 # The asset says `portable` and this directory says `musl` on purpose. The asset name is
 # read by somebody choosing what to download, and what they are choosing is a binary that
@@ -29,6 +31,20 @@ if [ "${ARCH}" = "all" ]; then
 else
     ARCHES=("${ARCH}")
 fi
+
+case "$(uname -m)" in
+    aarch64|arm64) HOST_ARCH=arm64 ;;
+    *)             HOST_ARCH=amd64 ;;
+esac
+
+# The verdict goes to the log and, under Actions, to the run summary page. The glibc
+# script's header says why.
+announce() {
+    echo "$1"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        echo "$1" >> "${GITHUB_STEP_SUMMARY}"
+    fi
+}
 
 VERSION_ENV=""
 if [ -n "${VERSION}" ]; then
@@ -57,6 +73,14 @@ for CURRENT_ARCH in "${ARCHES[@]}"; do
     TAG_NAME="lyxbosa-build-linux-musl-${CURRENT_ARCH}"
     BINARY_NAME="lyxbosa-linux-${CURRENT_ARCH}-portable"
 
+    if [ "${CURRENT_ARCH}" = "${HOST_ARCH}" ]; then
+        RUN_TESTS=1
+        SKIP_REASON=""
+    else
+        RUN_TESTS=0
+        SKIP_REASON="this machine is ${HOST_ARCH} and would run a ${CURRENT_ARCH} suite under emulation"
+    fi
+
     echo "=== Building LyxBoSa for Linux (${CURRENT_ARCH}, static musl) ==="
 
     echo "Building Docker image..."
@@ -74,12 +98,18 @@ for CURRENT_ARCH in "${ARCHES[@]}"; do
         -v "${OUTPUT_DIR}:/output" \
         ${CACHE_MOUNT} \
         ${VERSION_ENV} \
+        -e "LYXBOSA_RUN_TESTS=${RUN_TESTS}" \
+        -e "LYXBOSA_TESTS_SKIPPED_BECAUSE=${SKIP_REASON}" \
         "${TAG_NAME}"
 
     mv -f "${OUTPUT_DIR}/lyxbosa" "${OUTPUT_DIR}/${BINARY_NAME}"
 
     echo ""
-    echo "=== Build complete: ${OUTPUT_DIR}/${BINARY_NAME} ==="
+    if [ "${RUN_TESTS}" = "1" ]; then
+        announce "- \`linux ${CURRENT_ARCH} musl\` built **and tested** - ctest ran in the Alpine release container"
+    else
+        announce "- \`linux ${CURRENT_ARCH} musl\` built, **not tested** - ${SKIP_REASON}"
+    fi
     file "${OUTPUT_DIR}/${BINARY_NAME}"
     echo ""
 done

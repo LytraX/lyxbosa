@@ -297,7 +297,7 @@ endif()
 # binary and the test binary cannot drift apart on it: a manifest present in only one of
 # them is a fix nobody can test. CMake merges a `.manifest` source into the
 # linker-generated manifest with mt.exe (release notes, 3.4) under the Visual Studio
-# generator that build.ps1 and test.ps1 use and under Ninja alike. Nothing here reaches
+# generator that build.ps1 uses and under Ninja alike. Nothing here reaches
 # a non-MSVC build: the source is not even listed.
 set(LYXBOSA_WIN_MANIFEST ${CMAKE_SOURCE_DIR}/cmake/lyxbosa.manifest)
 function(lyxbosa_configure_windows_exe target)
@@ -426,5 +426,17 @@ if(BUILD_TESTS)
     LYXBOSA_KEYRING_FILE_PATH="${LYXBOSA_KEYRING_FILE}")
 
   include(GoogleTest)
-  gtest_discover_tests(lyxbosa_tests)
+
+  # PRE_TEST rather than the default POST_BUILD, because one of the configures that
+  # builds this target cannot execute it. POST_BUILD enumerates the cases by RUNNING
+  # the test binary as the last step of the link, and the Windows ARM64 build is
+  # cross-compiled on an x64 runner: there is no emulator, so CMake would invoke an
+  # ARM64 executable on x64 and fail the build - not the tests, the build, and the
+  # release binary with it. PRE_TEST defers the enumeration to `ctest`, which is only
+  # ever run where the binary runs.
+  #
+  # It is set here rather than only for that one configure so that every build of this
+  # tree discovers its cases the same way, and so the mode that ships is the mode that
+  # was exercised on somebody's desk.
+  gtest_discover_tests(lyxbosa_tests DISCOVERY_MODE PRE_TEST)
 endif()

@@ -198,24 +198,25 @@ the tag ref has to be pushed explicitly.
 gh run watch
 ```
 
-Seven jobs. `test-linux` (amd64 and arm64 matrix), `test-linux-musl` (the same matrix,
-in the Alpine image) and `test-windows` build the tree with `BUILD_TESTS=ON` and run
-`ctest` - `test-windows` also runs `scripts/install.ps1 -SelfTest`, which is the only place
-in this project that can execute PowerShell; they are the same jobs a pull request to `master` runs, and a tag runs them too.
-They also run on a push to `master`, where they build nothing anyone downloads: a cache
-saved during a pull request is scoped to that pull request, so only a run on the default
-branch leaves one the next pull request can restore. `build-linux` (amd64 and arm64
-matrix), `build-linux-musl` (the same matrix, static musl) and `build-windows` produce
-the binaries, with the tests off — a release build compiles only what it ships, which is
-why the test build is a separate configure in `docker/build/Linux/test-inside.sh`,
-`docker/build/Linux-musl/test-inside.sh` and `docker/build/Windows/test.ps1` rather than
-a flag on the release scripts. Then `release`, which only runs
-`if: startsWith(github.ref, 'refs/tags/v')` and needs all three builds to succeed. If any
-build fails, no release is published and the tag is left pointing at a commit with
-nothing attached — see [If a release goes
-wrong](#if-a-release-goes-wrong). A test job failing does not stop the release; it is
-reported on the run, and gating on it is a decision to take once the jobs have been seen
-to pass.
+Seven jobs: one per platform and architecture, and `release`. `build-linux` (amd64 and
+arm64 matrix), `build-linux-musl` (the same matrix, in the Alpine image) and
+`build-windows` (the same matrix, static vcpkg triplets) each configure the tree once with
+`BUILD_TESTS=ON`, run `ctest`, and upload a binary. There are no separate test jobs: the
+binary a release ships is the binary its suite ran against, and a suite that fails stops
+the artefact rather than being reported beside a release that went out anyway.
+
+`ctest` runs where the binary just built can be executed, which is everywhere except
+`build-windows (arm64)` — that leg is cross-compiled on an x64 runner. It says which of
+the two it did, on the run summary as well as in the log, so a build is never read as a
+pass it did not earn. `build-windows (amd64)` also runs `scripts/install.ps1 -SelfTest`,
+which is the only place in this project that can execute PowerShell.
+
+The same six jobs run on a pull request and on a push to `master`, where they upload
+nothing anyone downloads: a cache saved during a pull request is scoped to that pull
+request, so only a run on the default branch leaves one the next run can restore. Then
+`release`, which only runs `if: startsWith(github.ref, 'refs/tags/v')` and needs all six
+to succeed. If any fails, no release is published and the tag is left pointing at a commit
+with nothing attached — see [If a release goes wrong](#if-a-release-goes-wrong).
 
 ---
 
@@ -227,7 +228,8 @@ to pass.
 | `lyxbosa-linux-arm64` | `ubuntu-24.04-arm`, same container |
 | `lyxbosa-linux-amd64-portable` | `ubuntu-latest`, built in the Alpine container in `docker/build/Linux-musl/` |
 | `lyxbosa-linux-arm64-portable` | `ubuntu-24.04-arm`, same container |
-| `lyxbosa-windows-*.exe` | `windows-latest`, static vcpkg triplet (amd64 and arm64) |
+| `lyxbosa-windows-amd64.exe` | `windows-latest`, static vcpkg triplet, tests run |
+| `lyxbosa-windows-arm64.exe` | `windows-latest`, static vcpkg triplet, cross-compiled and not tested |
 | `install.sh` | the release job, copied from `scripts/` in the tagged checkout |
 | `install.ps1` | the release job, copied from `scripts/` in the tagged checkout |
 | `SHA256SUMS` | the release job, over those eight assets |

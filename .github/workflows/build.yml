@@ -4,15 +4,15 @@ on:
   push:
     tags:
       - 'v*'
-    # Not for artefacts - the build jobs skip here - but because a cache saved during a
+    # Not for artefacts - the upload steps skip here - but because a cache saved during a
     # pull request is scoped to that pull request and invisible to the next one. Only the
-    # default branch's caches are shared. Without a run on master, every pull request
-    # starts cold no matter how well the keys are chosen, so the test jobs run here to
-    # leave a cache the next pull request can restore.
+    # default branch's caches are shared. Without a run on master, every pull request and
+    # every tag starts cold no matter how well the keys are chosen, so the build jobs run
+    # here to leave a cache the next run can restore.
     branches:
       - master
-  # Pull requests run the three test jobs and nothing else: the build jobs are gated on the
-  # event below, and `release` on the tag. Tags and manual runs run all seven.
+  # Pull requests run every build job and publish nothing: the upload steps are gated on
+  # the event below, and `release` on the tag.
   pull_request:
     branches:
       - master
@@ -30,171 +30,61 @@ on:
         required: false
         default: ''
 
+# ---------------------------------------------------------------------------------------
+# ONE JOB PER PLATFORM AND ARCHITECTURE
+#
+# Six build jobs and a release job. Each build job configures the tree once with
+# BUILD_TESTS=ON, runs ctest where the binary it just produced can be executed, and uploads
+# its artefact when the ref calls for one. There is no separate set of test jobs, and that
+# is the point: a second job configuring the same commit with the tests off compiles every
+# binary twice, for about a third of the runner minutes, and leaves the binary that was
+# tested and the binary that shipped as two different files.
+#
+# That the two configures produce the same bytes is measured rather than assumed - see the
+# header of docker/build/Linux/build-inside.sh. What one job buys beyond the minutes is a
+# guarantee: a suite that fails stops the artefact, because the build script copies the
+# binary out after ctest and not before.
+#
+# WHAT RUNS WHEN
+#   pull request   all six jobs build and test; nothing is uploaded, nothing is published
+#   push to master the same, and the caches they leave are the only ones a later run can
+#                  restore - a cache written on a pull request or a tag is scoped to that
+#                  ref and no other run ever sees it
+#   v* tag         the same six, plus the artefact uploads, plus `release`
+#   dispatch       the same six, plus the artefact uploads; `release` is gated on the tag
+#                  and never runs here
+#
+# CACHES
+# One cache key per job, and nothing shares one. actions/cache saves NOTHING when the
+# primary key hits, so two jobs on one key means whichever runs second can never persist a
+# rebuild - and a runner-image roll, which invalidates every vcpkg ABI hash at once, is
+# then paid again on every run afterwards rather than once. With one job per platform and
+# architecture there is a single reader and a single writer of each key and that cannot
+# arise: a hit means nothing changed, and a miss is saved.
+#
+# The arch segment is the same argument one level down. Two matrix legs sharing one key
+# would both miss, both build their own triplet, and one would win the save - leaving a
+# cache holding one triplet, a primary-key hit for both next time, and the other triplet
+# never cached at all.
+#
+# Each list ends with the prefix under which this repository already holds warm packages
+# for that platform and architecture, so a key introduced here starts from what is there
+# rather than rebuilding every dependency from source. Where nothing is held, the entry
+# repeats the job's own prefix and the first run pays for it once.
+# ---------------------------------------------------------------------------------------
+
 jobs:
-  # ---------------------------------------------------------------- tests
-  #
-  # These three jobs are the only place the test suite runs anywhere but on somebody's
-  # desk. They build with BUILD_TESTS=ON and run ctest; the build jobs below build with
-  # the tests OFF, because a release should compile only what it ships - and that is
-  # exactly why a test target that could not compile on Windows shipped release after
-  # release with every build green. The two are deliberately separate configures, so
-  # a test-only switch can never leak into what is published; see the header of
-  # docker/build/Linux/test-inside.sh and docker/build/Windows/test.ps1.
-  #
-  # What they share with the build jobs is everything that costs time: the same
-  # container, compiler, triplets, static runtime and - keyed identically - the same
-  # vcpkg binary cache. A pull request that warms the cache warms it for the tag.
-  test-linux:
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v5
-
-      # A key of this job's OWN, not build-linux's, because actions/cache saves nothing
-      # when the PRIMARY key hit and sharing a key means it always hits.
-      #
-      # What that costs is not obvious until a rebuild happens. vcpkg's binary cache is
-      # keyed by an ABI hash that includes the compiler, so when GitHub rolls the runner
-      # image to a new toolset every entry is invalidated and every package is rebuilt.
-      # That is unavoidable and it is fine - it should be paid once. Sharing the key made
-      # it recur: the rebuild could never be saved, so the next run on that image paid it
-      # again, and the one after that. Falling back to the release prefix keeps the thrift
-      # that is real, a cold cache still starting from what the release build had.
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v5
-        with:
-          path: .vcpkg-cache
-          key: vcpkg-linux-tests-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile') }}
-          restore-keys: |
-            vcpkg-linux-tests-${{ matrix.arch }}-
-            vcpkg-linux-${{ matrix.arch }}-
-
-      # Runs inside the release container, as an unprivileged user so the cases about
-      # unreadable files and directories are observed rather than skipped as root.
-      - name: Build with tests and run them (${{ matrix.arch }})
-        env:
-          VCPKG_BINARY_CACHE: .vcpkg-cache
-        run: docker/build/Linux/test.sh "${{ matrix.arch }}"
-
-      - name: Reclaim cache ownership
-        if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache || true
-
-  # The same suite under the static musl build. A different C library is a different
-  # allocator, resolver and regex build, so a musl asset whose tests only ever ran on
-  # glibc would ship on an assumption; docker/build/Linux-musl/test.sh says what this
-  # proves. Its own cache key, hashing its own Dockerfile: the compiler is in vcpkg's ABI
-  # hash and Alpine's gcc is not AlmaLinux's, so the two caches cannot share an entry.
-  test-linux-musl:
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v5
-        with:
-          path: .vcpkg-cache-musl
-          key: vcpkg-linux-musl-tests-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux-musl/Dockerfile') }}
-          restore-keys: |
-            vcpkg-linux-musl-tests-${{ matrix.arch }}-
-            vcpkg-linux-musl-${{ matrix.arch }}-
-
-      - name: Build with tests and run them (${{ matrix.arch }}, static musl)
-        env:
-          VCPKG_BINARY_CACHE: .vcpkg-cache-musl
-        run: docker/build/Linux-musl/test.sh "${{ matrix.arch }}"
-
-      - name: Reclaim cache ownership
-        if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache-musl || true
-
-  test-windows:
-    runs-on: windows-latest
-    env:
-      VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-cache
-    steps:
-      - uses: actions/checkout@v5
-
-      # ImageVersion is set by the runner, and the `env` context inside a `with:`
-      # expression sees only what this file declares - so ${{ steps.toolchain.outputs.value }} expanded
-      # to nothing and saved a key with an empty segment, which is how the first attempt at
-      # this looked like it had worked. Reading it in a step is the way to reach it.
-      #
-      # `:?` rather than a default: a key that silently loses the toolchain is the exact
-      # failure being fixed here, so an absent variable stops the job rather than quietly
-      # producing one key for every compiler again.
-      - name: Name the toolchain the cache is keyed to
-        id: toolchain
-        shell: bash
-        run: echo "value=${ImageVersion:?the runner did not set ImageVersion}" >> "$GITHUB_OUTPUT"
-
-      # This job's own key, and ImageVersion is in it because a cache key has to be at
-      # least as specific as the thing it caches. vcpkg's ABI hash includes the compiler;
-      # GitHub rolls windows-latest to new toolsets; so one key without the image serves
-      # two incompatible toolchains, and whichever image writes it first owns it forever.
-      #
-      # That was measured the hard way, twice. Sharing build-windows's key: hit on the
-      # primary, rebuild all ten packages, "not saving cache", 11m34s. Then with a key of
-      # its own but still no image in it: saved on image 20260824.214, met 20260907.229,
-      # restored binaries the new compiler could not use, rebuilt all ten again, "not
-      # saving cache" again, 12m0s. The rule that bit both times is the same one - nothing
-      # is saved when the PRIMARY key hits - and the repair is to stop asking one key to
-      # answer for two compilers. See the note in test-linux, whose key hashes the
-      # Dockerfile and so has pinned its compiler all along.
-      - name: Set up vcpkg cache
-        uses: actions/cache@v5
-        with:
-          path: C:\vcpkg-cache
-          key: vcpkg-windows-tests-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
-          restore-keys: |
-            vcpkg-windows-tests-${{ steps.toolchain.outputs.value }}-
-            vcpkg-windows-tests-
-            vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-
-
-      - name: Create binary cache dir
-        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE
-
-      # x64 only: the runner cannot execute an arm64 test binary, and compiling one it
-      # never runs is the half of the check that proves least.
-      - name: Build with tests and run them
-        run: docker/build/Windows/test.ps1
-        env:
-          VCPKG_ROOT: C:\vcpkg
-
-      # The only place in this project that can run PowerShell, and therefore the only place
-      # install.ps1 is anything but a claim about its text: corpus/install-scripts.sh asserts
-      # the POSIX half for real and can do no more than read this one, which every one of its
-      # labels says. The cases need no network - each is a refusal or a pure function - so
-      # this costs a second and is not gated on the release.
-      - name: Prove the Windows installer's refusals
-        run: ./scripts/install.ps1 -SelfTest
-
-  # ---------------------------------------------------------------- release binaries
   build-linux:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     strategy:
       matrix:
         arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-latest
+            warm_from: vcpkg-linux-tests-amd64-
           - arch: arm64
             runner: ubuntu-24.04-arm
+            warm_from: vcpkg-linux-tests-arm64-
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -220,14 +110,14 @@ jobs:
           fi
           echo "value=${version}" >> "$GITHUB_OUTPUT"
 
-      # vcpkg builds every dependency from source, which is most of this job. The
-      # cache is keyed on what actually determines the binaries: the dependency
-      # list, the pinned registry baseline in vcpkg-configuration.json, and the
-      # Dockerfile (compiler and toolchain). A miss on any of those rebuilds.
+      # vcpkg builds every dependency from source, which is most of this job. The cache is
+      # keyed on what actually determines the binaries: the dependency list, the pinned
+      # registry baseline in vcpkg-configuration.json, and the Dockerfile (compiler and
+      # toolchain). A miss on any of those rebuilds.
       #
-      # Restoring a stale or partial cache is safe: vcpkg keys each entry by an ABI
-      # hash covering the port version, triplet, compiler and dependency hashes, so
-      # an entry that does not apply is ignored rather than reused.
+      # Restoring a stale or partial cache is safe: vcpkg keys each entry by an ABI hash
+      # covering the port version, triplet, compiler and dependency hashes, so an entry
+      # that does not apply is ignored rather than reused.
       - name: Restore vcpkg binary cache
         uses: actions/cache@v5
         with:
@@ -235,8 +125,11 @@ jobs:
           key: vcpkg-linux-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile') }}
           restore-keys: |
             vcpkg-linux-${{ matrix.arch }}-
+            ${{ matrix.warm_from }}
 
-      - name: Build for Linux (${{ matrix.arch }})
+      # Runs inside the release container, as an unprivileged user so the cases about
+      # unreadable files and directories are observed rather than skipped as root.
+      - name: Build and test (${{ matrix.arch }})
         env:
           VCPKG_BINARY_CACHE: .vcpkg-cache
         run: docker/build/Linux/build.sh "${{ matrix.arch }}" dist "${{ steps.version.outputs.value }}"
@@ -248,6 +141,7 @@ jobs:
         run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache || true
 
       - uses: actions/upload-artifact@v6
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
           name: lyxbosa-linux-${{ matrix.arch }}
           path: dist/lyxbosa-linux-*
@@ -259,6 +153,10 @@ jobs:
   # either is retired, and so that a defect in the new one is not also the loss of the
   # old one. docker/build/Linux-musl/Dockerfile says why musl and not a static glibc.
   #
+  # A different C library is a different allocator, resolver and regex build, so the suite
+  # runs here too rather than only on glibc: a musl asset whose tests only ever ran on
+  # glibc would ship on an assumption.
+  #
   # The asset is lyxbosa-linux-<arch>-portable, and that suffix is not decoration: it is
   # what src-lib/cpp/update/ReleaseAssets.cpp appends for a musl build, so `lyxbosa
   # update` running from this binary fetches this binary's successor and never the glibc
@@ -266,15 +164,16 @@ jobs:
   # binary is made; the asset says what it is for, which is what a person downloading it
   # is choosing between.
   build-linux-musl:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     strategy:
       matrix:
         arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-latest
+            warm_from: vcpkg-linux-musl-tests-amd64-
           - arch: arm64
             runner: ubuntu-24.04-arm
+            warm_from: vcpkg-linux-musl-tests-arm64-
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -297,7 +196,8 @@ jobs:
           echo "value=${version}" >> "$GITHUB_OUTPUT"
 
       # Keyed on this job's own Dockerfile, for the reason build-linux's note gives, and
-      # apart from the glibc cache because the compiler is in the ABI hash.
+      # apart from the glibc cache because the compiler is in the ABI hash: Alpine's gcc
+      # is not AlmaLinux's, so the two caches cannot share an entry.
       - name: Restore vcpkg binary cache
         uses: actions/cache@v5
         with:
@@ -305,8 +205,9 @@ jobs:
           key: vcpkg-linux-musl-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux-musl/Dockerfile') }}
           restore-keys: |
             vcpkg-linux-musl-${{ matrix.arch }}-
+            ${{ matrix.warm_from }}
 
-      - name: Build for Linux (${{ matrix.arch }}, static musl)
+      - name: Build and test (${{ matrix.arch }}, static musl)
         env:
           VCPKG_BINARY_CACHE: .vcpkg-cache-musl
         run: docker/build/Linux-musl/build.sh "${{ matrix.arch }}" dist "${{ steps.version.outputs.value }}"
@@ -316,12 +217,38 @@ jobs:
         run: sudo chown -R "$(id -u):$(id -g)" .vcpkg-cache-musl || true
 
       - uses: actions/upload-artifact@v6
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
           name: lyxbosa-linux-${{ matrix.arch }}-portable
           path: dist/lyxbosa-linux-*-portable
 
+  # A matrix, like the two above. This was one job looping over both architectures
+  # sequentially, and on the v2.5.0 release it took 1553 seconds while every other job in
+  # the run finished inside 520 - it set the wall clock on its own. The two architectures
+  # are within 40 seconds of each other (776 and 738 of that 1553), so running them as two
+  # jobs halves the job rather than merely shortening it.
+  #
+  # amd64 runs the suite and arm64 does not: the runner is x64 and cannot execute an ARM64
+  # binary. build.ps1 determines that from the host rather than assuming it, and says on
+  # the run summary which of the two it did. The ARM64 test target is still compiled - see
+  # that script's header for what that is worth and what it costs.
   build-windows:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          # amd64 falls back to `vcpkg-windows-tests-`, which is where this repository's
+          # warm x64 package cache sits on master. A job that runs only on tags writes its
+          # cache on a tag ref no other run can read, so a release build's own cache is
+          # never usefully restored: measured on the v2.5.0 run, which restored 0 packages
+          # and rebuilt all 18 from source, twice, at 673 and 628 seconds.
+          - arch: amd64
+            warm_from: vcpkg-windows-tests-
+          # No cache of arm64-windows-static packages is readable from master, so this leg
+          # has nothing to fall back to and its entry repeats its own prefix. One cold run
+          # on master is the whole price.
+          - arch: arm64
+            warm_from: vcpkg-windows-arm64-
     runs-on: windows-latest
     env:
       VCPKG_DEFAULT_BINARY_CACHE: C:\vcpkg-cache
@@ -347,7 +274,7 @@ jobs:
           echo "value=${version}" >> "$GITHUB_OUTPUT"
 
       # ImageVersion is set by the runner, and the `env` context inside a `with:`
-      # expression sees only what this file declares - so ${{ steps.toolchain.outputs.value }} expanded
+      # expression sees only what this file declares - so ${{ env.ImageVersion }} expanded
       # to nothing and saved a key with an empty segment, which is how the first attempt at
       # this looked like it had worked. Reading it in a step is the way to reach it.
       #
@@ -359,28 +286,54 @@ jobs:
         shell: bash
         run: echo "value=${ImageVersion:?the runner did not set ImageVersion}" >> "$GITHUB_OUTPUT"
 
+      # ImageVersion is in the key because a cache key has to be at least as specific as
+      # the thing it caches. vcpkg's ABI hash includes the compiler; GitHub rolls
+      # windows-latest to new toolsets; so one key without the image serves two
+      # incompatible toolchains, and whichever image writes it first owns it forever.
+      #
+      # That was measured the hard way, twice. Sharing one key between two jobs: hit on the
+      # primary, rebuild all ten packages, "not saving cache", 11m34s. Then with a key of
+      # its own but still no image in it: saved on image 20260824.214, met 20260907.229,
+      # restored binaries the new compiler could not use, rebuilt all ten again, "not
+      # saving cache" again, 12m0s. The rule that bit both times is the same one - nothing
+      # is saved when the PRIMARY key hits. See the note in build-linux, whose key hashes
+      # the Dockerfile and so has pinned its compiler all along.
       - name: Set up vcpkg cache
         uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-windows-${{ matrix.arch }}-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-windows-static-${{ steps.toolchain.outputs.value }}-
-            vcpkg-windows-static-
+            vcpkg-windows-${{ matrix.arch }}-${{ steps.toolchain.outputs.value }}-
+            vcpkg-windows-${{ matrix.arch }}-
+            ${{ matrix.warm_from }}${{ steps.toolchain.outputs.value }}-
 
       - name: Create binary cache dir
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE
 
-      - name: Build
-        run: docker/build/Windows/build.ps1 dist
+      - name: Build and test (${{ matrix.arch }})
+        run: docker/build/Windows/build.ps1 ${{ matrix.arch }} dist
         env:
           VCPKG_ROOT: C:\vcpkg
           LYXBOSA_VERSION: ${{ steps.version.outputs.value }}
 
+      # The only place in this project that can run PowerShell, and therefore the only
+      # place install.ps1 is anything but a claim about its text: corpus/install-scripts.sh
+      # asserts the POSIX half for real and can do no more than read this one, which every
+      # one of its labels says. The cases need no network - each is a refusal or a pure
+      # function - so this costs a second and is not gated on the release.
+      #
+      # Once per run rather than once per architecture: it is about the script's text and
+      # nothing about what was just built, so the matrix leg it rides on is arbitrary.
+      - name: Prove the Windows installer's refusals
+        if: matrix.arch == 'amd64'
+        run: ./scripts/install.ps1 -SelfTest
+
       - uses: actions/upload-artifact@v6
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         with:
-          name: lyxbosa-windows
-          path: dist/lyxbosa-windows-*.exe
+          name: lyxbosa-windows-${{ matrix.arch }}
+          path: dist/lyxbosa-windows-${{ matrix.arch }}.exe
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -495,11 +448,15 @@ jobs:
           .github/scripts/release-checksums.sh --selftest
           .github/scripts/release-sign.sh --selftest --require-minisign
 
-      # --expect 8 is everything a release publishes: the six binaries the three build jobs
+      # --expect 8 is everything a release publishes: the six binaries the six build jobs
       # produce - linux amd64 and arm64 on glibc, the same two on static musl, and windows
       # amd64 and arm64 - plus the two install scripts staged by the step above. It is exact
       # on purpose, and it is a floor as much as a ceiling: a build that produced nothing
       # fails here loudly rather than shipping a short list.
+      #
+      # It counts FILES in artifacts/, not uploads, which is why splitting the Windows
+      # upload into one artefact per architecture did not move it: download-artifact merges
+      # them into the one directory this counts.
       #
       # A list that is missing one asset looks finished, and a release that gained one
       # should stop here and be looked at rather than shipping a checksum file that quietly
