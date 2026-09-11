@@ -112,11 +112,18 @@ endif()
 
 # The allocator the binary carries, if it carries one.
 #
-# musl's allocator is deliberately small and simple, and a scan is malloc-heavy: over
-# 53,977 files the static musl build ran about 40% slower than the glibc build of the
-# same commit, on the same tree, with the cache warm. That difference is the allocator
-# and not the C library in general, and it is the only thing that stops one Linux binary
-# from being the binary everybody gets. mimalloc carries its own free lists and heaps, is
+# musl's allocator is deliberately small and simple, and a scan is malloc-heavy. Measured
+# over 53,977 files with the cache warm, alternating the binaries, both built in their own
+# container so the compiler is not part of the difference: glibc 7.21s and 7.24s, musl
+# 9.60s and 9.50s, musl with mimalloc 8.02s and 8.00s.
+#
+# So mimalloc recovers about two thirds of the gap and roughly 10% remains. That remainder
+# is NOT the allocator: jemalloc lands within a hundredth of a second of mimalloc on every
+# tree tried, and two independent allocators agreeing is the evidence. What is left is the
+# part of a scan that searches bytes, where glibc dispatches routines chosen for the
+# instruction set and musl's are plain C - which is why one Linux binary for everybody is
+# not on the table, and why the portable asset is published beside the standard one rather
+# than instead of it. mimalloc carries its own free lists and heaps, is
 # built with MI_OVERRIDE so the ordinary malloc, free, new and delete entry points are
 # its own, and links into a static binary with nothing to load at run time.
 #

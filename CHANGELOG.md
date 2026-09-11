@@ -105,8 +105,9 @@ commit list that CI generates per tag.
   accurate word wherever a maintainer reads it: the CMake option is `LYXBOSA_LIBC_MUSL`
   and the container is `docker/build/Linux-musl/`.
 
-  A release publishes six assets rather than four, and the release job's asset count
-  moves with it.
+  A release publishes **eight** files rather than six: two more binaries, plus the
+  unchanged `SHA256SUMS` and its signature. The release job's count of the binaries it
+  expects moves from four to six with it.
 
 - **`lyxbosa update` replaces the binary on Windows.** A running `.exe` cannot be
   overwritten or deleted, but it can be renamed, so the replace there is two moves inside
