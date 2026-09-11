@@ -79,8 +79,9 @@ message(STATUS "Update verification: OpenSSL ${OPENSSL_VERSION} (Ed25519, BLAKE2
 
 # Which C library a Linux binary is built against decides which release asset it is,
 # and so which asset `lyxbosa update` fetches: a glibc build publishes as
-# lyxbosa-linux-<arch> and a musl build as lyxbosa-linux-<arch>-musl, and
-# ReleaseAssets.cpp says why neither ever fetches the other. The compiler's target
+# lyxbosa-linux-<arch> and a musl build as lyxbosa-linux-<arch>-portable, and
+# ReleaseAssets.cpp says why neither ever fetches the other - and why the asset says
+# `portable` while this option says `musl`. The compiler's target
 # triple is what says which - Alpine's gcc reports x86_64-alpine-linux-musl, AlmaLinux's
 # x86_64-redhat-linux - and it is read here and handed to the code as a definition
 # rather than sniffed from a macro in the source, because musl deliberately defines no
@@ -102,7 +103,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   if(LYXBOSA_TARGET_TRIPLE MATCHES "musl")
     set(LYXBOSA_LIBC_MUSL ON)
     message(STATUS "Linux C library: musl (${LYXBOSA_TARGET_TRIPLE}); "
-                   "release asset lyxbosa-linux-<arch>-musl")
+                   "release asset lyxbosa-linux-<arch>-portable")
   else()
     message(STATUS "Linux C library: glibc (${LYXBOSA_TARGET_TRIPLE}); "
                    "release asset lyxbosa-linux-<arch>")

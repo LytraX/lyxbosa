@@ -161,7 +161,9 @@ staged binary's smoke test, and the new cross-check that the asset name agrees w
 ## Decisions
 
 **Asset names.** `lyxbosa-linux-amd64-musl` and `lyxbosa-linux-arm64-musl`, beside the
-unchanged glibc names. The suffix keeps the existing name as a stem, so the pair sorts
+unchanged glibc names. *These are the names this spike chose; they were renamed to
+`-portable` before any release carried them, and `README.md` under System support
+describes the shipped pair.* The suffix keeps the existing name as a stem, so the pair sorts
 together and the workflow's existing globs still match; the libc last follows the Rust and
 Zig target-triple convention (`x86_64-unknown-linux-musl`). `platformAssetName()` builds the
 same name from `LYXBOSA_LIBC_MUSL`, which CMake sets from the compiler's `-dumpmachine`

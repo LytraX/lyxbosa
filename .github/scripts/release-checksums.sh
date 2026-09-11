@@ -113,26 +113,26 @@ cmd_write() {
 # ---------------------------------------------------------------------------------------
 
 # The six names are the six assets a release actually publishes - Linux amd64 and arm64 on
-# glibc, the same two on musl, and Windows amd64 and arm64 - and they are CREATED in an
-# order that is neither the sorted order nor its reverse, so a run that simply echoed readdir
-# order would fail the expected-bytes case rather than pass it by luck.
+# glibc, the same two as the portable static build, and Windows amd64 and arm64 - and they
+# are CREATED in an order that is neither the sorted order nor its reverse, so a run that
+# simply echoed readdir order would fail the expected-bytes case rather than pass it by luck.
 #
-# The musl pair earns its place here beyond making the count right: `lyxbosa-linux-amd64` is
-# a strict PREFIX of `lyxbosa-linux-amd64-musl`. Byte order puts the shorter first, and a
-# consumer running `sha256sum -c` matches whole lines, so nothing here is ambiguous - but
+# The portable pair earns its place here beyond making the count right: `lyxbosa-linux-amd64`
+# is a strict PREFIX of `lyxbosa-linux-amd64-portable`. Byte order puts the shorter first, and
+# a consumer running `sha256sum -c` matches whole lines, so nothing here is ambiguous - but
 # the fixture had no two names in that relation before, so the ordering it pins was never
 # exercised on the one shape where a sloppier comparison could get it wrong.
-FIXTURE_NAMES=(lyxbosa-windows-arm64.exe lyxbosa-linux-amd64-musl lyxbosa-linux-amd64 \
-               lyxbosa-windows-amd64.exe lyxbosa-linux-arm64-musl lyxbosa-linux-arm64)
+FIXTURE_NAMES=(lyxbosa-windows-arm64.exe lyxbosa-linux-amd64-portable lyxbosa-linux-amd64 \
+               lyxbosa-windows-amd64.exe lyxbosa-linux-arm64-portable lyxbosa-linux-arm64)
 
 fixture() {
   local dir="$1"
   mkdir -p "$dir"
   printf ''     > "$dir/lyxbosa-windows-arm64.exe"
-  printf '%s' "$FIPS_TWO_BLOCK" > "$dir/lyxbosa-linux-amd64-musl"
+  printf '%s' "$FIPS_TWO_BLOCK" > "$dir/lyxbosa-linux-amd64-portable"
   printf 'abc'  > "$dir/lyxbosa-linux-amd64"
   printf 'a'    > "$dir/lyxbosa-windows-amd64.exe"
-  printf '%s' "$FIPS_MULTI_BLOCK" > "$dir/lyxbosa-linux-arm64-musl"
+  printf '%s' "$FIPS_MULTI_BLOCK" > "$dir/lyxbosa-linux-arm64-portable"
   printf 'z\n'  > "$dir/lyxbosa-linux-arm64"
 }
 
@@ -148,9 +148,9 @@ FIPS_MULTI_BLOCK='abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklm
 expected_sums() {
   cat <<'EXPECTED'
 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  lyxbosa-linux-amd64
-248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1  lyxbosa-linux-amd64-musl
+248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1  lyxbosa-linux-amd64-portable
 c865f6c5ab8d1b0bcd383a5e1e3879d22681c96bf462c269b7581d523fbe70ab  lyxbosa-linux-arm64
-cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1  lyxbosa-linux-arm64-musl
+cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1  lyxbosa-linux-arm64-portable
 ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb  lyxbosa-windows-amd64.exe
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  lyxbosa-windows-arm64.exe
 EXPECTED
@@ -216,10 +216,10 @@ selftest() {
   #    reverse order and in a different directory.
   mkdir -p "$b"
   printf 'z\n' > "$b/lyxbosa-linux-arm64"
-  printf '%s' "$FIPS_MULTI_BLOCK" > "$b/lyxbosa-linux-arm64-musl"
+  printf '%s' "$FIPS_MULTI_BLOCK" > "$b/lyxbosa-linux-arm64-portable"
   printf 'a'   > "$b/lyxbosa-windows-amd64.exe"
   printf 'abc' > "$b/lyxbosa-linux-amd64"
-  printf '%s' "$FIPS_TWO_BLOCK" > "$b/lyxbosa-linux-amd64-musl"
+  printf '%s' "$FIPS_TWO_BLOCK" > "$b/lyxbosa-linux-amd64-portable"
   printf ''    > "$b/lyxbosa-windows-arm64.exe"
   cmd_write "$b" >/dev/null
   if cmp -s "$a/$SUMS" "$b/$SUMS"; then
@@ -290,9 +290,9 @@ selftest() {
     pass "--expect 7 refuses six assets"
   fi
   # And the direction that actually happens: a release GAINS an asset and the workflow's
-  # number is not updated. That is this round's change seen from the other side - the musl
-  # pair arrived and `--expect 4` had to become 6 - so the case that would have caught a
-  # missed update is worth stating rather than leaving to the pair above.
+  # number is not updated. That is what happened when the portable pair arrived and
+  # `--expect 4` had to become 6, so the case that would have caught a missed update is
+  # worth stating rather than leaving to the pair above.
   if ( cmd_write "$a" --expect 4 >/dev/null 2>&1 ); then
     fail "--expect 4 refuses the six assets a release now publishes"
   else

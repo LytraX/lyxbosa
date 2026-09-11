@@ -198,8 +198,8 @@ to pass.
 |---|---|
 | `lyxbosa-linux-amd64` | `ubuntu-latest`, built in the container in `docker/build/Linux/` |
 | `lyxbosa-linux-arm64` | `ubuntu-24.04-arm`, same container |
-| `lyxbosa-linux-amd64-musl` | `ubuntu-latest`, built in the Alpine container in `docker/build/Linux-musl/` |
-| `lyxbosa-linux-arm64-musl` | `ubuntu-24.04-arm`, same container |
+| `lyxbosa-linux-amd64-portable` | `ubuntu-latest`, built in the Alpine container in `docker/build/Linux-musl/` |
+| `lyxbosa-linux-arm64-portable` | `ubuntu-24.04-arm`, same container |
 | `lyxbosa-windows-*.exe` | `windows-latest`, static vcpkg triplet (amd64 and arm64) |
 | `SHA256SUMS` | the release job, over the six binaries |
 | `SHA256SUMS.minisig` | the release job, signing `SHA256SUMS` with the release key |
@@ -210,16 +210,24 @@ are not optional: the job fails rather than publishing a release without them.
 **Two Linux binaries per architecture, and the difference is the C library.**
 `lyxbosa-linux-<arch>` is dynamically linked against the glibc of `almalinux:8` and needs
 glibc 2.28 and a libstdc++ from GCC 6 or newer on the host; older hosts refuse to load it.
-`lyxbosa-linux-<arch>-musl` is statically linked against musl and needs nothing from the
-host at all, which is what makes it run on the older shared hosting where compromised
+`lyxbosa-linux-<arch>-portable` is statically linked against musl and needs nothing from
+the host at all, which is what makes it run on the older shared hosting where compromised
 sites tend to live. It is musl rather than a static glibc because glibc's resolver loads
 the host's NSS modules even from a static binary, and a binary that segfaults on
 `update --check` there is worse than one that refuses. `lyxbosa update` never crosses
-between the two: a glibc binary fetches the glibc asset and a musl binary the musl one,
-and swapping is done once, by hand, by installing the other. The suffix is the contract —
-`src-lib/cpp/update/ReleaseAssets.cpp` appends `-musl` for a musl build and nothing for
-glibc, so the names here and the names there have to move together. README.md under
-*Updating* is what a user reads about choosing.
+between the two: the standard binary fetches the standard asset and the portable binary
+the portable one, and swapping is done once, by hand, by installing the other. The suffix
+is the contract — `src-lib/cpp/update/ReleaseAssets.cpp` appends `-portable` for a musl
+build and nothing for glibc, so the names here and the names there have to move together.
+
+**The asset says `portable`; the build says `musl`.** The asset name is read by whoever is
+choosing a download, and the thing they are choosing is a binary that runs on an older
+host. The CI job (`build-linux-musl`), its caches, the container directory
+(`docker/build/Linux-musl/`) and the CMake option (`LYXBOSA_LIBC_MUSL`) all keep `musl`,
+because each of those is read by somebody who needs to know which C library is involved —
+the CMake option is checked against `__GLIBC__` by a test, where it is a claim about the C
+library and nothing else. README.md under *System support* is what a user reads about
+choosing.
 
 Release notes are the union of three things, in this order:
 

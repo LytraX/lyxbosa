@@ -56,29 +56,35 @@ commit list that CI generates per tag.
   glibc build. The glibc binary is unaffected; only the static build links it, because
   only the static build needed it.
 
-- **A static musl build of the Linux binary, published beside the glibc one.** Every
-  release now carries `lyxbosa-linux-<arch>-musl` for amd64 and arm64 as well as
-  `lyxbosa-linux-<arch>`. The glibc build is linked against the glibc of AlmaLinux 8 and
+- **A portable build of the Linux binary, published beside the standard one.** Every
+  release now carries `lyxbosa-linux-<arch>-portable` for amd64 and arm64 as well as
+  `lyxbosa-linux-<arch>`. The standard build is linked against the glibc of AlmaLinux 8 and
   refuses to load on anything older - CentOS 7 and Ubuntu 16.04 print `GLIBC_2.28' not
   found` and never start - which is the hosting where compromised sites tend to live. The
-  musl build is statically linked, needs nothing from the host, and runs there; it is musl
-  rather than a static glibc because a static glibc binary still loads the host's
-  name-service modules and segfaults in `update --check` on CentOS 7. Measured on
-  `centos:7`, `ubuntu:16.04` and `ubuntu:24.04`: the musl build scans, reports the same
+  portable build is statically linked against musl, needs nothing from the host, and runs
+  there; it is musl rather than a static glibc because a static glibc binary still loads
+  the host's name-service modules and segfaults in `update --check` on CentOS 7. Measured
+  on `centos:7`, `ubuntu:16.04` and `ubuntu:24.04`: the portable build scans, reports the same
   findings byte for byte over the whole reviewed corpus - detection 730 of 1,299,
   regression 131 of 131, 44 benign findings in 197,559 files read, identical to the glibc
   build - and completes `update --check` on all three. It is about a third larger,
   because the C library is inside it.
 
-  `lyxbosa update` stays on the C library it was built with: a glibc binary fetches the
-  glibc asset and a musl binary the `-musl` one, never the other. Before the suffix
-  existed a musl binary asked to update on a current host fetched the glibc asset, passed
-  the start-up check and installed it, silently swapping the C library; now the asset
-  name carries the C library and the updater cannot. Moving between the two is done once,
-  by hand. When a glibc build's update is refused because the download will not start on
-  the host, the message now names the `-musl` asset as the way forward.
+  `lyxbosa update` stays on the build it was installed as: the standard binary fetches the
+  standard asset and the portable binary the `-portable` one, never the other. Before the
+  suffix existed a musl binary asked to update on a current host fetched the glibc asset,
+  passed the start-up check and installed it, silently swapping the C library; now the
+  asset name carries the distinction and the updater cannot. Moving between the two is
+  done once, by hand. When a standard build's update is refused because the download will
+  not start on the host, the message now names the `-portable` asset as the way forward.
 
-  A release publishes eight assets rather than six, and the release job's asset count
+  The asset says `portable` rather than `musl` because it names what the build is for -
+  running on an older host - rather than the C library that delivers it, which is a
+  detail nobody choosing a download should have to learn. The build itself keeps the
+  accurate word wherever a maintainer reads it: the CMake option is `LYXBOSA_LIBC_MUSL`
+  and the container is `docker/build/Linux-musl/`.
+
+  A release publishes six assets rather than four, and the release job's asset count
   moves with it.
 
 - **`lyxbosa update` replaces the binary on Windows.** A running `.exe` cannot be

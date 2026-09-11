@@ -235,14 +235,19 @@ older. The same arguments as the glibc script:
 docker/build/Linux-musl/build.sh [amd64|arm64|all] [output-dir] [version]
 ```
 
-Output is `dist/lyxbosa-linux-<arch>-musl`. The image is Alpine, which is musl
+Output is `dist/lyxbosa-linux-<arch>-portable`. The image is Alpine, which is musl
 natively, so it is the system compiler and not a cross toolchain; vcpkg is told to use
 the system cmake and ninja (`VCPKG_FORCE_SYSTEM_BINARIES`), because the ones it would
 download are glibc binaries. The build passes `-static` on the executable link and
 refuses its own output if it is not statically linked. Tests run in the same image
 through `docker/build/Linux-musl/test.sh`, and CMake reports which C library it
 detected — the line `Linux C library: musl` — because that detection is what sets the
-`-musl` suffix the updater fetches by.
+`-portable` suffix the updater fetches by.
+
+The directory, the container and the CMake option say `musl`; the asset says `portable`.
+The asset name is what somebody choosing a download reads, and what they are choosing is
+a binary that runs on an older host. Everything in this section is how that is delivered,
+and musl is the accurate word for it here.
 
 ### Windows (PowerShell, static MSVC runtime)
 
