@@ -112,20 +112,37 @@ jobs:
 
       # vcpkg builds every dependency from source, which is most of this job. The cache is
       # keyed on what actually determines the binaries: the dependency list, the pinned
-      # registry baseline in vcpkg-configuration.json, and the Dockerfile (compiler and
-      # toolchain). A miss on any of those rebuilds.
+      # registry baseline in vcpkg-configuration.json, the Dockerfile (compiler and
+      # toolchain), the overlay triplets and the pinned build epoch. A miss on any of
+      # those rebuilds.
       #
       # Restoring a stale or partial cache is safe: vcpkg keys each entry by an ABI hash
       # covering the port version, triplet, compiler and dependency hashes, so an entry
       # that does not apply is ignored rather than reused.
+      #
+      # The last two are in the key because the ABI hash reads them and a key that does not
+      # would go quietly wrong rather than merely slow. The triplets name SOURCE_DATE_EPOCH
+      # in VCPKG_ENV_PASSTHROUGH, which puts its VALUE in the hash; change the epoch and
+      # every entry in a restored cache is unusable. actions/cache saves nothing when the
+      # primary key already exists, so the run would rebuild all of them, save none, and
+      # the next run would do it again - a permanent full rebuild that no step reports.
       - name: Restore vcpkg binary cache
         uses: actions/cache@v5
         with:
           path: .vcpkg-cache
-          key: vcpkg-linux-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile') }}
+          key: vcpkg-linux-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile', 'docker/build/source-date-epoch', 'triplets/*.cmake') }}
           restore-keys: |
             vcpkg-linux-${{ matrix.arch }}-
             ${{ matrix.warm_from }}
+
+      # The reproducibility check defends a property of the binary this job is about to
+      # produce, so its controls run here rather than only on a release. They plant each
+      # failure - a comparison that always says equal, a binary with no OpenSSL banner read
+      # as a pass, two runs handed one cache directory - assert each is caught, and need no
+      # compiler, so the whole step is under a second. docs/RELEASING.md, under "Rebuilding
+      # a release", is what they defend.
+      - name: Prove the reproducibility check can fail
+        run: docker/build/verify-reproducible.sh --selftest
 
       # Runs inside the release container, as an unprivileged user so the cases about
       # unreadable files and directories are observed rather than skipped as root.
@@ -202,7 +219,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .vcpkg-cache-musl
-          key: vcpkg-linux-musl-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux-musl/Dockerfile') }}
+          key: vcpkg-linux-musl-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux-musl/Dockerfile', 'docker/build/source-date-epoch', 'triplets/*.cmake') }}
           restore-keys: |
             vcpkg-linux-musl-${{ matrix.arch }}-
             ${{ matrix.warm_from }}
@@ -302,7 +319,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: C:\vcpkg-cache
-          key: vcpkg-windows-${{ matrix.arch }}-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-windows-${{ matrix.arch }}-${{ steps.toolchain.outputs.value }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/source-date-epoch', 'triplets/*.cmake') }}
           restore-keys: |
             vcpkg-windows-${{ matrix.arch }}-${{ steps.toolchain.outputs.value }}-
             vcpkg-windows-${{ matrix.arch }}-

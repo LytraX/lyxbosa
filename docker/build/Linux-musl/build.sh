@@ -46,6 +46,33 @@ announce() {
     fi
 }
 
+# The build timestamp, pinned, so the same source produces the same bytes.
+#
+# vcpkg builds OpenSSL from source and its util/mkbuildinf.pl stamps the build time into
+# the version banner libcrypto carries; the GNU build ID, a hash over the link inputs,
+# then moves with it. Two builds of one commit minutes apart differ in exactly those 24
+# bytes and nowhere else - .text is identical. SOURCE_DATE_EPOCH replaces the clock, and
+# with it held the two builds are byte for byte the same file.
+#
+# The value is a constant in the repository rather than the commit date of HEAD, and that
+# is deliberate. The overlay triplets put it in vcpkg's ABI hash - which is what stops a
+# cached dependency built under another epoch from being restored and silently undoing the
+# pin - so an epoch that moved with every commit would miss every cache entry on every
+# run and rebuild all of them. A constant is the same pin with a warm cache. Bump it when
+# there is a reason to; nothing breaks if nobody does.
+#
+# An exported SOURCE_DATE_EPOCH wins, so a rebuilder can reproduce a release whose pinned
+# value differs from the one in the tree they happen to be holding.
+EPOCH_FILE="${SCRIPT_DIR}/../source-date-epoch"
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    [ -r "${EPOCH_FILE}" ] || { echo "no epoch at ${EPOCH_FILE}" >&2; exit 1; }
+    SOURCE_DATE_EPOCH="$(tr -d '[:space:]' < "${EPOCH_FILE}")"
+fi
+case "${SOURCE_DATE_EPOCH}" in
+    ''|*[!0-9]*) echo "SOURCE_DATE_EPOCH is not a whole number of seconds: '${SOURCE_DATE_EPOCH}'" >&2; exit 1 ;;
+esac
+echo "SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH} ($(date -u -d "@${SOURCE_DATE_EPOCH}" 2>/dev/null || true))"
+
 VERSION_ENV=""
 if [ -n "${VERSION}" ]; then
     VERSION_ENV="-e LYXBOSA_VERSION=${VERSION}"
@@ -98,6 +125,7 @@ for CURRENT_ARCH in "${ARCHES[@]}"; do
         -v "${OUTPUT_DIR}:/output" \
         ${CACHE_MOUNT} \
         ${VERSION_ENV} \
+        -e "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
         -e "LYXBOSA_RUN_TESTS=${RUN_TESTS}" \
         -e "LYXBOSA_TESTS_SKIPPED_BECAUSE=${SKIP_REASON}" \
         "${TAG_NAME}"
