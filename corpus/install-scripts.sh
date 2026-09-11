@@ -38,7 +38,7 @@
 # ----------------------
 # install.ps1's behaviour. There is no PowerShell on this machine, so everything below
 # about it is a claim about its TEXT, and it says so in each label. Its behaviour is
-# exercised by `install.ps1 -SelfTest` in the `test-windows` job, which is the only place
+# exercised by `install.ps1 -SelfTest` in the `build-windows` job, which is the only place
 # in this project that can run it.
 set -uo pipefail
 

@@ -215,6 +215,12 @@ build directory fast. Deleting it only costs rebuild time.
 These produce the standalone binaries published on releases — they are not needed for
 day-to-day development.
 
+Each script configures the tree once with `BUILD_TESTS=ON`, runs `ctest`, and copies the
+binary out only after the suite has passed, so the binary a release ships is the binary
+that was tested. The tests run when the machine can execute the architecture being built
+and are skipped otherwise — a foreign architecture runs under emulation at a cost measured
+in tens of minutes. Each script says which of the two it did.
+
 ### Linux (Docker, AlmaLinux 8 + GCC 12)
 
 Builds against an old glibc so the binary runs on older distributions:
@@ -228,7 +234,9 @@ docker/build/Linux/build.sh all dist 1.1.0
 ```
 
 Requires Docker with buildx (and qemu for cross-arch builds). Output is
-`dist/lyxbosa-linux-<arch>`.
+`dist/lyxbosa-linux-<arch>`. The suite runs inside the container as an unprivileged user,
+because root ignores permission bits and every case about an unreadable file would
+otherwise skip.
 
 ### Linux, static musl (Docker, Alpine)
 
@@ -244,10 +252,10 @@ Output is `dist/lyxbosa-linux-<arch>-portable`. The image is Alpine, which is mu
 natively, so it is the system compiler and not a cross toolchain; vcpkg is told to use
 the system cmake and ninja (`VCPKG_FORCE_SYSTEM_BINARIES`), because the ones it would
 download are glibc binaries. The build passes `-static` on the executable link and
-refuses its own output if it is not statically linked. Tests run in the same image
-through `docker/build/Linux-musl/test.sh`, and CMake reports which C library it
-detected — the line `Linux C library: musl` — because that detection is what sets the
-`-portable` suffix the updater fetches by.
+refuses its own output if it is not statically linked. The test binary is linked the same
+way and carries the same allocator, because it is the same configure, and CMake reports
+which C library it detected — the line `Linux C library: musl` — because that detection is
+what sets the `-portable` suffix the updater fetches by.
 
 The directory, the container and the CMake option say `musl`; the asset says `portable`.
 The asset name is what somebody choosing a download reads, and what they are choosing is
@@ -258,13 +266,20 @@ and musl is the accurate word for it here.
 
 ```powershell
 $env:LYXBOSA_VERSION = "1.1.0"   # optional
-docker\build\Windows\build.ps1 dist
+docker\build\Windows\build.ps1 amd64 dist
+docker\build\Windows\build.ps1 arm64 dist
 ```
 
-Builds x64 and ARM64 with the `*-windows-static` triplets, `BUILD_TESTS=OFF` and
-`CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`, producing
-`dist\lyxbosa-windows-<arch>.exe`. Clones and bootstraps vcpkg into the repo if
+One architecture per call, so the two can run as parallel CI jobs. Builds with the
+matching `*-windows-static` triplet and `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`,
+producing `dist\lyxbosa-windows-<arch>.exe`. Clones and bootstraps vcpkg into the repo if
 `VCPKG_ROOT` is unset.
+
+An x64 machine cannot execute an ARM64 binary, so the ARM64 call builds and does not test,
+and says so. Its test target is still compiled, which is why
+[`CMakeLists.txt`](../CMakeLists.txt) asks GoogleTest to enumerate cases at `ctest` time
+rather than at link time: the default runs the freshly linked binary as the last step of
+the build, which on a cross build would fail the build itself.
 
 Every executable - the CLI, the test binary and the benchmark - carries
 [`cmake/lyxbosa.manifest`](../cmake/lyxbosa.manifest), which declares it `longPathAware`.

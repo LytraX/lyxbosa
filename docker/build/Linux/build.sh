@@ -1,6 +1,21 @@
 #!/bin/bash
 set -e
 
+# Build the Linux binary in the release container, run its tests, and copy it out.
+#
+#   docker/build/Linux/build.sh [amd64|arm64|all] [output-dir] [version]
+#
+# One entry point, because there is one build. build-inside.sh configures the tree once
+# with the tests in it, runs them, and copies out the binary that passed - its header
+# carries the measurement that says a test-only switch changes nothing in the published
+# bytes, which is what makes one configure correct rather than merely cheaper.
+#
+# The tests run when this machine can execute the architecture being built, and not
+# otherwise: a foreign architecture runs under qemu at a cost measured in tens of minutes,
+# which is not a thing to do by accident. When they are skipped this script says so, on
+# the run summary as well as in the log - "built" and "built and tested" are different
+# results and a job must not report the second when it did the first.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
@@ -14,6 +29,20 @@ if [ "${ARCH}" = "all" ]; then
 else
     ARCHES=("${ARCH}")
 fi
+
+case "$(uname -m)" in
+    aarch64|arm64) HOST_ARCH=arm64 ;;
+    *)             HOST_ARCH=amd64 ;;
+esac
+
+# The verdict goes to the log and, under Actions, to the run summary page, because a
+# result nobody opens a log to find is a result nobody reads.
+announce() {
+    echo "$1"
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+        echo "$1" >> "${GITHUB_STEP_SUMMARY}"
+    fi
+}
 
 # Build version args for docker run
 VERSION_ENV=""
@@ -48,6 +77,14 @@ for CURRENT_ARCH in "${ARCHES[@]}"; do
     TAG_NAME="lyxbosa-build-linux-${CURRENT_ARCH}"
     BINARY_NAME="lyxbosa-linux-${CURRENT_ARCH}"
 
+    if [ "${CURRENT_ARCH}" = "${HOST_ARCH}" ]; then
+        RUN_TESTS=1
+        SKIP_REASON=""
+    else
+        RUN_TESTS=0
+        SKIP_REASON="this machine is ${HOST_ARCH} and would run a ${CURRENT_ARCH} suite under emulation"
+    fi
+
     echo "=== Building LyxBoSa for Linux (${CURRENT_ARCH}) ==="
 
     # Build the Docker image
@@ -67,13 +104,19 @@ for CURRENT_ARCH in "${ARCHES[@]}"; do
         -v "${OUTPUT_DIR}:/output" \
         ${CACHE_MOUNT} \
         ${VERSION_ENV} \
+        -e "LYXBOSA_RUN_TESTS=${RUN_TESTS}" \
+        -e "LYXBOSA_TESTS_SKIPPED_BECAUSE=${SKIP_REASON}" \
         "${TAG_NAME}"
 
     # Rename binary with target suffix
     mv -f "${OUTPUT_DIR}/lyxbosa" "${OUTPUT_DIR}/${BINARY_NAME}"
 
     echo ""
-    echo "=== Build complete: ${OUTPUT_DIR}/${BINARY_NAME} ==="
+    if [ "${RUN_TESTS}" = "1" ]; then
+        announce "- \`linux ${CURRENT_ARCH}\` built **and tested** - ctest ran in the release container"
+    else
+        announce "- \`linux ${CURRENT_ARCH}\` built, **not tested** - ${SKIP_REASON}"
+    fi
     file "${OUTPUT_DIR}/${BINARY_NAME}"
     echo ""
 done

@@ -2,7 +2,6 @@
 /build-release/
 /build-static/
 /build-win-release*/
-/build-win-tests*/
 node_modules/
 dist/
 experiments/

@@ -1,6 +1,20 @@
 #!/bin/bash
 set -e
 
+# The build, inside the musl release container: one configure, the tests built with it,
+# the tests run, and the binary that passed them copied out.
+#
+# The same shape as docker/build/Linux/build-inside.sh and for the same reasons; that
+# file's header carries the measurement showing a test-only switch changes nothing in the
+# published bytes, and the contract for LYXBOSA_RUN_TESTS. What differs here is the
+# platform: a different C library, a different allocator and a different resolver, so a
+# musl asset whose suite only ever ran on glibc would be shipping on an assumption.
+#
+# The test binary is linked -static and carries mimalloc, exactly as the shipped one is,
+# because it IS the same configure: the update tests run the staged binary's smoke test
+# for real, and a dynamically linked cousin of the release binary would not prove a static
+# build passes that.
+
 # Build version override arg
 VERSION_ARG=""
 if [ -n "${LYXBOSA_VERSION}" ]; then
@@ -21,13 +35,10 @@ fi
 # resolves anything, and LYXBOSA_BUNDLED_ALLOCATOR is what CMakeLists.txt reads
 # afterwards to link it. Neither is inferred from the C library; the check below is what
 # makes sure they were both actually passed.
-#
-# BUILD_TESTS=OFF because a release build compiles only what it ships; the test build
-# is test-inside.sh, a separate configure, for the reasons its header gives.
 cmake -B /build -S /src \
     -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_TESTS=OFF \
+    -DBUILD_TESTS=ON \
     -DCMAKE_EXE_LINKER_FLAGS=-static \
     -DVCPKG_OVERLAY_TRIPLETS=/src/triplets \
     -DVCPKG_MANIFEST_FEATURES=bundled-allocator \
@@ -59,6 +70,24 @@ if ! MIMALLOC_VERBOSE=1 /build/lyxbosa --version 2>&1 | grep -q "mimalloc"; then
 fi
 echo "Allocator: mimalloc, observed announcing itself under MIMALLOC_VERBOSE"
 
+if [ "${LYXBOSA_RUN_TESTS:-1}" != "0" ]; then
+    # Unprivileged, for the reason docker/build/Linux/build-inside.sh gives: root ignores
+    # permission bits, so every case about an unreadable file would skip rather than run.
+    # BusyBox's adduser and su, since Alpine ships neither useradd nor runuser.
+    adduser -D -h /home/tester tester
+    chown tester /build
+
+    # Serial, for the reason docker/build/Linux/build-inside.sh gives: scan_root_test
+    # names its scratch directory the same way in every process, so two of its cases
+    # running at once share a directory.
+    echo "=== Running tests as $(id -un tester) (uid $(id -u tester)) ==="
+    su tester -c "HOME=/home/tester ctest --test-dir /build --output-on-failure --timeout 300"
+else
+    echo "=== Tests not run in this container: ${LYXBOSA_TESTS_SKIPPED_BECAUSE:-caller asked for a build only} ==="
+fi
+
+# After the tests and never before: a binary whose suite failed must not reach the
+# directory the release job collects from.
 cp /build/lyxbosa /output/lyxbosa
 
 echo "Build complete: /output/lyxbosa"
