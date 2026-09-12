@@ -224,8 +224,23 @@ TEST(QuarantineTest, TheDestinationNamesTheOriginalPath) {
     ASSERT_TRUE(destination.has_value());
 
     // Every component of the original path, the scan root included, is still there.
-    const fs::path expected =
-        quarantine.path() / fs::weakly_canonical(shell).relative_path();
+    //
+    // On Windows the root NAME is a component too: `relative_path()` drops it, so
+    // building the expectation from that alone would assert that C:\x\y and D:\x\y
+    // mirror onto one destination - the precise collision this mechanism exists to
+    // prevent. Spelled out here rather than borrowed from the implementation, so the
+    // case stays an independent statement of the rule rather than a tautology.
+    const fs::path canonical = fs::weakly_canonical(shell);
+    fs::path expected = quarantine.path();
+#ifdef _WIN32
+    std::wstring root = canonical.root_name().native();
+    for (wchar_t& c : root) {
+        if (c == L':' || c == L'\\' || c == L'/') c = L'_';
+    }
+    while (!root.empty() && root.back() == L'_') root.pop_back();
+    if (!root.empty()) expected /= root;
+#endif
+    expected /= canonical.relative_path();
     EXPECT_EQ(destination->lexically_normal(), expected.lexically_normal());
     EXPECT_TRUE(fs::exists(*destination));
     EXPECT_NE(readFile(*destination).find("TRACEABLE"), std::string::npos);
