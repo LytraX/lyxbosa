@@ -390,6 +390,7 @@ if(BUILD_TESTS)
     tests/archive_test.cpp
     tests/quarantine_test.cpp
     tests/scan_root_test.cpp
+    tests/incomplete_answer_test.cpp
     tests/file_walker_test.cpp
     tests/long_path_test.cpp
     tests/update_test.cpp

@@ -21,7 +21,7 @@ public:
     }
 
     void onFile(const FileResult& result) override {
-        if (result.matches.empty() && !result.skipped()) {
+        if (!worthReporting(result)) {
             return;
         }
 
@@ -41,6 +41,13 @@ public:
                  << "\",\n";
         }
         out_ << "      \"quarantined\": " << (result.quarantined ? "true" : "false") << ",\n";
+        // Present only when it happened, like `skipReason` and `suppressed` above, so a
+        // report from a run where every move succeeded is byte-identical to before.
+        // `quarantined: false` is the answer for an exposure finding and for a run with
+        // quarantine off as well; this key is the one that says the file is still there.
+        if (result.quarantineFailed) {
+            out_ << "      \"quarantineFailed\": true,\n";
+        }
         out_ << "      \"matches\": [";
 
         bool firstMatch = true;
@@ -83,6 +90,7 @@ public:
         out_ << "  \"filesSkippedSize\": " << result.filesSkippedSize() << ",\n";
         writeFilesSkipped(result);
         out_ << "  \"filesQuarantined\": " << result.filesQuarantined << ",\n";
+        out_ << "  \"filesQuarantineFailed\": " << result.filesQuarantineFailed << ",\n";
         writeRootsMissing(result);
         writeArchives(result.archives);
         out_ << "  \"durationMs\": " << result.duration().count() << "\n";

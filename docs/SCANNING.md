@@ -115,6 +115,32 @@ handled by creating the destination exclusively, copying the bytes through it, f
 and unlinking the source last. That path refuses an occupied destination the same way, and
 leaves the evidence in two places rather than none if it is interrupted.
 
+**A move that fails is reported, not dropped.** A quarantine directory that cannot be
+created, a destination the process may not write, a source that disappeared under the
+scan — the file stays exactly where it was found, and the operator needs to know which
+webshell is still under the web root. It is counted in the summary, listed on stderr, and
+carried per file in both machine-readable formats:
+
+```
+Files quarantined: 4
+Files NOT quarantined: 2 (still in place)
+```
+
+```json
+{ "path": "/var/www/html/wp/shell.php", "quarantined": false, "quarantineFailed": true }
+```
+
+`quarantineFailed` is present only when it happened, and `filesQuarantineFailed` is
+always in the summary object. CSV carries `quarantine_failed` as a new last column, so
+every column before it keeps the index it had. `quarantined: false` on its own cannot
+answer this — it is also what an exposure finding and a run without `--quarantine` look
+like, and the difference is whether the file was moved or could not be.
+
+The count and the list are printed under `--quiet`, which suppresses progress and the
+summary. Only `--silent`, which promises no output at all, holds them back. The exit code
+is unchanged by it: a quarantine failure only happens where there was a finding, so the
+run already exits `2`, and the report says which files it left behind.
+
 ## Skipped files
 
 A file the scanner did not open is not a file it found nothing in, so every skip is
@@ -162,17 +188,32 @@ an object shaped like `archives.membersSkipped`:
 "directoriesUnreadable": 2
 ```
 
-CSV carries `skipped` and `skip_reason` as its last two columns, and a skipped file gets
-a row with the rule, severity, line and column fields empty:
+CSV carries `skipped`, `skip_reason` and `quarantine_failed` as its last three columns,
+and a file with no matches — one that was skipped, or a container whose quarantine
+outcome is the only thing to say about it — gets a row with the rule, severity, line and
+column fields empty:
 
 ```
-file,rule,severity,original_severity,suppressed,category,line,column,quarantined,skipped,skip_reason
-/var/www/html/backup.zip,,,,false,,,,false,true,size
+file,rule,severity,original_severity,suppressed,category,line,column,quarantined,skipped,skip_reason,quarantine_failed
+/var/www/html/backup.zip,,,,false,,,,false,true,size,false
 ```
 
 `check` reports it the same way for a single file — an oversize or unreadable file prints
 `Not scanned (over size limit)` and exits `1`, so "no matches found" always means the
 bytes were read.
+
+That holds one level down as well. A container `check` opened and could not read whole —
+a truncated gzip, a member past `archives.max_member_size`, a guard that stopped the
+stream — prints `Not fully examined`, names what was not covered in the scan summary's
+own words, and exits `1`. Members the selection policy did not open are the one reason
+that does not: they are the container-level counterpart of an excluded loose file, so
+they are counted and named and the exit code stays `0`, with the verdict reading `No
+matches found in what was scanned of:` rather than claiming the container was read
+whole. The full table is in [docs/CLI.md](CLI.md#check--check-a-single-file).
+
+An oversize *container* is not a skipped file in either command: its index is read and
+its members are scanned, which is why raising `scan.max_file_size` to reach a large
+backup is unnecessary.
 
 Excluded files are always *counted*, so you can tell whether a pattern took effect, but
 only *listed* on request: globs are how people cut `node_modules` out of a scan, and on
