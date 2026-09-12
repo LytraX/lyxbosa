@@ -586,6 +586,12 @@ annotations:
 
 # Actions
 actions:
+  # A quarantined file is evidence. With preserve_structure the source's whole absolute
+  # path is mirrored under `directory`, so /var/www/a/wp/shell.php lands at
+  # <directory>/var/www/a/wp/shell.php - two roots holding the same relative path cannot
+  # collide, and the destination still says which original the sample was. Flat keeps
+  # filenames alone and gives that up. Nothing already in the directory is ever written
+  # over either way; an occupied name gets a numeric suffix.
   quarantine:
     enabled: false
     directory: /var/quarantine

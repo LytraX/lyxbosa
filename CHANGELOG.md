@@ -22,6 +22,42 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Fixed
+
+- **Quarantine no longer replaces one sample with another, and the destination says where
+  a file came from.** With `preserve_structure` the destination was built from the path
+  *relative to the scan root*, which discards which root that was: two roots holding the
+  same relative path — `/var/www/a/wp/shell.php` and `/var/www/b/wp/shell.php`, the
+  ordinary shape of a shared host — produced one destination, and the move replaced
+  silently. The summary said two files were quarantined and one of them was gone. The same
+  collision happened between two runs into one quarantine directory, which is how an
+  operator uses one.
+
+  The destination now mirrors the source's whole absolute path under the quarantine
+  directory, so it cannot collide and an analyst can read the original path off it. A
+  Windows root name becomes one component (`C:` → `C`). Flat mode (`preserve_structure:
+  false`) still holds filenames alone and still keeps both samples.
+
+  Separately from the destination, the move itself now refuses rather than replaces:
+  `renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS, and
+  `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows. An occupied name is stepped
+  past with a numeric suffix rather than written over. The previous flat-mode handling was
+  `while (exists(dest))` followed by a rename, which is a time-of-check-to-time-of-use race
+  and protected against a second file in the same run and nothing running beside it. A
+  quarantine directory on a different filesystem — where a rename cannot work at all — is
+  handled by an exclusive create, a copy, a flush, and unlinking the source last; it refuses
+  an occupied destination the same way.
+
+- **Malware inside an archive now quarantines the container, as documented.** A member with
+  findings is reported as its own result and its compressed bytes match nothing in the
+  container, so the quarantine decision — which asked only about the container's own
+  matches — never saw it. A webshell in a zip that actually compresses was detected, named
+  in the report, and left on disk; one in a zip too small to compress was quarantined,
+  because the literal survived in the container's bytes. An exposure finding on a member
+  still moves nothing, in either direction. A container moved for what was inside it now
+  appears in the report as a file that was quarantined, rather than being dropped for
+  carrying no match of its own.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added

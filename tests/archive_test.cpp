@@ -150,6 +150,25 @@ void writeZip(const fs::path& path, const std::vector<std::pair<std::string, std
     ASSERT_EQ(zip_close(za), 0);
 }
 
+// A member body that deflate genuinely compresses, so the literal the rules match
+// does not survive into the container's own bytes. A short body does not: libzip
+// stores what it cannot shrink, and the payload is then readable in the zip.
+std::string compressibleBody(const std::string& payload) {
+    std::string body = payload;
+    body += "\n";
+    for (int i = 0; i < 400; ++i) {
+        body += "// padding padding padding padding padding padding\n";
+    }
+    return body;
+}
+
+bool rawBytesContain(const fs::path& path, std::string_view needle) {
+    std::ifstream in(path, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
+    return bytes.find(needle) != std::string::npos;
+}
+
 AppConfig testConfig(const fs::path& directory) {
     AppConfig config = Config::loadFromString(Config::generateDefault());
     config.scan.directories = {directory.string()};
@@ -633,14 +652,27 @@ TEST(ArchiveScannerTest, ExposureFindingsAreNeverQuarantined) {
     EXPECT_TRUE(reported);
 }
 
-// Malware inside the same archive is a different matter - but the container is
-// still not moved, because a member cannot be quarantined out of it.
+// Malware inside an archive still quarantines the container, which is what
+// docs/SCANNING.md says beside the rule about exposed backups. A member cannot be
+// moved out of the archive it is in, so the container is what gets contained.
+//
+// The case has to be a member the container is NOT detectable by. An earlier version
+// of this test used a 42-byte body that libzip stored rather than deflated: the
+// literal sat in the zip's own bytes, the container matched on its own account, and
+// the test passed for a reason other than the one in its name while a member-only
+// detection was being left on disk. The assertion below is what keeps that from
+// coming back - it is the whole difference between this test and its predecessor.
 TEST(ArchiveScannerTest, MalwareInAnArchiveStillQuarantinesTheContainer) {
     TempDir dir;
     TempDir quarantine;
 
     const auto payload = dir.path() / "payload.zip";
-    writeZip(payload, {{"x.php", "<?php eval(base64_decode($_POST['x'])); ?>"}});
+    writeZip(payload, {{"x.php",
+                        compressibleBody("<?php eval(base64_decode($_POST['x'])); ?>")}});
+
+    ASSERT_FALSE(rawBytesContain(payload, "base64_decode"))
+        << "the payload is readable in the container's raw bytes, so this case would "
+           "pass on the container's own match and prove nothing about the member";
 
     AppConfig config = testConfig(dir.path());
     config.actions.quarantine.enabled = true;
@@ -651,10 +683,102 @@ TEST(ArchiveScannerTest, MalwareInAnArchiveStillQuarantinesTheContainer) {
     scanner.setPreCount(false);
     const ScanResult result = scanner.scan();
 
-    // The zip's own bytes match the rule too, so it is hostile content, not just
-    // a misplaced file.
+    // The member was detected, and it was detected as a member rather than as the
+    // container: its path is the `archive.zip!member` form.
+    bool memberReported = false;
+    for (const auto& file : result.files) {
+        if (file.path.string().find("payload.zip!x.php") != std::string::npos) {
+            memberReported = true;
+            EXPECT_TRUE(hasHostileContent(file));
+        }
+    }
+    EXPECT_TRUE(memberReported);
+
     EXPECT_EQ(result.filesQuarantined, 1u);
     EXPECT_FALSE(fs::exists(payload));
+    EXPECT_TRUE(fs::exists(quarantine.path() / "payload.zip"));
+
+    // And the container appears in the report as a file that was moved, even though
+    // it carries no match of its own. Moving a file and then saying so nowhere is
+    // the same silence as not moving it.
+    bool containerReported = false;
+    for (const auto& file : result.files) {
+        if (file.path == payload) {
+            containerReported = true;
+            EXPECT_TRUE(file.quarantined);
+            EXPECT_FALSE(file.quarantinePath.empty());
+        }
+    }
+    EXPECT_TRUE(containerReported);
+}
+
+// The other direction of the same rule. A backup nested inside a container raises an
+// exposure finding about the container, and an exposure finding never moves a file -
+// so a member that is exposure-only must not become a reason to move the container
+// either. Without this, the repair for the case above would quarantine the
+// operator's own data the moment it arrived in a zip.
+TEST(ArchiveScannerTest, AnExposedBackupInsideAnArchiveDoesNotMoveTheContainer) {
+    TempDir dir;
+    TempDir quarantine;
+
+    std::string tar;
+    appendTarMember(tar, "site/wp-config.php", "<?php define('DB_PASSWORD','x');");
+    appendTarMember(tar, "site/db.sql", "CREATE TABLE wp_users (id int);");
+    tar += endOfTar();
+
+    const auto outer = dir.path() / "outer.zip";
+    writeZip(outer, {{"site-backup.tar.gz", gzipCompress(tar)}});
+
+    AppConfig config = testConfig(dir.path());
+    config.actions.quarantine.enabled = true;
+    config.actions.quarantine.directory = quarantine.path().string();
+    config.actions.quarantine.preserveStructure = false;
+
+    Scanner scanner(config);
+    scanner.setPreCount(false);
+    const ScanResult result = scanner.scan();
+
+    EXPECT_EQ(result.filesQuarantined, 0u);
+    EXPECT_TRUE(fs::exists(outer)) << "the operator's backup must still be there";
+    for (const auto& file : result.files) {
+        EXPECT_FALSE(file.quarantined);
+        EXPECT_FALSE(hasHostileContent(file))
+            << file.path.string() << " carries a finding that is not an exposure, so "
+               "this case is no longer about an exposure-only container";
+    }
+}
+
+// Whether anything hostile was inside the last container is per-file state, and
+// state that outlives the file it describes quarantines the next one for free.
+//
+// The ordering is not left to the directory listing: the walk hands back every file
+// directly in a directory before it descends, so the container is always scanned
+// before the file in the subdirectory below it.
+TEST(ArchiveScannerTest, AHostileArchiveDoesNotTaintTheFileScannedAfterIt) {
+    TempDir dir;
+    TempDir quarantine;
+
+    const auto payload = dir.path() / "payload.zip";
+    writeZip(payload, {{"x.php",
+                        compressibleBody("<?php eval(base64_decode($_POST['x'])); ?>")}});
+    ASSERT_FALSE(rawBytesContain(payload, "base64_decode"));
+
+    const auto innocent = dir.path() / "sub" / "index.php";
+    writeFile(innocent, "<?php echo 'hello';");
+
+    AppConfig config = testConfig(dir.path());
+    config.actions.quarantine.enabled = true;
+    config.actions.quarantine.directory = quarantine.path().string();
+    config.actions.quarantine.preserveStructure = false;
+
+    Scanner scanner(config);
+    scanner.setPreCount(false);
+    const ScanResult result = scanner.scan();
+
+    EXPECT_EQ(result.filesQuarantined, 1u);
+    EXPECT_FALSE(fs::exists(payload));
+    EXPECT_TRUE(fs::exists(innocent)) << "a clean file was moved because the archive "
+                                         "scanned before it was hostile";
 }
 
 // The pre-count reads a zip's index and adds exactly what the scan will open, so
