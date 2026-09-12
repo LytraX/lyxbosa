@@ -324,22 +324,8 @@ function(lyxbosa_configure_windows_exe target)
   endif()
 endfunction()
 
-# Create the CLI executable
-add_executable(lyxbosa
-    src-cli/lyxbosa.cpp
-    ${LIB_SOURCES}
-    ${UPDATE_SOURCES}
-    ${WIN_RC_FILE}
-)
-lyxbosa_configure_windows_exe(lyxbosa)
-
-target_include_directories(lyxbosa PRIVATE
-    ${CMAKE_SOURCE_DIR}/src-lib/cpp
-    ${CMAKE_SOURCE_DIR}/src-cli
-)
-
-target_link_libraries(lyxbosa
-  PRIVATE
+# The libraries the CLI, the test binary and the sources they share all link against.
+set(LYXBOSA_CORE_LIBRARIES
     fmt::fmt
     argparse::argparse
     yaml-cpp::yaml-cpp
@@ -349,6 +335,58 @@ target_link_libraries(lyxbosa
     ZLIB::ZLIB
     Threads::Threads
 )
+
+# The sources the CLI and the test binary share, compiled once into one set of objects that
+# both executables link, rather than once per executable.
+#
+# That is correct only while nothing either executable sets for itself reaches a shared
+# source. What differs between the two is LYXBOSA_TUI_ENABLED on the CLI, and
+# LYXBOSA_FUZZ_DIR, LYXBOSA_KEYRING_FILE_PATH and the fuzz/ include directory on the test
+# binary. Those stay on the executable that needs them and apply to its own sources -
+# src-cli/lyxbosa.cpp and tests/*.cpp - and no file in LIB_SOURCES or UPDATE_SOURCES reads
+# any of them, directly or through a header. It has to stay that way, and nothing fails if
+# it does not: a shared source that started reading one would compile without it, quietly,
+# in both binaries. So a setting that changes how a shared source compiles belongs on
+# lyxbosa_core, where both binaries get it alike, and a setting only one executable has is
+# never read by a shared source.
+#
+# It is compiled with everything the two executables had in common: the same include
+# directories, the usage requirements of the same libraries - the allocator's included - and
+# the same update definitions - so each shared source is compiled with the command line
+# either executable used to compile it for itself.
+#
+# $<TARGET_OBJECTS> in each executable's source list rather than target_link_libraries,
+# which would also reorder the static libraries on the link line. This way the libraries
+# keep their order, and the one thing that can move is where an executable's own objects
+# sit: under Ninja CMake places them after the shared ones, which changes the layout of the
+# Linux binaries and nothing in any object; the Visual Studio generator keeps them first.
+#
+# The fuzz targets further down do not use it. They compile LIB_SOURCES themselves under
+# the sanitizers, and objects built without that instrumentation would still link and run
+# while leaving uninstrumented the very code the fuzzer is there to exercise.
+add_library(lyxbosa_core OBJECT ${LIB_SOURCES} ${UPDATE_SOURCES})
+target_include_directories(lyxbosa_core PRIVATE
+    ${CMAKE_SOURCE_DIR}/src-lib/cpp
+    ${CMAKE_SOURCE_DIR}/src-cli
+)
+target_link_libraries(lyxbosa_core PRIVATE ${LYXBOSA_CORE_LIBRARIES})
+lyxbosa_configure_update(lyxbosa_core)
+lyxbosa_configure_allocator(lyxbosa_core)
+
+# Create the CLI executable
+add_executable(lyxbosa
+    src-cli/lyxbosa.cpp
+    $<TARGET_OBJECTS:lyxbosa_core>
+    ${WIN_RC_FILE}
+)
+lyxbosa_configure_windows_exe(lyxbosa)
+
+target_include_directories(lyxbosa PRIVATE
+    ${CMAKE_SOURCE_DIR}/src-lib/cpp
+    ${CMAKE_SOURCE_DIR}/src-cli
+)
+
+target_link_libraries(lyxbosa PRIVATE ${LYXBOSA_CORE_LIBRARIES})
 lyxbosa_configure_update(lyxbosa)
 lyxbosa_configure_allocator(lyxbosa)
 
@@ -472,8 +510,7 @@ if(BUILD_TESTS)
     tests/build_identity_test.cpp
     tests/hostile_filename_test.cpp
     tests/fuzz_replay_test.cpp
-    ${LIB_SOURCES}
-    ${UPDATE_SOURCES}
+    $<TARGET_OBJECTS:lyxbosa_core>
   )
   lyxbosa_configure_windows_exe(lyxbosa_tests)
 
@@ -491,18 +528,7 @@ if(BUILD_TESTS)
   target_compile_definitions(lyxbosa_tests PRIVATE
     LYXBOSA_FUZZ_DIR="${CMAKE_SOURCE_DIR}/fuzz")
 
-  target_link_libraries(lyxbosa_tests
-    PRIVATE
-      fmt::fmt
-      argparse::argparse
-      yaml-cpp::yaml-cpp
-      reflectcpp::reflectcpp
-      re2::re2
-      libzip::zip
-      ZLIB::ZLIB
-      Threads::Threads
-      GTest::gtest
-  )
+  target_link_libraries(lyxbosa_tests PRIVATE ${LYXBOSA_CORE_LIBRARIES} GTest::gtest)
   lyxbosa_configure_update(lyxbosa_tests)
   lyxbosa_configure_allocator(lyxbosa_tests)
 
