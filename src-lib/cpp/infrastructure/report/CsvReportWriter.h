@@ -12,21 +12,31 @@ class CsvReportWriter : public ReportWriter {
 public:
     explicit CsvReportWriter(std::ostream& out) : out_(out) {}
 
+    // `quarantine_failed` is appended rather than placed beside `quarantined`, where it
+    // reads better, because every column before it keeps its index that way and this
+    // format is consumed by position. A file that could not be moved is still where it
+    // was found, which `quarantined,false` alone cannot distinguish from a run with
+    // quarantine switched off.
     void begin() override {
         out_ << "file,rule,severity,original_severity,suppressed,category,line,column,"
-                "quarantined,skipped,skip_reason\n";
+                "quarantined,skipped,skip_reason,quarantine_failed\n";
     }
 
     void onFile(const FileResult& result) override {
-        // A skipped file has no matches, so the loop below never ran for one and CSV
-        // output listed none of them at all - 487 files invisible in the format an
-        // operator is most likely to pivot through a spreadsheet.
-        if (result.matches.empty() && result.skipReason) {
+        // A file with no matches can still be worth a row: it was skipped, or it is a
+        // container whose quarantine outcome belongs to it rather than to any match of
+        // its own. The loop below never runs for one, and CSV listed none of them at
+        // all - 487 skipped files invisible in the format an operator is most likely to
+        // pivot through a spreadsheet, and every unmoved container beside them.
+        if (result.matches.empty() && worthReporting(result)) {
             writeField(out_, pathForDisplay(result.path));
             // rule,severity,original_severity,suppressed,category,line,column
             out_ << ",,,,false,,,,";
-            out_ << (result.quarantined ? "true" : "false") << ",true,";
-            writeField(out_, skipReasonToString(*result.skipReason));
+            out_ << (result.quarantined ? "true" : "false") << ',';
+            out_ << (result.skipped() ? "true" : "false") << ',';
+            writeField(out_, result.skipReason ? skipReasonToString(*result.skipReason)
+                                               : std::string_view{});
+            out_ << ',' << (result.quarantineFailed ? "true" : "false");
             out_ << '\n';
             out_.flush();
             return;
@@ -47,6 +57,7 @@ public:
             out_ << (result.skipped() ? "true" : "false")     << ',';
             writeField(out_, result.skipReason ? skipReasonToString(*result.skipReason)
                                                : std::string_view{});
+            out_ << ',' << (result.quarantineFailed ? "true" : "false");
             out_ << '\n';
         }
         out_.flush();

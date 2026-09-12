@@ -47,13 +47,48 @@ struct FileResult {
     std::vector<FileMatch> matches;
     bool quarantined = false;
     std::string quarantinePath;  // where it was moved to, if quarantined
+
+    // The file was selected for quarantine and could not be moved, so it is still
+    // where it was found. Never the same fact as `!quarantined`, which is also what
+    // an exposure finding and a run with quarantine switched off both look like -
+    // and the difference is whether a webshell is still under the web root.
+    bool quarantineFailed = false;
+
     // Empty when the file was scanned. A skip is never silent: every one of the
     // three file-level reasons is recorded, so a report can say which.
     std::optional<SkipReason> skipReason;
     uint64_t fileSize = 0;
 
+    // What opening this file as a container covered, when it was one; empty when it
+    // is not an archive or archives are off.
+    //
+    // A skip inside a container used to have nowhere to travel: the counters lived on
+    // ScanResult, so the walk kept them and `scanFile()` - which returns one of these -
+    // dropped them on the floor. `check` then printed "No matches found" for a
+    // truncated gzip, which is what a genuinely clean file prints. The coverage rides
+    // with the result it belongs to, so every caller of scanFile() inherits it rather
+    // than having to know it exists.
+    std::optional<archive::Stats> archive;
+
     bool skipped() const { return skipReason.has_value(); }
+
+    // True when something about this file was not looked at: the file itself was
+    // skipped, or its container could not be spoken for. What "No matches found" may
+    // not be said about.
+    bool examinedFully() const {
+        return !skipped() && !(archive && archive::coverageIncomplete(*archive));
+    }
 };
+
+// True when a report has something to say about this file. Matches and skips are the
+// obvious two; the third is a quarantine outcome on a file with no matches of its own,
+// which is what a container moved - or not moved - for what was inside it looks like.
+// Without it a report says a file was quarantined nowhere at all, or worse, says
+// nothing about one that could not be.
+inline bool worthReporting(const FileResult& result) {
+    return !result.matches.empty() || result.skipped() ||
+           result.quarantined || result.quarantineFailed;
+}
 
 // True when a file carries at least one finding about its own content, as
 // opposed to only an exposure finding about where it sits.
@@ -75,6 +110,13 @@ struct ScanResult {
     size_t totalDirectoriesScanned = 0;
     size_t filesWithMatches = 0;
     size_t filesQuarantined = 0;
+
+    // Files selected for quarantine that could not be moved, and so are still where
+    // they were found. `if (quarantineFile(...))` with no else was the whole defect:
+    // a file the tool was asked to contain and could not read exactly like one
+    // quarantine was never enabled for.
+    size_t filesQuarantineFailed = 0;
+
     size_t totalMatches = 0;
     uint64_t bytesScanned = 0;
 

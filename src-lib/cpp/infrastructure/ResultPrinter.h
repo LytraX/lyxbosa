@@ -69,6 +69,10 @@ public:
         if (result.quarantined) {
             styled(Terminal::low(), "    moved: {}\n", result.quarantinePath);
         }
+        if (result.quarantineFailed) {
+            styled(Terminal::error(), "    NOT quarantined - still at {}\n",
+                   pathForDisplay(result.path));
+        }
 
         plain("\n");
     }
@@ -120,6 +124,15 @@ public:
         if (low > 0)      styled(Terminal::low(),      "  L:{}", low);
 
         plain("\n");
+
+        // A second line rather than a suffix: the compact line's width is already
+        // budgeted between the path and the severity counts, and a marker squeezed in
+        // there would take characters off the path an operator needs to read. Rare
+        // enough that the extra line costs nothing on a real scan.
+        if (result.quarantineFailed) {
+            styled(Terminal::error(), "    NOT quarantined - still at {}\n",
+                   pathForDisplay(result.path));
+        }
     }
 
     // Print scan summary
@@ -156,6 +169,14 @@ public:
 
         if (result.filesQuarantined > 0) {
             plain("Files quarantined: {}\n", result.filesQuarantined);
+        }
+
+        // Beside the count above rather than as a shape of its own. A file selected for
+        // quarantine that could not be moved is still where it was found, and the
+        // difference between that and "quarantine was not enabled" is the whole point.
+        if (result.filesQuarantineFailed > 0) {
+            styled(Terminal::error(), "Files NOT quarantined: {} (still in place)\n",
+                   result.filesQuarantineFailed);
         }
 
         printArchiveSummary(result.archives);
@@ -218,8 +239,7 @@ public:
             return;
         }
 
-        plain("Members not scanned: {} ({})\n",
-              stats.totalSkipped(), formatSkipTally(stats.skips, kArchiveSkipOrder));
+        plain("{}\n", archive::membersNotScannedLine(stats));
     }
 
     // Truncate a path from the beginning ("...rest/of/path") without ever

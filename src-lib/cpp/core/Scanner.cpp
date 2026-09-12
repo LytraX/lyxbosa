@@ -358,6 +358,12 @@ ScanResult Scanner::scan() {
                 oversize ? std::string_view{} : std::string_view(content));
             result.archives.merge(outcome.stats);
 
+            // The same coverage, kept on the file it belongs to as well as in the
+            // aggregate. The summary answers "what did this scan not open"; this
+            // answers it about one file, which is the question `check` asks and the
+            // question a per-file report row can carry.
+            fileResult.archive = outcome.stats;
+
             for (auto& match : outcome.archiveMatches) {
                 fileResult.matches.push_back(std::move(match));
             }
@@ -403,6 +409,13 @@ ScanResult Scanner::scan() {
                 fileResult.quarantined = true;
                 fileResult.quarantinePath = destPath;
                 ++result.filesQuarantined;
+            } else {
+                // This branch is the whole third of the defect: it did not exist, so a
+                // file the tool was asked to contain and could not looked exactly like
+                // one quarantine was never enabled for. The operator needs to know
+                // which webshell is still sitting in the web root.
+                fileResult.quarantineFailed = true;
+                ++result.filesQuarantineFailed;
             }
         }
 
@@ -411,8 +424,11 @@ ScanResult Scanner::scan() {
         // bought nothing - every consumer filtered them straight back out.
         // A container quarantined for what was inside it carries no matches of its
         // own. Dropping it here would move a file and then not say so anywhere in
-        // the report, with only the member rows beside it to hint at why.
-        const bool reportable = !fileResult.matches.empty() || fileResult.quarantined;
+        // the report, with only the member rows beside it to hint at why. The same
+        // container when the move *failed* carries neither matches nor a destination,
+        // and dropping that one would lose the only row naming a file still in place.
+        const bool reportable = !fileResult.matches.empty() || fileResult.quarantined ||
+                                fileResult.quarantineFailed;
         if (reportable) {
             result.files.push_back(fileResult);
         }
@@ -532,6 +548,21 @@ FileResult Scanner::scanFile(const std::filesystem::path& path) {
     auto outcome = archives_.scan(path, kind, content);   // empty: read from disk
     for (auto& match : outcome.archiveMatches) {
         result.matches.push_back(std::move(match));
+    }
+
+    // What the container did or did not cover, travelling out with the result. Without
+    // this the caller has a FileResult and no way to learn that a member went unread,
+    // which is how `check` came to print "No matches found" for a truncated gzip.
+    result.archive = outcome.stats;
+
+    // The walk does not call an oversize container a skipped file: its index was read
+    // and its members were scanned, which is the affordable answer for a 13 GB backup.
+    // So neither does this. Leaving the size skip on would make `check` and `scan`
+    // disagree about the same file, and what the container did not reach is in
+    // `archive` where it belongs. Only Size: a file whose bytes could not be read at
+    // all is still unreadable, whatever its header sniffed as.
+    if (result.skipReason == SkipReason::Size) {
+        result.skipReason.reset();
     }
     return result;
 }

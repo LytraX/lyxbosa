@@ -68,17 +68,28 @@ public:
 
         auto result = scanner.scanFile(filePath);
 
-        // "No matches found" must mean the file was read and nothing matched. A file
-        // that was never read has not been cleared, and saying otherwise here is the
-        // same silent skip the scan path reports by reason.
-        if (result.skipReason && result.matches.empty() && members.empty()) {
-            terminal_.print(Terminal::warning(), "Not scanned ({}): {}\n",
-                            skipReasonLabel(*result.skipReason), filePath.string());
-            return 1;
-        }
+        // "No matches found" must mean the file was read and nothing matched. Three
+        // things can make that untrue and only the first of them used to be noticed:
+        // the file itself was skipped, the container would not open, or a member the
+        // scanner selected to read went unread. All three are the same silent skip the
+        // scan path has always reported by reason, so all three are answered the same
+        // way here.
+        const bool complete = result.examinedFully();
+        const bool matched = !result.matches.empty() || !members.empty();
 
-        if (result.matches.empty() && members.empty()) {
-            terminal_.print(Terminal::success(), "No matches found in: {}\n", filePath.string());
+        if (!matched && complete) {
+            // Members the *policy* did not select are named and change nothing, exactly
+            // as an excluded loose file is counted and changes no exit code - but the
+            // verdict says so rather than claiming the whole container was read.
+            if (result.archive && result.archive->totalSkipped() > 0) {
+                terminal_.print(Terminal::success(),
+                                "No matches found in what was scanned of: {}\n",
+                                filePath.string());
+            } else {
+                terminal_.print(Terminal::success(), "No matches found in: {}\n",
+                                filePath.string());
+            }
+            printCoverage(result);
             return 0;
         }
 
@@ -94,10 +105,57 @@ public:
             printCompactMatches(member.matches);
         }
 
-        return 2;  // Matches found
+        if (complete) {
+            return 2;  // Matches found, and everything selected was read
+        }
+
+        // The findings above stand and are printed; what follows is that they are not
+        // the whole answer. An incomplete answer takes the exit code even when
+        // something was found, for the reason `scan` already returns 1 for a root that
+        // was gone: the exit code says whether the command did what was asked, and 2
+        // means "these are the matches" rather than "these are some of them".
+        if (matched) {
+            fmt::print("\n");   // the findings above are a block; this is the verdict
+        }
+        if (result.skipReason) {
+            terminal_.print(Terminal::warning(), "Not scanned ({}): {}\n",
+                            skipReasonLabel(*result.skipReason), filePath.string());
+        } else {
+            terminal_.print(Terminal::warning(), "Not fully examined: {}\n",
+                            filePath.string());
+        }
+        printCoverage(result);
+        return 1;
     }
 
 private:
+    // What the container did not cover, in the scan summary's own words. The lines
+    // come from archive::membersNotScannedLine() and the labels from SkipReason.h, so
+    // `check` and `scan` cannot end up describing one archive two different ways -
+    // that disagreement is what makes an operator stop trusting the tool.
+    void printCoverage(const FileResult& result) const {
+        if (!result.archive) {
+            return;
+        }
+        const archive::Stats& stats = *result.archive;
+
+        if (stats.archivesUnreadable > 0) {
+            terminal_.print(Terminal::warning(),
+                            "  Archives unreadable: {}\n", stats.archivesUnreadable);
+        }
+        if (stats.archivesTruncated > 0) {
+            terminal_.print(Terminal::warning(),
+                            "  Archives stopped early: {} (a guard fired; the rest of "
+                            "the stream was not read)\n", stats.archivesTruncated);
+        }
+        const std::string line = archive::membersNotScannedLine(stats);
+        if (!line.empty()) {
+            const auto style = archive::membersUnexamined(stats) > 0 ? Terminal::warning()
+                                                                     : Terminal::muted();
+            terminal_.print(style, "  {}\n", line);
+        }
+    }
+
     // Group key: rule category + line number
     struct MatchGroup {
         const FileMatch* first;  // First match (for context display)

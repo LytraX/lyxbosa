@@ -557,10 +557,32 @@ private:
         if (consoleWriter) {
             consoleWriter->end(result, interrupted);
         }
+
+        // Delivering the report is part of completing the command. The stream used to
+        // be checked when it was opened and never again, so a full disk produced
+        // "Report written to /dev/full" and an exit code that said the run succeeded -
+        // and the run that matters is the unattended one, which then has neither a
+        // report nor anything saying it lost one. The write, the flush and the close
+        // are all asked, because they fail at different moments: a short report never
+        // leaves the buffer until close.
+        bool reportUndelivered = false;
         if (fileWriter) {
             fileWriter->end(result, interrupted);
+            fileStream.flush();
             fileStream.close();
-            if (!quiet) {
+            reportUndelivered = fileStream.fail();
+
+            if (reportUndelivered) {
+                // Held back only by --silent, which promises no output at all. --quiet
+                // suppresses progress and the summary, and this is neither: it is the
+                // command's own deliverable not existing.
+                if (!args.silent) {
+                    terminal_.printErr(Terminal::error(),
+                        "\nError: the report could not be written to {}\n"
+                        "       what is on disk there, if anything, is incomplete\n",
+                        *plan.file);
+                }
+            } else if (!quiet) {
                 terminal_.printErr(Terminal::success(), "Report written to {}\n", *plan.file);
             }
         }
@@ -612,6 +634,22 @@ private:
             }
         }
 
+        // Files the tool was asked to contain and could not. Not the same fact as
+        // `filesQuarantined < filesWithMatches`, which is also what an exposure finding
+        // and a run without --quarantine look like: these are webshells still sitting
+        // where they were found, and the operator has to be told which. Printed under
+        // --quiet like the block above, and for the same reason.
+        if (result.filesQuarantineFailed > 0 && !args.silent) {
+            terminal_.printErr(Terminal::error(),
+                "\nError: {} file{} could not be moved to the quarantine directory and\n"
+                "       {} still where {} found:\n",
+                result.filesQuarantineFailed,
+                result.filesQuarantineFailed == 1 ? "" : "s",
+                result.filesQuarantineFailed == 1 ? "is" : "are",
+                result.filesQuarantineFailed == 1 ? "it was" : "they were");
+            printQuarantineFailures(result);
+        }
+
         // Return 130 on interrupt (standard convention), 2 if matches found, 0 otherwise
         if (interrupted) {
             return 130;
@@ -620,10 +658,37 @@ private:
         // outranks the findings for the same reason the interrupt above already does:
         // the exit code answers "did this do what I asked", not "what did it find",
         // and the findings are in the report either way.
-        if (!result.rootsMissing.empty()) {
+        //
+        // A report that could not be written joins it, because for `-O` the report IS
+        // the answer: exiting 2 would tell an unattended caller to go and read a file
+        // that is truncated or empty. A quarantine that failed deliberately does not
+        // join it - the answer is complete and delivered, the failure is named in it
+        // and on stderr, and ranking it above the findings would turn every such run
+        // into a 1 and hide a real detection from a caller watching for 2.
+        if (!result.rootsMissing.empty() || reportUndelivered) {
             return 1;
         }
         return result.filesWithMatches > 0 ? 2 : 0;
+    }
+
+    // The paths, because a count cannot be acted on. Capped: a quarantine directory on
+    // a read-only mount fails for every hostile file in the tree, and a thousand lines
+    // of stderr would bury the sentence above them. The report carries all of them.
+    void printQuarantineFailures(const ScanResult& result) const {
+        constexpr size_t kMaxListed = 10;
+        size_t listed = 0;
+        for (const auto& file : result.files) {
+            if (!file.quarantineFailed) {
+                continue;
+            }
+            if (listed == kMaxListed) {
+                terminal_.printErr(Terminal::error(), "       ... and {} more, all in the report\n",
+                                   result.filesQuarantineFailed - listed);
+                break;
+            }
+            terminal_.printErr(Terminal::error(), "       {}\n", pathForDisplay(file.path));
+            ++listed;
+        }
     }
 
     // The portable build, at most once an interval, on a host that could have run the

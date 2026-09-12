@@ -87,6 +87,24 @@ Prompts for a path when FILE is omitted. Quarantine is always disabled. Accepts
 the exposure finding lands on the file, and each member with findings is listed under
 it as `archive.zip!member/path.php`.
 
+`No matches found` means the bytes were read and nothing matched, so anything that was
+not read changes the verdict:
+
+| What happened | Prints | Exit |
+|---|---|---|
+| The file was read and nothing matched | `No matches found in: FILE` | `0` |
+| Members the selection policy did not open — non-code outside `--exhaustive-archives`, or a member the configured filters reject | `No matches found in what was scanned of: FILE`, then `Members not scanned: N (...)` | `0` |
+| The file itself was not read — over `scan.max_file_size`, or unreadable | `Not scanned (REASON): FILE` | `1` |
+| The container would not open, a guard stopped it part-way, or a member it selected went unread — corrupt, over `archives.max_member_size`, budget, ratio, depth | `Not fully examined: FILE`, then what was not covered | `1` |
+| Matches were found and everything selected was read | the findings | `2` |
+| Matches were found and something was not read | the findings, then `Not fully examined: FILE` | `1` |
+
+The last row is deliberate: the findings are printed in full, and `2` is not said,
+because `2` means "these are the matches" rather than "these are some of them". It is
+the rule `scan` already follows for a root that was gone. The wording of the coverage
+lines is the same wording the scan summary uses, so the two commands cannot describe one
+archive two different ways.
+
 ## `validate-config` — validate a configuration file
 
 ```
@@ -119,9 +137,20 @@ scan checks on its own, and the privacy consequence, are there too.
 | Code | Meaning |
 |------|---------|
 | `0` | No matches found, or the command was cancelled |
-| `1` | Error: invalid arguments, missing file, invalid configuration, a file that could not be scanned, or a refused unsafe operation |
+| `1` | Error: invalid arguments, missing file, invalid configuration, a file that could not be scanned, a report that could not be written, or a refused unsafe operation |
 | `2` | Matches found; for `update --check`, a newer release is available |
 | `130` | Interrupted with Ctrl+C (the partial report is still written) |
+
+**An incomplete answer outranks a finding.** A scan whose named root was gone, and a
+`--output-file` that could not be written, both exit `1` even when matches were found —
+the findings are still printed and still written to whatever report survived. The exit
+code answers "did this do what I asked", and with `-O` the report *is* the answer, so
+`2` would send an unattended caller to read a file that is truncated or empty.
+
+A quarantine that could not complete is the exception, and for the same reason: the
+answer is complete and delivered, and the files that are still in place are named in it,
+on stderr, and in the summary. Ranking it above the findings would turn every such run
+into a `1` and hide a real detection from a caller watching for `2`.
 
 An update check never contributes to any of these. A scan that could not reach the releases
 API, or reached it slowly, exits exactly as it would have without the check.

@@ -83,6 +83,41 @@ tree, or the file, into the scratchpad and mutate that; or commit first so the u
 somewhere to go. A harness that restores by reverting is one interruption away from destroying
 whatever else was in flight.
 
+## An operation that did not happen is not one that did
+
+Every command here answers a question for somebody who is not watching. The answer has to
+keep *it did not happen* apart from *it happened and found nothing*, and those two are one
+string apart in the output and one missing branch apart in the code. The missing branch is
+the default: `if (move(...))` with no `else`, a stream checked when it is opened and never
+again, coverage that lives on the aggregate so a single-file caller cannot see it.
+
+What the code owes a caller when an operation does not happen:
+
+- **Carry it on the result the caller actually has.** A fact kept only on an aggregate is
+  lost to every caller holding one element of it, and it is lost silently, which is the
+  failure. Put it where the operation's success is already recorded.
+- **Never let absence carry it.** `quarantined: false` is equally what an exposure
+  finding, a disabled quarantine and a failed move look like. A distinct fact needs a
+  distinct field, and a count of failures needs a counter rather than a subtraction
+  between two others.
+- **Say it in every place the success is already said**, and beside it rather than as a new
+  shape: the summary line, the per-file line, the JSON key, the CSV column. An operator
+  reads exactly one of those and you do not know which.
+- **Rank the exit code deliberately and write the ranking down.** An answer that is
+  incomplete or undelivered outranks a finding, because a partial answer read as a complete
+  one is the whole failure. An action that failed beside a complete answer does not: the
+  answer names what was left undone, and ranking the action above it would turn every such
+  run into a `1` and hide a real detection from a caller watching for `2`.
+- **Choose which output flags may suppress it.** `--quiet` suppresses progress and the
+  summary, and a failure the operator has to act on is neither of those. Only `--silent`,
+  which promises no output at all, holds one back.
+- **Two commands answering about one file must answer the same.** The wording belongs in
+  one function that both call, not in two that agree today. An operator who sees them
+  disagree stops trusting both.
+
+None of this is provable by reading. Construct the failure, assert the refusal, and assert
+the other direction in the same commit - the section below is what that means.
+
 ## A check that has never been observed to fail is not yet a check
 
 Five checks written during that incident passed while being blind:

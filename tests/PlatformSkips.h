@@ -16,6 +16,7 @@
 // its neighbours, and so that adding the Windows arm was one edit rather than four.
 
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 
@@ -78,6 +79,44 @@ inline std::optional<std::string> whyCannotObserveLongPaths() {
     return std::nullopt;
 #else
     // PATH_MAX is 4096 here and the case stays well inside it; the property is observed.
+    return std::nullopt;
+#endif
+}
+
+// Nullopt when this platform can hand a program a destination that opens for writing
+// and then refuses the bytes - which is what a full disk is, and what a case about a
+// report that could not be delivered has to have.
+//
+// On POSIX that destination is /dev/full, and it is probed rather than assumed: a
+// container built without the standard device set does not have one, and a case that
+// wrote to a path that quietly accepted everything would be asserting that a failure
+// nobody caused was not reported. The probe writes, flushes and checks, because those
+// are the three moments a stream can fail at and only the flush fails here.
+//
+// Windows has no equivalent. There is no /dev/full, and the other route - denying
+// access to the directory - does not reach a handle that is already open, which is the
+// whole point: the open has to succeed for the write to be the thing that fails. So the
+// case says that rather than passing on a write that worked.
+inline std::optional<std::string> whyCannotFailAWrite(std::string& sink) {
+#ifdef _WIN32
+    (void)sink;
+    return "Windows has no /dev/full, and an ACL tightened after the fact does not reach "
+           "a handle that is already open, so no path here opens for writing and then "
+           "refuses the bytes";
+#else
+    const char* candidate = "/dev/full";
+    std::ofstream probe(candidate, std::ios::out | std::ios::binary);
+    if (!probe) {
+        return std::string("this host has no writable ") + candidate +
+               ", so a write that fails after a successful open cannot be set up here";
+    }
+    probe << "probe";
+    probe.flush();
+    if (!probe.fail()) {
+        return std::string(candidate) + " accepted a write on this host, so it cannot "
+               "stand in for a destination that refuses one";
+    }
+    sink = candidate;
     return std::nullopt;
 #endif
 }

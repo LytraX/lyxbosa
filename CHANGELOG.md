@@ -24,6 +24,37 @@ commit list that CI generates per tag.
 
 ### Fixed
 
+- **Three commands no longer report an operation that did not happen as one that did.**
+  One defect in three places, so one entry.
+
+  `check` printed `No matches found` and exited `0` for an archive whose contents were
+  never examined — a truncated gzip of a webshell, or a member past
+  `archives.max_member_size` — which is exactly what a genuinely clean file prints.
+  `scan` had always named members it did not scan, by reason, in its summary; the
+  coverage simply had no way to travel out of a single-file check, because the counters
+  lived on the whole-scan result. They now ride on the file result, so `check` prints
+  `Not fully examined` with the same sentence the scan summary uses and exits `1`.
+  Members the selection policy did not open are counted and named but still exit `0`,
+  with the verdict reading `No matches found in what was scanned of:` — they are the
+  container-level counterpart of an excluded loose file. Findings are printed in full
+  either way; where coverage is incomplete the exit code is `1` rather than `2`, because
+  `2` means "these are the matches" and not "these are some of them". An oversize
+  container is no longer called a skipped file by `check`, which `scan` had never done.
+
+  A report that could not be written printed `Report written to FILE` and exited `0`. The
+  stream was checked when it was opened and never afterwards, so an unattended run that
+  lost its report to a full disk said nothing at all. The write, the flush and the close
+  are all checked now; a failure names the path on stderr and exits `1`, which outranks
+  the findings for `-O` because the report is the answer.
+
+  A quarantine that failed was silent: no counter, no warning, no report field, so a file
+  the scanner was asked to contain and could not read exactly like one quarantine was
+  never enabled for. The summary now carries `Files NOT quarantined: N (still in place)`,
+  stderr lists the paths, JSON gains `quarantineFailed` per file and
+  `filesQuarantineFailed` in the summary, and CSV gains a `quarantine_failed` column
+  appended last so every existing column keeps its index. The exit code is deliberately
+  unchanged: the scan's answer is complete and says which files were left behind.
+
 - **Quarantine no longer replaces one sample with another, and the destination says where
   a file came from.** With `preserve_structure` the destination was built from the path
   *relative to the scan root*, which discards which root that was: two roots holding the

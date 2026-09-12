@@ -98,6 +98,39 @@ struct Stats {
     }
 };
 
+// Members the scanner meant to read and did not.
+//
+// Policy is the one reason that is not one of them, and the distinction is what the
+// exit code turns on. A sidecar metadata entry, a member the operator's own exclude
+// globs reject, and - outside exhaustive mode - a member that is not code are the
+// scanner deciding what to open: the container-level counterpart of an excluded loose
+// file, which is also counted and also changes no exit code. Every other reason is a
+// member that was selected to be read and then was not, so nothing can be said about
+// its bytes.
+inline size_t membersUnexamined(const Stats& stats) {
+    return stats.totalSkipped() - stats.skippedPolicy();
+}
+
+// True when this container cannot be spoken for: it would not open, a guard stopped it
+// part-way, or a member it selected went unread. A caller that reports "nothing found"
+// on one of these is reporting an operation that did not happen as one that did.
+inline bool coverageIncomplete(const Stats& stats) {
+    return stats.archivesUnreadable > 0 || stats.archivesTruncated > 0 ||
+           membersUnexamined(stats) > 0;
+}
+
+// "Members not scanned: 906 (874 not code, 30 over size limit, 2 corrupt)" - the one
+// sentence that says what a container did not cover, empty when it covered everything.
+// Written once so the scan summary and `check` cannot describe the same archive two
+// different ways; that disagreement is what makes an operator stop trusting the tool.
+inline std::string membersNotScannedLine(const Stats& stats) {
+    if (stats.totalSkipped() == 0) {
+        return {};
+    }
+    return "Members not scanned: " + std::to_string(stats.totalSkipped()) + " (" +
+           lyxbosa::formatSkipTally(stats.skips, lyxbosa::kArchiveSkipOrder) + ")";
+}
+
 // The guards, carried down through nested archives so a bomb cannot buy itself
 // more budget by nesting. Everything here is measured in decompressed bytes or
 // wall-clock time; the size of the archive on disk is not a bound on anything.
