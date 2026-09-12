@@ -456,13 +456,34 @@ part of vcpkg's ABI hash. That last part is load-bearing rather than tidy - with
 variable still reaches the port build, but a dependency cached under one epoch is restored
 for a request at another and the pin never touches the bytes.
 
-**The builder image.** The comparison is between two builds *of the same image*. Both
-Dockerfiles name a moving tag, and both install packages and clone vcpkg at image build
-time, so an image built from the same Dockerfile a year later is a different toolchain. What
-a rebuilder is verifying is therefore the source, given the builder - not the builder. To
-verify the builder as well, the image would have to be published by digest and pulled
-rather than rebuilt from the Dockerfile, and kept for as long as the release it built is
-worth checking.
+**The builder image.** The comparison is between two builds *of the same image*, and what
+makes an image built from the same Dockerfile a year later the same image is written into
+the two Dockerfiles rather than assumed.
+
+Each names its base layer by **digest**, so the starting layer - and with it the glibc or
+musl, the binutils and the package database the build inherits - is the same bytes every
+time; the tag beside the digest is for a reader, and a digest that no longer resolves fails
+the build rather than falling back to it. The glibc image takes its packages from
+`repo.almalinux.org` at a fixed minor version rather than from the mirror network, and asks
+for the **compiler** by its exact RPM release, which AlmaLinux's AppStream keeps serving
+after it ships the next one. The musl image asserts the gcc and musl versions instead,
+because Alpine's branch repository keeps only current ones and a request for a superseded
+version would stop resolving rather than stay fixed. Both check out the commit in
+[`docker/build/vcpkg-commit`](../docker/build/vcpkg-commit) rather than vcpkg's default
+branch: `vcpkg-configuration.json` pins the port *versions* and says nothing about the tool
+whose cmake, toolchain files and ABI hashing decide how those ports build.
+
+**What is not pinned is every other package in the image**, and both distributions make that
+unfixable rather than merely unfixed: each serves the current build of a package and nothing
+else, so a superseded one is gone rather than selectable. So each image records what it
+resolved in `/etc/lyxbosa-builder-manifest` - base digest, vcpkg commit, compiler, and every
+package with its version - and every build prints the first three lines of it and names the
+path. Two rebuilds that disagree have somewhere to be diffed, and a log says which toolchain
+produced the file somebody is holding.
+
+Verifying the **image** rather than the source given the image needs the image published by
+digest and pulled rather than rebuilt from the Dockerfile, and kept for as long as the
+release it built is worth checking.
 
 ### Rebuilding one Linux asset
 
@@ -478,6 +499,18 @@ The version argument matters: it is compiled in, so a rebuild at a different ver
 different binary. Use the tag with the leading `v` removed, which is what the release job
 passes.
 
+**A release cut before the epoch was pinned carries its own clock.** The build scripts read
+`SOURCE_DATE_EPOCH` from [`docker/build/source-date-epoch`](../docker/build/source-date-epoch)
+and an exported value wins. A tag whose tree does not carry that file was built at whatever
+second the release job ran, and the binary says which second: OpenSSL's banner is `gmtime`
+of it. Read it out and export it, or the rebuild differs in that banner and in the GNU build
+ID derived from it.
+
+```bash
+strings -a lyxbosa-linux-amd64 | grep '^built on: '     # built on: Fri Sep 11 18:23:40 2026 UTC
+export SOURCE_DATE_EPOCH=$(date -u -d 'Fri Sep 11 18:23:40 2026 UTC' +%s)
+```
+
 Then compare that hash against the release's `SHA256SUMS` - after verifying the signature
 over it, for the reason *Release integrity* gives. The build directory inside the container
 is part of the specification and the script pins it; a build configured somewhere other
@@ -489,8 +522,11 @@ a different file. Where the *source* is checked out does not reach the binary.
 ```bash
 docker/build/verify-reproducible.sh glibc amd64     # build twice, compare
 docker/build/verify-reproducible.sh musl amd64
-docker/build/verify-reproducible.sh --selftest      # the controls, no compiler needed
 docker/build/verify-reproducible.sh --control glibc amd64
+
+docker/build/check-pins.sh --selftest               # every control here, no compiler needed
+docker/build/check-pins.sh --images glibc           # plant a bad pin, watch the image refuse
+docker/build/check-pins.sh --images musl
 ```
 
 The first form builds twice and reports whether the two runs produced the same file. It
@@ -502,6 +538,14 @@ builds that happened in the same second.
 `--control` is the other direction and costs two more builds: the same pair at two
 deliberately different epochs, which must produce *different* files. A green `--control` is
 what says the variable is reaching something.
+
+`check-pins.sh --selftest` runs every `--selftest` under `docker/build/`, discovered by
+reading those files rather than listed here, and refuses to report a result if it finds
+fewer suites than this repository has. `--images` is the expensive half: it builds each
+Linux image with one pin deliberately broken - a base digest that does not resolve, a
+compiler release that was never built, a vcpkg commit that is not in the repository - and
+requires the build to stop **and to stop for that reason**, since a build that broke for an
+unrelated reason would otherwise be counted as the pin working.
 
 ## Verifying detection did not change
 

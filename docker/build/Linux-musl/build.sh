@@ -110,13 +110,17 @@ for CURRENT_ARCH in "${ARCHES[@]}"; do
 
     echo "=== Building LyxBoSa for Linux (${CURRENT_ARCH}, static musl) ==="
 
+    # The build context is docker/build/ rather than this directory: retry.sh and
+    # vcpkg-commit are shared by both Linux images and by the Windows script, and a copy
+    # of each in every directory is three files that agree today. The Dockerfile's COPY
+    # lines are written against that root.
     echo "Building Docker image..."
     docker buildx build \
         --platform "${PLATFORM}" \
         -t "${TAG_NAME}" \
         --load \
         -f "${SCRIPT_DIR}/Dockerfile" \
-        "${SCRIPT_DIR}"
+        "${SCRIPT_DIR}/.."
 
     echo "Running build inside container..."
     docker run --rm \

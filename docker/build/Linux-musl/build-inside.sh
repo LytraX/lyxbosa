@@ -15,6 +15,24 @@ set -e
 # for real, and a dynamically linked cousin of the release binary would not prove a static
 # build passes that.
 
+# What this image is, printed before anything is built - the same record the glibc
+# container prints, and for the same reason: the base layer, the compiler and vcpkg are
+# pinned, every other package is whatever the branch served on the day the image was built,
+# and a rebuilder comparing two binaries needs somewhere to diff.
+#
+# No ABI floor is asserted here and that is not an omission: this binary is linked -static
+# and needs nothing from any host, which is the whole reason it exists. What stands in its
+# place is the dynamic-section check further down, which refuses a binary that acquired one.
+if [ -r /etc/lyxbosa-builder-manifest ]; then
+    head -3 /etc/lyxbosa-builder-manifest
+    # The package lines are the indented ones. Counted rather than derived by subtracting
+    # a header length, which would go quietly wrong the day the header gains a line.
+    echo "packages: $(command grep -c '^  ' /etc/lyxbosa-builder-manifest) recorded in /etc/lyxbosa-builder-manifest"
+else
+    echo "no builder manifest in this image" >&2
+    exit 1
+fi
+
 # Build version override arg
 VERSION_ARG=""
 if [ -n "${LYXBOSA_VERSION}" ]; then

@@ -45,6 +45,10 @@ on:
 # guarantee: a suite that fails stops the artefact, because the build script copies the
 # binary out after ctest and not before.
 #
+# A seventh job, check-builder-pins, builds no artefact: it breaks each pin in the two
+# Linux images on purpose and requires the image build to refuse. See its own comment for
+# why it is a job and not three more steps.
+#
 # WHAT RUNS WHEN
 #   pull request   all six jobs build and test; nothing is uploaded, nothing is published
 #   push to master the same, and the caches they leave are the only ones a later run can
@@ -120,6 +124,13 @@ jobs:
       # covering the port version, triplet, compiler and dependency hashes, so an entry
       # that does not apply is ignored rather than reused.
       #
+      # docker/build/vcpkg-commit is in the key because the Dockerfile no longer names the
+      # commit: the two Linux images and the Windows script read one file so they cannot
+      # disagree, and a key that hashed only the Dockerfile would let a tool bump restore
+      # dependency artefacts built by another vcpkg. retry.sh and almalinux-repos.sh are
+      # there because they decide what the image installs and from where. abi-floor.sh is
+      # deliberately NOT: it runs on the binary after the build and cannot change a package.
+      #
       # The last two are in the key because the ABI hash reads them and a key that does not
       # would go quietly wrong rather than merely slow. The triplets name SOURCE_DATE_EPOCH
       # in VCPKG_ENV_PASSTHROUGH, which puts its VALUE in the hash; change the epoch and
@@ -130,19 +141,25 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .vcpkg-cache
-          key: vcpkg-linux-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile', 'docker/build/source-date-epoch', 'triplets/*.cmake') }}
+          key: vcpkg-linux-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux/Dockerfile', 'docker/build/vcpkg-commit', 'docker/build/retry.sh', 'docker/build/almalinux-repos.sh', 'docker/build/source-date-epoch', 'triplets/*.cmake') }}
           restore-keys: |
             vcpkg-linux-${{ matrix.arch }}-
             ${{ matrix.warm_from }}
 
-      # The reproducibility check defends a property of the binary this job is about to
-      # produce, so its controls run here rather than only on a release. They plant each
-      # failure - a comparison that always says equal, a binary with no OpenSSL banner read
-      # as a pass, two runs handed one cache directory - assert each is caught, and need no
-      # compiler, so the whole step is under a second. docs/RELEASING.md, under "Rebuilding
-      # a release", is what they defend.
-      - name: Prove the reproducibility check can fail
-        run: docker/build/verify-reproducible.sh --selftest
+      # Every check that defends a property of the binary this job is about to produce,
+      # driven in both directions before it is produced. check-pins.sh DISCOVERS them by
+      # reading docker/build/*.sh for a --selftest in a dispatch position rather than
+      # holding a list, so a suite added there is run without this file being edited - and
+      # it refuses to report a result at all if discovery finds fewer suites than this
+      # repository has, because zero failures found reads exactly like zero failures.
+      #
+      # They plant each failure - a comparison that always says equal, a binary with no
+      # OpenSSL banner read as a pass, two runs handed one cache directory, a repository
+      # rewrite that matched nothing, a glibc floor compared as a string so that 2.9 looks
+      # newer than 2.28 - and need no compiler, so the whole step is under a second. The
+      # planted IMAGE builds cost minutes and run in check-builder-pins, beside this job.
+      - name: Prove the builder checks can fail
+        run: docker/build/check-pins.sh --selftest
 
       # Runs inside the release container, as an unprivileged user so the cases about
       # unreadable files and directories are observed rather than skipped as root.
@@ -219,10 +236,15 @@ jobs:
         uses: actions/cache@v5
         with:
           path: .vcpkg-cache-musl
-          key: vcpkg-linux-musl-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux-musl/Dockerfile', 'docker/build/source-date-epoch', 'triplets/*.cmake') }}
+          key: vcpkg-linux-musl-${{ matrix.arch }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'docker/build/Linux-musl/Dockerfile', 'docker/build/vcpkg-commit', 'docker/build/retry.sh', 'docker/build/source-date-epoch', 'triplets/*.cmake') }}
           restore-keys: |
             vcpkg-linux-musl-${{ matrix.arch }}-
             ${{ matrix.warm_from }}
+
+      # The same discovered suites as build-linux runs, for the same reason: this job also
+      # produces a published binary and the checks that defend it are worth a second.
+      - name: Prove the builder checks can fail
+        run: docker/build/check-pins.sh --selftest
 
       - name: Build and test (${{ matrix.arch }}, static musl)
         env:
@@ -352,9 +374,43 @@ jobs:
           name: lyxbosa-windows-${{ matrix.arch }}
           path: dist/lyxbosa-windows-${{ matrix.arch }}.exe
 
+  # The planted half of the builder-image controls, in a job of its own.
+  #
+  # A pin nobody has watched refuse is a comment. This one breaks each of them on purpose -
+  # a base-image digest that does not resolve, a compiler release that was never built, a
+  # vcpkg commit that is not in the repository - and requires the image build to stop, and
+  # to stop FOR THAT REASON: the planted text has to appear, or a build that broke for an
+  # unrelated reason would be counted as the pin working.
+  #
+  # Beside the build jobs rather than inside them, and this is the whole reason it is a job:
+  # measured locally the glibc plants cost 2m10s and the musl plants 51s, against Linux
+  # build jobs that finish in two and a half to four and a half minutes. Run as steps they
+  # would land on the critical path of a release; run here they finish inside the wall clock
+  # the six build jobs already set, and cost only their own runner minutes.
+  #
+  # amd64 only. The arm64 legs would pay the same minutes to observe the same three
+  # refusals - the pins are in the Dockerfile, not in the architecture.
+  check-builder-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Prove the builder checks can fail
+        run: docker/build/check-pins.sh --selftest
+
+      - name: Plant a bad pin in the glibc image and watch it refuse
+        run: docker/build/check-pins.sh --images glibc
+
+      - name: Plant a bad pin in the musl image and watch it refuse
+        run: docker/build/check-pins.sh --images musl
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-linux, build-linux-musl, build-windows]
+    # check-builder-pins is in this list for the same reason the checksum and signing
+    # controls run before the publish: a release built by an image whose pins are not
+    # actually holding is a release nobody can rebuild, and finding that out afterwards is
+    # finding it out from a user.
+    needs: [build-linux, build-linux-musl, build-windows, check-builder-pins]
     runs-on: ubuntu-latest
     permissions:
       contents: write
