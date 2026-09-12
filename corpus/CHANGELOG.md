@@ -2990,7 +2990,7 @@ a human assessment and the row waits for one.
   sources pinned by version and sha256 — nothing is committed, `corpus/fetch-benign.sh`
   downloads and hash-verifies — so the false-positive rate regenerates anywhere and yields
   the same number. `corpus/verify.py` runs it. See
-  [Detection coverage](README.md#detection-coverage).
+  [Detection coverage](../README.md#detection-coverage).
 
 ### Changed
 

@@ -848,7 +848,7 @@ A further sixteen rules were narrowed to the shape they were written for:
   to break pattern matching.
 - **Skip reasons.** Every file the scanner does not open is counted and named — `size`,
   `excluded` or `unreadable` — and directories it could not list are counted too. See
-  [Skipped files](README.md#skipped-files).
+  [Skipped files](docs/SCANNING.md#skipped-files).
 - **`scan.report_excluded`** (default `false`) — list every file the include/exclude
   globs rejected, not just count them.
 - The eval-family rules now tolerate block comments between a function name and its
@@ -861,7 +861,7 @@ A further sixteen rules were narrowed to the shape they were written for:
   230 more files for about 4% more scan time. It buys coverage rather than detections —
   those 230 files matched nothing — the point being that a file the scanner never opened
   should not be counted as clean. See
-  [Choosing `scan.max_file_size`](README.md#choosing-scanmax_file_size).
+  [Choosing `scan.max_file_size`](docs/SCANNING.md#choosing-scanmax_file_size).
 - **`archives.max_member_size` is pinned at 5 MB** and no longer follows
   `scan.max_file_size`. A member is inflated into memory and shares one expansion budget
   with every other member of the same archive, so it wants the tighter bound.
