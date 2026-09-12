@@ -233,12 +233,12 @@ TEST(QuarantineTest, TheDestinationNamesTheOriginalPath) {
     const fs::path canonical = fs::weakly_canonical(shell);
     fs::path expected = quarantine.path();
 #ifdef _WIN32
-    std::wstring root = canonical.root_name().native();
-    for (wchar_t& c : root) {
-        if (c == L':' || c == L'\\' || c == L'/') c = L'_';
+    std::wstring volume = canonical.root_name().native();
+    for (wchar_t& ch : volume) {
+        if (ch == L':' || ch == L'\\' || ch == L'/') ch = L'_';
     }
-    while (!root.empty() && root.back() == L'_') root.pop_back();
-    if (!root.empty()) expected /= root;
+    while (!volume.empty() && volume.back() == L'_') volume.pop_back();
+    if (!volume.empty()) expected /= volume;
 #endif
     expected /= canonical.relative_path();
     EXPECT_EQ(destination->lexically_normal(), expected.lexically_normal());
