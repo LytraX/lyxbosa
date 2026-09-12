@@ -233,6 +233,7 @@ set(LIB_SOURCES
     src-lib/cpp/core/FileWalker.cpp
     src-lib/cpp/core/MatchEngine.cpp
     src-lib/cpp/core/Scanner.cpp
+    src-lib/cpp/core/Quarantine.cpp
     src-lib/cpp/archive/ArchiveFormat.cpp
     src-lib/cpp/archive/ArchiveIndex.cpp
     src-lib/cpp/archive/ArchiveScanner.cpp
@@ -387,6 +388,7 @@ if(BUILD_TESTS)
     tests/annotation_test.cpp
     tests/progress_model_test.cpp
     tests/archive_test.cpp
+    tests/quarantine_test.cpp
     tests/scan_root_test.cpp
     tests/file_walker_test.cpp
     tests/long_path_test.cpp

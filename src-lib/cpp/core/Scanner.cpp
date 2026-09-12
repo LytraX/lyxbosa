@@ -1,4 +1,5 @@
 #include "Scanner.h"
+#include "Quarantine.h"
 #include "archive/ArchiveFormat.h"
 #include "infrastructure/PathUtils.h"
 #include "rules/Registry.hpp"
@@ -125,6 +126,15 @@ ScanResult Scanner::scan() {
     size_t currentMember = 0;
     size_t currentMemberTotal = 0;
 
+    // Whether anything hostile was found *inside* the container currently being
+    // scanned. A member is reported as its own FileResult and never joins the
+    // container's match list - its bytes are compressed in the container and match
+    // nothing there - so the container's own matches cannot answer the quarantine
+    // question for it. Without this, a webshell in a zip that actually compresses is
+    // detected, named in the report, and left on disk. The archive callbacks below
+    // set it; fileCallback clears it for every file it starts.
+    bool archiveMemberHostile = false;
+
     // Members of containers the pre-count could not index - a .tar.gz has no
     // index to read - so they raise the total as they are reached rather than
     // pushing filesScanned past it.
@@ -203,6 +213,13 @@ ScanResult Scanner::scan() {
         result.totalMatches += member.matches.size();
         countSeverities(member.matches);
 
+        // The same rule the container is held to: an exposure finding says a file is
+        // in the wrong place, not that it is hostile, so a nested backup inside a zip
+        // is no more a reason to move the zip than a loose one is to move itself.
+        if (hasHostileContent(member)) {
+            archiveMemberHostile = true;
+        }
+
         result.files.push_back(member);
         if (fileResultCallback_) {
             fileResultCallback_(result.files.back());
@@ -236,6 +253,10 @@ ScanResult Scanner::scan() {
             interrupted_ = true;
             return false;  // Stop walking
         }
+
+        // Cleared here rather than after the archive scan, so that it can only ever
+        // describe the file this callback is looking at.
+        archiveMemberHostile = false;
 
         // An excluded file is not work and is not a finding: it is tallied so the
         // operator can see their globs took effect, and only listed if they asked.
@@ -361,28 +382,37 @@ ScanResult Scanner::scan() {
 
         if (!fileResult.matches.empty()) {
             ++result.filesWithMatches;
+        }
 
-            // Quarantine if enabled - but never for an exposure finding alone.
-            // An exposed backup is the operator's own data, possibly their only
-            // copy of the site and possibly 13 GB of it; fs::rename across a
-            // filesystem boundary degrades to copy-and-delete, and moving it
-            // somewhere still under the web root changes the URL without
-            // removing the exposure while reporting it as handled. The finding
-            // says what to do; the operator decides.
-            if (isQuarantineEnabled() && hasHostileContent(fileResult)) {
-                std::string destPath;
-                if (quarantineFile(info.path, destPath)) {
-                    fileResult.quarantined = true;
-                    fileResult.quarantinePath = destPath;
-                    ++result.filesQuarantined;
-                }
+        // Quarantine if enabled - but never for an exposure finding alone.
+        // An exposed backup is the operator's own data, possibly their only
+        // copy of the site and possibly 13 GB of it; moving it somewhere still
+        // under the web root changes the URL without removing the exposure while
+        // reporting it as handled. The finding says what to do; the operator
+        // decides.
+        //
+        // `archiveMemberHostile` is the second half of the question and not a
+        // special case: malware inside an archive quarantines the container, so a
+        // container whose own bytes match nothing is still moved when something
+        // inside it does. That is why this sits outside the `matches.empty()`
+        // guard above - a zip that compresses well has no matches of its own.
+        if (isQuarantineEnabled() &&
+            (hasHostileContent(fileResult) || archiveMemberHostile)) {
+            std::string destPath;
+            if (quarantineFile(info.path, destPath)) {
+                fileResult.quarantined = true;
+                fileResult.quarantinePath = destPath;
+                ++result.filesQuarantined;
             }
         }
 
         // Only reportable files are retained. Keeping a FileResult for every
         // clean file cost hundreds of megabytes of paths on a large tree and
         // bought nothing - every consumer filtered them straight back out.
-        const bool reportable = !fileResult.matches.empty();
+        // A container quarantined for what was inside it carries no matches of its
+        // own. Dropping it here would move a file and then not say so anywhere in
+        // the report, with only the member rows beside it to hint at why.
+        const bool reportable = !fileResult.matches.empty() || fileResult.quarantined;
         if (reportable) {
             result.files.push_back(fileResult);
         }
@@ -549,61 +579,38 @@ bool Scanner::quarantineFile(const std::filesystem::path& source, std::string& d
     }
 
     try {
-        fs::path quarantineDir(config_.actions.quarantine.directory);
+        const fs::path quarantineDir(config_.actions.quarantine.directory);
+        fs::create_directories(quarantineDir);
 
-        // Create quarantine directory if it doesn't exist
-        if (!fs::exists(quarantineDir)) {
-            fs::create_directories(quarantineDir);
-        }
+        const fs::path dest = quarantine::destinationFor(
+            quarantineDir, source, config_.actions.quarantine.preserveStructure);
 
-        fs::path dest;
+        // A destination that is already taken is stepped past rather than written
+        // over, and the step is bounded: a directory that somehow answers "taken" a
+        // thousand times running is a filesystem saying no, not a name to keep
+        // guessing at. Failing here leaves the file exactly where it was, which the
+        // report shows as a finding that was not quarantined.
+        constexpr int kMaxDisambiguators = 1000;
+        for (int attempt = 0; attempt <= kMaxDisambiguators; ++attempt) {
+            const fs::path candidate =
+                attempt == 0 ? dest : quarantine::withDisambiguator(dest, attempt);
 
-        if (config_.actions.quarantine.preserveStructure) {
-            // Preserve directory structure relative to scan directories
-            // Find which scan directory this file is under
-            fs::path relativePath;
-            for (const auto& scanDir : config_.scan.directories) {
-                fs::path scanPath(scanDir);
-                auto canonical = fs::weakly_canonical(source);
-                auto canonicalScan = fs::weakly_canonical(scanPath);
+            // Inside the loop: a disambiguated candidate has the same parent, but
+            // the directory can have been removed between attempts by something
+            // else on the machine, and re-making it costs nothing when it is there.
+            fs::create_directories(candidate.parent_path());
 
-                auto [rootEnd, nothing] = std::mismatch(
-                    canonicalScan.begin(), canonicalScan.end(),
-                    canonical.begin(), canonical.end()
-                );
-
-                if (rootEnd == canonicalScan.end()) {
-                    // Source is under this scan directory
-                    relativePath = fs::relative(source, scanPath);
-                    break;
-                }
-            }
-
-            if (relativePath.empty()) {
-                relativePath = source.filename();
-            }
-
-            dest = quarantineDir / relativePath;
-
-            // Create parent directories
-            fs::create_directories(dest.parent_path());
-        } else {
-            // Flat structure - just use filename
-            dest = quarantineDir / source.filename();
-
-            // Handle duplicates by adding numeric suffix
-            int suffix = 0;
-            while (fs::exists(dest)) {
-                dest = quarantineDir / (source.stem().string() + "." +
-                                        std::to_string(++suffix) +
-                                        source.extension().string());
+            switch (quarantine::moveWithoutReplacing(source, candidate)) {
+                case quarantine::MoveResult::Moved:
+                    destPath = candidate.string();
+                    return true;
+                case quarantine::MoveResult::DestinationExists:
+                    continue;
+                case quarantine::MoveResult::Failed:
+                    return false;
             }
         }
-
-        // Move the file
-        fs::rename(source, dest);
-        destPath = dest.string();
-        return true;
+        return false;
 
     } catch (const fs::filesystem_error&) {
         return false;

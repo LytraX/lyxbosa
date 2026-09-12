@@ -70,6 +70,51 @@ Progress treats an archive as the directory it is: a zip's central directory giv
 exact member count before anything is inflated, and a `.tar.gz` — which has no index —
 reports its position in compressed bytes, which the filesystem already knows exactly.
 
+## Quarantine
+
+Quarantine is off by default, and an unattended run that would move files refuses unless
+`--quarantine` is given explicitly. It moves a file only for a finding about that file's
+own content: an exposure finding never moves anything, in an archive or out of one.
+
+```yaml
+actions:
+  quarantine:
+    enabled: false
+    directory: /var/quarantine
+    preserve_structure: true
+```
+
+A quarantined file is evidence, so the destination is built to answer two questions: what
+was this, and where was it taken from.
+
+With `preserve_structure` — the default — the source's **whole absolute path** is mirrored
+under the quarantine directory, so `/var/www/a/wp/shell.php` lands at
+`<directory>/var/www/a/wp/shell.php`. A Windows root name becomes one ordinary component
+(`C:` → `C`, `\\server\share` → `server_share`). Mirroring the absolute path rather than
+the path relative to the scan root is what makes two files unable to arrive at one
+destination: `/var/www/a/wp/shell.php` and `/var/www/b/wp/shell.php` are the same relative
+path under two roots, and on a shared host that is the ordinary case rather than the
+exotic one. It is also the only form that says which original a sample was — the scan root
+is exactly the part a relative path drops.
+
+Without `preserve_structure` the quarantine directory is flat and holds filenames alone.
+Two samples are still both kept, but where each came from is no longer recoverable from
+the destination, which is the cost of that choice.
+
+**Nothing in a quarantine directory is ever written over.** The move is the platform's
+refusing one — `renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS,
+`MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` on Windows — so a destination that is
+already taken fails rather than replaces, and the refusal is taken by the kernel rather
+than by a preceding `exists()` that anything running alongside could invalidate. A name
+that is taken is stepped past with a numeric suffix (`shell.php` → `shell.1.php`) in the
+same directory, so a second run into the same quarantine directory keeps the first run's
+sample and its path.
+
+A rename cannot cross a filesystem boundary, so a quarantine directory on its own mount is
+handled by creating the destination exclusively, copying the bytes through it, flushing,
+and unlinking the source last. That path refuses an occupied destination the same way, and
+leaves the evidence in two places rather than none if it is interrupted.
+
 ## Skipped files
 
 A file the scanner did not open is not a file it found nothing in, so every skip is
