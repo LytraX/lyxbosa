@@ -1,6 +1,7 @@
 # Overlay triplets
 
-These mirror vcpkg's built-in triplets of the same name and add two lines:
+Four of these five mirror vcpkg's built-in triplets of the same name and add two lines
+(`x64-linux-fuzz.cmake` is the exception, described at the end):
 
 ```cmake
 set(VCPKG_BUILD_TYPE release)
@@ -23,5 +24,13 @@ environment - it is also what lets the variable through at all. Each triplet fil
 so at length. The value lives in `docker/build/source-date-epoch` and the procedure is
 in `docs/RELEASING.md` under *Rebuilding a release*.
 
-Keep these in step with upstream if the built-in definitions change; the rest of
-each file is copied verbatim from `vcpkg/triplets/`.
+`x64-linux-fuzz.cmake` mirrors nothing: vcpkg has no built-in triplet of that name. It is
+`x64-linux` plus AddressSanitizer, UndefinedBehaviorSanitizer and SanitizerCoverage on the
+parsers alone — zlib, libzip, re2, abseil and the compression ports under them — because ASan
+reports an out-of-bounds access only when the code performing it was instrumented, and
+libFuzzer cannot steer through a parser whose coverage it cannot see. It carries no
+`VCPKG_ENV_PASSTHROUGH`, because nothing about a fuzz build is reproduced byte for byte. It
+is used only by `docker/fuzz/`; see `docs/FUZZING.md`.
+
+Keep the other four in step with upstream if the built-in definitions change; the rest of
+each of those files is copied verbatim from `vcpkg/triplets/`.
