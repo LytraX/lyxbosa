@@ -201,6 +201,42 @@ int scanExitCode(const std::vector<fs::path>& directories, const std::string& re
     return ScanUseCase(terminal, caps).execute(args);
 }
 
+// What `lyxbosa scan` wrote to stderr, which is where the diagnostics an operator has to
+// act on go. `--quiet` is on deliberately: a failure the operator must know about is not
+// progress chatter, and the case is that --quiet does not reach it.
+struct ScanRun {
+    int code = 0;
+    std::string diagnostics;
+};
+
+ScanRun scanQuietly(const fs::path& config, const fs::path& report) {
+    CliArgs args;
+    args.configFile = config.string();
+    args.force = true;
+    args.quarantine = true;
+    args.quiet = true;
+    args.outputFile = report.string();
+    args.noPreCount = true;
+
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+
+    ScanRun run;
+    testing::internal::CaptureStderr();
+    run.code = ScanUseCase(terminal, caps).execute(args);
+    run.diagnostics = testing::internal::GetCapturedStderr();
+    return run;
+}
+
+// A configuration file, because the command reads one and the quarantine destination is
+// what these cases are about.
+void writeQuarantineConfig(const fs::path& path, const fs::path& root,
+                           const fs::path& quarantineDir) {
+    writeFile(path, "scan:\n  directories:\n    - " + root.string() +
+                        "\nactions:\n  quarantine:\n    enabled: true\n    directory: " +
+                        quarantineDir.string() + "\n");
+}
+
 AppConfig quarantineConfig(const fs::path& root, const fs::path& quarantineDir) {
     AppConfig config = Config::loadFromString(Config::generateDefault());
     config.scan.directories = {root.string()};
@@ -568,6 +604,41 @@ TEST(QuarantineFailureTest, AContainerThatCouldNotBeMovedStillReachesTheReport) 
     }
     EXPECT_TRUE(named) << "the container has no matches of its own; it is in the report "
                           "for its quarantine outcome alone";
+}
+
+// The diagnostic an operator reads, and the two decisions in it that were deliberate:
+// --quiet does not suppress it, and the list of paths is capped so a quarantine
+// directory on a read-only mount cannot bury its own explanation under a thousand lines.
+TEST(QuarantineFailureTest, TheDiagnosticSurvivesQuietAndCapsItsList) {
+    TempDir dir;
+    const fs::path root = dir.path() / "site";
+    for (int i = 1; i <= 12; ++i) {
+        writeFile(root / ("shell" + std::to_string(i) + ".php"), kShell);
+    }
+    writeFile(dir.file("blocker"), "a regular file");
+    writeQuarantineConfig(dir.file("scan.yaml"), root, dir.file("blocker") / "quarantine");
+
+    const ScanRun run = scanQuietly(dir.file("scan.yaml"), dir.file("report.txt"));
+
+    EXPECT_EQ(run.code, 2) << "a failed move does not outrank the finding that caused it";
+    EXPECT_TRUE(contains(run.diagnostics, "12 files could not be moved")) << run.diagnostics;
+    EXPECT_TRUE(contains(run.diagnostics, "... and 2 more, all in the report"))
+        << run.diagnostics;
+}
+
+// The companion. Without it the case above would pass against a command that had learned
+// to print that sentence whatever happened.
+TEST(QuarantineFailureTest, TheDiagnosticIsAbsentWhenEveryMoveSucceeded) {
+    TempDir dir;
+    TempDir quarantine;
+    const fs::path root = dir.path() / "site";
+    writeFile(root / "shell.php", kShell);
+    writeQuarantineConfig(dir.file("scan.yaml"), root, quarantine.path());
+
+    const ScanRun run = scanQuietly(dir.file("scan.yaml"), dir.file("report.txt"));
+
+    EXPECT_EQ(run.code, 2);
+    EXPECT_FALSE(contains(run.diagnostics, "could not be moved")) << run.diagnostics;
 }
 
 // The same hole in the readable report. A container has no match of its own, so both
