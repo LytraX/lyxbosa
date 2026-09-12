@@ -188,16 +188,19 @@ Assert-LastExitCode "Configure"
 
 # The CLI and the test binary in one build.
 #
-# No --parallel, and that is measured rather than overlooked. CMakeLists.txt sets /MP, so
-# each project already compiles on every processor the machine has; --parallel adds
-# MSBuild's /m, which runs the two projects at once on top of that. On a 2-core, 4-thread
-# affinity mask with /MP4, standing in for a hosted runner, a clean build took 142.0 and
-# 141.5 s with it and 142.5 and 141.5 s without, while the cl.exe processes alive at once
-# went from 5 to 10 and their peak working set from 1.5 to 2.4 GiB. Overlapping projects
-# pays only where processors would otherwise sit idle - 16.5 s against 22 s on 56 threads -
-# and a runner has none to spare.
+# --parallel adds MSBuild's /m, which runs projects that do not depend on each other at
+# once. CMakeLists.txt already sets /MP, so each project compiles on every processor, and
+# what /m overlaps is what comes after lyxbosa_core: src-cli/lyxbosa.cpp and its link beside
+# the test sources and theirs. On a 2-core, 4-thread affinity mask with /MP4, standing in
+# for a hosted runner, a clean build took 106.8 and 106.7 s with it against 109.8 and 109.7 s
+# without, the peak working set of cl.exe unchanged at 1.5 GiB and at most one more
+# compiler process alive; on 56 threads, 16.3 to 16.6 s against 22.3 to 22.8 s.
+#
+# That depends on the shared sources compiling first. When each executable compiled them
+# itself, /m ran two full projects at once on a runner that had no processor to spare for
+# either: no faster, twice the compiler processes, and 0.85 GiB more memory.
 Write-Host "Building..."
-cmake --build "$BuildDir" --config Release
+cmake --build "$BuildDir" --config Release --parallel
 Assert-LastExitCode "Build"
 
 if ($RunTests) {
