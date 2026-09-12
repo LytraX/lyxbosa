@@ -65,19 +65,46 @@ $HostArch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchi
 }
 $RunTests = ($Arch -eq $HostArch)
 
-# Ensure vcpkg is available
+# WHICH VCPKG
+# -----------
+# vcpkg-configuration.json pins the registry baseline, which pins the port VERSIONS. The
+# tool that builds them comes from the clone, and cloning the default branch means whatever
+# was on it that morning. docker/build/vcpkg-commit holds the commit, and it is the same
+# file the two Linux images read - one value rather than three that agree today.
+#
+# The pin applies to a clone this script makes. It deliberately does NOT check out that
+# commit inside a VCPKG_ROOT somebody else provided: on a GitHub runner that variable
+# points at the image's own vcpkg, shared with every other job on the machine, and moving
+# its HEAD would be this script reaching outside its own build.
+#
+# So a Windows release is not reproducible the way a Linux one is, and this pin does not
+# make it so - the MSVC toolchain, the Windows SDK and that preinstalled vcpkg all come
+# from the runner image, which rolls. What this does is make the local path deterministic
+# and make the remote one REPORTED: the commit actually in use is printed below, so a log
+# says which tool built the artefact instead of leaving it to be guessed.
+$VcpkgCommit = (Get-Content (Join-Path $ScriptDir "..\vcpkg-commit") -Raw).Trim()
+
 if (-not $env:VCPKG_ROOT) {
     if (Test-Path "$ProjectRoot\vcpkg\vcpkg.exe") {
         $env:VCPKG_ROOT = "$ProjectRoot\vcpkg"
     } else {
-        Write-Host "VCPKG_ROOT not set. Cloning vcpkg..."
+        Write-Host "VCPKG_ROOT not set. Cloning vcpkg at $VcpkgCommit..."
         git clone https://github.com/microsoft/vcpkg.git "$ProjectRoot\vcpkg"
+        if ($LASTEXITCODE -ne 0) { Write-Host "=== vcpkg clone failed ===" -ForegroundColor Red; exit $LASTEXITCODE }
+        git -C "$ProjectRoot\vcpkg" checkout --detach $VcpkgCommit
+        if ($LASTEXITCODE -ne 0) { Write-Host "=== vcpkg is not at $VcpkgCommit ===" -ForegroundColor Red; exit $LASTEXITCODE }
         & "$ProjectRoot\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+        if ($LASTEXITCODE -ne 0) { Write-Host "=== vcpkg bootstrap failed ===" -ForegroundColor Red; exit $LASTEXITCODE }
         $env:VCPKG_ROOT = "$ProjectRoot\vcpkg"
     }
 }
 
+# Whatever it turned out to be, said out loud. An unreadable HEAD is reported as unknown
+# rather than left blank: a missing line and a line nobody wrote look the same in a log.
+$VcpkgAt = (git -C $env:VCPKG_ROOT rev-parse HEAD 2>$null)
+if (-not $VcpkgAt) { $VcpkgAt = "unknown - not a git checkout" }
 Write-Host "Using vcpkg at: $env:VCPKG_ROOT"
+Write-Host "vcpkg commit:   $VcpkgAt (this repository pins $VcpkgCommit for clones it makes)"
 
 # A native command's exit code does not stop a PowerShell script on its own, and a cmake
 # or ctest that failed must fail the job: every step checks.

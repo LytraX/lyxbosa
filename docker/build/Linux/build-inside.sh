@@ -28,6 +28,21 @@ set -e
 # whether this container can run what it just produced. Unset means run, so a caller that
 # forgets the variable gets a slow suite rather than a silent skip.
 
+# What this image is, printed before anything is built. The Dockerfile pins the base layer
+# by digest, the compiler by its exact release and vcpkg by commit; every other package is
+# whatever dnf resolved on the day the image was built, and the manifest is the record of
+# that. Two builds that disagree have somewhere to be diffed, and a rebuilder reading a log
+# can see which toolchain produced the file they are holding.
+if [ -r /etc/lyxbosa-builder-manifest ]; then
+    head -3 /etc/lyxbosa-builder-manifest
+    # The package lines are the indented ones. Counted rather than derived by subtracting
+    # a header length, which would go quietly wrong the day the header gains a line.
+    echo "packages: $(command grep -c '^  ' /etc/lyxbosa-builder-manifest) recorded in /etc/lyxbosa-builder-manifest"
+else
+    echo "no builder manifest in this image" >&2
+    exit 1
+fi
+
 source /opt/rh/gcc-toolset-12/enable
 
 # Build version override arg
@@ -53,6 +68,12 @@ cmake -B /build -S /src \
 
 # The CLI and the test binary in one build.
 cmake --build /build
+
+# The floor README.md publishes, asserted on the binary that is about to be copied out.
+# AlmaLinux 8 is the only reason "glibc 2.28 or newer" is true, and a base image bumped to
+# a newer distribution would strand every host the standard build exists for without one
+# line of this build failing. See docker/build/abi-floor.sh for both directions of it.
+abi-floor /build/lyxbosa
 
 if [ "${LYXBOSA_RUN_TESTS:-1}" != "0" ]; then
     # The tests run as an unprivileged user. The container is root, and root ignores
