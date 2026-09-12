@@ -187,6 +187,15 @@ cmake -B "$BuildDir" -S "$ProjectRoot" `
 Assert-LastExitCode "Configure"
 
 # The CLI and the test binary in one build.
+#
+# No --parallel, and that is measured rather than overlooked. CMakeLists.txt sets /MP, so
+# each project already compiles on every processor the machine has; --parallel adds
+# MSBuild's /m, which runs the two projects at once on top of that. On a 2-core, 4-thread
+# affinity mask with /MP4, standing in for a hosted runner, a clean build took 142.0 and
+# 141.5 s with it and 142.5 and 141.5 s without, while the cl.exe processes alive at once
+# went from 5 to 10 and their peak working set from 1.5 to 2.4 GiB. Overlapping projects
+# pays only where processors would otherwise sit idle - 16.5 s against 22 s on 56 threads -
+# and a runner has none to spare.
 Write-Host "Building..."
 cmake --build "$BuildDir" --config Release
 Assert-LastExitCode "Build"

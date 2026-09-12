@@ -42,6 +42,22 @@ if(MSVC)
   add_compile_definitions(NOMINMAX)
 endif()
 
+# Compile the sources of one target concurrently under MSVC.
+#
+# The Visual Studio generator that docker/build/Windows/build.ps1 uses hands MSBuild one
+# project per target, and MSBuild invokes cl.exe once per source, in sequence, unless /MP
+# is set; Ninja on the Linux builds needs no flag for this. It changes when a translation
+# unit is compiled and nothing about how: each one is still its own cl.exe invocation into
+# its own object file, and the link line is the one CMake writes.
+#
+# Appended with add_compile_options and not set through CMAKE_CXX_FLAGS, because a
+# CMAKE_CXX_FLAGS given on a configure command line replaces CMake's MSVC defaults rather
+# than adding to them - it silently drops /EHsc and the /D defines, and the build that
+# results is faster and wrong. The generated projects carry it as
+# <MultiProcessorCompilation>, and MSBuild then passes a bare /MP, which cl.exe sizes from
+# the machine's processor count.
+add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/MP>)
+
 # Find vcpkg packages
 find_package(fmt CONFIG REQUIRED)
 find_package(argparse CONFIG REQUIRED)
