@@ -10,6 +10,7 @@ The flags and configuration keys named here are described in full in
 [docs/CLI.md](CLI.md) and in the output of `lyxbosa init-config`.
 
 - [Archives](#archives) — zip, tar, tar.gz and gz, and the backup left in the web root
+- [File names](#file-names) — when the name is the attack, and what is done about it
 - [Skipped files](#skipped-files) — every file the scanner did not open, counted by reason
 - [Choosing `scan.max_file_size`](#choosing-scanmax_file_size) — what the cap buys, measured
 - [In-file annotations](#in-file-annotations) — and why a marker is not trusted by default
@@ -182,6 +183,113 @@ and `container NOT quarantined - still at <path>` — and the full-screen view s
 chips on the finding's own line. CSV carries `container_quarantine`, empty when no decision
 was taken.
 
+## File names
+
+A file's name is chosen by whoever uploaded it, and on a compromised host it is sometimes
+the attack rather than a label on one. `x$(sleep 20)y.mdb` is evidence whatever is inside
+it: somebody wrote a command substitution into a name hoping that something downstream —
+a backup script, a log pipeline, a cron job building an argument list — would hand it to a
+shell.
+
+Six rules read the name. They are ordinary findings: they carry a severity, they appear in
+the text, JSON and CSV reports beside every other finding, and they move the exit code to
+`2` like any other match.
+
+| code | severity | what it reads |
+|---|---|---|
+| FN001 | High | `$(...)`, a backtick pair or `${...}` — a shell would execute it |
+| FN002 | Medium | a double quote, semicolon, pipe or backslash — ends an argument or a command |
+| FN003 | Medium | a byte below `0x20` — splits a log line, a report row or a `read`-per-line pipeline |
+| FN004 | Medium | a leading `-`, which a glob expansion hands to the next command as an option |
+| FN005 | High | a dot-dot against a character that resembles a separator without being one |
+| FN006 | High | `%00`, which truncates the name in anything that percent-decodes it |
+
+Disable them like any other rule, by code or by category:
+
+```yaml
+builtin_rules:
+  disable: [FN004]        # a tree of files whose names legitimately start with a dash
+```
+
+**A name finding never quarantines the file.** Quarantine acts on bytes, and these rules
+have not read any: the file is very likely the customer's own database with a hostile
+string written on the outside of it. Moving it would also carry that string into the
+quarantine directory, which is the directory an operator is most likely to sweep later
+with a shell loop. A file carrying a name finding *and* a content signature is still
+quarantined, on the strength of the signature. The remedy for a hostile name is to delete
+it or rename it, and which of those it is depends on whether anybody needs the file.
+
+**`scan.include` does not hide a name.** That list decides what gets *opened*, and a name
+costs no open — so a file no include pattern covers is still reported when its name is a
+finding, with its row saying plainly that the bytes were never read. `scan.exclude` is the
+other intention and is obeyed: a pattern the operator wrote to keep a tree out of the scan
+keeps it out of this too.
+
+**Volume.** One automated vulnerability scanner left 83 such names in a single upload
+directory, and a worse host gives thousands. The summary rolls them up on one line rather
+than repeating them:
+
+```
+Files with matches: 4118
+Files with a hostile name: 4102 (the name is the finding; the bytes may be ordinary)
+```
+
+JSON carries the same count as `filesWithHostileNames`, always present.
+
+### How a name is printed, and how a program gets back to the file
+
+A name is untrusted text on its way to a terminal and untrusted *bytes* on its way to a
+program, and a report owes both.
+
+**The rendering.** Every path in every output goes through one escape before it is written.
+Control bytes and DEL become a visible `\x0a`, `\x09`, `\x1b` and so on, and so does any
+byte that is not part of well-formed UTF-8 — including overlong forms such as `c0 af`,
+surrogates and anything past U+10FFFF. Well-formed UTF-8 is left exactly alone, so a name
+in Greek, Japanese or French prints as it is. Two things depend on this. A terminal is the
+one consumer that cannot be handed the bytes, because a name carrying `ESC ] 52 ; c ;` is
+not text there but an instruction that writes the reader's clipboard. And a JSON document
+has to stay valid UTF-8 or no parser will accept it, and a file name on a Linux host may be
+any bytes at all.
+
+**The bytes.** That escape is one-way — a backslash already in a name is written through
+unchanged, so a file named with the six characters `a\x0ab` renders like one named `a`, a
+newline, `b` — which is fine for a person and useless to a program that has to open, match
+or delete the exact file. So a path the rendering could not carry exactly is accompanied by
+its bytes in hex:
+
+| output | field |
+|---|---|
+| JSON | `pathBytesHex`, and `quarantinePathBytesHex`, present only when that path's rendering is inexact |
+| CSV | `file_bytes_hex` and `quarantine_path_bytes_hex`, the last two columns, empty otherwise |
+| text | nothing — this is the terminal, and the rendering is the point |
+
+A consumer that needs the real name reads the hex field when it is there and the rendered
+path when it is not. Its presence *is* the statement that the path beside it is a rendering
+rather than a name. An ordinary tree produces none of them, and in practice a Windows tree
+produces none either: NTFS stores names as UTF-16 and the narrow API converts on the way in,
+so a name that is not valid UTF-8 cannot exist there — it becomes whatever characters the
+host's code page maps those bytes to, at the moment the file is created.
+
+Hex rather than a reversible escape, deliberately. Doubling every backslash would make the
+rendering reversible and would also rewrite every path in every report produced on Windows,
+where the separator *is* a backslash — a break for every existing consumer, to pay for a
+case that is rare. Hex is additive, has no escaping rules of its own to get wrong, and is
+what a loader wants anyway.
+
+### What this does not read
+
+Only the final component of the path. A hostile directory name is a fact about that
+directory, and putting it on every file underneath would be thousands of rows for one
+thing. Archive member names are not read either — these rules are about files on disk.
+
+On Windows, NTFS refuses several of these shapes outright, so a file created there cannot
+carry them: a double quote, a pipe and every byte below `0x20` are rejected, and a trailing
+space or a trailing dot is silently stripped before the name reaches the disk. A backslash
+is always a separator there and never part of a name. What NTFS does accept is `$(`, a
+backtick, `${`, a semicolon, `%00`, a leading dash, and both of the separator lookalikes
+FN005 reads — U+FF0F and the re-encoded overlong slash — so those rules are as live on
+Windows as on Linux.
+
 ## Skipped files
 
 A file the scanner did not open is not a file it found nothing in, so every skip is
@@ -192,6 +300,11 @@ counted and named. Three things can happen to a file at the file level:
 | `size` | larger than `scan.max_file_size` |
 | `excluded` | rejected by `scan.include` / `scan.exclude` |
 | `unreadable` | `stat` or `open` failed — permissions, a race, a dead mount |
+
+A skipped file can still carry a finding, and one line can say both. A name is knowable
+without opening anything, so a file past the size limit, one that would not open and one
+no include pattern covers can each raise an FN rule; the row then names the finding *and*
+says the bytes were not read.
 
 Archive members carry their own reasons (`not code`, `over size limit`, `budget spent`,
 `compression ratio`, `too deeply nested`, `corrupt`), and both levels read the same way

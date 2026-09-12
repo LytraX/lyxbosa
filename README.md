@@ -13,9 +13,9 @@ lyxbosa scan /var/www/html --recursive
 
 ## What it detects
 
-Twelve categories of server-side malware, shipped as built-in rules. Any of them can be
-enabled or disabled by category or by individual rule code, and custom rules can be defined
-alongside them.
+Twelve categories of server-side malware plus one that reads file names, shipped as built-in
+rules. Any of them can be enabled or disabled by category or by individual rule code, and
+custom rules can be defined alongside them.
 
 | Code | Category | Description |
 |------|----------|-------------|
@@ -31,6 +31,7 @@ alongside them.
 | DEFC | Defacement | Website defacement markers |
 | PL | Perl | Perl-based attack scripts |
 | ARC | Archive | Site backups and source archives left exposed in the scanned tree |
+| FN | Filename | Names carrying shell metacharacters, control bytes, argument injection or a traversal in a lookalike encoding |
 
 Each file goes through a layered matching engine rather than a single pattern list:
 
@@ -53,6 +54,14 @@ Archives are not opaque bytes: zip, tar, tar.gz and gz are opened and their memb
 the same rules, and a backup of an installed site left under a web root is itself reported as
 an exposure. What a scan opens, what it declines to open and how each guard is expressed are
 in [docs/SCANNING.md](docs/SCANNING.md).
+
+Names are not labels either. On a compromised host a file called `x$(sleep 20)y.mdb` is
+evidence whatever is inside it — somebody uploaded a command substitution hoping something
+downstream would pass the name to a shell — so the FN rules read the name as well as the
+bytes. A name finding is an ordinary finding with an ordinary severity, and it never moves
+the file: the bytes may be the customer's own database, and the answer to a hostile name is
+to delete it or rename it. [docs/SCANNING.md](docs/SCANNING.md#file-names) has the rules,
+what they decline to fire on and why.
 
 **Around the matching.** Recursive traversal with a configurable file size limit (25 MB by
 default) and symlink control; include and exclude glob patterns; four severity levels —

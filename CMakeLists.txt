@@ -219,6 +219,7 @@ set(RULE_SOURCES
     src-lib/cpp/rules/defacement.cpp
     src-lib/cpp/rules/perl.cpp
     src-lib/cpp/rules/archive.cpp
+    src-lib/cpp/rules/filename.cpp
 )
 
 # Collect library sources from src-lib
@@ -453,6 +454,7 @@ if(BUILD_TESTS)
     tests/update_test.cpp
     tests/update_apply_test.cpp
     tests/build_identity_test.cpp
+    tests/hostile_filename_test.cpp
     tests/fuzz_replay_test.cpp
     ${LIB_SOURCES}
     ${UPDATE_SOURCES}

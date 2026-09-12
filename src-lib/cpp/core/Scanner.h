@@ -115,6 +115,14 @@ private:
     // which is a question about its bytes, never about its name.
     FileResult scanContent(const std::filesystem::path& path, std::string& content);
 
+    // Attach this file's FN findings - what its name is, as opposed to what is in it.
+    //
+    // One function and every caller goes through it, because the paths that need it are
+    // exactly the paths that do not look alike: a file that was read, a file too large
+    // to read, a file that would not open, and `check` on a single path. A name costs
+    // nothing to examine and is knowable in all four, so all four must answer the same.
+    void addNameFindings(FileResult& result) const;
+
     // Quarantine a file. `destPath` is where it landed, and it is a path rather than a
     // string so that the destination reaches a report through the same pathForDisplay()
     // every other path does - it mirrors an attacker-controlled source path under

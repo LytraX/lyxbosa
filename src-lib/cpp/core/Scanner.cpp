@@ -205,6 +205,27 @@ ScanResult Scanner::scan() {
         }
     };
 
+    // One file's findings folded into the aggregate: the match total, the severity
+    // breakdown and the two file counters.
+    //
+    // Every path that keeps a FileResult goes through this, including the two that end
+    // in a skip. That is not tidiness: a name finding is knowable without reading a
+    // byte, so a file whose size could not be stat'd and whose name carries a command
+    // substitution has a real finding and no content. Counting it only where content
+    // was read would leave the summary asserting a total that the rows below it
+    // contradict - the aggregate saying nothing was found and a row naming the file.
+    auto accountFindings = [&result, &countSeverities](const FileResult& file) {
+        if (file.matches.empty()) {
+            return;
+        }
+        ++result.filesWithMatches;
+        result.totalMatches += file.matches.size();
+        countSeverities(file.matches);
+        if (hasHostileName(file)) {
+            ++result.filesWithHostileNames;
+        }
+    };
+
     // A member's address under the container's new location.
     //
     // Built by replacing the prefix the display path was COMPOSED from -
@@ -332,10 +353,35 @@ ScanResult Scanner::scan() {
         // operator can see their globs took effect, and only listed if they asked.
         if (info.skip == SkipReason::Excluded) {
             result.skips.skip(SkipReason::Excluded);
-            if (config_.scan.reportExcluded) {
-                FileResult excluded;
-                excluded.path = info.path;
-                excluded.skipReason = SkipReason::Excluded;
+
+            FileResult excluded;
+            excluded.path = info.path;
+            excluded.skipReason = SkipReason::Excluded;
+
+            // A file the include list did not cover was not OPENED, which is all that
+            // list decides - the shipped configuration says so in its own words,
+            // because an extension is never trusted to say what a file is. Its name
+            // was still read, by the walk, for free. Skipping the name question here
+            // would make this whole rule set blind to most of its own evidence: of the
+            // 83 hostile names measured on a production upload directory, 73 are
+            // `.mdb`, and no include pattern covers a `.mdb`. A scanner that cannot
+            // see 88% of what it was built for is not a scanner.
+            //
+            // An `exclude` pattern is the other intention and gets the other answer.
+            // There the operator has written down a tree they do not want looked at,
+            // and answering anyway - even about something as cheap as a name - is the
+            // tool overruling them.
+            if (!info.excludedByPattern) {
+                addNameFindings(excluded);
+            }
+            accountFindings(excluded);
+
+            // Reported when the operator asked for every excluded file, and reported
+            // regardless when there is something to say about this one. `report_excluded`
+            // is off by default because a glob that cuts node_modules produces hundreds
+            // of thousands of these - which is an argument about volume and not about
+            // whether a finding may be withheld.
+            if (config_.scan.reportExcluded || !excluded.matches.empty()) {
                 result.files.push_back(excluded);
                 if (fileResultCallback_) {
                     fileResultCallback_(result.files.back());
@@ -351,8 +397,13 @@ ScanResult Scanner::scan() {
             FileResult unreadable;
             unreadable.path = info.path;
             unreadable.skipReason = SkipReason::Unreadable;
+            // The bytes could not be reached; the name was. A file the walk could not
+            // even stat still has the name whoever uploaded it chose, and declining to
+            // say so would be the scanner withholding something it knows for certain.
+            addNameFindings(unreadable);
             result.skips.skip(SkipReason::Unreadable);
             ++result.totalFilesScanned;
+            accountFindings(unreadable);
             result.files.push_back(unreadable);
 
             publishProgress(info.path, 0);
@@ -377,7 +428,12 @@ ScanResult Scanner::scan() {
         // backup, where the affordable answer is the archive itself and it costs
         // one short read.
         std::string content;
-        if (!oversize) {
+        if (oversize) {
+            // scanContent() is where a name is normally examined, and it is not called
+            // for a file past the size limit. A 13 GB backup has a name like any other
+            // file and it is the one thing about it that costs nothing to read.
+            addNameFindings(fileResult);
+        } else {
             fileResult = scanContent(info.path, content);
             fileResult.fileSize = info.size;
 
@@ -386,6 +442,9 @@ ScanResult Scanner::scan() {
             if (fileResult.skipReason == SkipReason::Unreadable) {
                 result.skips.skip(SkipReason::Unreadable);
                 ++result.totalFilesScanned;
+                // scanContent() has already read the name; the same argument as the
+                // branch above applies to a file that opened and would not read.
+                accountFindings(fileResult);
                 result.files.push_back(fileResult);
 
                 publishProgress(info.path, info.size);
@@ -407,6 +466,7 @@ ScanResult Scanner::scan() {
             fileResult.skipReason = SkipReason::Size;
             result.skips.skip(SkipReason::Size);
             ++result.totalFilesScanned;
+            accountFindings(fileResult);
             result.files.push_back(fileResult);
 
             publishProgress(info.path, info.size);
@@ -455,12 +515,7 @@ ScanResult Scanner::scan() {
         // Update statistics
         ++result.totalFilesScanned;
         result.bytesScanned += chargeBytes;
-        result.totalMatches += fileResult.matches.size();
-        countSeverities(fileResult.matches);
-
-        if (!fileResult.matches.empty()) {
-            ++result.filesWithMatches;
-        }
+        accountFindings(fileResult);
 
         // Quarantine if enabled - but never for an exposure finding alone.
         // An exposed backup is the operator's own data, possibly their only
@@ -593,7 +648,28 @@ FileResult Scanner::scanContent(const std::filesystem::path& path, std::string& 
         result.skipReason = SkipReason::Unreadable;
     }
 
+    // After the catch, and deliberately: a name is knowable whether or not a single
+    // byte was read, and the two clear() calls above throw away content findings only.
+    // A file that would not open and is called `x$(id).php` has one true finding, and
+    // this is where it survives.
+    addNameFindings(result);
+
     return result;
+}
+
+void Scanner::addNameFindings(FileResult& result) const {
+    auto named = engine_.matchName(pathToUtf8(result.path));
+    if (named.empty()) {
+        return;
+    }
+
+    // In front of the content findings. A name finding is about the whole file rather
+    // than a position in it, so it reads first for the same reason a heading does -
+    // and nothing about a file with no hostile name changes, which is every file in an
+    // ordinary tree.
+    result.matches.insert(result.matches.begin(),
+                          std::make_move_iterator(named.begin()),
+                          std::make_move_iterator(named.end()));
 }
 
 FileResult Scanner::scanFile(const std::filesystem::path& path) {

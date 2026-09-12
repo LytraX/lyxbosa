@@ -71,6 +71,22 @@ public:
     // Returns all matches from all rules
     std::vector<FileMatch> match(std::string_view content, std::string_view filePath = "") const;
 
+    // Findings about the file's NAME, from the FN rules. A separate entry point rather
+    // than a branch inside match(), because the two ask different questions of
+    // different bytes: match() is handed file content, and a name is knowable without
+    // reading any. That difference is load-bearing - a file too large to read and a
+    // file that could not be opened at all still have names, and both reach this.
+    //
+    // `pathUtf8` is the whole path; only its final component is examined, split by
+    // rules::filename::finalComponent(). Which rules run is the same question it is for
+    // content: a code in `builtin_rules.disable` does not, and `builtin_rules.use`
+    // selects, through exactly the same loaded-rule list every other rule goes through.
+    std::vector<FileMatch> matchName(std::string_view pathUtf8) const;
+
+    // How many FN rules are live. Lets a caller skip the call - and a test assert that
+    // disabling one took effect.
+    size_t nameRuleCount() const { return nameRules_.size(); }
+
     // Get the number of loaded custom rules
     size_t customRuleCount() const { return rules_.size(); }
 
@@ -164,6 +180,13 @@ private:
 
     std::vector<std::unique_ptr<Rule>> rules_;  // Custom YAML rules
     std::vector<const rules::BuiltinRule*> builtinRules_;  // Built-in CTRE rules
+
+    // The FN rules that are live, kept apart from builtinRules_ because they must never
+    // be run against content: they have no patterns, so the content loop would walk
+    // every file for a rule that cannot match, which is why scansContent() already
+    // excludes them. Loaded and unloaded by the same four functions, so an operator's
+    // `disable` and `use` reach a name rule and a content rule identically.
+    std::vector<const rules::BuiltinRule*> nameRules_;
     std::unordered_set<std::string> disabledRules_;  // Disabled rule codes
 
     // Whether a marker inside a scanned file is obeyed. False until a configuration

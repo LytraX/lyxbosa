@@ -24,6 +24,7 @@ enum class Category : uint8_t {
     Defacement,     // DEFC - Site defacement
     Perl,           // PL - Perl-specific malware
     Archive,        // ARC - Exposed archives and backups
+    Filename,       // FN - Hostile file names
     COUNT           // Number of categories
 };
 
@@ -50,6 +51,7 @@ constexpr CategoryInfo getCategoryInfo(Category cat) {
         {"DEFC", "Defacement",    "Site defacement"},
         {"PL",   "Perl",          "Perl malware"},
         {"ARC",  "Archive",       "Exposed archives and backups"},
+        {"FN",   "Filename",      "Hostile file names"},
     }};
     return infos[static_cast<size_t>(cat)];
 }
@@ -69,6 +71,7 @@ inline std::optional<Category> parseCategory(std::string_view code) {
     if (code == "DEFC") return Category::Defacement;
     if (code == "PL")   return Category::Perl;
     if (code == "ARC")  return Category::Archive;
+    if (code == "FN")   return Category::Filename;
     return std::nullopt;
 }
 

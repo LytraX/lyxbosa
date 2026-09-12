@@ -1173,6 +1173,25 @@ TEST(ContainedMemberReportTest, JsonSaysNeitherWhenNoDecisionWasTaken) {
     EXPECT_TRUE(contains(json, "\"quarantined\": false")) << json;
 }
 
+// One CSV line, split on commas. Enough for these cases: none of the fields they look at
+// is quoted, and a field's INDEX is what they are about - the columns of this format are
+// consumed by position, which is the whole reason a new one is appended rather than put
+// where it reads best.
+std::vector<std::string> csvFields(const std::string& line) {
+    std::vector<std::string> fields;
+    std::string current;
+    for (char c : line) {
+        if (c == ',') {
+            fields.push_back(current);
+            current.clear();
+        } else {
+            current += c;
+        }
+    }
+    fields.push_back(current);
+    return fields;
+}
+
 TEST(ContainedMemberReportTest, CsvCarriesBothAndKeepsEveryOtherIndex) {
     ScanResult result;
     result.files.push_back(containedMember());
@@ -1194,10 +1213,20 @@ TEST(ContainedMemberReportTest, CsvCarriesBothAndKeepsEveryOtherIndex) {
         "quarantined,skipped,skip_reason,quarantine_failed,"))
         << "the two new columns are appended, so every existing column keeps its "
            "index: " << header;
-    EXPECT_TRUE(header.ends_with(",quarantine_path,container_quarantine")) << header;
-    EXPECT_TRUE(row.ends_with(
-        ",/var/quarantine/var/www/html/backup.zip!wp-content/uploads/shell.php,moved"))
-        << row;
+    // By index rather than by what the line ends with. The point of appending a column
+    // is that the ones before it do not move, and a case that pins the LAST field breaks
+    // the next time something is appended - saying nothing about whether the indexes it
+    // was actually about were kept. These two are 12 and 13 and must stay there.
+    const std::vector<std::string> columns = csvFields(header);
+    const std::vector<std::string> values = csvFields(row);
+    ASSERT_EQ(columns.size(), values.size()) << header << "\n" << row;
+    ASSERT_GT(columns.size(), 13u) << header;
+
+    EXPECT_EQ(columns[12], "quarantine_path");
+    EXPECT_EQ(columns[13], "container_quarantine");
+    EXPECT_EQ(values[12],
+              "/var/quarantine/var/www/html/backup.zip!wp-content/uploads/shell.php");
+    EXPECT_EQ(values[13], "moved");
 }
 
 // The companion for CSV: a row for which no decision was taken leaves both cells empty,
@@ -1220,7 +1249,12 @@ TEST(ContainedMemberReportTest, CsvLeavesBothCellsEmptyWhenNothingWasAttempted) 
     std::string row;
     ASSERT_TRUE(std::getline(lines, header));
     ASSERT_TRUE(std::getline(lines, row));
-    EXPECT_TRUE(row.ends_with(",false,,")) << row;
+
+    const std::vector<std::string> values = csvFields(row);
+    ASSERT_GT(values.size(), 13u) << row;
+    EXPECT_EQ(values[11], "false") << "quarantine_failed";
+    EXPECT_EQ(values[12], "") << "quarantine_path";
+    EXPECT_EQ(values[13], "") << "container_quarantine";
 }
 
 // Both readable views, from the one function that puts a quarantine outcome into words.

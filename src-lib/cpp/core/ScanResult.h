@@ -41,6 +41,40 @@ inline bool isExposureFinding(const FileMatch& match) {
     return match.patternType == kExposurePatternType;
 }
 
+// `patternType` of a finding raised by the FN rules: one about what the file is
+// CALLED rather than about any byte inside it.
+inline constexpr std::string_view kFilenamePatternType = "filename";
+
+// A name finding says somebody uploaded a hostile name, not that these bytes are
+// hostile. `x$(sleep 20)y.mdb` is very likely a perfectly ordinary Access database
+// with a command substitution written on the outside of it.
+inline bool isFilenameFinding(const FileMatch& match) {
+    return match.patternType == kFilenamePatternType;
+}
+
+// Whether acting on this finding means moving the file.
+//
+// Two kinds of finding say no, for the same underlying reason twice: the finding is
+// not about the bytes, so moving the bytes does not answer it.
+//
+//   - An exposure finding is the operator's own backup in the wrong place.
+//   - A name finding is a hostile string attached to what may be the customer's
+//     database. Worse than useless to move: quarantine under `preserve_structure`
+//     mirrors the source path into the destination, so the command substitution
+//     travels into the quarantine directory - the one directory an operator is most
+//     likely to sweep later with a shell loop. The exposure would be relocated and
+//     reported as handled. The answer to a hostile name is to delete it or rename it,
+//     and which of those it is depends on whether the customer needs the file, which
+//     is not a question a scanner can answer.
+//
+// A file carrying BOTH a name finding and a webshell signature still quarantines,
+// because the signature is a content finding and this returns true for it. That falls
+// out of asking the question per match rather than per file, which is why it is asked
+// that way.
+inline bool findingMeansMoveTheFile(const FileMatch& match) {
+    return !isExposureFinding(match) && !isFilenameFinding(match);
+}
+
 // What happened to the container a file was found inside.
 //
 // A member of an archive is not a file on disk and is never moved on its own: the
@@ -160,11 +194,21 @@ inline bool worthReporting(const FileResult& result) {
            result.containerQuarantine.has_value();
 }
 
-// True when a file carries at least one finding about its own content, as
-// opposed to only an exposure finding about where it sits.
+// True when a file carries at least one finding about its own content, as opposed to
+// only findings about where it sits or what it is called.
 inline bool hasHostileContent(const FileResult& result) {
     for (const auto& match : result.matches) {
-        if (!isExposureFinding(match)) {
+        if (findingMeansMoveTheFile(match)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// True when a file carries at least one finding about its name.
+inline bool hasHostileName(const FileResult& result) {
+    for (const auto& match : result.matches) {
+        if (isFilenameFinding(match)) {
             return true;
         }
     }
@@ -179,6 +223,21 @@ struct ScanResult {
     size_t totalFilesScanned = 0;
     size_t totalDirectoriesScanned = 0;
     size_t filesWithMatches = 0;
+
+    // Files carrying at least one FN finding - a hostile name. A count and not a list,
+    // and a rollup rather than a shape of its own, because the per-file answer is
+    // already carried where every other finding's is: a match row with an FN code, a
+    // severity, a JSON entry and a CSV line. What this adds is the volume, which is the
+    // one thing those cannot say. 83 in one upload directory is an afternoon; a worse
+    // host gives thousands, and an operator who reads "Files with a hostile name: 4,102"
+    // beside "Files with matches: 4,118" knows in one line that sixteen files are the
+    // actual compromise and the rest is a vulnerability scanner's litter.
+    //
+    // Files rather than matches, so it is comparable with filesWithMatches directly
+    // above it - one name can raise three findings, and a ratio between a match count
+    // and a file count is a number nobody can use.
+    size_t filesWithHostileNames = 0;
+
     size_t filesQuarantined = 0;
 
     // Files selected for quarantine that could not be moved, and so are still where

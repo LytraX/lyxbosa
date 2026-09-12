@@ -43,4 +43,51 @@ inline std::string pathForDisplay(const std::filesystem::path& p) {
     return safe_text::needsSanitizing(utf8) ? safe_text::sanitize(utf8) : utf8;
 }
 
+// True when pathForDisplay() could not render this path without losing something - a
+// control byte, DEL, or a byte outside well-formed UTF-8. Exactly the condition under
+// which the escape above is one-way, and therefore exactly when a machine-readable
+// report owes its reader the bytes as well as the rendering.
+inline bool pathDisplayIsLossy(const std::filesystem::path& p) {
+    return safe_text::needsSanitizing(pathToUtf8(p));
+}
+
+// The path's bytes, lowercase hex, no separators.
+//
+// WHY A SECOND REPRESENTATION EXISTS AT ALL. The escape pathForDisplay() writes is for a
+// terminal, and a terminal is the one consumer that cannot be given the bytes: a name
+// carrying ESC is not text there, it is commands - OSC 52 writes the analyst's clipboard
+// on the way past. So the rendering is escaped and one-way, and a person reading it goes
+// and looks at the directory.
+//
+// A log file, a CSV loaded into a spreadsheet and a JSON document loaded into a database
+// have no such problem and the opposite need: nobody is there to go and look, and the
+// row IS the record. They must be able to reconstruct the name exactly - to open the
+// file, to match it against an earlier inventory, to hand it to a delete that has to hit
+// the right file and no other. The rendering cannot give them that, because a backslash
+// already in the name is written through unchanged and `a\x0ab` on disk renders the same
+// as `a`, a newline, `b`.
+//
+// Hex rather than a reversible escape. The alternative was to double every backslash,
+// which would make the rendering reversible and would also rewrite every path in every
+// report produced on Windows, where the separator IS a backslash - a break for every
+// existing consumer, to pay for a case that is rare. Hex is additive, has no escaping
+// rules of its own to get wrong, and is what a loader wants anyway.
+//
+// Emitted only when pathDisplayIsLossy() says the rendering lost something, so an
+// ordinary report carries nothing new. On Windows this is the UTF-8 conversion of the
+// native wide path, which is what every other reader of that path already sees; an
+// unpaired surrogate in a name is converted before it reaches here and is the one shape
+// this cannot round-trip.
+inline std::string pathBytesHex(const std::filesystem::path& p) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    const std::string utf8 = pathToUtf8(p);
+    std::string out;
+    out.reserve(utf8.size() * 2);
+    for (unsigned char c : utf8) {
+        out += kHex[(c >> 4) & 0xf];
+        out += kHex[c & 0xf];
+    }
+    return out;
+}
+
 }  // namespace lyxbosa

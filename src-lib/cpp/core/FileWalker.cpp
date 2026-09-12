@@ -359,9 +359,11 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
         // Filters first. An excluded file is excluded whatever its size - deciding
         // that a 6 GB file the operator told us to ignore was "skipped for size"
         // is backwards, and it is the size skip that gets read as a coverage gap.
-        if (!matchesFilters(entry.path())) {
+        const FilterVerdict verdict = filterVerdict(entry.path());
+        if (verdict != FilterVerdict::Accepted) {
             info.size = 0;
             info.skip = SkipReason::Excluded;
+            info.excludedByPattern = (verdict == FilterVerdict::Excluded);
             if (!callback(info)) {
                 stopped = true;
                 return false;
@@ -473,7 +475,8 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
     return dirCount;
 }
 
-bool FileWalker::matchesFilters(const std::filesystem::path& path) const {
+FileWalker::FilterVerdict FileWalker::filterVerdict(
+    const std::filesystem::path& path) const {
     // If no include filters, include everything
     // If include filters exist, file must match at least one
     bool included = config_.include.empty();
@@ -488,17 +491,17 @@ bool FileWalker::matchesFilters(const std::filesystem::path& path) const {
     }
 
     if (!included) {
-        return false;
+        return FilterVerdict::NotIncluded;
     }
 
     // Check exclude patterns
     for (const auto& pattern : config_.exclude) {
         if (matchesGlob(pattern, path)) {
-            return false;
+            return FilterVerdict::Excluded;
         }
     }
 
-    return true;
+    return FilterVerdict::Accepted;
 }
 
 CountResult FileWalker::countFiles(const CountProgressCallback& onProgress,

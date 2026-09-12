@@ -32,6 +32,25 @@ public:
         out_ << "      \"path\": ";
         writeString(out_, pathForDisplay(result.path));
         out_ << ",\n";
+
+        // The same path as bytes, when the rendering above could not carry them.
+        //
+        // `path` is escaped so that the document stays valid UTF-8 and a parser accepts
+        // it - a file name on a Linux host may be any bytes at all, and one that is not
+        // valid UTF-8 has no JSON string that spells it. That escape is one-way, which
+        // is fine for a person and useless to a program: an external tool reading this
+        // report has to be able to open, match or delete the exact file, and it cannot
+        // do that from a rendering. So it gets the bytes here, in hex, and keeps a
+        // document that every JSON parser still reads.
+        //
+        // Absent - not empty - whenever `path` is already exact, which is every file in
+        // an ordinary tree. A consumer reads this key only when it is there, and its
+        // presence is itself the statement that `path` is a rendering rather than a name.
+        if (pathDisplayIsLossy(result.path)) {
+            out_ << "      \"pathBytesHex\": ";
+            writeString(out_, pathBytesHex(result.path));
+            out_ << ",\n";
+        }
         // `skipped` keeps meaning exactly what it always did, so every existing
         // consumer reads this report unchanged; `skipReason` is additive and
         // present only when there is one.
@@ -57,6 +76,15 @@ public:
             out_ << "      \"quarantinePath\": ";
             writeString(out_, pathForDisplay(result.quarantinePath));
             out_ << ",\n";
+            // Same rule as `pathBytesHex`, and needed for the same reason one level on:
+            // under `preserve_structure` the destination mirrors the source's whole
+            // path, so a name that could not be rendered exactly arrives here too - and
+            // this is the path a tool has to open to find where the bytes went.
+            if (pathDisplayIsLossy(result.quarantinePath)) {
+                out_ << "      \"quarantinePathBytesHex\": ";
+                writeString(out_, pathBytesHex(result.quarantinePath));
+                out_ << ",\n";
+            }
         }
 
         // What happened to the container this file was found inside. Absent for a loose
@@ -107,6 +135,12 @@ public:
         out_ << "  \"totalFilesScanned\": " << result.totalFilesScanned << ",\n";
         out_ << "  \"totalDirectoriesScanned\": " << result.totalDirectoriesScanned << ",\n";
         out_ << "  \"filesWithMatches\": " << result.filesWithMatches << ",\n";
+        // Beside the count it is a subset of, and emitted unconditionally like it: a
+        // consumer that has to test for a key's presence to learn a count was zero
+        // reads an old report and a clean tree as the same thing. This is the volume
+        // answer - a caller can tell 4,102 findings about names from 16 about content
+        // without walking the file list to work it out.
+        out_ << "  \"filesWithHostileNames\": " << result.filesWithHostileNames << ",\n";
         out_ << "  \"filesSkippedSize\": " << result.filesSkippedSize() << ",\n";
         writeFilesSkipped(result);
         out_ << "  \"filesQuarantined\": " << result.filesQuarantined << ",\n";

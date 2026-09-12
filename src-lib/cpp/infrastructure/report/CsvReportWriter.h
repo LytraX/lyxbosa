@@ -24,10 +24,20 @@ public:
     // moved and never where to, and without the second a member of a quarantined
     // container reads `quarantined,false` - identical to an exposure finding, to a run
     // with quarantine off, and to a webshell whose container could not be moved at all.
+    //
+    // `file_bytes_hex` and `quarantine_path_bytes_hex` are appended last, under the same
+    // rule, and are the machine-readable half of what `file` carries. `file` is escaped
+    // so that the row is text a spreadsheet and a loader can read: a name on a Linux
+    // host may be any bytes, and one that is not valid UTF-8 breaks the encoding the
+    // file claims. That escape is one-way and therefore no use to a program that has to
+    // open, match or delete the exact file, so these two carry the bytes. Both are empty
+    // for every path the escape rendered exactly, which is every file in an ordinary
+    // tree - a non-empty cell is itself the statement that the column to its left is a
+    // rendering rather than a name.
     void begin() override {
         out_ << "file,rule,severity,original_severity,suppressed,category,line,column,"
                 "quarantined,skipped,skip_reason,quarantine_failed,quarantine_path,"
-                "container_quarantine\n";
+                "container_quarantine,file_bytes_hex,quarantine_path_bytes_hex\n";
     }
 
     void onFile(const FileResult& result) override {
@@ -82,6 +92,14 @@ public:
         writeField(out_, result.containerQuarantine
                              ? containerQuarantineToString(*result.containerQuarantine)
                              : std::string_view{});
+        out_ << ',';
+        writeField(out_, pathDisplayIsLossy(result.path) ? pathBytesHex(result.path)
+                                                         : std::string{});
+        out_ << ',';
+        writeField(out_, !result.quarantinePath.empty() &&
+                                 pathDisplayIsLossy(result.quarantinePath)
+                             ? pathBytesHex(result.quarantinePath)
+                             : std::string{});
     }
 
     void end(const ScanResult&, bool) override { out_.flush(); }
