@@ -18,6 +18,7 @@ number, because the measurement is the useful part and re-deriving it costs anot
 | 5 | a bundled mailer behind a hardcoded password literal | open — 29/29 recall, 0 FPs, 230 at risk. §5 |
 | 6 | `mail()` + `$_POST[…]` + a hardcoded address literal | open — reaches 1 file of a 7-file kit, 0 FPs, 175 at risk. §6 |
 | 7 | card CVC/CVV reaching a remote-fetch sink in one file | open — 1 FP in 465 at risk; the FP is a form builder. §7 |
+| 10 | a Windows-hostile file name: trailing space, trailing dot, reserved device name | **closed** — measured on NTFS: the platform strips the first two before they reach the disk, and the corpus holds none of the third. §10 |
 
 Candidates 4–7 come from review round 10, which characterised the five families holding 597
 of the 638 known misses. Every FP figure in this file from 2026-09-05 onward is produced by
@@ -825,6 +826,57 @@ measured at all.
 This was not visible from the index, because the index is content-addressed and these nine
 files were never grouped with the family they belong to. It was visible from listing the
 directory — which is §2.3b's argument for collecting siblings, paying off a second time.
+
+## 10. A Windows-hostile file name — **CLOSED 2026-09-12, measured on NTFS**
+
+**Signal.** Four shapes behave differently on Windows from the way they read: a name ending
+in a space, a name ending in a dot, a reserved device name (`CON`, `LPT1.php`, `aux.txt`),
+and a leading dash. The first three have no POSIX equivalent, and the fourth already ships
+as FN004. The question was whether the other three deserve rules beside it.
+
+**Where the evidence stops.** Of 22,728 files measured on a production upload directory,
+exactly one name ends in a space and none ends in a dot or is a reserved device name. One
+observation is not a population, and the FN rules that did ship are each backed by between
+2 and 37.
+
+**What NTFS actually does, measured 2026-09-12 on Visual Studio 18 / Windows 11, by code
+point rather than by what a console printed** — the first attempt at this was read through a
+code page that rendered U+FF0F as an ordinary `/` and would have been recorded as a
+traversal that traverses:
+
+| asked for | what the directory held afterwards |
+|---|---|
+| `ts .mdb ` (trailing space) | `ts .mdb` — the trailing space was stripped |
+| `td.mdb.` (trailing dot) | `td.mdb` — the trailing dot was stripped |
+| `CON`, `LPT1.php`, `aux.txt` | created, as ordinary files, by the .NET path API |
+| `a|id.mdb`, `x" ; id ; ".mdb` | refused — `ArgumentException` |
+| a name holding a newline | refused — `ArgumentException` |
+| `a\zz.php` | refused — the backslash is a separator, never part of a name |
+| `a$(id)b.mdb`, `` a`id`b.mdb ``, `x${IFS}y.mdb` | created unchanged |
+| `a;b.mdb`, `x.php%00.mdb`, `-x.htaccess` | created unchanged |
+| `a` U+FF0F `..` U+FF0F `public.php` | created unchanged, code point for code point |
+| `a` U+00C0 U+00AF `..` U+00C0 U+00AF `p.php` | created unchanged, code point for code point |
+
+**Why the first two are closed rather than open.** A rule cannot fire on what the
+filesystem removed before the scanner saw it. Windows strips a trailing space and a trailing
+dot on the way in, so a file *created on Windows* cannot carry one — and a scan of a
+Windows tree would never see one to report. The shape survives only on a POSIX filesystem
+reached over a share, where it is not a Windows hazard at all. There is nothing to detect on
+the platform the shape is about.
+
+**Why the third is closed.** `CON` and `LPT1.php` are real hazards — a tool that opens one
+by its Win32 path gets the console or a serial port rather than a file, so a name like that
+in a web root is a trap for the next script that walks it. But the corpus holds none, the
+shape has no false-positive measurement behind it, and `aux.txt` is a name a person could
+plausibly choose. It is recorded here rather than shipped on an argument.
+
+**What this measurement was worth anyway.** It settled that FN005's two separator
+lookalikes survive NTFS unchanged, so that rule is exactly as live on Windows as on Linux;
+that FN002's quote and pipe arms and all of FN003 are unreachable for a file created on
+Windows, which is why the cases covering them skip there with a sentence rather than passing
+blind; and that a name which is not valid UTF-8 cannot exist on Windows at all, because the
+filesystem stores UTF-16 and the narrow API converts on the way in — so the report's
+`pathBytesHex` is in practice a POSIX field.
 
 ## What this brief deliberately does not do
 

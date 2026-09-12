@@ -1388,26 +1388,35 @@ static bool scansContent(const rules::BuiltinRule* rule) {
     return rule && (!rule->patterns.empty() || rule->analyzer != nullptr);
 }
 
+// A rule that is run against the file's name instead. Patternless like the ARC rules,
+// so scansContent() already declines it - but unlike an ARC rule it has somewhere of
+// its own to run, and the two lists exist so that one question is never asked of the
+// other's bytes.
+static bool scansName(const rules::BuiltinRule* rule) {
+    return rule && rule->code.category == rules::Category::Filename;
+}
+
 void MatchEngine::loadBuiltinCategory(rules::Category category) {
     const auto& registry = rules::Registry::instance();
     auto categoryRules = registry.getByCategory(category);
 
     for (const auto* rule : categoryRules) {
-        if (!scansContent(rule)) {
+        if (!scansContent(rule) && !scansName(rule)) {
             continue;
         }
+        auto& into = scansName(rule) ? nameRules_ : builtinRules_;
         std::string code = rule->code.toString();
         if (disabledRules_.find(code) == disabledRules_.end()) {
             // Check if already loaded
             bool alreadyLoaded = false;
-            for (const auto* existing : builtinRules_) {
+            for (const auto* existing : into) {
                 if (existing == rule) {
                     alreadyLoaded = true;
                     break;
                 }
             }
             if (!alreadyLoaded) {
-                builtinRules_.push_back(rule);
+                into.push_back(rule);
             }
         }
     }
@@ -1417,14 +1426,17 @@ void MatchEngine::loadBuiltinCategory(rules::Category category) {
 void MatchEngine::loadAllBuiltinRules() {
     const auto& registry = rules::Registry::instance();
     builtinRules_.clear();
+    nameRules_.clear();
 
     for (const auto* rule : registry.getAllRules()) {
-        if (!scansContent(rule)) {
+        const bool content = scansContent(rule);
+        const bool name = scansName(rule);
+        if (!content && !name) {
             continue;
         }
         std::string code = rule->code.toString();
         if (disabledRules_.find(code) == disabledRules_.end()) {
-            builtinRules_.push_back(rule);
+            (name ? nameRules_ : builtinRules_).push_back(rule);
         }
     }
     rebuildPrefilter();
@@ -1432,19 +1444,20 @@ void MatchEngine::loadAllBuiltinRules() {
 
 void MatchEngine::loadBuiltinRule(std::string_view code) {
     const auto* rule = rules::getRuleByCode(code);
-    if (scansContent(rule)) {
+    if (scansContent(rule) || scansName(rule)) {
+        auto& into = scansName(rule) ? nameRules_ : builtinRules_;
         std::string codeStr(code);
         if (disabledRules_.find(codeStr) == disabledRules_.end()) {
             // Check if already loaded
             bool alreadyLoaded = false;
-            for (const auto* existing : builtinRules_) {
+            for (const auto* existing : into) {
                 if (existing == rule) {
                     alreadyLoaded = true;
                     break;
                 }
             }
             if (!alreadyLoaded) {
-                builtinRules_.push_back(rule);
+                into.push_back(rule);
             }
         }
     }
@@ -1454,12 +1467,18 @@ void MatchEngine::loadBuiltinRule(std::string_view code) {
 void MatchEngine::disableBuiltinRule(std::string_view code) {
     disabledRules_.insert(std::string(code));
 
-    // Remove from loaded rules if present
+    // Remove from loaded rules if present. Both lists, because an operator naming a
+    // code does not know or care which of the two it lives in - and a `disable` that
+    // silently did nothing is the worst answer of the three available.
     const auto* ruleToRemove = rules::getRuleByCode(code);
     if (ruleToRemove) {
         builtinRules_.erase(
             std::remove(builtinRules_.begin(), builtinRules_.end(), ruleToRemove),
             builtinRules_.end()
+        );
+        nameRules_.erase(
+            std::remove(nameRules_.begin(), nameRules_.end(), ruleToRemove),
+            nameRules_.end()
         );
     }
     rebuildPrefilter();
@@ -1666,6 +1685,60 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
     return allMatches;
 }
 
+std::vector<FileMatch> MatchEngine::matchName(std::string_view pathUtf8) const {
+    std::vector<FileMatch> out;
+    if (nameRules_.empty() || pathUtf8.empty()) {
+        return out;
+    }
+
+    const std::string_view name = rules::filename::finalComponent(pathUtf8);
+    for (const auto& finding : rules::filename::examine(name)) {
+        // A finding whose rule the operator turned off is not raised. The lookup is
+        // over the live list rather than over disabledRules_, so `builtin_rules.use`
+        // - which selects rather than excludes - is honoured by the same line.
+        const rules::BuiltinRule* rule = nullptr;
+        for (const auto* candidate : nameRules_) {
+            if (candidate->code.toString() == finding.code) {
+                rule = candidate;
+                break;
+            }
+        }
+        if (!rule) {
+            continue;
+        }
+
+        FileMatch fm;
+        fm.ruleName = std::string(rule->name);
+        fm.severity = rule->severity;
+        fm.originalSeverity = rule->severity;
+        fm.category = std::string(finding.code);
+
+        // The fact that makes this finding different from every other one on the same
+        // file, and the fact the quarantine decision turns on. It rides on the match
+        // rather than on the file, because a file can carry a name finding and a
+        // webshell signature at once and those two want opposite treatment.
+        fm.patternType = std::string(kFilenamePatternType);
+
+        // There is no position in a file to point at: the evidence is the name, which
+        // is already the row's path. 1:1 rather than 0:0 so that a consumer computing
+        // a line number never sees a value no text file has.
+        fm.offset = 0;
+        fm.line = 1;
+        fm.column = 1;
+        fm.matchedText = finding.detail;
+        fm.context = std::string(rule->description);
+
+        // Deliberately no applyAnnotation(). An annotation is a marker inside a file
+        // saying the operator vouches for what is written there, and it has nothing to
+        // say about what the file is called - a name is chosen by whoever uploaded it,
+        // and a file that could vouch for its own name would be vouching for the
+        // attacker's.
+        out.push_back(std::move(fm));
+    }
+
+    return out;
+}
+
 size_t MatchEngine::patternCount() const {
     size_t total = 0;
     for (const auto& rule : rules_) {
@@ -1681,6 +1754,7 @@ size_t MatchEngine::patternCount() const {
 void MatchEngine::clear() {
     rules_.clear();
     builtinRules_.clear();
+    nameRules_.clear();
     disabledRules_.clear();
     rebuildPrefilter();
 }

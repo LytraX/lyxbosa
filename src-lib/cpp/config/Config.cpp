@@ -541,7 +541,13 @@ archives:
 # Built-in detection rules (CTRE compile-time regex - extremely fast)
 # Categories: WS (Webshell), BD (Backdoor), OBF (Obfuscation), PHI (Phishing),
 #             EXP (Exploit), DRP (Dropper), RCE (CodeExec), CRED (CredTheft),
-#             SEO (SeoSpam), DEFC (Defacement), PL (Perl), ARC (Archive)
+#             SEO (SeoSpam), DEFC (Defacement), PL (Perl), ARC (Archive),
+#             FN (Filename)
+#
+# FN reads the file's NAME rather than its bytes - a command substitution, a shell
+# separator, a control byte, a leading dash, a traversal in a lookalike encoding or a
+# percent-encoded NUL. A name finding never quarantines the file: see
+# docs/SCANNING.md#file-names.
 builtin_rules:
   enabled: true
   # use: []                    # Empty = load all rules (default)

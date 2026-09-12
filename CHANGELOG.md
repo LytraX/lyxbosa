@@ -22,6 +22,123 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Added
+
+- **Six rules that read a file's name rather than its bytes (`FN001`-`FN006`).** On a
+  compromised host the name is sometimes the attack: a file called `x$(sleep 20)y.mdb` is
+  evidence whatever is inside it, because somebody wrote a command substitution into a
+  name hoping something downstream would hand it to a shell.
+
+  | code | severity | what it reads |
+  |---|---|---|
+  | `FN001` | High | `$(...)`, a backtick pair or `${...}` |
+  | `FN002` | Medium | a double quote, semicolon, pipe or backslash |
+  | `FN003` | Medium | a byte below `0x20` |
+  | `FN004` | Medium | a leading `-`, which a glob hands to the next command as an option |
+  | `FN005` | High | a dot-dot against a character that resembles a separator without being one |
+  | `FN006` | High | `%00` |
+
+  Six rules rather than one because they are six intentions with six different next
+  questions, and because a tree of files whose names legitimately begin with a dash has a
+  reason to disable `FN004` and none to disable `FN001`. They are disabled by code or by
+  `category:filename` like any other rule.
+
+  **Where the line is.** Measured against 22,728 files an automated vulnerability scanner
+  left in an upload directory on a production server. The character set these rules read
+  fires on 83 of them and every one of the 83 is the scanner's — precision 100%. Adding
+  the apostrophe and the ampersand takes it to 175 files, of which 89 are ordinary
+  customer uploads, and precision falls to 49%: `O'Brien & Sons Invoice.pdf` is what real
+  file names look like. Neither character appears in any rule. Two places are tighter than
+  the measured set at no cost to recall: a bare `$` does not fire, because `~$Report.docx`
+  is the lock file Word and Excel write beside an open document, and a bare `..` does not,
+  because a name has no separators in it and `photo_2_final..jpg` is a doubled extension
+  dot. Against 268,853 real file names from CMS, site and malware trees the whole rule set
+  fires zero times.
+
+  **A name finding never quarantines the file.** Quarantine acts on bytes and these rules
+  have read none: the file is very likely the customer's own database with a hostile string
+  written on the outside of it, and moving it would carry that string into the quarantine
+  directory. A file carrying a name finding *and* a content signature is still quarantined,
+  on the strength of the signature.
+
+  **`scan.include` does not hide a name.** That list decides what gets opened, and a name
+  costs no open — 73 of the 83 observed names are `.mdb`, which no include pattern covers.
+  Such a file is reported with its row saying plainly that the bytes were never read.
+  `scan.exclude` is the operator saying *do not look here* and is obeyed.
+
+### Fixed
+
+- **A file name carrying bytes that are not valid UTF-8 no longer makes the report invalid
+  UTF-8.** Control bytes in a name were escaped into a visible `\x0a` and quoted correctly
+  in CSV, but any byte from `0x80` up was written through raw — so a name containing, say,
+  `c0 af` produced a JSON document that a standard parser refuses outright. The two halves
+  of one question were answered differently by one code path.
+
+  Every byte that is not part of a well-formed UTF-8 sequence is now escaped the same way a
+  control byte already was, including overlong forms, surrogates and anything past
+  U+10FFFF. Well-formed UTF-8 is still left exactly alone, so a name or a quoted excerpt in
+  Greek, Japanese or French is unchanged. The bytes are preserved in the escape rather than
+  replaced with U+FFFD, because an operator has to be able to get from the report back to
+  the file.
+
+  The escape is **one-way, and the machine-readable reports now carry the bytes beside it.**
+  A backslash already in the name is written through unchanged, so a file whose name really
+  is the six characters `a\x0ab` prints identically to one named `a`, a newline, `b`. That
+  is fine for a person at a terminal — the one consumer that cannot be handed the bytes,
+  since a name carrying `ESC ] 52 ; c ;` writes their clipboard — and useless to an external
+  program that has to open, match or delete the exact file. So JSON gains `pathBytesHex` and
+  `quarantinePathBytesHex`, and CSV gains `file_bytes_hex` and `quarantine_path_bytes_hex`,
+  carrying the path in hex whenever its rendering is inexact. The JSON document stays valid
+  UTF-8 and every parser still reads it.
+
+  Hex rather than a reversible escape: doubling every backslash would make the rendering
+  reversible and would also rewrite every path in every report produced on Windows, where
+  the separator is a backslash — a break for every existing consumer, to pay for a case
+  that is rare.
+
+- **A skipped file no longer swallows a finding in the text report.** A file the scanner did
+  not open can still carry a name finding, and the text printer returned on the skip before
+  it printed any match — so JSON and CSV named the finding and the text report did not.
+  Both text views now print the skip and the finding, the compact line carrying
+  `(not scanned: <reason>)` after the severity counts.
+
+### Compatibility
+
+- **New rule codes `FN001`-`FN006` appear in reports**, in the `category` field of a JSON
+  match, the `category` column of a CSV row and the rule line of the text report. A
+  consumer with a fixed list of rule codes, or one that maps a code to a remediation, sees
+  six it does not know. They can be turned off with `builtin_rules.disable: [FN001, ...]`
+  or `category:filename`.
+- **`scan` exits 2 where it exited 0** on a tree holding a file with a hostile name and
+  nothing else. A name finding is an ordinary finding and moves the exit code like any
+  other match.
+- **Files no `scan.include` pattern covers can now appear in a report.** They are still
+  counted as `excluded` and their bytes are still not read; what is new is a row for one
+  whose *name* is a finding. `report_excluded` is unchanged and still off by default — it
+  governs rows for excluded files with nothing to say about them.
+- **JSON gains `filesWithHostileNames`**, always present, beside `filesWithMatches`.
+- **The text summary gains `Files with a hostile name: N`** when the count is not zero.
+  Suppressed by `--quiet` with the rest of the summary.
+- **The compact text line gains `(not scanned: <reason>)`** on a file that was skipped and
+  still carried a finding, and the verbose view now prints that file's matches under its
+  skip line. A file that was skipped with nothing found prints exactly what it did before.
+- **A path or a quoted excerpt containing bytes that are not valid UTF-8 now renders as
+  `\xNN` escapes rather than raw bytes.** A consumer that was reading those bytes back out
+  of a report was reading from a document no standard JSON parser would accept; one that
+  parsed reports successfully is unaffected, because such a document never parsed.
+- **JSON gains `pathBytesHex` and `quarantinePathBytesHex`**, each present on a file only
+  when that path's rendering is inexact — never in an ordinary tree. A consumer that needs
+  the real bytes reads the hex when it is there and the rendered path when it is not.
+- **CSV gains `file_bytes_hex` and `quarantine_path_bytes_hex` as its last two columns.**
+  Appended, so every existing column keeps its index — `container_quarantine` is still
+  index 13 and is no longer the last field on the line. A reader that takes the last field
+  positionally rather than by header name needs adjusting. Both are empty for every path
+  the escape rendered exactly.
+- **`check` escapes the path it was given.** It printed `File: <path>` and its three
+  verdict lines with the raw argument, so a file named with an ESC sequence reached the
+  terminal unescaped from the one command most likely to be pointed at a single suspicious
+  file. The member lines in the same output had always been escaped.
+
 ### Fixed
 
 - **Three commands no longer report an operation that did not happen as one that did.**

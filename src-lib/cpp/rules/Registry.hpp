@@ -13,6 +13,7 @@
 #include "defacement.h"
 #include "perl.h"
 #include "archive.h"
+#include "filename.h"
 #include <vector>
 #include <unordered_map>
 #include <optional>
@@ -156,6 +157,14 @@ private:
         auto arcRules = archive::getAllRules();
         for (size_t i = 0; i < archive::RULE_COUNT; ++i) {
             registerRule(arcRules[i]);
+        }
+        // Register the file-name rules. They carry no patterns either - they are
+        // raised from a name rather than from bytes - and they are registered for
+        // exactly the reason the ARC rules above are: `builtin_rules.disable: [FN004]`
+        // and a report that resolves FN001 to a sentence both go through here.
+        auto fnRules = filename::getAllRules();
+        for (size_t i = 0; i < filename::RULE_COUNT; ++i) {
+            registerRule(fnRules[i]);
         }
     }
 

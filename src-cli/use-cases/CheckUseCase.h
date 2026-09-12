@@ -42,9 +42,17 @@ public:
             args.checkFile = *file;
         }
 
+        // Rendered through pathForDisplay() everywhere below, never with .string().
+        //
+        // This is an argument the operator typed, which makes it feel trustworthy, and it
+        // names a file on a host somebody else has been writing to - so it carries ESC
+        // exactly as file *content* does, and a name like `a<ESC>]52;c;...<BEL>.php`
+        // echoed raw writes the analyst's clipboard on the way past. The member lines
+        // further down already escaped theirs, so one screen was answering the same
+        // question two ways: the container's name raw and its members' escaped.
         std::filesystem::path filePath(*args.checkFile);
         if (!std::filesystem::exists(filePath)) {
-            terminal_.printErr(Terminal::error(), "Error: File not found: {}\n", filePath.string());
+            terminal_.printErr(Terminal::error(), "Error: File not found: {}\n", pathForDisplay(filePath));
             return 1;
         }
 
@@ -84,17 +92,17 @@ public:
             if (result.archive && result.archive->totalSkipped() > 0) {
                 terminal_.print(Terminal::success(),
                                 "No matches found in what was scanned of: {}\n",
-                                filePath.string());
+                                pathForDisplay(filePath));
             } else {
                 terminal_.print(Terminal::success(), "No matches found in: {}\n",
-                                filePath.string());
+                                pathForDisplay(filePath));
             }
             printCoverage(result);
             return 0;
         }
 
         if (!result.matches.empty()) {
-            terminal_.print(Terminal::info(), "File: {}\n", filePath.string());
+            terminal_.print(Terminal::info(), "File: {}\n", pathForDisplay(filePath));
             fmt::print("Matches: {}\n\n", result.matches.size());
             printCompactMatches(result.matches);
         }
@@ -119,10 +127,10 @@ public:
         }
         if (result.skipReason) {
             terminal_.print(Terminal::warning(), "Not scanned ({}): {}\n",
-                            skipReasonLabel(*result.skipReason), filePath.string());
+                            skipReasonLabel(*result.skipReason), pathForDisplay(filePath));
         } else {
             terminal_.print(Terminal::warning(), "Not fully examined: {}\n",
-                            filePath.string());
+                            pathForDisplay(filePath));
         }
         printCoverage(result);
         return 1;

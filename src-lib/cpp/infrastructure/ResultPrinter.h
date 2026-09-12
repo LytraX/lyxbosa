@@ -50,6 +50,19 @@ public:
                                                               : Terminal::muted();
             styled(style, "[-] {} (skipped - {})\n",
                    pathForDisplay(result.path), skipReasonLabel(reason));
+
+            // A skipped file can still carry a finding. An FN rule reads the name,
+            // which is knowable without opening the file, so a file too large to read,
+            // one that would not open and one no include pattern covers can each have
+            // a real finding and no content. Returning on the skip alone printed the
+            // skip and swallowed the finding - and the JSON and the CSV carried it, so
+            // the three formats disagreed about the same file.
+            for (const auto& match : result.matches) {
+                printMatch(match);
+            }
+            if (!result.matches.empty()) {
+                plain("\n");
+            }
             return;
         }
 
@@ -77,7 +90,12 @@ public:
     // Print a file result in compact single-line format
     // Format: [!] path/to/file.php  C:2 H:5 M:3 L:1
     void printFileResultCompact(const FileResult& result) const {
-        if (result.skipped()) {
+        // A skip with nothing found is the muted one-liner it has always been. A skip
+        // WITH a finding is not: it falls through to the finding line below, which
+        // carries the severity counts, and says the file was not read as a suffix. The
+        // two facts are both load-bearing and neither may take the other's line - see
+        // the verbose printer above for how that went wrong.
+        if (result.skipped() && result.matches.empty()) {
             // The compact line is width-constrained, so it takes the short name.
             styled(Terminal::muted(), "[-] {} (skipped: {})\n",
                    truncatePath(pathForDisplay(result.path), width_ > 24 ? width_ - 24 : 20),
@@ -109,6 +127,11 @@ public:
                 suffixLen += 4 + std::to_string(count).length();
             }
         }
+        // ... and of the "  (not scanned: excluded)" suffix when there is one, or the
+        // path is budgeted the whole width and the line wraps past it.
+        if (result.skipped()) {
+            suffixLen += 18 + skipReasonToString(*result.skipReason).size();
+        }
 
         constexpr size_t prefixLen = 4;  // "[!] "
         const size_t availableForPath =
@@ -121,6 +144,14 @@ public:
         if (high > 0)     styled(Terminal::high(),     "  H:{}", high);
         if (medium > 0)   styled(Terminal::medium(),   "  M:{}", medium);
         if (low > 0)      styled(Terminal::low(),      "  L:{}", low);
+
+        // The bytes were never read. Said here because the finding above it is about
+        // the name, and an operator who reads this line as "we looked inside and found
+        // one thing" would be reading a coverage gap as a clean result.
+        if (result.skipped()) {
+            styled(Terminal::muted(), "  (not scanned: {})",
+                   skipReasonToString(*result.skipReason));
+        }
 
         plain("\n");
 
@@ -145,6 +176,21 @@ public:
         plain("Files scanned: {}\n", result.totalFilesScanned);
         plain("Directories parsed: {}\n", result.totalDirectoriesScanned);
         plain("Files with matches: {}\n", result.filesWithMatches);
+
+        // Directly under the count it is a subset of, because that is the comparison
+        // an operator makes with it. Printed only when there are some - an ordinary
+        // tree has none, and an unconditional zero here would be one more line between
+        // the operator and the numbers that moved.
+        //
+        // A count and not a list. One vulnerability scanner left 83 of these in a
+        // single upload directory and a worse host gives thousands; listing them here
+        // would bury the summary in exactly the case the summary is most needed. Each
+        // one has its own row above with its own FN code, which is where a name
+        // belongs - a finding about a file, reported on that file.
+        if (result.filesWithHostileNames > 0) {
+            plain("Files with a hostile name: {} (the name is the finding; the bytes "
+                  "may be ordinary)\n", result.filesWithHostileNames);
+        }
 
         // Reads the same way as "Members not scanned" below, because it is the same
         // fact one level up. Printed only when something was skipped, which drops

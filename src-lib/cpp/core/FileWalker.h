@@ -20,6 +20,21 @@ struct FileInfo {
     // the scanner never has to re-derive it - which is how a failed stat used to
     // be reported as an oversize file and then scanned anyway.
     std::optional<SkipReason> skip;
+
+    // Which of the two filters rejected this file, when `skip` is Excluded.
+    //
+    // To a report they are one skip reason, and to the scanner they are two different
+    // intentions. The include list decides what gets OPENED - the shipped
+    // configuration says exactly that in its own comment, because an extension is
+    // never trusted to say what a file is - while an `exclude` pattern is the operator
+    // writing down a tree they do not want looked at. So a question that needs no open
+    // may be asked of the first and must not be asked of the second, and the only such
+    // question the scanner has is whether the file's NAME is hostile.
+    //
+    // It is carried here rather than re-derived from the path, because re-running the
+    // glob list over every file a `node_modules/**` pattern cut is a second full pass
+    // over the largest part of the tree.
+    bool excludedByPattern = false;
 };
 
 // Callback function type for file iteration
@@ -119,8 +134,21 @@ public:
         dirCallback_ = std::move(callback);
     }
 
+    // Which side of the filters has an opinion about this path.
+    enum class FilterVerdict {
+        Accepted,     // scan it
+        NotIncluded,  // no `include` pattern covers it, so it is not opened
+        Excluded,     // an `exclude` pattern names it: the operator said do not look
+    };
+
     // Check if a file matches the include/exclude filters
-    bool matchesFilters(const std::filesystem::path& path) const;
+    bool matchesFilters(const std::filesystem::path& path) const {
+        return filterVerdict(path) == FilterVerdict::Accepted;
+    }
+
+    // The same question, answered with its reason. One definition, so the two can
+    // never drift into disagreeing about whether a file is in the scan.
+    FilterVerdict filterVerdict(const std::filesystem::path& path) const;
 
 private:
     // Check if path matches a glob pattern
