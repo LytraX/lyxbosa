@@ -56,7 +56,7 @@ public:
         // A clean file is not printed - but a container moved, or not moved, for what
         // was inside it carries no match of its own, and returning here on the match
         // count alone dropped the only line naming it.
-        if (result.matches.empty() && !result.quarantined && !result.quarantineFailed) {
+        if (result.matches.empty() && !worthReporting(result)) {
             return;
         }
 
@@ -69,13 +69,7 @@ public:
             printMatch(match);
         }
 
-        if (result.quarantined) {
-            styled(Terminal::low(), "    moved: {}\n", result.quarantinePath);
-        }
-        if (result.quarantineFailed) {
-            styled(Terminal::error(), "    NOT quarantined - still at {}\n",
-                   pathForDisplay(result.path));
-        }
+        printQuarantineOutcome(result);
 
         plain("\n");
     }
@@ -93,7 +87,7 @@ public:
 
         // As in the verbose printer: a container with no match of its own is still
         // worth a line when something was done to it, or could not be.
-        if (result.matches.empty() && !result.quarantined && !result.quarantineFailed) {
+        if (result.matches.empty() && !worthReporting(result)) {
             return;
         }
 
@@ -134,10 +128,13 @@ public:
         // budgeted between the path and the severity counts, and a marker squeezed in
         // there would take characters off the path an operator needs to read. Rare
         // enough that the extra line costs nothing on a real scan.
-        if (result.quarantineFailed) {
-            styled(Terminal::error(), "    NOT quarantined - still at {}\n",
-                   pathForDisplay(result.path));
-        }
+        //
+        // The same function the verbose printer calls, so this view is not one line
+        // behind the other on what was done to a file. It used to print only the
+        // failure, which meant the compact view - what an operator watching a
+        // `--quarantine` run actually reads - said nothing at all about the one
+        // destructive thing the command does, and never named a destination.
+        printQuarantineOutcome(result);
     }
 
     // Print scan summary
@@ -256,6 +253,36 @@ public:
         }
 
         plain("{}\n", archive::membersNotScannedLine(stats));
+    }
+
+    // What was done to this file's bytes, and where they are now. The one place that
+    // puts a quarantine outcome into words: both printers call it, and the full-screen
+    // view draws its chips from the same labels in ScanResult.h. Two commands answering
+    // about one file have to answer the same, and wording kept in two places that agree
+    // today is how they stop agreeing.
+    //
+    // Four outcomes and each gets its own line, because none of them can be read off
+    // the absence of another: a file that moved, a file the tool could not move, a
+    // member carried out of the tree inside its container, and a member still under the
+    // web root because its container did not go.
+    void printQuarantineOutcome(const FileResult& result) const {
+        if (result.quarantined) {
+            styled(Terminal::low(), "    moved: {}\n", pathForDisplay(result.quarantinePath));
+        }
+        if (result.quarantineFailed) {
+            styled(Terminal::error(), "    NOT quarantined - still at {}\n",
+                   pathForDisplay(result.path));
+        }
+        if (result.containerQuarantine == ContainerQuarantine::Moved) {
+            styled(Terminal::low(), "    {}: {}\n",
+                   containerQuarantineLabel(ContainerQuarantine::Moved),
+                   pathForDisplay(result.quarantinePath));
+        }
+        if (result.containerQuarantine == ContainerQuarantine::MoveFailed) {
+            styled(Terminal::error(), "    {} - still at {}\n",
+                   containerQuarantineLabel(ContainerQuarantine::MoveFailed),
+                   pathForDisplay(result.path));
+        }
     }
 
     // Truncate a path from the beginning ("...rest/of/path") without ever

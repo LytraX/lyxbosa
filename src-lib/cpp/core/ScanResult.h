@@ -41,18 +41,85 @@ inline bool isExposureFinding(const FileMatch& match) {
     return match.patternType == kExposurePatternType;
 }
 
+// What happened to the container a file was found inside.
+//
+// A member of an archive is not a file on disk and is never moved on its own: the
+// container goes as a unit, carrying every member with it. So this is a different fact
+// from `quarantined` beside it, not a shade of it, and it is deliberately not written
+// into that flag. Two reasons, and either alone would be enough. `filesQuarantined`
+// counts files that were moved, so a member row claiming `quarantined` would make the
+// rows disagree with the count - two answers to one question. And the operator's next
+// action differs: nothing further is owed for a member that left with its container,
+// while a member of a container that could NOT be moved is a webshell still under the
+// web root, reachable at the same URL as before.
+//
+// Absent when no quarantine decision was made about the containing file at all -
+// quarantine off, an exposure-only finding, or a loose file that has no container.
+// That is the one thing absence may carry here, because it is the same "nothing was
+// attempted" that an ordinary file's empty quarantine fields already mean.
+enum class ContainerQuarantine : uint8_t {
+    Moved,       // the container was quarantined; these bytes left the tree inside it
+    MoveFailed,  // the container was selected and the move failed; still in place
+};
+
+// The machine-readable name: the JSON value and the CSV cell. Load-bearing, exactly
+// like the skip-reason spellings - changing one breaks every consumer of a report.
+constexpr std::string_view containerQuarantineToString(ContainerQuarantine outcome) {
+    switch (outcome) {
+        case ContainerQuarantine::Moved:      return "moved";
+        case ContainerQuarantine::MoveFailed: return "moveFailed";
+    }
+    return "unknown";
+}
+
+// The human-readable phrase, for the readable report and the full-screen view.
+//
+// One definition because those are two commands answering about one file: the report
+// file, the terminal and the scrolling pane of the full-screen UI all render the same
+// member row, and an operator who sees them disagree stops trusting all three. Phrased
+// to sit where `moved:` and `NOT quarantined` already sit on a loose file's line, so
+// the two levels read as one vocabulary.
+constexpr std::string_view containerQuarantineLabel(ContainerQuarantine outcome) {
+    switch (outcome) {
+        case ContainerQuarantine::Moved:      return "moved with its container";
+        case ContainerQuarantine::MoveFailed: return "container NOT quarantined";
+    }
+    return "unknown";
+}
+
 // Result for a single file
 struct FileResult {
+    // Where the file was found. Never rewritten by a move: it is what the operator's
+    // own notes and every earlier report say, and it is the half of the answer a
+    // quarantine destination cannot reconstruct. `quarantinePath` below is where the
+    // bytes are now, and the pair is what lets a row be followed in either direction.
     std::filesystem::path path;
+
     std::vector<FileMatch> matches;
     bool quarantined = false;
-    std::string quarantinePath;  // where it was moved to, if quarantined
+
+    // Where the bytes are NOW, empty when they did not move. A `std::filesystem::path`
+    // rather than a string so that every writer renders it through pathForDisplay()
+    // exactly as it renders `path`: a destination under `preserve_structure` mirrors
+    // the source's whole path, so an attacker-controlled directory name reaches this
+    // field, and it was previously printed raw and encoded in the host's ANSI code
+    // page on Windows.
+    //
+    // For a container, the file's own destination. For a member of one, the address of
+    // the member under that destination, `<container destination>!<member>` - the same
+    // `container!member` form `path` already uses, so a reader who can follow one can
+    // follow the other.
+    std::filesystem::path quarantinePath;
 
     // The file was selected for quarantine and could not be moved, so it is still
     // where it was found. Never the same fact as `!quarantined`, which is also what
     // an exposure finding and a run with quarantine switched off both look like -
     // and the difference is whether a webshell is still under the web root.
     bool quarantineFailed = false;
+
+    // What happened to the container this file was found inside; see the enum above.
+    // Empty for a loose file and for a member no decision was made about.
+    std::optional<ContainerQuarantine> containerQuarantine;
 
     // Empty when the file was scanned. A skip is never silent: every one of the
     // three file-level reasons is recorded, so a report can say which.
@@ -84,10 +151,13 @@ struct FileResult {
 // obvious two; the third is a quarantine outcome on a file with no matches of its own,
 // which is what a container moved - or not moved - for what was inside it looks like.
 // Without it a report says a file was quarantined nowhere at all, or worse, says
-// nothing about one that could not be.
+// nothing about one that could not be. The fourth is the same argument one level in: a
+// member whose container did not move is a finding still under the web root, and that
+// is worth a row whatever else the row carries.
 inline bool worthReporting(const FileResult& result) {
     return !result.matches.empty() || result.skipped() ||
-           result.quarantined || result.quarantineFailed;
+           result.quarantined || result.quarantineFailed ||
+           result.containerQuarantine.has_value();
 }
 
 // True when a file carries at least one finding about its own content, as

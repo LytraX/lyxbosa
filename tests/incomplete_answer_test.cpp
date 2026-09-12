@@ -261,6 +261,20 @@ bool contains(const std::string& haystack, std::string_view needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
+// The nth comma-separated field of a CSV line, counting from zero. Enough for the cases
+// here, whose fields never carry a comma of their own - a quoted field would need the
+// real parser and none of these produce one.
+std::string fieldAt(const std::string& line, size_t index) {
+    size_t start = 0;
+    for (size_t seen = 0; seen < index; ++seen) {
+        start = line.find(',', start);
+        if (start == std::string::npos) return {};
+        ++start;
+    }
+    const size_t end = line.find(',', start);
+    return line.substr(start, end == std::string::npos ? end : end - start);
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -758,10 +772,508 @@ TEST(UnquarantinedReportTest, CsvCarriesTheColumnAndKeepsEveryOtherIndex) {
 
     EXPECT_TRUE(header.starts_with(
         "file,rule,severity,original_severity,suppressed,category,line,column,"
-        "quarantined,skipped,skip_reason"))
+        "quarantined,skipped,skip_reason,quarantine_failed"))
         << "the new column is appended so every existing column keeps its index: " << header;
-    EXPECT_TRUE(header.ends_with(",quarantine_failed")) << header;
-    EXPECT_TRUE(row.ends_with(",true")) << row;
+
+    // The rule this case exists for is that a column is appended and the ones before it
+    // keep their index - not that `quarantine_failed` is last for ever. Two more columns
+    // have since been appended under the same rule, so the assertion is on the index of
+    // this one rather than on its position at the end of the line.
+    EXPECT_EQ(fieldAt(header, 11), "quarantine_failed") << header;
+    EXPECT_EQ(fieldAt(row, 11), "true") << row;
+}
+
+// ===========================================================================
+// A finding inside a container that was moved
+// ===========================================================================
+//
+// Three defects sharing one reproduction: a webshell in a zip that genuinely
+// compresses, under a scan root, with quarantine enabled. The container is moved,
+// correctly, because a hostile member quarantines its container. What the report then
+// said about the member was wrong in three separate ways.
+//
+// The member row was addressed `archive.zip!wp-content/uploads/shell.php` using the
+// container's path AT THE TIME IT WAS SCANNED, and the container is not there any more.
+// An operator following that path finds nothing and so does a tool. That is an ordering
+// property rather than a mistake in one writer: the row was published by the archive
+// finding callback and the quarantine decision was taken afterwards, so the row was
+// always written before there was anything true to write. The repair is to publish the
+// row after the decision - NOT to correct the retained row, which would have been worse
+// than the defect, because fileResultCallback_ drives every streaming writer and the
+// full-screen view, and each had already seen the stale value.
+//
+// The member row said `quarantined: false`, which is equally what an exposure finding,
+// a run with quarantine switched off and a failed move look like - the absence that
+// `quarantineFailed` was added to stop carrying a fact, made again one level in. A
+// member is not a file that was moved, so it does not claim `quarantined`; it carries
+// what happened to the container it is inside, and it carries it as a value that is
+// absent when nothing was attempted rather than false.
+//
+// And the destination was known to the scanner and read by exactly one consumer, the
+// `moved:` line of the verbose text view. A machine was told a file had been
+// quarantined and never told where to.
+//
+// Every case below is paired with the other direction, because each of the three is
+// easy to "fix" by asserting the fact unconditionally: a container that was not moved,
+// one whose move failed, an exposure-only container and a run with quarantine off must
+// each produce a visibly different row.
+
+namespace {
+
+// The member of an archive really is addressable at the `container!member` address the
+// row gives. Reading the row is not enough: the whole defect was a row whose address
+// named a file that was no longer there.
+bool memberIsInArchive(const fs::path& archive, const std::string& member) {
+    int err = 0;
+    zip_t* za = zip_open(archive.string().c_str(), ZIP_RDONLY, &err);
+    if (!za) {
+        return false;
+    }
+    const bool found = zip_name_locate(za, member.c_str(), 0) >= 0;
+    zip_close(za);
+    return found;
+}
+
+// A scan that keeps the rows as the streaming writers received them, beside the rows an
+// in-process caller reads at the end.
+//
+// The two are not the same thing and one case below turns entirely on the difference:
+// `result.files` is what a caller holding the whole ScanResult sees, and the callback is
+// what the report file, the terminal and the full-screen view are built from while the
+// scan runs. A repair that corrected only the first would leave every report the tool
+// actually writes carrying the value from before the move.
+struct StreamedScan {
+    ScanResult result;
+    std::vector<FileResult> streamed;
+};
+
+StreamedScan runScanStreaming(const AppConfig& config) {
+    StreamedScan out;
+    Scanner scanner(config);
+    scanner.setPreCount(false);
+    scanner.setFileResultCallback(
+        [&out](const FileResult& file) { out.streamed.push_back(file); });
+    out.result = scanner.scan();
+    return out;
+}
+
+// The row whose path ends in `suffix`. Suffix rather than substring, because
+// `backup.zip` is a prefix of `backup.zip!shell.php` and a substring search would hand
+// back the container when asked for the member.
+const FileResult* rowEndingIn(const std::vector<FileResult>& files,
+                              std::string_view suffix) {
+    for (const auto& file : files) {
+        if (file.path.string().ends_with(suffix)) {
+            return &file;
+        }
+    }
+    return nullptr;
+}
+
+const std::string kMemberName = "wp-content/uploads/shell.php";
+const std::string kMemberSuffix = "backup.zip!wp-content/uploads/shell.php";
+
+// The reproduction, built once: a zip whose member deflate genuinely compresses, so the
+// literal the rules match is not sitting in the container's own bytes and the container
+// can only be moved on the strength of what was found inside it.
+fs::path writeContainerWithAShellInside(const fs::path& root) {
+    const fs::path container = root / "backup.zip";
+    writeZip(container, {{kMemberName, compressibleShell()}});
+    return container;
+}
+
+}  // namespace
+
+// The first defect. The row still names where the file was found - that is what the
+// operator's own notes say and what every earlier report says - and it now carries
+// where the bytes went, in the same `container!member` form, which really does resolve.
+TEST(ContainedMemberTest, TheMemberRowSaysWhereItWasFoundAndWhereItsBytesNowAre) {
+    TempDir dir;
+    TempDir quarantine;
+    const fs::path root = dir.path() / "site";
+    const fs::path container = writeContainerWithAShellInside(root);
+
+    const ScanResult result = runScan(quarantineConfig(root, quarantine.path()));
+
+    const FileResult* containerRow = rowEndingIn(result.files, "backup.zip");
+    const FileResult* memberRow = rowEndingIn(result.files, kMemberSuffix);
+    ASSERT_NE(containerRow, nullptr);
+    ASSERT_NE(memberRow, nullptr);
+
+    ASSERT_TRUE(containerRow->quarantined);
+    EXPECT_FALSE(fs::exists(container)) << "the container was moved, so the address the "
+                                           "member row used to give resolves to nothing";
+
+    EXPECT_EQ(memberRow->path.string(), pathToUtf8(container) + "!" + kMemberName)
+        << "the found-at address is not rewritten by the move";
+
+    EXPECT_EQ(memberRow->quarantinePath.string(),
+              pathToUtf8(containerRow->quarantinePath) + "!" + kMemberName)
+        << "the member's bytes are addressed under the container's destination";
+
+    // And the address is not merely well-formed. The bytes are there.
+    EXPECT_TRUE(fs::exists(containerRow->quarantinePath));
+    EXPECT_TRUE(memberIsInArchive(containerRow->quarantinePath, kMemberName))
+        << "a reader must be able to get from the row to the bytes";
+}
+
+// The second defect. The member carries what happened to its container, and does not
+// claim to have been quarantined itself - which would make the rows disagree with
+// filesQuarantined, the count of files that were moved.
+TEST(ContainedMemberTest, TheMemberCarriesTheContainersOutcomeAndNotItsOwn) {
+    TempDir dir;
+    TempDir quarantine;
+    const fs::path root = dir.path() / "site";
+    writeContainerWithAShellInside(root);
+
+    const ScanResult result = runScan(quarantineConfig(root, quarantine.path()));
+
+    const FileResult* memberRow = rowEndingIn(result.files, kMemberSuffix);
+    ASSERT_NE(memberRow, nullptr);
+
+    ASSERT_TRUE(memberRow->containerQuarantine.has_value());
+    EXPECT_EQ(*memberRow->containerQuarantine, ContainerQuarantine::Moved);
+    EXPECT_FALSE(memberRow->quarantined)
+        << "a member is not a file that was moved; the container went as a unit";
+    EXPECT_FALSE(memberRow->quarantineFailed);
+
+    EXPECT_EQ(result.filesQuarantined, 1u)
+        << "one file was moved, and exactly one row may say it was";
+    size_t rowsClaimingAMove = 0;
+    for (const auto& file : result.files) {
+        if (file.quarantined) ++rowsClaimingAMove;
+    }
+    EXPECT_EQ(rowsClaimingAMove, result.filesQuarantined);
+}
+
+// The control that matters most, and the one a repair is most likely to fail. A member
+// whose container could NOT be moved is a webshell still under the web root, reachable
+// at the same URL as before - the opposite operational answer from the case above, and
+// it must not be reachable by reading `quarantined: false` on either of them.
+TEST(ContainedMemberTest, AMemberOfAContainerThatCouldNotBeMovedIsSaidToBeStillInPlace) {
+    TempDir dir;
+    const fs::path root = dir.path() / "site";
+    const fs::path container = writeContainerWithAShellInside(root);
+    writeFile(dir.file("blocker"), "a regular file, so nothing can be made under it");
+
+    const ScanResult result =
+        runScan(quarantineConfig(root, dir.file("blocker") / "quarantine"));
+
+    const FileResult* memberRow = rowEndingIn(result.files, kMemberSuffix);
+    ASSERT_NE(memberRow, nullptr);
+
+    ASSERT_TRUE(memberRow->containerQuarantine.has_value());
+    EXPECT_EQ(*memberRow->containerQuarantine, ContainerQuarantine::MoveFailed);
+    EXPECT_TRUE(memberRow->quarantinePath.empty())
+        << "nothing moved, so there is nowhere else to point a reader";
+
+    EXPECT_TRUE(fs::exists(container));
+    EXPECT_TRUE(memberIsInArchive(container, kMemberName))
+        << "the shell is still where it was found, which is what the row has to say";
+    EXPECT_EQ(result.filesQuarantineFailed, 1u);
+}
+
+// A run with quarantine switched off. Nothing was attempted, so the member row carries
+// no outcome at all rather than a negative one - the distinction the whole enum exists
+// for. Without this case every assertion above would pass against a scanner that
+// stamped `MoveFailed` on every member it ever reported.
+TEST(ContainedMemberTest, WithQuarantineOffNoRowCarriesAContainerOutcome) {
+    TempDir dir;
+    const fs::path root = dir.path() / "site";
+    const fs::path container = writeContainerWithAShellInside(root);
+
+    AppConfig config = quarantineConfig(root, dir.file("unused-quarantine"));
+    config.actions.quarantine.enabled = false;
+
+    const ScanResult result = runScan(config);
+
+    const FileResult* memberRow = rowEndingIn(result.files, kMemberSuffix);
+    ASSERT_NE(memberRow, nullptr);
+    EXPECT_FALSE(memberRow->containerQuarantine.has_value())
+        << "nothing was attempted, and that is not the same answer as a move that failed";
+    EXPECT_TRUE(memberRow->quarantinePath.empty());
+    EXPECT_TRUE(fs::exists(container));
+    EXPECT_EQ(result.filesQuarantined, 0u);
+    EXPECT_EQ(result.filesQuarantineFailed, 0u);
+}
+
+// The same ruling for --dry-run, which is a different branch reaching the same
+// decision: the operator asked what WOULD happen, and a row claiming a container had
+// been moved would be the report telling them it had.
+TEST(ContainedMemberTest, ADryRunReportsTheMemberAndClaimsNoContainment) {
+    TempDir dir;
+    TempDir quarantine;
+    const fs::path root = dir.path() / "site";
+    const fs::path container = writeContainerWithAShellInside(root);
+
+    Scanner scanner(quarantineConfig(root, quarantine.path()));
+    scanner.setPreCount(false);
+    scanner.setDryRun(true);
+    const ScanResult result = scanner.scan();
+
+    const FileResult* memberRow = rowEndingIn(result.files, kMemberSuffix);
+    ASSERT_NE(memberRow, nullptr);
+    EXPECT_FALSE(memberRow->containerQuarantine.has_value());
+    EXPECT_TRUE(fs::exists(container)) << "a dry run moves nothing";
+}
+
+// An exposure finding says a file is in the wrong place, not that it is hostile, so it
+// never moves anything - and no row may claim otherwise. A member row never carries an
+// exposure finding of its own, because an exposure finding is raised about a container
+// and a nested container's entries fold into the outer one's summary; so the case is
+// put at the level where it exists, which is the container.
+TEST(ContainedMemberTest, AnExposureOnlyContainerMovesNothingAndNoRowClaimsItDid) {
+    TempDir dir;
+    TempDir quarantine;
+    const fs::path root = dir.path() / "site";
+    const fs::path backup = root / "site-backup.zip";
+    writeZip(backup, {{"wp-config.php", "<?php define('DB_PASSWORD', 'x');\n"},
+                      {"wp-load.php", "<?php require 'wp-config.php';\n"}});
+
+    const ScanResult result = runScan(quarantineConfig(root, quarantine.path()));
+
+    const FileResult* containerRow = rowEndingIn(result.files, "site-backup.zip");
+    ASSERT_NE(containerRow, nullptr);
+    ASSERT_FALSE(hasHostileContent(*containerRow))
+        << "this case is only about an exposure finding, and this container has more";
+
+    EXPECT_EQ(result.filesQuarantined, 0u);
+    EXPECT_TRUE(fs::exists(backup)) << "the operator's own data is not moved for them";
+    for (const auto& file : result.files) {
+        EXPECT_FALSE(file.quarantined) << file.path.string();
+        EXPECT_FALSE(file.containerQuarantine.has_value()) << file.path.string();
+    }
+}
+
+// The trap, pinned. fileResultCallback_ fires as each row is published, and it is what
+// the report file, the console report and the full-screen view are all built from. A
+// repair that published the row first and corrected it afterwards would leave every one
+// of them holding the stale address while `result.files` - which only an in-process
+// caller reads - looked right.
+//
+// So the streamed row is compared against the final row field by field, and the member
+// row's outcome is asserted on the STREAMED copy: it can only be there if the row was
+// published after the container's fate was decided.
+TEST(ContainedMemberTest, TheRowEveryWriterSeesIsTheRowTheResultKeeps) {
+    TempDir dir;
+    TempDir quarantine;
+    const fs::path root = dir.path() / "site";
+    writeContainerWithAShellInside(root);
+
+    const StreamedScan scan = runScanStreaming(quarantineConfig(root, quarantine.path()));
+
+    const FileResult* streamedMember = rowEndingIn(scan.streamed, kMemberSuffix);
+    const FileResult* finalMember = rowEndingIn(scan.result.files, kMemberSuffix);
+    ASSERT_NE(streamedMember, nullptr);
+    ASSERT_NE(finalMember, nullptr);
+
+    ASSERT_TRUE(streamedMember->containerQuarantine.has_value())
+        << "the row reached its writers before the container's fate was known";
+    EXPECT_EQ(*streamedMember->containerQuarantine, ContainerQuarantine::Moved);
+    EXPECT_FALSE(streamedMember->quarantinePath.empty());
+
+    EXPECT_EQ(streamedMember->path, finalMember->path);
+    EXPECT_EQ(streamedMember->quarantinePath, finalMember->quarantinePath);
+    EXPECT_EQ(streamedMember->containerQuarantine, finalMember->containerQuarantine);
+    EXPECT_EQ(streamedMember->quarantined, finalMember->quarantined);
+
+    // And the order a report has always shown these in is unchanged: the members of a
+    // container, then the container itself.
+    std::vector<std::string> order;
+    for (const auto& file : scan.streamed) {
+        order.push_back(file.path.string());
+    }
+    ASSERT_EQ(order.size(), 2u) << "one member row and one container row";
+    EXPECT_TRUE(order[0].ends_with(kMemberSuffix)) << order[0];
+    EXPECT_TRUE(order[1].ends_with("backup.zip")) << order[1];
+}
+
+// ===========================================================================
+// What the reports say about a member that was contained
+// ===========================================================================
+
+namespace {
+
+FileResult containedMember() {
+    FileResult member;
+    member.path = "/var/www/html/backup.zip!wp-content/uploads/shell.php";
+    member.containerQuarantine = ContainerQuarantine::Moved;
+    member.quarantinePath =
+        "/var/quarantine/var/www/html/backup.zip!wp-content/uploads/shell.php";
+    FileMatch match;
+    match.ruleName = "eval base64 decode";
+    match.category = "RCE001";
+    match.severity = Severity::Critical;
+    member.matches.push_back(match);
+    return member;
+}
+
+std::string jsonFor(const FileResult& file) {
+    ScanResult result;
+    result.files.push_back(file);
+    std::ostringstream out;
+    JsonReportWriter writer(out);
+    writer.begin();
+    writer.onFile(result.files.front());
+    writer.end(result, /*interrupted=*/false);
+    return out.str();
+}
+
+}  // namespace
+
+// The third defect. The scanner has always known the destination and exactly one
+// consumer read it - the verbose text view - so a pipeline was told a file had been
+// quarantined and never told where to.
+TEST(ContainedMemberReportTest, JsonCarriesTheDestinationOfAFileThatMoved) {
+    FileResult moved;
+    moved.path = "/var/www/html/backup.zip";
+    moved.quarantined = true;
+    moved.quarantinePath = "/var/quarantine/var/www/html/backup.zip";
+
+    const std::string json = jsonFor(moved);
+    EXPECT_TRUE(contains(json, "\"quarantined\": true")) << json;
+    EXPECT_TRUE(contains(json,
+                         "\"quarantinePath\": \"/var/quarantine/var/www/html/backup.zip\""))
+        << json;
+}
+
+TEST(ContainedMemberReportTest, JsonCarriesTheContainerOutcomeAndTheMembersAddress) {
+    const std::string json = jsonFor(containedMember());
+
+    EXPECT_TRUE(contains(json, "\"containerQuarantine\": \"moved\"")) << json;
+    EXPECT_TRUE(contains(json, "\"quarantinePath\": \"/var/quarantine/var/www/html/"
+                               "backup.zip!wp-content/uploads/shell.php\""))
+        << json;
+    EXPECT_TRUE(contains(json, "\"quarantined\": false"))
+        << "the member itself was not moved, and the row still says so: " << json;
+}
+
+// The companion, and the reason both keys are written only when they have something to
+// say: a member of a container whose move failed is still under the web root, and a
+// report from a run where nothing was attempted is the report it always was.
+TEST(ContainedMemberReportTest, JsonSaysMoveFailedAndOffersNoDestination) {
+    FileResult member = containedMember();
+    member.containerQuarantine = ContainerQuarantine::MoveFailed;
+    member.quarantinePath.clear();
+
+    const std::string json = jsonFor(member);
+    EXPECT_TRUE(contains(json, "\"containerQuarantine\": \"moveFailed\"")) << json;
+    EXPECT_FALSE(contains(json, "quarantinePath")) << json;
+}
+
+TEST(ContainedMemberReportTest, JsonSaysNeitherWhenNoDecisionWasTaken) {
+    FileResult member = containedMember();
+    member.containerQuarantine.reset();
+    member.quarantinePath.clear();
+
+    const std::string json = jsonFor(member);
+    EXPECT_FALSE(contains(json, "containerQuarantine"))
+        << "an absent key is how a report says nothing was attempted: " << json;
+    EXPECT_FALSE(contains(json, "quarantinePath")) << json;
+    EXPECT_TRUE(contains(json, "\"quarantined\": false")) << json;
+}
+
+TEST(ContainedMemberReportTest, CsvCarriesBothAndKeepsEveryOtherIndex) {
+    ScanResult result;
+    result.files.push_back(containedMember());
+
+    std::ostringstream out;
+    CsvReportWriter writer(out);
+    writer.begin();
+    writer.onFile(result.files.front());
+    writer.end(result, /*interrupted=*/false);
+
+    std::istringstream lines(out.str());
+    std::string header;
+    std::string row;
+    ASSERT_TRUE(std::getline(lines, header));
+    ASSERT_TRUE(std::getline(lines, row));
+
+    EXPECT_TRUE(header.starts_with(
+        "file,rule,severity,original_severity,suppressed,category,line,column,"
+        "quarantined,skipped,skip_reason,quarantine_failed,"))
+        << "the two new columns are appended, so every existing column keeps its "
+           "index: " << header;
+    EXPECT_TRUE(header.ends_with(",quarantine_path,container_quarantine")) << header;
+    EXPECT_TRUE(row.ends_with(
+        ",/var/quarantine/var/www/html/backup.zip!wp-content/uploads/shell.php,moved"))
+        << row;
+}
+
+// The companion for CSV: a row for which no decision was taken leaves both cells empty,
+// which is not the same as `moveFailed` and is not the same as a destination of "".
+TEST(ContainedMemberReportTest, CsvLeavesBothCellsEmptyWhenNothingWasAttempted) {
+    ScanResult result;
+    FileResult member = containedMember();
+    member.containerQuarantine.reset();
+    member.quarantinePath.clear();
+    result.files.push_back(member);
+
+    std::ostringstream out;
+    CsvReportWriter writer(out);
+    writer.begin();
+    writer.onFile(result.files.front());
+    writer.end(result, /*interrupted=*/false);
+
+    std::istringstream lines(out.str());
+    std::string header;
+    std::string row;
+    ASSERT_TRUE(std::getline(lines, header));
+    ASSERT_TRUE(std::getline(lines, row));
+    EXPECT_TRUE(row.ends_with(",false,,")) << row;
+}
+
+// Both readable views, from the one function that puts a quarantine outcome into words.
+// The compact view is what an operator watching a `--quarantine` run actually reads and
+// it said nothing at all about the one destructive thing the command does; the verbose
+// view named a destination and no other output did.
+TEST(ContainedMemberReportTest, BothReadableViewsNameTheDestinationAndTheOutcome) {
+    const FileResult member = containedMember();
+
+    FileResult stranded = member;
+    stranded.containerQuarantine = ContainerQuarantine::MoveFailed;
+    stranded.quarantinePath.clear();
+
+    FileResult moved;
+    moved.path = "/var/www/html/backup.zip";
+    moved.quarantined = true;
+    moved.quarantinePath = "/var/quarantine/var/www/html/backup.zip";
+
+    FileResult clean;
+    clean.path = "/var/www/html/index.php";
+
+    for (const bool verbose : {false, true}) {
+        std::ostringstream out;
+        ResultPrinter printer(out, /*color=*/false, /*width=*/120);
+        for (const FileResult& file : {member, stranded, moved, clean}) {
+            if (verbose) {
+                printer.printFileResult(file);
+            } else {
+                printer.printFileResultCompact(file);
+            }
+        }
+        const std::string text = out.str();
+
+        // Built from the label functions rather than from literals. The full-screen
+        // view draws its chips from those same two functions and cannot be exercised
+        // from here - it is compiled only into the CLI binary - so this is what holds
+        // the two views to one vocabulary: a printer that grew a wording of its own
+        // fails here, and a deliberate change to a label moves both at once.
+        EXPECT_TRUE(contains(
+            text, std::string(containerQuarantineLabel(ContainerQuarantine::Moved)) +
+                      ": /var/quarantine/var/www/html/backup.zip!"
+                      "wp-content/uploads/shell.php"))
+            << text;
+        EXPECT_TRUE(contains(
+            text, std::string(containerQuarantineLabel(ContainerQuarantine::MoveFailed)) +
+                      " - still at "))
+            << text;
+        EXPECT_TRUE(contains(text, "moved: /var/quarantine/var/www/html/backup.zip"))
+            << "a file that moved names where it went in both views: " << text;
+        // The companion inside the companion: a clean file is still not printed, so
+        // none of this is passing because every file now gets a line.
+        EXPECT_FALSE(contains(text, "index.php")) << text;
+    }
 }
 
 // ===========================================================================

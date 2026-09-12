@@ -48,6 +48,26 @@ public:
         if (result.quarantineFailed) {
             out_ << "      \"quarantineFailed\": true,\n";
         }
+
+        // Where the bytes are now. The scanner has always known this and exactly one
+        // consumer ever read it - the `moved:` line of the verbose text view - so a
+        // pipeline was told a file had been quarantined and never told where to, which
+        // is the half of the answer a machine needs and a human can go and look for.
+        if (!result.quarantinePath.empty()) {
+            out_ << "      \"quarantinePath\": ";
+            writeString(out_, pathForDisplay(result.quarantinePath));
+            out_ << ",\n";
+        }
+
+        // What happened to the container this file was found inside. Absent for a loose
+        // file and for a member no decision was taken about, which is why it is a
+        // string rather than a bool: `false` would be the answer for a member that went
+        // into quarantine inside its container AND for one still sitting under the web
+        // root, and those are the two answers an operator acts on differently.
+        if (result.containerQuarantine) {
+            out_ << "      \"containerQuarantine\": \""
+                 << containerQuarantineToString(*result.containerQuarantine) << "\",\n";
+        }
         out_ << "      \"matches\": [";
 
         bool firstMatch = true;

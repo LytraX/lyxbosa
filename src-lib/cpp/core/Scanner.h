@@ -115,8 +115,12 @@ private:
     // which is a question about its bytes, never about its name.
     FileResult scanContent(const std::filesystem::path& path, std::string& content);
 
-    // Quarantine a file
-    bool quarantineFile(const std::filesystem::path& source, std::string& destPath);
+    // Quarantine a file. `destPath` is where it landed, and it is a path rather than a
+    // string so that the destination reaches a report through the same pathForDisplay()
+    // every other path does - it mirrors an attacker-controlled source path under
+    // `preserve_structure`, and it was previously rendered raw.
+    bool quarantineFile(const std::filesystem::path& source,
+                        std::filesystem::path& destPath);
 
     AppConfig config_;
     MatchEngine engine_;
