@@ -42,6 +42,7 @@
 #include "archive/ArchiveTypes.h"
 #include "config/Config.h"
 #include "core/Scanner.h"
+#include "infrastructure/ResultPrinter.h"
 #include "infrastructure/report/CsvReportWriter.h"
 #include "infrastructure/report/JsonReportWriter.h"
 #include "system/CliArgs.h"
@@ -567,6 +568,41 @@ TEST(QuarantineFailureTest, AContainerThatCouldNotBeMovedStillReachesTheReport) 
     }
     EXPECT_TRUE(named) << "the container has no matches of its own; it is in the report "
                           "for its quarantine outcome alone";
+}
+
+// The same hole in the readable report. A container has no match of its own, so both
+// printers returned on the match count alone and printed no line for it at all - the
+// quarantine outcome was the only thing to say about that file and nothing said it.
+TEST(QuarantineFailureTest, TheReadableReportNamesAContainerWithNoMatchOfItsOwn) {
+    FileResult container;
+    container.path = "/var/www/html/backup.zip";
+    container.quarantineFailed = true;
+
+    FileResult moved = container;
+    moved.quarantineFailed = false;
+    moved.quarantined = true;
+    moved.quarantinePath = "/var/quarantine/var/www/html/backup.zip";
+
+    FileResult clean;
+    clean.path = "/var/www/html/index.php";
+
+    for (const bool verbose : {false, true}) {
+        std::ostringstream out;
+        ResultPrinter printer(out, /*color=*/false, /*width=*/100);
+        for (const FileResult& file : {container, moved, clean}) {
+            if (verbose) {
+                printer.printFileResult(file);
+            } else {
+                printer.printFileResultCompact(file);
+            }
+        }
+
+        EXPECT_TRUE(contains(out.str(), "backup.zip")) << out.str();
+        EXPECT_TRUE(contains(out.str(), "NOT quarantined")) << out.str();
+        // The companion inside the companion: a clean file is still not printed, so
+        // this cannot be passing because every file now gets a line.
+        EXPECT_FALSE(contains(out.str(), "index.php")) << out.str();
+    }
 }
 
 // ===========================================================================
