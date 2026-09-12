@@ -1,0 +1,29 @@
+# What a build context rooted at this repository must not carry.
+#
+# docker/fuzz/fuzz.sh is the only build here whose context is the repository root - the
+# release builds under docker/build/ use their own directory - and its Dockerfile copies
+# four things: the vcpkg manifest, the vcpkg configuration, the overlay triplets and one
+# script. BuildKit already sends only what a COPY names, so this file is not what makes
+# the context small.
+#
+# It is here for the other reason. This tree holds material that must never leave the
+# machine, and a build context is a copy of a directory into a daemon - a second way for
+# it to travel that .gitignore has nothing to do with. AGENTS.md: gitignored is not a
+# guarantee, it is a default that a new directory gets around. So the held trees are named
+# explicitly, and named here as well as there.
+trail-data/
+corpus/local/
+corpus/blobs/
+corpus/shards/
+docs/local/
+
+# Build output and caches: large, machine-specific, and rebuilt inside the container.
+build/
+build-release/
+build-static/
+build-win-release*/
+vcpkg_installed/
+fuzz/work/
+.git/
+.vcpkg-cache*/
+dist/

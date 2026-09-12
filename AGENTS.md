@@ -305,6 +305,15 @@ This is not a new rule. `docs/RELEASING.md` already defines exactly two CMake pr
 about to tag from `build-release/`. It simply was not written where an agent reads its
 conventions.
 
+**A configuration this machine's compiler cannot produce lives where its compiler lives.**
+The sanitizer-and-fuzzer build is the case: libFuzzer is compiler-rt and there is no clang
+here, so it is built in `docker/fuzz/`, configured inside the container and kept in a docker
+volume — the same shape as `docker/build/Linux/build-inside.sh`, which configures at `/build`
+inside its own container and copies out what it made. That is why fuzzing adds no build
+directory here, and it is the pattern to follow rather than a special case: if a build needs a
+toolchain this machine does not have, the answer is a container, not a fourth name in
+`.gitignore`. `docs/FUZZING.md` is the procedure.
+
 Two reasons it is not merely tidiness. `.vscode/settings.json` points
 `C_Cpp.default.compileCommands` at `build/compile_commands.json` and deliberately does **not**
 exclude `build/` from cpptools, because the generated headers live there; a third directory is

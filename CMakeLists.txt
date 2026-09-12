@@ -369,6 +369,63 @@ if(LYXBOSA_BENCHMARKS)
   endif()
 endif()
 
+# Fuzz targets (opt-in, clang only).
+#
+# libFuzzer lives in clang's compiler-rt and has no GCC equivalent, so this configure
+# cannot be produced by the compiler that builds everything else here. It is not built on
+# a developer machine and it is not built in CI; docker/fuzz/ is where it has a compiler,
+# and docs/FUZZING.md is the procedure.
+#
+# The bodies of the targets are in fuzz/FuzzTargets.h, which tests/fuzz_replay_test.cpp
+# also includes - so the seed corpus is replayed through the same code in the ordinary
+# build, by the ordinary suite, in seconds. See that file for why the two must not be
+# separate harnesses.
+option(LYXBOSA_FUZZERS "Build the libFuzzer targets (requires clang)" OFF)
+option(LYXBOSA_FUZZER_COVERAGE "Add source-based coverage instrumentation to the fuzz targets" OFF)
+if(LYXBOSA_FUZZERS)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR
+      "LYXBOSA_FUZZERS needs clang: -fsanitize=fuzzer is compiler-rt and GCC has no "
+      "equivalent. This configure is using ${CMAKE_CXX_COMPILER_ID}. Build it in "
+      "docker/fuzz/ instead of installing a second compiler on the machine.")
+  endif()
+
+  # Address and undefined-behaviour sanitizers on every fuzz target, not as an option.
+  #
+  # A fuzzer without them finds the reads that segfault and misses every read that merely
+  # happens to land on a mapped page today - which is most of them, and which is the
+  # whole reason to fuzz a parser rather than to run it. -fno-sanitize-recover makes a
+  # UBSan report a crash rather than a line on stderr that libFuzzer would never see.
+  set(LYXBOSA_FUZZ_SANITIZERS
+      -fsanitize=address,undefined
+      -fno-sanitize-recover=undefined
+      -fno-omit-frame-pointer)
+
+  function(lyxbosa_add_fuzzer name source)
+    add_executable(${name} ${source} ${LIB_SOURCES})
+    target_include_directories(${name} PRIVATE
+      ${CMAKE_SOURCE_DIR}/src-lib/cpp
+      ${CMAKE_SOURCE_DIR}/src-cli
+      ${CMAKE_SOURCE_DIR}/fuzz
+    )
+    target_link_libraries(${name} PRIVATE
+      fmt::fmt yaml-cpp::yaml-cpp re2::re2 libzip::zip ZLIB::ZLIB Threads::Threads)
+    target_compile_options(${name} PRIVATE
+      ${LYXBOSA_FUZZ_SANITIZERS} -fsanitize=fuzzer)
+    target_link_options(${name} PRIVATE
+      ${LYXBOSA_FUZZ_SANITIZERS} -fsanitize=fuzzer)
+    if(LYXBOSA_FUZZER_COVERAGE)
+      target_compile_options(${name} PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+      target_link_options(${name} PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+    endif()
+  endfunction()
+
+  lyxbosa_add_fuzzer(lyxbosa_fuzz_archive ${CMAKE_SOURCE_DIR}/fuzz/archive_fuzzer.cpp)
+  lyxbosa_add_fuzzer(lyxbosa_fuzz_content ${CMAKE_SOURCE_DIR}/fuzz/content_fuzzer.cpp)
+  message(STATUS "Fuzz targets: lyxbosa_fuzz_archive, lyxbosa_fuzz_content "
+                 "(ASan+UBSan, coverage=${LYXBOSA_FUZZER_COVERAGE})")
+endif()
+
 # Testing
 option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
@@ -396,6 +453,7 @@ if(BUILD_TESTS)
     tests/update_test.cpp
     tests/update_apply_test.cpp
     tests/build_identity_test.cpp
+    tests/fuzz_replay_test.cpp
     ${LIB_SOURCES}
     ${UPDATE_SOURCES}
   )
@@ -404,7 +462,16 @@ if(BUILD_TESTS)
   target_include_directories(lyxbosa_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src-lib/cpp
     ${CMAKE_SOURCE_DIR}/src-cli
+    ${CMAKE_SOURCE_DIR}/fuzz
   )
+
+  # The seed corpus the fuzz replay reads, given as a path the way the keyring is, rather
+  # than found relative to the working directory: ctest runs this binary from the build
+  # tree and a released executable has no business carrying the path of the machine that
+  # built it. tests/fuzz_replay_test.cpp fails to compile without it, deliberately - a
+  # replay that silently found no corpus would pass.
+  target_compile_definitions(lyxbosa_tests PRIVATE
+    LYXBOSA_FUZZ_DIR="${CMAKE_SOURCE_DIR}/fuzz")
 
   target_link_libraries(lyxbosa_tests
     PRIVATE
