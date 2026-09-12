@@ -734,9 +734,27 @@ TEST(ArchiveScannerTest, AnExposedBackupInsideAnArchiveDoesNotMoveTheContainer) 
     config.actions.quarantine.directory = quarantine.path().string();
     config.actions.quarantine.preserveStructure = false;
 
+    // Exhaustive, and the case says nothing without it. A `.tar.gz` inside a zip is
+    // "not code" to the selection policy, so by default the nested container is never
+    // opened, its entries never reach the summary, and the outer zip raises no finding
+    // of any kind - which made this case green because nothing was found rather than
+    // because an exposure finding was declined. The assertion below is what stops it
+    // going quiet that way again.
+    config.archives.exhaustive = true;
+
     Scanner scanner(config);
     scanner.setPreCount(false);
     const ScanResult result = scanner.scan();
+
+    bool exposureRaised = false;
+    for (const auto& file : result.files) {
+        for (const auto& match : file.matches) {
+            if (isExposureFinding(match)) exposureRaised = true;
+        }
+    }
+    ASSERT_TRUE(exposureRaised)
+        << "nothing was found at all, so this proves nothing about a finding that must "
+           "not move a file";
 
     EXPECT_EQ(result.filesQuarantined, 0u);
     EXPECT_TRUE(fs::exists(outer)) << "the operator's backup must still be there";
