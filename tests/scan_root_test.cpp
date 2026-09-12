@@ -35,6 +35,7 @@
 
 #include "PlatformSkips.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -49,9 +50,16 @@ namespace fs = std::filesystem;
 class TempDir {
 public:
     TempDir() {
+        // A steady_clock tick, not a hash of the temp directory. That hash is the
+        // same in every process, and the counter restarts at zero in each one, so two
+        // ctest workers built identical names and removed each other's fixtures - a
+        // case would find files in an allegedly empty root, or its directory gone
+        // before a permissions call. The three sibling suites already name themselves
+        // this way; this file was the last one that did not.
+        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
         path_ = fs::temp_directory_path() /
-                ("lyxbosa-root-test-" + std::to_string(counter_++) + "-" +
-                 std::to_string(fs::hash_value(fs::temp_directory_path())));
+                ("lyxbosa-root-test-" + std::to_string(tick) + "-" +
+                 std::to_string(counter_++));
         fs::create_directories(path_);
     }
     ~TempDir() {
