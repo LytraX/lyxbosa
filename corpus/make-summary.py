@@ -224,6 +224,91 @@ def recorded_frame(rows):
     return out[0] if len(out) == 1 else None
 
 
+# A THIRD KIND OF FRAME: A COLLECTION WITH ONE SOURCE
+# ----------------------------------------------------
+# The two frames above are about how a FAMILY was drawn. This one is about how the ROWS were,
+# and neither of the means that found those can find it. Nothing in the writer's verdicts
+# consults the scanner, so reading the code shows nothing. Counting the pool does not help
+# either, and can mislead: the first such collection holds seven malicious samples of which
+# five are detected, and at the reviewed set's own rate that outcome or better has a
+# probability of 0.34 - no evidence of anything - while `family_evidence`'s ten-point gap
+# test would call the same pool detection-conditioned, because it states no power. What the
+# collection has instead is a single origin: one upload directory, on one host, written by one
+# automated scanner inside one session. Every row can be byte-clean and the collection is
+# still a sample of one attacker's afternoon.
+#
+# Adding such a collection moves `malicious_reviewed` and `malicious_detected` together, and a
+# reader of those two numbers cannot tell a rule improving from a directory arriving. §8 says
+# every count difference carries an attributed cause, so the cause is put in the denominator
+# file itself: the writer measures the frame at write time and records it on every row it
+# writes (`collection_frame`, with `single_source: true` and a `frame_id`), and this partition
+# reads it back. Read rather than re-derived, for the reason `family_frame` gives - by the time
+# anything re-derives a frame, the pool it would count is a different pool.
+#
+# A frame that does not claim `single_source: true` with a `frame_id` moves nothing. Recording
+# a frame is not by itself a reason to leave the unmarked column: otherwise any writer could
+# lift its rows out of the headline population by attaching a block.
+COLLECTION_FRAME_FIELD = "collection_frame"
+UNRECORDED_COLLECTION = "collection_frame_not_recorded"
+
+
+def collection_frame_id(r):
+    """The single-source collection this row was drawn from, or None."""
+    fr = r.get(COLLECTION_FRAME_FIELD)
+    if (isinstance(fr, dict) and fr.get("single_source") is True
+            and isinstance(fr.get("frame_id"), str) and fr["frame_id"]):
+        return fr["frame_id"]
+    return None
+
+
+def malicious_by_collection_frame(allr, pub):
+    """The reviewed-malicious figures, partitioned by collection frame.
+
+    `collection_frame_not_recorded` holds every row that records no single-source frame, and
+    `single_source` holds one block per `frame_id`. The four counts in every block are the four
+    headline keys, computed with the same predicates, so the blocks sum to `malicious_reviewed`,
+    `malicious_detected`, `malicious_known_miss` and `malicious_detected_runnable` exactly and
+    `--inject` asserts it.
+
+    Each single-source block also carries `rows_indexed` - every row under the frame, whatever
+    its verdict - and the one frame its rows record, or None when they do not agree. The frame
+    records `rows_recorded`, the number of rows written under it at write time;
+    `recorded_rows_matches_indexed` compares that with the rows the index holds now, so a later
+    round that drops or adds rows under the frame is visible here rather than only in a diff.
+    """
+    shipped = {r["sha256"] for r in pub if ships_as_bytes(r)}
+
+    def counts(rows):
+        mal = [r for r in rows if r.get("verdict") == "malicious"]
+        return {"reviewed": len(mal),
+                "detected": sum(1 for r in mal if is_detected(r)),
+                "known_miss": sum(1 for r in mal if (r.get("expect") or {}).get("known_miss")),
+                "detected_runnable": sum(1 for r in mal if is_detected(r)
+                                         and r["sha256"] in shipped)}
+
+    by_id = collections.defaultdict(list)
+    unmarked = []
+    for r in allr:
+        fid = collection_frame_id(r)
+        (by_id[fid] if fid else unmarked).append(r)
+    out = {UNRECORDED_COLLECTION: counts(unmarked), "single_source": {}}
+    for fid, rows in sorted(by_id.items()):
+        seen, frames = set(), []
+        for r in rows:
+            k = json.dumps(r[COLLECTION_FRAME_FIELD], sort_keys=True)
+            if k not in seen:
+                seen.add(k)
+                frames.append(r[COLLECTION_FRAME_FIELD])
+        frame = frames[0] if len(frames) == 1 else None
+        block = counts(rows)
+        block["rows_indexed"] = len(rows)
+        block["frame"] = frame
+        rec = frame.get("rows_recorded") if isinstance(frame, dict) else None
+        block["recorded_rows_matches_indexed"] = (rec == len(rows)) if rec is not None else None
+        out["single_source"][fid] = block
+    return out
+
+
 def is_detected(r):
     """The one detection predicate, shared with `malicious_detected` above.
 
@@ -487,6 +572,24 @@ def build():
         "malicious_no_expectation": sum(1 for r in allr if r.get("verdict") == "malicious"
                                         and not (r.get("expect") or {}).get("must_detect")
                                         and not (r.get("expect") or {}).get("known_miss")),
+        # The same four figures, by the collection their rows were drawn from. See the block
+        # above `collection_frame_id` for why this is a partition and not a footnote.
+        "malicious_by_collection_frame": malicious_by_collection_frame(allr, pub),
+        "malicious_by_collection_frame_note": (
+            "the reviewed-malicious figures partitioned by collection frame, read from the "
+            "`collection_frame` block a writer records on every row it writes. "
+            "collection_frame_not_recorded is every row that records no single-source frame; "
+            "it is NOT a clean control and nothing measured how those rows were collected. "
+            "Each single_source block is a collection drawn from one origin - one host, one "
+            "directory, one writer - whose rows can be byte-clean and still be a sample of "
+            "nothing wider than that origin, so a rate over it is a statement about that "
+            "origin and never about the scanner. The blocks sum to malicious_reviewed, "
+            "malicious_detected, malicious_known_miss and malicious_detected_runnable, so a "
+            "move in any of those four that came from a collection arriving is attributable "
+            "here rather than only in a changelog. rows_indexed counts every verdict under "
+            "the frame; recorded_rows_matches_indexed compares it with rows_recorded, the "
+            "count the frame recorded at write time, and is null when the rows do not agree "
+            "on one frame"),
         # Provenance split, section 11 in its newest place. `trail-data/Infected` is the tree
         # the FIRST version of these rules was written against, so detection measured over it
         # is partly a test of the rules against their own source material. The rows record
@@ -899,6 +1002,79 @@ def inject():
          "two" not in family_bucket_suspects(two))
     case("the detector needs no reason code to fire",
          family_bucket_suspects(pile)["pile"]["distinct_rule_sets"] == 3)
+
+    print()
+    print("=== the collection-frame partition: a directory arriving is not a rule improving ===")
+    # Both directions on every case. A partition that moved every framed row out of the
+    # unmarked column would satisfy "a single-source row is named"; one that moved nothing
+    # would satisfy "the blocks sum to the totals". Only the pair says the rows went where
+    # their frame says and nowhere else.
+    def cf_row(verdict, detected=False, miss=False, frame=None, published=False, n=[0]):
+        n[0] += 1
+        r = {"verdict": verdict, "sha256": "%064d" % (700000 + n[0])}
+        if verdict == "malicious":
+            r["expect"] = ({"must_detect": ["RCE008"]} if detected
+                           else {"must_detect": [], "known_miss": True} if miss else {})
+        if frame is not None:
+            r[COLLECTION_FRAME_FIELD] = frame
+        if published:
+            r["reason"], r["publishable"] = "media-polyglot", True
+        return r
+
+    src = {"single_source": True, "frame_id": "probe-src", "rows_recorded": 4,
+           "source_distinct_blobs": 9}
+    framed_rows = [cf_row("malicious", detected=True, frame=src),
+                   cf_row("malicious", miss=True, frame=src),
+                   cf_row("benign", frame=src), cf_row("benign", frame=src)]
+    plain_pub = [cf_row("malicious", detected=True, published=True),
+                 cf_row("malicious", detected=True)]
+    plain_loc = [cf_row("malicious", miss=True), cf_row("benign"),
+                 # a frame block that does not claim single_source moves nothing
+                 cf_row("malicious", detected=True,
+                        frame={"single_source": False, "frame_id": "not-single"}),
+                 cf_row("malicious", detected=True, frame={"single_source": True})]
+    allc = plain_pub + framed_rows + plain_loc
+    part = malicious_by_collection_frame(allc, plain_pub)
+    un, ss = part[UNRECORDED_COLLECTION], part["single_source"]
+    blocks = [un] + list(ss.values())
+    # Read through .get so a partition that lost the frame reports WRONG on the cases below
+    # rather than raising before them: a control that crashes names nothing.
+    probe = ss.get("probe-src", {})
+    totals = {"reviewed": sum(1 for r in allc if r["verdict"] == "malicious"),
+              "detected": sum(1 for r in allc if r["verdict"] == "malicious" and is_detected(r)),
+              "known_miss": sum(1 for r in allc if (r.get("expect") or {}).get("known_miss")),
+              "detected_runnable": 1}
+    for k, want in sorted(totals.items()):
+        case("the frame blocks sum to the headline %-19s (%d)" % (k, want),
+             sum(b[k] for b in blocks) == want)
+    case("a single-source row is counted under its frame_id",
+         set(ss) == {"probe-src"} and probe.get("reviewed") == 2)
+    case("  ...and specifically NOT in the unmarked column",
+         un["reviewed"] == 5 and un["detected"] == 4)
+    case("  ...its detected and missed rows are kept apart",
+         probe.get("detected") == 1 and probe.get("known_miss") == 1)
+    case("a frame not claiming single_source stays in the unmarked column",
+         "not-single" not in ss)
+    case("a frame claiming single_source with no frame_id stays there too", len(ss) == 1)
+    case("rows_indexed counts every verdict under the frame, reviewed only malicious",
+         probe.get("rows_indexed") == 4 and probe.get("reviewed") == 2)
+    case("  ...and the recorded 4 rows match the 4 rows indexed",
+         probe.get("recorded_rows_matches_indexed") is True)
+    dropped = malicious_by_collection_frame(plain_pub + framed_rows[:3] + plain_loc, plain_pub)
+    case("  ...a row dropped from under the frame flips that comparison",
+         dropped["single_source"].get("probe-src", {}).get("recorded_rows_matches_indexed")
+         is False)
+    case("runnable counts a shipped detected row, never a local one",
+         un["detected_runnable"] == 1 and probe.get("detected_runnable") == 0)
+    other = dict(src, rows_recorded=5)
+    split = malicious_by_collection_frame(
+        plain_pub + framed_rows + [cf_row("benign", frame=other)], plain_pub)
+    split_probe = split["single_source"].get("probe-src", {})
+    case("two disagreeing records under one frame_id report no frame",
+         "probe-src" in split["single_source"] and split_probe.get("frame") is None
+         and split_probe.get("recorded_rows_matches_indexed") is None)
+    case("  ...and one shared record is reported whole",
+         (probe.get("frame") or {}).get("rows_recorded") == 4)
 
     print()
     print("=== the known_miss split: one marker, three states, and only one is a miss ===")

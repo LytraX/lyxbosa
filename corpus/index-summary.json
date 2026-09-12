@@ -208,6 +208,16 @@
  "local_only_blockers_note": "a row may carry several blockers and is counted under each, so these sum to more than local_only. Reported this way deliberately: collapsing to one reason per row hides the specific, actionable blocker behind the generic one",
  "local_only_publishable_no_blocker": 335,
  "local_only_publishable_no_blocker_note": "rows held local-only that the section 7.2 gate does not block. Held for a reason outside the gate's remit - no shard carries their bytes, or they lack the family/technique classification a published row needs - so they appear under no blocker and would otherwise be an unattributed count",
+ "malicious_by_collection_frame": {
+  "collection_frame_not_recorded": {
+   "detected": 730,
+   "detected_runnable": 131,
+   "known_miss": 569,
+   "reviewed": 1299
+  },
+  "single_source": {}
+ },
+ "malicious_by_collection_frame_note": "the reviewed-malicious figures partitioned by collection frame, read from the `collection_frame` block a writer records on every row it writes. collection_frame_not_recorded is every row that records no single-source frame; it is NOT a clean control and nothing measured how those rows were collected. Each single_source block is a collection drawn from one origin - one host, one directory, one writer - whose rows can be byte-clean and still be a sample of nothing wider than that origin, so a rate over it is a statement about that origin and never about the scanner. The blocks sum to malicious_reviewed, malicious_detected, malicious_known_miss and malicious_detected_runnable, so a move in any of those four that came from a collection arriving is attributable here rather than only in a changelog. rows_indexed counts every verdict under the frame; recorded_rows_matches_indexed compares it with rows_recorded, the count the frame recorded at write time, and is null when the rows do not agree on one frame",
  "malicious_detected": 730,
  "malicious_detected_excl_predates_ruleset": 665,
  "malicious_detected_runnable": 131,
