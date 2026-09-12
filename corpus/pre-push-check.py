@@ -13,10 +13,12 @@ That is the cost this file exists to avoid. It is cheap: a few seconds over ~150
 
 WHAT IT CHECKS, and why each one is here rather than assumed:
 
-  tracked files   Every file `git ls-files` reports, against both pseudonym maps. This is
-                  the check that was missing. The index halves had verifiers; the tracked
-                  files - source, docs, committed JSON - had none, and a scan report is a
-                  tracked file.
+  tracked files   Every file `git ls-files` reports, against every pseudonym map: the
+                  required pair, and any other collection's map under
+                  `trail-data/incoming/*/private/` (see `discover_maps`). This is the check
+                  that was missing. The index halves had verifiers; the tracked files -
+                  source, docs, committed JSON - had none, and a scan report is a tracked
+                  file.
   commit messages Every message about to be pushed. A message is as permanent as a blob and
                   harder to remove: once a commit is referenced by a pull request, its
                   `refs/pull/*` ref is server-side and cannot be pushed to or deleted. The
@@ -104,8 +106,44 @@ _vim = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_vim)
 
 ROOT = os.path.dirname(HERE)
-MAPS = [os.path.join(ROOT, "trail-data/incoming/2026-09-03/private/account-mapping.json"),
-        os.path.join(ROOT, "trail-data/incoming/2026-09-03/private/infected-tree-mapping.json")]
+# The two maps every push must be certified against. Absent is a refusal, not a skip.
+REQUIRED_MAPS = [
+    os.path.join(ROOT, "trail-data/incoming/2026-09-03/private/account-mapping.json"),
+    os.path.join(ROOT, "trail-data/incoming/2026-09-03/private/infected-tree-mapping.json")]
+
+# EVERY SOURCE HAS ITS OWN CUSTOMER, AND A MAP NOBODY READS IS A GATE WITH NO POWER
+# ----------------------------------------------------------------------------------
+# This list was the two maps above and nothing else. A collection from a different host
+# brings a different customer, and its identifiers are in none of the 288 those two maps
+# hold - so a changelog entry naming that customer would have reported SAFE TO PUSH,
+# because the sweep had never been told the label existed. Measured on 2026-09-12: the
+# label of the upload-probe collection is in neither map, and a sweep over the two maps
+# stayed silent on a file holding it. That is §11's power problem, not a denominator one:
+# the check is correct about everything it was given and was given nothing about this
+# source.
+#
+# So a map is found where maps live - `trail-data/incoming/<collection>/private/` - by the
+# name every map there already carries. Discovered in addition to the required pair rather
+# than instead of it, so a missing required map still refuses and a new source cannot
+# displace an old one. The `.bak` copies beside the account map do not end in
+# `-mapping.json` and are not read; a stale backup certifying a push is the failure, not
+# the fix.
+MAP_GLOB = os.path.join("trail-data", "incoming", "*", "private", "*-mapping.json")
+
+
+def discover_maps(root=ROOT):
+    """REQUIRED_MAPS, then every other map under `root` matching MAP_GLOB, sorted.
+
+    Parameterised on `root` so `--inject` can run it over a temp tree holding a source the
+    real tree does not have.
+    """
+    import glob
+    required = [os.path.join(root, os.path.relpath(p, ROOT)) for p in REQUIRED_MAPS]
+    found = sorted(p for p in glob.glob(os.path.join(root, MAP_GLOB)) if p not in required)
+    return required + found
+
+
+MAPS = discover_maps()
 
 # A stock Magento class name that two pre-existing source files carry. It contains a client
 # label by coincidence and reveals nothing. Listed by the string that collides rather than by
@@ -484,6 +522,76 @@ def inject_minisign():
     return 0 if ok else 1
 
 
+def inject_discovery():
+    """A map for a new source is read, and the things beside it that are not maps are not.
+
+    Both directions, over a temp tree holding a collection the real tree does not have. The
+    label is synthetic: a control that planted a real customer's label would be writing the
+    leak it exists to catch.
+    """
+    import shutil, tempfile
+    ok = True
+    tmp = tempfile.mkdtemp(prefix="pre-push-discovery-")
+    try:
+        label = "zqsourcelabelprobe"
+        priv = os.path.join(tmp, "trail-data", "incoming", "2099-01-01-probe", "private")
+        os.makedirs(priv)
+        new_map = os.path.join(priv, "source-mapping.json")
+        json.dump({"labels": {label: "src01"}}, open(new_map, "w"))
+        json.dump({"labels": {"zqbackupprobe": "src02"}},
+                  open(os.path.join(priv, "source-mapping.json.20990101.bak"), "w"))
+        json.dump({"labels": {"zqnotesprobe": "src03"}},
+                  open(os.path.join(priv, "notes.json"), "w"))
+        found = discover_maps(tmp)
+        required = found[:len(REQUIRED_MAPS)]
+
+        if new_map in found:
+            print("  a map in a new collection's private/          discovered")
+        else:
+            print("  FAIL: a map in a new collection's private/ was not discovered"); ok = False
+        if [os.path.basename(p) for p in required] == [os.path.basename(p) for p in REQUIRED_MAPS]:
+            print("  the required pair still leads, present or not  kept")
+        else:
+            print("  FAIL: a discovered map displaced a required one"); ok = False
+        stray = [p for p in found[len(REQUIRED_MAPS):] if p != new_map]
+        if stray:
+            print("  FAIL: read as maps: %s" % ", ".join(os.path.basename(p) for p in stray))
+            ok = False
+        else:
+            print("  a .bak beside it and a non-map json            not read")
+
+        # The reason discovery exists: the required pair cannot see this label at all, and the
+        # discovered map can. Asserted as a pair, because "the new map catches it" alone would
+        # pass on a sweep that caught it through the old maps too, and then discovery would be
+        # load-bearing for nothing.
+        probe = os.path.join(ROOT, ".pre-push-check-discovery.tmp")
+        try:
+            open(probe, "w").write("a note about the %s upload directory\n" % label)
+            rel = os.path.relpath(probe, ROOT)
+            old_hits = 0
+            for mp in REQUIRED_MAPS:
+                if os.path.exists(mp):
+                    m = json.load(open(mp))
+                    old_hits += len(sweep([rel], _vim.identifiers(m), _vim.keep_tokens(m)))
+            m = json.load(open(new_map))
+            new_hits = len(sweep([rel], _vim.identifiers(m), _vim.keep_tokens(m)))
+        finally:
+            if os.path.exists(probe):
+                os.unlink(probe)
+        if old_hits == 0:
+            print("  the required maps on a new source's label      silent (no power)")
+        else:
+            print("  FAIL: the required maps already see the probe label; this case "
+                  "demonstrates nothing"); ok = False
+        if new_hits:
+            print("  the discovered map on the same label           caught")
+        else:
+            print("  FAIL: the discovered map did not catch its own label"); ok = False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return 0 if ok else 1
+
+
 def inject(paths):
     """Prove the sweep can fail. Writes nothing: a synthetic path list is enough."""
     m = json.load(open(MAPS[0]))
@@ -510,6 +618,10 @@ def inject(paths):
         if os.path.exists(tmp):
             os.unlink(tmp)
     print("  the sweep can fail, and does not fire on English" if ok else "  SELF-TEST FAILED")
+    print()
+    print("=== map discovery: a new source's map is read, in both directions ===")
+    if inject_discovery():
+        ok = False
     print()
     print("=== the make-summary delegation, in both directions ===")
     if inject_summary():

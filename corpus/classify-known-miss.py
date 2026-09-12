@@ -120,13 +120,77 @@ def is_known_miss(row):
     return bool((row.get("expect") or {}).get("known_miss"))
 
 
+def select_rows(rows, shas):
+    """(the rows whose sha256 is in `shas`, the listed sha256 that name none of them).
+
+    A listed hash with no known_miss row is returned rather than dropped: a restriction that
+    silently measured fewer rows than it was given would report "all current" about rows it
+    never looked at.
+    """
+    want = set(shas)
+    picked = [r for r in rows if r["sha256"] in want]
+    have = {r["sha256"] for r in picked}
+    return picked, sorted(want - have)
+
+
 # --------------------------------------------------------------------------- measurement
 
-def check_rules(path):
-    """Per-sample `check`. Never a batch scan: a batch cannot distinguish 'not scanned'
-    from 'scanned and clean' (CORPUS_PLAN 5.6, 8)."""
+def _check(path):
     r = subprocess.run([SCANNER, "check", "--no-ansi", path], capture_output=True)
     return sorted(set(x.decode() for x in re.findall(rb"- ([A-Z]+\d+)", r.stdout)))
+
+
+# A NAME RULE HAS READ NONE OF THE BYTES, AND THIS TOOL IS A QUESTION ABOUT BYTES
+# --------------------------------------------------------------------------------
+# The scanner reads names as well as content: FN001-FN006 fire on a file called
+# `x$(true)y.mdb` whatever is inside it. That is right for a scan and wrong here, because
+# every state below is a statement about whether a rule fires on a row's BYTES, and the path
+# this tool measures is whichever copy `resolve_bytes` happened to hash first - a name chosen
+# by whoever stored the file, not by the row.
+#
+# It was not hypothetical. A known-miss row whose every copy was stored under a leading-dash
+# name measured FN004 at that path, and the classifier read one rule firing as "rules fire,
+# nothing ships them" - `detected-not-shippable`, a rule gap published as a shipping gap,
+# about bytes no content rule matches under any of sixteen names tried.
+#
+# So a copy whose basename carries nothing a name rule reads is measured where it is, exactly
+# as before, and every row measured before this existed measures the same now. A copy whose
+# basename is outside that shape is measured as a copy named `sample<ext>`, keeping the
+# extension, because content rules read it: the same NUL-bearing probe fires OBF036 as
+# `.txt` and is silent as `.zip`. What the stored name fired is recorded beside the rules,
+# never among them.
+# A leading dot is allowed, so `.htaccess` is measured where it is; a leading dash is not.
+SAFE_BASENAME = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]*$")
+SAFE_EXTENSION = re.compile(r"^\.[A-Za-z0-9]{1,16}$")
+
+
+def measured_name(path):
+    """The basename `path`'s bytes are measured under: its own, or `sample<ext>`."""
+    base = os.path.basename(path)
+    if SAFE_BASENAME.match(base) and ".." not in base:
+        return base
+    ext = os.path.splitext(base)[1]
+    return "sample" + (ext if SAFE_EXTENSION.match(ext) else "")
+
+
+def check_rules(path):
+    """Per-sample `check` over the BYTES at `path`, under a name no name rule reads.
+
+    Never a batch scan: a batch cannot distinguish 'not scanned' from 'scanned and clean'
+    (CORPUS_PLAN 5.6, 8). Returns (rules, stored_name_rules), where `stored_name_rules` is
+    None when the copy was measured at its own path and otherwise what `check` reported
+    under the stored name - evidence about the name, kept apart from the rules."""
+    name = measured_name(path)
+    if name == os.path.basename(path):
+        return _check(path), None
+    import shutil as _shutil
+    tmp = tempfile.mkdtemp(prefix="classify-known-miss-name-")
+    try:
+        staged = os.path.join(tmp, name)
+        _shutil.copyfile(path, staged)
+        return _check(staged), _check(path)
+    finally:
+        _shutil.rmtree(tmp, ignore_errors=True)
 
 
 def resolve_bytes(rows, extra_roots=(), out=sys.stderr):
@@ -254,7 +318,7 @@ def measure(rows, date, out=sys.stderr):
         for i, row in enumerate(sorted(rows, key=lambda r: r["sha256"])):
             sha = row["sha256"]
             path = located.get(sha)
-            rules = check_rules(path) if path else []
+            rules, stored_name_rules = check_rules(path) if path else ([], None)
             kind, refusal = classify(bool(path), rules, sha in ships)
             if refusal:
                 refused.append((sha, row.get("family"), rules, refusal))
@@ -264,6 +328,13 @@ def measure(rows, date, out=sys.stderr):
             else:
                 block = {"date": date, "binary": bin_path, "binary_sha256_12": bin_sha,
                          "rules": rules, "ships_as_bytes": sha in ships}
+                if stored_name_rules is not None:
+                    # Only where the copy was renamed, so no row measured at its own path
+                    # changes shape. The name is never recorded: it can be the payload.
+                    block["measured_under"] = ("sample%s: the stored name carries a shape "
+                                               "the name rules read"
+                                               % os.path.splitext(measured_name(path))[1])
+                    block["stored_name_rules"] = stored_name_rules
             kinds[sha] = (kind, block)
             if (i + 1) % 200 == 0:
                 print("  %d/%d" % (i + 1, len(rows)), file=out)
@@ -404,6 +475,75 @@ def inject():
         _shutil.rmtree(tmp, ignore_errors=True)
 
     print()
+    print("=== a name finding is not a finding about the bytes ===")
+    # Pure half: which names are measured where they are. Both directions - a rule that renamed
+    # everything would change every existing row's measurement, and one that renamed nothing
+    # is the defect.
+    for name, want in (("index.php", "index.php"), (".htaccess", ".htaccess"),
+                       ("wp-config.php", "wp-config.php"), ("a_b.c-d.txt", "a_b.c-d.txt"),
+                       # Synthetic shapes, one per character class the name rules read,
+                       # none of them spelled as a name the collection actually holds.
+                       ("-remap.htaccess", "sample.htaccess"),
+                       ("x$(true)y.mdb", "sample.mdb"),
+                       ("x;true;y.zip", "sample.zip"),
+                       ("x.php\ny.mdb", "sample.mdb"),
+                       ("x%00y.mdb", "sample.mdb"),
+                       ("x.mdb ", "sample")):
+        case("measured as %-24s <- %r" % (want, name[:28]),
+             measured_name(os.path.join("/x", name)) == want)
+
+    # End-to-end half, against the real scanner, because the property is about what `check`
+    # reports and a stubbed `check` would only restate the assumption. Fails loudly rather
+    # than skipping when there is no scanner, as verify.py's end-to-end section does.
+    if not os.path.exists(SCANNER):
+        case("a scanner to run the end-to-end cases against (%s)" % SCANNER, False)
+    else:
+        tmp = tempfile.mkdtemp(prefix="classify-known-miss-names-")
+        try:
+            remap = os.path.join(tmp, "-remap.htaccess")
+            with open(remap, "wb") as fh:
+                fh.write(b"AddType application/x-httpd-php .mdb\n")
+            at_stored = _check(remap)
+            rules, stored = check_rules(remap)
+            kind, _ = classify(True, rules, False)
+            # The power half first: without it the next case would pass on a scanner that
+            # reads no names at all, and prove nothing about the repair.
+            case("a leading-dash name fires a name rule at its stored path", bool(at_stored))
+            case("  ...and the bytes under a neutral name fire nothing", rules == [])
+            case("  ...so the row is a rule-gap, not detected-not-shippable",
+                 kind == MISS_KIND)
+            case("  ...and what the stored name fired is kept beside the rules",
+                 stored == at_stored)
+
+            shell = os.path.join(tmp, "x$(true)y.mdb")
+            with open(shell, "wb") as fh:
+                fh.write(b"<?php echo shell_exec($_GET['c']); ?>")
+            s_rules, s_stored = check_rules(shell)
+            s_kind, _ = classify(True, s_rules, False)
+            case("a content rule under a hostile name still fires on the bytes",
+                 bool(s_rules))
+            case("  ...minus what only the name fired", bool(s_stored)
+                 and set(s_rules) < set(s_stored))
+            case("  ...so the row is NOT a rule-gap", s_kind == "detected-not-shippable")
+
+            plain = os.path.join(tmp, "shell.php")
+            with open(plain, "wb") as fh:
+                fh.write(b"<?php echo shell_exec($_GET['c']); ?>")
+            p_rules, p_stored = check_rules(plain)
+            case("a safe name is measured where it is, with nothing recorded beside it",
+                 p_stored is None and p_rules == s_rules)
+        finally:
+            _shutil.rmtree(tmp, ignore_errors=True)
+
+    print()
+    print("=== --sha-file narrows the rows, and says what it could not find ===")
+    rows = [{"sha256": "a" * 64}, {"sha256": "b" * 64}]
+    picked, missing = select_rows(rows, ["b" * 64, "c" * 64])
+    case("a listed row that exists is measured", [r["sha256"] for r in picked] == ["b" * 64])
+    case("  ...one that does not is returned, not dropped", missing == ["c" * 64])
+    case("  ...and an unlisted row is not measured", "a" * 64 not in {r["sha256"] for r in picked})
+
+    print()
     print("=== the vocabulary is closed ===")
     produced = set()
     for reach in (True, False):
@@ -432,6 +572,11 @@ def main():
                     help="exit non-zero if any known_miss row carries no kind")
     ap.add_argument("--inject", action="store_true", help="controls, both directions")
     ap.add_argument("--date", default=datetime.date.today().isoformat())
+    ap.add_argument("--sha-file", default=None,
+                    help="measure and apply only the known_miss rows whose sha256 is listed, "
+                         "one per line. Without it every row is re-measured, and every block "
+                         "records the binary it was measured with, so a full run restamps "
+                         "every known_miss row in both halves")
     a = ap.parse_args()
 
     if sum([a.apply, a.check, a.inject]) > 1:
@@ -444,6 +589,8 @@ def main():
     print("known_miss rows: %d (published %d, local %d)"
           % (len(rows), sum(1 for r in published if is_known_miss(r)),
              sum(1 for r in local if is_known_miss(r))))
+    if a.sha_file and a.check:
+        sys.exit("--check answers about every known_miss row; --sha-file would narrow it")
 
     if a.check:
         total, in_scope = survey(rows)
@@ -457,6 +604,14 @@ def main():
         if bad:
             print("REFUSE: %d known_miss row(s) carry no %s. Run --apply." % (bad, KIND_FIELD))
         return 1 if (bad or unknown) else 0
+
+    if a.sha_file:
+        wanted = [l.strip() for l in open(a.sha_file, encoding="utf-8") if l.strip()]
+        rows, missing = select_rows(rows, wanted)
+        if missing:
+            sys.exit("REFUSE: %d listed sha256 name no known_miss row: %s"
+                     % (len(missing), ", ".join(s[:12] for s in missing)))
+        print("restricted by --sha-file to %d row(s)" % len(rows))
 
     kinds, refused = measure(rows, a.date)
     counts = collections.Counter(k for k, _ in kinds.values())

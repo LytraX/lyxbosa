@@ -80,7 +80,7 @@ The index is **split in two, and both halves matter**:
 | file | rows | tracked? | what it is |
 |---|---|---|---|
 | `index.jsonl` | 44,573 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 48,227 | no | everything held back, with each row's blockers |
+| `local/index-local.jsonl` | 48,234 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 <!-- END GENERATED index-halves -->
 
