@@ -445,7 +445,17 @@ ScanResult Scanner::scan() {
     };
 
     result.totalDirectoriesScanned =
-        walker.walk(fileCallback, &result.directoriesUnreadable, &result.rootsMissing);
+        walker.walk(fileCallback, &result.directoriesUnreadable, &result.rootsMissing,
+                    &result.directoriesCycleSkipped);
+
+    // The walk stops on the interrupt flag itself now, not only when the file callback
+    // above refuses - and that callback is reached by a regular file, so a tree holding
+    // nothing but directories reached it never. Read the flag here or such a scan
+    // reports a completed clean run and exits 0 after the operator pressed Ctrl+C,
+    // which is the same lie as a report that was never written saying it was.
+    if (interrupted()) {
+        interrupted_ = true;
+    }
 
     if (counter.joinable()) {
         // countFiles polls the interrupt flag, so this returns promptly on Ctrl+C.

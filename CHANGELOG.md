@@ -89,6 +89,30 @@ commit list that CI generates per tag.
   appears in the report as a file that was quarantined, rather than being dropped for
   carrying no match of its own.
 
+- **A tree that leads back into itself no longer walks without end.** With
+  `scan.follow_symlinks: true`, a link to a directory was queued with no question asked
+  about which directory it was, so a link pointing back up the path the walk was already
+  on queued that path again. A directory holding two links to itself kept the walk
+  entering 33,120 directories a second, and would have entered 2.2 trillion of them —
+  every one of the 2^41 paths the kernel's 40-link resolution limit allows. The walk now
+  asks the host which directory a path actually is, using the device and inode pair on
+  POSIX and the volume serial and file id on Windows, and declines to enter one already
+  open above it on the same path. Two paths to one directory where neither is inside the
+  other — a bind mount — are both still walked, because refusing the second would drop a
+  subtree from the scan without saying so. The declines are counted, in the summary as
+  `Directories not re-entered` and in JSON as `directoriesCycleSkipped`. Nothing was left
+  uncovered, so no exit code moves.
+
+- **Ctrl+C now stops a scan of a tree that holds no file.** Interruption was noticed only
+  when a file was handed to the scanner, and a tree of directories and directory symlinks
+  hands it none, so a scan of one ignored SIGINT entirely and had to be killed — and a
+  scan of 200,400 empty directories that was interrupted ran to the end and reported a
+  completed clean run with exit code 0. The walk polls for the interrupt as it reads each
+  directory entry and as it enters each directory, so a single directory holding millions
+  of entries stops too, and the scanner records that the run was cut short whether or not
+  a file reached it. Both traversals honour it, including the pre-count that runs on its
+  own thread.
+
 ### Compatibility
 
 - **`check` exits 1 where it exited 0**, when a container's members could not all be read —
@@ -111,6 +135,13 @@ commit list that CI generates per tag.
 - **The text summary gains `Files NOT quarantined: N (still in place)`**, and the per-file
   line gains `NOT quarantined - still at <path>`. Both are held back by `--silent` only, never
   by `--quiet`: a file the tool was asked to contain and could not is not progress chatter.
+- **`scan` exits 130 where it exited 0**, when a scan of a tree holding no regular file was
+  interrupted. Such a run previously reported a completed clean scan.
+- **JSON gains `directoriesCycleSkipped`**, always present beside `directoriesUnreadable`, and
+  the text summary gains `Directories not re-entered: N` when the count is not zero. It is a
+  coverage note rather than a failure — nothing was left unread — so `--quiet` suppresses it
+  along with the rest of the summary. CSV is unchanged: it carries one row per match and no
+  directory-level count, which is where `directoriesUnreadable` already sits.
 
 ## [2.5.0] - 2026-09-11
 

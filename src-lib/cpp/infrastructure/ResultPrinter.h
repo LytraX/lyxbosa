@@ -161,6 +161,17 @@ public:
                    result.directoriesUnreadable);
         }
 
+        // Beside the unreadable count because both are directory-level coverage facts
+        // and an operator reads this block as one thing - but worded so it cannot be
+        // read as a gap, because it is not one. Plain rather than warning-coloured for
+        // the same reason: nothing here was missed, and colouring it like the line
+        // above would put a loop and an unreadable tree in the same category.
+        if (result.directoriesCycleSkipped > 0) {
+            plain("Directories not re-entered: {} (a loop - each is already open above "
+                  "it, and was read there)\n",
+                  result.directoriesCycleSkipped);
+        }
+
         // Named and not there. Listed rather than counted, because the operator can
         // only act on it if they are told which path it was.
         if (!result.rootsMissing.empty()) {

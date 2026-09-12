@@ -68,8 +68,14 @@ public:
     // `missingRoots` collects every configured root that rootUnusableReason() refused,
     // because a walk whose success is defined by what it managed to open reports a
     // root that was never there as a clean scan of nothing.
+    //
+    // `cycleSkippedDirs` counts the directories the walk declined to enter because
+    // entering one would have re-entered a directory it was already inside. Their
+    // contents are covered at the path they lead back to, so this is not a coverage
+    // gap - but it is not nothing either, and no other count moves when it happens.
     size_t walk(FileCallback callback, size_t* unreadableDirs = nullptr,
-                std::vector<std::filesystem::path>* missingRoots = nullptr) const;
+                std::vector<std::filesystem::path>* missingRoots = nullptr,
+                size_t* cycleSkippedDirs = nullptr) const;
 
     // Walk a single directory and everything under it (stopped is set to true if
     // callback returns false). Returns the number of directories entered.
@@ -83,8 +89,23 @@ public:
     // Order: depth-first, and within a directory every file is reported before the
     // walk descends into any subdirectory. Sibling order is the host's listing order.
     // Callers must not depend on more than that.
+    //
+    // STOPPING. `stopped` has two causes and the walk does not distinguish them: the
+    // callback returned false, or interrupted() became true. It is polled per entry and
+    // per directory rather than left to the callback, because the callback is reached
+    // only by a regular file and a tree of nothing but directories contains none - such
+    // a walk could not be stopped at all. A caller that needs to tell the two apart
+    // asks interrupted(), which is the flag both of them read.
+    //
+    // LOOPS. A directory is not entered when its identity is already on the path from
+    // `dir` down to it - the shape a directory symlink pointing at an ancestor makes.
+    // Identity is asked of every directory whatever followSymlinks says, because what
+    // stops the default configuration looping is the absence of such a link on the
+    // hosts tried and not anything this walk checks: a FUSE filesystem or a hostile
+    // network server can present a directory inside itself with no symlink anywhere.
     size_t walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,
-                         size_t* unreadableDirs = nullptr) const;
+                         size_t* unreadableDirs = nullptr,
+                         size_t* cycleSkippedDirs = nullptr) const;
 
     // Count total files and bytes without processing (fast pre-scan). The
     // optional callback receives the running file count so a long count is not
