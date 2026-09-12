@@ -89,6 +89,29 @@ commit list that CI generates per tag.
   appears in the report as a file that was quarantined, rather than being dropped for
   carrying no match of its own.
 
+### Compatibility
+
+- **`check` exits 1 where it exited 0**, when a container's members could not all be read —
+  a truncated archive, a member over a size limit, a spent budget, a compression ratio or a
+  nesting depth. It previously printed `No matches found` and exited 0, which is what a
+  genuinely clean file prints. A caller treating 0 as "this file is clean" was being told that
+  about a file whose contents were never examined.
+- **`check` exits 1 where it exited 2**, when there are matches *and* something went unread.
+  The findings still print in full. 2 is withheld because it means "these are the matches"
+  rather than "these are some of them", which is the rule `scan` already follows for a missing
+  root. **A monitor keyed on 2 will see 1 on such a file**; 1 reads as "look at this", which is
+  the safe direction, but a script that treats 1 as an error to skip past needs adjusting.
+- **`scan` exits 1 where it exited 0**, when the report could not be written. Delivering the
+  report is part of completing the command: `-O /dev/full` previously printed `Report written`
+  and exited 0.
+- **CSV gains `quarantine_failed` as its last column.** Appended, so every existing column
+  keeps its index.
+- **JSON gains two keys**: `filesQuarantineFailed` always, and `quarantineFailed` on a file
+  only when true.
+- **The text summary gains `Files NOT quarantined: N (still in place)`**, and the per-file
+  line gains `NOT quarantined - still at <path>`. Both are held back by `--silent` only, never
+  by `--quiet`: a file the tool was asked to contain and could not is not progress chatter.
+
 ## [2.5.0] - 2026-09-11
 
 ### Added
