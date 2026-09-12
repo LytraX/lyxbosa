@@ -208,14 +208,16 @@ if ($RunTests) {
     # be told which one was built. A ctest run without it finds no tests and, worse,
     # reports that as success.
     #
-    # Serial, for the reason docker/build/Linux/build-inside.sh gives: the scan-root
-    # cases share a scratch directory name across processes and collide under
-    # --parallel. The whole run is seconds either way.
-    Write-Host "Running tests..."
+    # One test process per logical processor, for the reasons and on the condition
+    # docker/build/Linux/build-inside.sh gives. Starting a process costs more here than on
+    # Linux, so a serial run is the slower of the two by far.
+    $TestJobs = [Environment]::ProcessorCount
+    Write-Host "Running tests, $TestJobs at a time..."
     ctest --test-dir "$BuildDir" `
         -C Release `
         --output-on-failure `
-        --timeout 300
+        --timeout 300 `
+        --parallel $TestJobs
     Assert-LastExitCode "Tests"
 } else {
     Write-Host "Tests not run: this machine is $HostArch and cannot execute an $Arch binary" -ForegroundColor Yellow
