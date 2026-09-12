@@ -17,9 +17,17 @@ public:
     // format is consumed by position. A file that could not be moved is still where it
     // was found, which `quarantined,false` alone cannot distinguish from a run with
     // quarantine switched off.
+    //
+    // `quarantine_path` and `container_quarantine` are appended for the same reason and
+    // under the same rule. They are here rather than in JSON alone because a CSV reader
+    // has exactly the need a JSON reader has: without the first it is told a file was
+    // moved and never where to, and without the second a member of a quarantined
+    // container reads `quarantined,false` - identical to an exposure finding, to a run
+    // with quarantine off, and to a webshell whose container could not be moved at all.
     void begin() override {
         out_ << "file,rule,severity,original_severity,suppressed,category,line,column,"
-                "quarantined,skipped,skip_reason,quarantine_failed\n";
+                "quarantined,skipped,skip_reason,quarantine_failed,quarantine_path,"
+                "container_quarantine\n";
     }
 
     void onFile(const FileResult& result) override {
@@ -36,7 +44,7 @@ public:
             out_ << (result.skipped() ? "true" : "false") << ',';
             writeField(out_, result.skipReason ? skipReasonToString(*result.skipReason)
                                                : std::string_view{});
-            out_ << ',' << (result.quarantineFailed ? "true" : "false");
+            writeQuarantineTail(result);
             out_ << '\n';
             out_.flush();
             return;
@@ -57,10 +65,23 @@ public:
             out_ << (result.skipped() ? "true" : "false")     << ',';
             writeField(out_, result.skipReason ? skipReasonToString(*result.skipReason)
                                                : std::string_view{});
-            out_ << ',' << (result.quarantineFailed ? "true" : "false");
+            writeQuarantineTail(result);
             out_ << '\n';
         }
         out_.flush();
+    }
+
+    // The three trailing quarantine columns, written by one function so the match rows
+    // and the no-match row cannot drift apart. An empty `container_quarantine` is the
+    // absence of a decision rather than a negative answer: a loose file has no
+    // container, and a member whose container was never selected had nothing attempted.
+    void writeQuarantineTail(const FileResult& result) {
+        out_ << ',' << (result.quarantineFailed ? "true" : "false") << ',';
+        writeField(out_, pathForDisplay(result.quarantinePath));
+        out_ << ',';
+        writeField(out_, result.containerQuarantine
+                             ? containerQuarantineToString(*result.containerQuarantine)
+                             : std::string_view{});
     }
 
     void end(const ScanResult&, bool) override { out_.flush(); }

@@ -135,6 +135,13 @@ ScanResult Scanner::scan() {
     // set it; fileCallback clears it for every file it starts.
     bool archiveMemberHostile = false;
 
+    // The half-open range of `result.files` holding the member rows of the container
+    // currently being scanned. They are pushed by the finding callback above and held
+    // unpublished until publishMembers() below, which is the only place that fires
+    // fileResultCallback_ for one.
+    size_t memberRowsBegin = 0;
+    size_t memberRowsEnd = 0;
+
     // Members of containers the pre-count could not index - a .tar.gz has no
     // index to read - so they raise the total as they are reached rather than
     // pushing filesScanned past it.
@@ -198,9 +205,72 @@ ScanResult Scanner::scan() {
         }
     };
 
+    // A member's address under the container's new location.
+    //
+    // Built by replacing the prefix the display path was COMPOSED from -
+    // ArchiveScanner writes `pathToUtf8(container) + "!" + name` - and never by
+    // splitting on "!", which docs/KNOWN_ISSUES.md #1 records as ambiguous: a nested
+    // container yields `outer.zip!inner.zip!x` and a filename may contain "!" of its
+    // own. Replacing a prefix known by construction has neither problem.
+    //
+    // If the prefix somehow does not match, the container's own destination is the
+    // answer. It is less precise and it is still true - the bytes are inside that file
+    // - which is the direction to be wrong in when the alternative is naming a path
+    // that holds nothing.
+    auto memberDestination = [](const std::filesystem::path& containerSource,
+                                const std::filesystem::path& containerDest,
+                                const std::filesystem::path& memberDisplay) {
+        const std::string prefix = pathToUtf8(containerSource);
+        const std::string display = pathToUtf8(memberDisplay);
+        if (display.size() > prefix.size() && display.starts_with(prefix)) {
+            return std::filesystem::path(pathToUtf8(containerDest) +
+                                         display.substr(prefix.size()));
+        }
+        return containerDest;
+    };
+
+    // Publish this container's member rows, now that what happened to the container is
+    // known. Two facts are written onto each row first, and they are two because one
+    // cannot stand for the other: where the bytes are now, and whether they are still
+    // where an attacker can reach them.
+    //
+    // Nothing is written when no decision was taken - quarantine off, or a container
+    // that was never selected - so a member row carries "no quarantine decision" as an
+    // absent value rather than as a false one.
+    auto publishMembers = [&](const std::filesystem::path& container,
+                              const FileResult& containerResult) {
+        for (size_t i = memberRowsBegin; i < memberRowsEnd; ++i) {
+            FileResult& member = result.files[i];
+            if (containerResult.quarantined) {
+                member.containerQuarantine = ContainerQuarantine::Moved;
+                member.quarantinePath =
+                    memberDestination(container, containerResult.quarantinePath, member.path);
+            } else if (containerResult.quarantineFailed) {
+                member.containerQuarantine = ContainerQuarantine::MoveFailed;
+            }
+        }
+        if (!fileResultCallback_) {
+            return;
+        }
+        for (size_t i = memberRowsBegin; i < memberRowsEnd; ++i) {
+            fileResultCallback_(result.files[i]);
+        }
+    };
+
     // A member with findings is reported exactly like a loose file, addressed
     // `archive.zip!member/path.php`. It went through the same MatchEngine, so it
     // carries the same rules, the same prefilter and the same escaping.
+    //
+    // The row is retained here and PUBLISHED LATER, by publishMembers() below, once the
+    // container's quarantine decision has been taken. The delay is the repair for a
+    // defect that is an ordering property rather than a mistake in any one writer: a
+    // member row says where its bytes are and whether they are still under the web
+    // root, and neither answer exists until the container's fate does. Publishing first
+    // and correcting the retained row afterwards would have been strictly worse than
+    // the defect - fileResultCallback_ is what drives every streaming writer and the
+    // full-screen view, so the file on disk and the screen would both keep the value
+    // from before the move, while only an in-process caller holding the whole
+    // ScanResult ever saw the corrected one.
     archives_.setFindingCallback([&](const std::filesystem::path& display,
                                      uint64_t size,
                                      std::vector<FileMatch>&& matches) {
@@ -221,9 +291,6 @@ ScanResult Scanner::scan() {
         }
 
         result.files.push_back(member);
-        if (fileResultCallback_) {
-            fileResultCallback_(result.files.back());
-        }
     });
 
     // Every member is a progress unit, whether it matched or not.
@@ -255,8 +322,11 @@ ScanResult Scanner::scan() {
         }
 
         // Cleared here rather than after the archive scan, so that it can only ever
-        // describe the file this callback is looking at.
+        // describe the file this callback is looking at. The member range beside it is
+        // emptied for the same reason: a file that is not a container publishes no
+        // member rows, and a stale range would republish the previous container's.
         archiveMemberHostile = false;
+        memberRowsBegin = memberRowsEnd = result.files.size();
 
         // An excluded file is not work and is not a finding: it is tallied so the
         // operator can see their globs took effect, and only listed if they asked.
@@ -353,9 +423,11 @@ ScanResult Scanner::scan() {
             streamCharged = 0;
             publishProgress(info.path, info.size);
 
+            memberRowsBegin = result.files.size();
             auto outcome = archives_.scan(
                 info.path, kind,
                 oversize ? std::string_view{} : std::string_view(content));
+            memberRowsEnd = result.files.size();
             result.archives.merge(outcome.stats);
 
             // The same coverage, kept on the file it belongs to as well as in the
@@ -404,7 +476,7 @@ ScanResult Scanner::scan() {
         // guard above - a zip that compresses well has no matches of its own.
         if (isQuarantineEnabled() &&
             (hasHostileContent(fileResult) || archiveMemberHostile)) {
-            std::string destPath;
+            std::filesystem::path destPath;
             if (quarantineFile(info.path, destPath)) {
                 fileResult.quarantined = true;
                 fileResult.quarantinePath = destPath;
@@ -435,6 +507,11 @@ ScanResult Scanner::scan() {
 
         // Report progress FIRST (so display is initialized before match output)
         publishProgress(info.path, info.size);
+
+        // The container's members, before the container's own row and in the order
+        // they were found - which is the order every report has always shown them in,
+        // and the only thing about them this change leaves alone.
+        publishMembers(info.path, fileResult);
 
         // Notify about the finding AFTER progress (for real-time output)
         if (reportable && fileResultCallback_) {
@@ -612,7 +689,8 @@ std::string Scanner::readFile(const std::filesystem::path& path, uint64_t maxSiz
     return content;
 }
 
-bool Scanner::quarantineFile(const std::filesystem::path& source, std::string& destPath) {
+bool Scanner::quarantineFile(const std::filesystem::path& source,
+                             std::filesystem::path& destPath) {
     namespace fs = std::filesystem;
 
     if (!config_.actions.quarantine.enabled || config_.actions.quarantine.directory.empty()) {
@@ -643,7 +721,7 @@ bool Scanner::quarantineFile(const std::filesystem::path& source, std::string& d
 
             switch (quarantine::moveWithoutReplacing(source, candidate)) {
                 case quarantine::MoveResult::Moved:
-                    destPath = candidate.string();
+                    destPath = candidate;
                     return true;
                 case quarantine::MoveResult::DestinationExists:
                     continue;

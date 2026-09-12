@@ -141,6 +141,47 @@ summary. Only `--silent`, which promises no output at all, holds them back. The 
 is unchanged by it: a quarantine failure only happens where there was a finding, so the
 run already exits `2`, and the report says which files it left behind.
 
+### Where a file went, and what happened to a finding inside a container
+
+Every row that says a file moved also says where to. `quarantinePath` in JSON, a
+`quarantine_path` column in CSV, and `moved: <path>` on the readable line in both the
+verbose and the compact view.
+
+A finding inside an archive is reported as its own row, addressed
+`backup.zip!wp-content/uploads/shell.php`. Malware in a member quarantines the
+**container**, which goes as a unit and carries every member with it, so such a row
+carries two paths and they answer different questions:
+
+| field | answer |
+|---|---|
+| `path` | where it was found — never rewritten by a move, so it still matches an earlier report and an operator's own notes |
+| `quarantinePath` | where the bytes are now, addressed under the container's destination in the same `archive!member` form |
+
+```json
+{
+  "path": "/var/www/html/backup.zip!wp-content/uploads/shell.php",
+  "quarantined": false,
+  "quarantinePath": "/var/quarantine/var/www/html/backup.zip!wp-content/uploads/shell.php",
+  "containerQuarantine": "moved"
+}
+```
+
+**`quarantined` stays `false` on such a row, and that is not the fact to read.** A member
+is not a file that was moved — `filesQuarantined` counts containers and loose files, and a
+member claiming otherwise would make the rows disagree with the count. `containerQuarantine`
+is the fact, it is a string rather than a flag, and it has three answers:
+
+| value | meaning | what it asks of the operator |
+|---|---|---|
+| `moved` | the container was quarantined; these bytes left the tree inside it | nothing further |
+| `moveFailed` | the container was selected and could not be moved | the webshell is still under the web root, at the same URL |
+| *absent* | no quarantine decision was taken about the container | nothing was attempted: quarantine off, `--dry-run`, or an exposure-only finding |
+
+The readable views say the same two things in words — `moved with its container: <path>`
+and `container NOT quarantined - still at <path>` — and the full-screen view shows them as
+chips on the finding's own line. CSV carries `container_quarantine`, empty when no decision
+was taken.
+
 ## Skipped files
 
 A file the scanner did not open is not a file it found nothing in, so every skip is
@@ -219,15 +260,18 @@ an object shaped like `archives.membersSkipped`:
 "directoriesUnreadable": 2
 ```
 
-CSV carries `skipped`, `skip_reason` and `quarantine_failed` as its last three columns,
-and a file with no matches — one that was skipped, or a container whose quarantine
-outcome is the only thing to say about it — gets a row with the rule, severity, line and
-column fields empty:
+CSV carries `skipped`, `skip_reason`, `quarantine_failed`, `quarantine_path` and
+`container_quarantine` as its last five columns, and a file with no matches — one that was
+skipped, or a container whose quarantine outcome is the only thing to say about it — gets a
+row with the rule, severity, line and column fields empty:
 
 ```
-file,rule,severity,original_severity,suppressed,category,line,column,quarantined,skipped,skip_reason,quarantine_failed
-/var/www/html/backup.zip,,,,false,,,,false,true,size,false
+file,rule,severity,original_severity,suppressed,category,line,column,quarantined,skipped,skip_reason,quarantine_failed,quarantine_path,container_quarantine
+/var/www/html/backup.zip,,,,false,,,,false,true,size,false,,
 ```
+
+Every column is appended rather than inserted, so a reader consuming this format by
+position keeps the indexes it already had.
 
 `check` reports it the same way for a single file — an oversize or unreadable file prints
 `Not scanned (over size limit)` and exits `1`, so "no matches found" always means the

@@ -55,6 +55,38 @@ commit list that CI generates per tag.
   appended last so every existing column keeps its index. The exit code is deliberately
   unchanged: the scan's answer is complete and says which files were left behind.
 
+- **A finding inside a quarantined container is no longer addressed at a path that holds
+  nothing, and the report says where every moved file went.** Three defects sharing one
+  reproduction: a webshell in a zip that genuinely compresses, under a scanned root, with
+  `--quarantine`. The container is moved, correctly — malware in a member quarantines its
+  container — and the report then described the member three different ways that were all
+  wrong.
+
+  The member row was addressed `backup.zip!wp-content/uploads/shell.php` using the
+  container's path *at the time it was scanned*, and the container was no longer there. An
+  operator following that path found nothing, and so did a tool. It was an ordering
+  property rather than a mistake in a writer: the row was published as the member was
+  found, and the quarantine decision was taken afterwards. Member rows are now published
+  once the container's outcome is known, so the row a report file, a terminal and the
+  full-screen view each receive is the corrected one rather than a value patched up
+  afterwards where only an in-process caller could see it. `path` is still where the file
+  was found — it is what an earlier report and an operator's notes say — and the new
+  `quarantinePath` beside it is where the bytes are now, in the same `archive!member` form.
+
+  The member row said `quarantined: false`, which is equally what an exposure finding, a
+  run with quarantine switched off and a failed move look like. A member is not a file
+  that was moved, so it does not claim `quarantined`; it carries `containerQuarantine`,
+  which is `moved`, `moveFailed`, or absent when nothing was attempted. `moveFailed` is
+  the one an operator has to act on: the container did not go, so the webshell is still
+  under the web root at the same URL.
+
+  And the destination was known to the scanner with exactly one consumer — the `moved:`
+  line of the verbose text view — so a pipeline was told a file had been quarantined and
+  never told where to. It is now in JSON, in CSV, and on the readable line in the compact
+  view as well as the verbose one, which is what an operator watching a `--quarantine` run
+  actually reads and which previously said nothing at all about the one destructive thing
+  the command does.
+
 - **Quarantine no longer replaces one sample with another, and the destination says where
   a file came from.** With `preserve_structure` the destination was built from the path
   *relative to the scan root*, which discards which root that was: two roots holding the
@@ -142,6 +174,25 @@ commit list that CI generates per tag.
   coverage note rather than a failure — nothing was left unread — so `--quiet` suppresses it
   along with the rest of the summary. CSV is unchanged: it carries one row per match and no
   directory-level count, which is where `directoriesUnreadable` already sits.
+- **JSON gains two per-file keys**, each present only when it has something to say:
+  `quarantinePath`, the destination of a file that was moved, and `containerQuarantine`,
+  which is `"moved"` or `"moveFailed"` on a row for a finding inside an archive. A consumer
+  that enumerates keys sees two more; one that reads by name is unaffected, and a report
+  from a run that moved nothing is unchanged.
+- **CSV gains `quarantine_path` and `container_quarantine` as its last two columns.**
+  Appended, so every existing column keeps its index — `quarantine_failed` is still index
+  11 and is no longer the last field on the line. A reader that takes the last field
+  positionally rather than by header name needs adjusting.
+- **`quarantined: false` on an archive member no longer means the finding was not
+  contained.** It never did, but there was nothing else to read; `containerQuarantine` is
+  now the field that answers it. **A consumer that counted unquarantined findings by
+  testing `quarantined == false` was already counting members of containers that had been
+  moved**, and should test `containerQuarantine` too.
+- **The compact text line gains `moved: <path>` under a file that was quarantined.** The
+  verbose view already printed it; the default console view printed nothing, so a
+  `--quarantine` run named no destination anywhere a human could read it. A finding inside
+  a moved container gains `moved with its container: <path>`, and one whose container could
+  not be moved gains `container NOT quarantined - still at <path>` in both views.
 
 ## [2.5.0] - 2026-09-11
 

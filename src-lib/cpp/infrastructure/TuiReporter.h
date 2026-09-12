@@ -86,6 +86,8 @@ public:
         row.path = pathForDisplay(result.path);
         row.skipReason = result.skipReason;
         row.quarantined = result.quarantined;
+        row.quarantineFailed = result.quarantineFailed;
+        row.containerQuarantine = result.containerQuarantine;
         for (const auto& match : result.matches) {
             switch (match.severity) {
                 case Severity::Critical: ++row.critical; break;
@@ -130,6 +132,8 @@ private:
         size_t low = 0;
         std::optional<SkipReason> skipReason;
         bool quarantined = false;
+        bool quarantineFailed = false;
+        std::optional<ContainerQuarantine> containerQuarantine;
     };
 
     void shutdown() {
@@ -269,6 +273,24 @@ private:
         addChip(chips, "L", row.low, Color::Cyan);
         if (row.quarantined) {
             chips.push_back({"  [quarantined]", Color::Magenta});
+        }
+
+        // The same three facts the written report carries, drawn from the same labels.
+        // This pane showed only the first of them, so a member of a container that had
+        // just been moved out of the tree looked identical here to one still sitting in
+        // it - and a file the scanner had been asked to contain and could not looked
+        // like an ordinary finding. The report file said otherwise, which is the worse
+        // of the two failures: an operator watching the screen and an operator reading
+        // the file were being given different answers about one file.
+        if (row.quarantineFailed) {
+            chips.push_back({"  [NOT quarantined]", Color::Red});
+        }
+        if (row.containerQuarantine) {
+            chips.push_back({"  [" + std::string(containerQuarantineLabel(
+                                        *row.containerQuarantine)) + "]",
+                             *row.containerQuarantine == ContainerQuarantine::Moved
+                                 ? Color::Magenta
+                                 : Color::Red});
         }
 
         Elements line;
