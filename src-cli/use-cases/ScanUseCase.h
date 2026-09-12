@@ -665,6 +665,18 @@ private:
         // join it - the answer is complete and delivered, the failure is named in it
         // and on stderr, and ranking it above the findings would turn every such run
         // into a 1 and hide a real detection from a caller watching for 2.
+        //
+        // A directory not re-entered because it closed a loop does not join it either,
+        // and for a stronger reason than the quarantine case: nothing was left undone at
+        // all. The refused directory is the one already open above it on the same path,
+        // and its contents are read there. It is counted in the summary and in the JSON
+        // so that a directory count larger than an operator expected has an explanation,
+        // and it moves no exit code.
+        //
+        // The interrupt above outranks all of these because it is the one case where the
+        // answer really is partial, and it is checked first so that a scan cut short
+        // after finding a webshell exits 130 and not 2: the finding is in the report,
+        // and 2 would tell a caller the tree had been examined.
         if (!result.rootsMissing.empty() || reportUndelivered) {
             return 1;
         }

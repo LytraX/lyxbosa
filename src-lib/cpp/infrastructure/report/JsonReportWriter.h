@@ -109,6 +109,10 @@ public:
         out_ << "    \"unreadable\": " << result.skips.count(SkipReason::Unreadable) << "\n";
         out_ << "  },\n";
         out_ << "  \"directoriesUnreadable\": " << result.directoriesUnreadable << ",\n";
+        // Unconditional like the key above it. A consumer that has to test for a key's
+        // presence to learn a count was zero is a consumer that reads an old report and
+        // a loop-free one as the same thing.
+        out_ << "  \"directoriesCycleSkipped\": " << result.directoriesCycleSkipped << ",\n";
     }
 
     // The roots that were named and were not there. Emitted unconditionally and as an

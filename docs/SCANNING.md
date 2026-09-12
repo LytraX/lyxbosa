@@ -169,6 +169,37 @@ Members not scanned: 906 (874 not code, 30 over size limit, 2 corrupt)
 `Directories unreadable` is a coverage fact too: a directory the scanner was pointed at
 and could not list is reported rather than treated as empty.
 
+## Symlinks, and directories the walk will not re-enter
+
+`scan.follow_symlinks` is `false` by default. A linked directory is not descended into
+and a linked file is not read; both are simply not part of the scan. Turn it on and the
+walk treats a link to a directory as that directory.
+
+A tree can lead back into itself — a link pointing at a directory the walk is already
+inside is the ordinary way, and a network or FUSE filesystem can present one with no link
+in it at all. The walk asks the host which directory each path actually is, using the
+device and inode pair on POSIX and the volume serial and file id on Windows, and declines
+to enter one whose identity is already open above it on the same path. Those are counted:
+
+```
+Directories not re-entered: 2 (a loop - each is already open above it, and was read there)
+```
+
+**This is not a coverage gap and it does not change the exit code.** The directory that
+was declined is the one already open above it, and its contents are read there. Only the
+path is refused, never the content. The count is in the summary and in JSON as
+`directoriesCycleSkipped`, because a directory total larger than an operator expected
+should have an explanation, and because a loop under a web root is worth knowing about.
+
+Two paths that reach the same directory without one being inside the other — a bind
+mount presenting one tree at two places — are both walked, and their files are reported
+under both paths. Refusing the second would be quicker and would drop a subtree from the
+scan without saying so.
+
+Traversal has no depth or breadth limit. Ctrl+C is what bounds a tree that is expensive
+rather than looping: the walk polls for it as it reads each directory entry, not only
+between files, so a tree holding no regular file at all still stops.
+
 In JSON, a skipped file carries the reason alongside the flag, and the totals appear as
 an object shaped like `archives.membersSkipped`:
 

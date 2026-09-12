@@ -41,6 +41,7 @@
 
 #include "archive/ArchiveTypes.h"
 #include "config/Config.h"
+#include "core/Interrupt.h"
 #include "core/Scanner.h"
 #include "infrastructure/ResultPrinter.h"
 #include "infrastructure/report/CsvReportWriter.h"
@@ -51,8 +52,12 @@
 
 #include "PlatformSkips.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <mutex>
+#include <thread>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -757,4 +762,257 @@ TEST(UnquarantinedReportTest, CsvCarriesTheColumnAndKeepsEveryOtherIndex) {
         << "the new column is appended so every existing column keeps its index: " << header;
     EXPECT_TRUE(header.ends_with(",quarantine_failed")) << header;
     EXPECT_TRUE(row.ends_with(",true")) << row;
+}
+
+// ===========================================================================
+// A directory the walk refused, and a scan the operator stopped
+// ===========================================================================
+//
+// Two more shapes of the same defect, from the fourth finding of the same review.
+//
+// A directory symlink pointing back up the path the walk is on used to be queued like
+// any other, and the walk followed it without end. It is refused now, and the refusal
+// needs somewhere to be said: it is not in totalDirectoriesScanned, because the walk did
+// not enter it, and no other number moves - so absence would carry it, and absence is
+// what "quarantined: false" already taught this codebase not to trust.
+//
+// It is deliberately NOT an error, and the pairing below is what pins that distinction:
+// nothing was left uncovered, because the directory that was refused is the one already
+// open above it and its contents were read there. So it appears in the summary and in
+// the JSON, and the exit code does not move.
+//
+// The interrupt is the opposite ruling on the same page. A scan of a tree holding no
+// regular file reached no file callback, which was the only thing that set the scanner's
+// interrupted flag, so Ctrl+C produced a completed clean scan and exit 0. That answer
+// really was partial, and 130 is what says so.
+
+namespace {
+
+// The interrupt flag is process-global; a case that raises it puts it back, or the next
+// case in the same binary stops before it starts and passes for the wrong reason.
+struct InterruptGuard {
+    InterruptGuard() { g_interrupted.store(false, std::memory_order_relaxed); }
+    ~InterruptGuard() { g_interrupted.store(false, std::memory_order_relaxed); }
+    InterruptGuard(const InterruptGuard&) = delete;
+    InterruptGuard& operator=(const InterruptGuard&) = delete;
+};
+
+// The review's reproduction as a fixture: a directory holding two symlinks to itself.
+// Returns false when this host will not create one, which is a reason to skip and not a
+// result - a case that built two plain directories and then watched the walk not loop
+// would be observing nothing.
+bool makeSelfLinkedTree(const fs::path& root) {
+    fs::create_directories(root);
+    std::error_code ec;
+    fs::create_directory_symlink(".", root / "a", ec);
+    if (ec) return false;
+    fs::create_directory_symlink(".", root / "b", ec);
+    return !ec;
+}
+
+// A deadline that turns "runs forever" into one failed expectation.
+//
+// The walker's own cases bound themselves by counting directories, which needs no clock
+// and cannot flake. Nothing at this level exposes that count - Scanner owns its walker
+// and ScanUseCase owns its Scanner - so the bound here is wall-clock instead. It is set
+// two orders of magnitude above what these scans take, which is tens of milliseconds, so
+// a loaded machine cannot reach it; what it must never be is absent, because without the
+// repair these fixtures do not fail, they run until somebody kills the suite.
+//
+// It stops the scan through the interrupt flag, which is the other half of the same
+// repair. That dependency is deliberate: a walk that could not be interrupted could not
+// be bounded here either, and the case would be back to hanging.
+class LoopDeadline {
+public:
+    explicit LoopDeadline(std::chrono::milliseconds limit)
+        : thread_([this, limit] {
+              std::unique_lock<std::mutex> lock(mutex_);
+              if (!done_.wait_for(lock, limit, [this] { return finished_; })) {
+                  fired_.store(true, std::memory_order_relaxed);
+                  g_interrupted.store(true, std::memory_order_relaxed);
+              }
+          }) {}
+
+    ~LoopDeadline() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            finished_ = true;
+        }
+        done_.notify_all();
+        thread_.join();
+        g_interrupted.store(false, std::memory_order_relaxed);
+    }
+
+    LoopDeadline(const LoopDeadline&) = delete;
+    LoopDeadline& operator=(const LoopDeadline&) = delete;
+
+    bool fired() const { return fired_.load(std::memory_order_relaxed); }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable done_;
+    bool finished_ = false;
+    std::atomic<bool> fired_{false};
+    std::thread thread_;  // last, so everything it touches is built before it starts
+};
+
+AppConfig followingConfig(const fs::path& root) {
+    AppConfig config = Config::loadFromString(Config::generateDefault());
+    config.scan.directories = {root.string()};
+    config.scan.recursive = true;
+    config.scan.followSymlinks = true;
+    return config;
+}
+
+std::string summaryOf(const ScanResult& result) {
+    std::ostringstream out;
+    ResultPrinter(out, /*color=*/false, /*width=*/100).printSummary(result);
+    return out.str();
+}
+
+}  // namespace
+
+TEST(LoopCoverageTest, ADirectoryRefusedAsALoopIsCountedOnTheResult) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    const fs::path root = dir.path() / "site";
+    writeFile(root / "index.php", "<?php echo 1; ?>\n");
+    ASSERT_TRUE(makeSelfLinkedTree(root));
+
+    InterruptGuard guard;
+    LoopDeadline deadline(std::chrono::seconds(5));
+    const ScanResult result = runScan(followingConfig(root));
+
+    ASSERT_FALSE(deadline.fired())
+        << "the scan was still walking a tree of one directory five seconds in";
+    EXPECT_EQ(result.directoriesCycleSkipped, 2u);
+    EXPECT_EQ(result.totalDirectoriesScanned, 1u)
+        << "a refused directory is not one the walk entered";
+    EXPECT_EQ(result.totalFilesScanned, 1u) << "read once, not once per path to it";
+}
+
+// The companion. Without it, a scanner that counted every directory as a loop would
+// satisfy the case above.
+TEST(LoopCoverageTest, NothingIsCountedWhenTheTreeHasNoLoop) {
+    TempDir dir;
+    const fs::path root = dir.path() / "site";
+    writeFile(root / "index.php", "<?php echo 1; ?>\n");
+    writeFile(root / "sub" / "page.php", "<?php echo 2; ?>\n");
+
+    const ScanResult result = runScan(followingConfig(root));
+
+    EXPECT_EQ(result.directoriesCycleSkipped, 0u);
+    EXPECT_EQ(result.totalDirectoriesScanned, 2u);
+}
+
+TEST(LoopCoverageTest, TheSummarySaysItAndSaysNothingWhenThereIsNone) {
+    ScanResult withLoop;
+    withLoop.totalDirectoriesScanned = 1;
+    withLoop.directoriesCycleSkipped = 2;
+
+    const std::string said = summaryOf(withLoop);
+    EXPECT_TRUE(contains(said, "Directories not re-entered: 2")) << said;
+    EXPECT_TRUE(contains(said, "loop")) << said;
+
+    ScanResult clean;
+    clean.totalDirectoriesScanned = 1;
+    const std::string quiet = summaryOf(clean);
+    EXPECT_FALSE(contains(quiet, "not re-entered"))
+        << "a tree with no loop in it must read exactly as it always did: " << quiet;
+}
+
+TEST(LoopCoverageTest, JsonCarriesTheCountAndCarriesZero) {
+    for (const size_t skipped : {size_t{0}, size_t{2}}) {
+        ScanResult result;
+        result.directoriesCycleSkipped = skipped;
+
+        std::ostringstream out;
+        JsonReportWriter writer(out);
+        writer.begin();
+        writer.end(result, /*interrupted=*/false);
+
+        // Unconditional: a consumer must not have to tell an old report from a
+        // loop-free one by whether the key is there.
+        EXPECT_TRUE(contains(out.str(), "\"directoriesCycleSkipped\": " +
+                                            std::to_string(skipped)))
+            << out.str();
+    }
+}
+
+// The ranking, asserted rather than asserted about in a comment. A loop leaves the
+// answer complete, so it moves nothing - including in the direction that would look
+// conservative and is not: turning a clean scan into a 1 would hide it from a caller
+// watching for 2, and turning a scan with a finding into a 1 would hide the finding.
+TEST(LoopCoverageTest, ALoopDoesNotMoveTheExitCode) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    const fs::path clean = dir.path() / "clean";
+    writeFile(clean / "index.php", "<?php echo 1; ?>\n");
+    ASSERT_TRUE(makeSelfLinkedTree(clean));
+
+    const fs::path hostile = dir.path() / "hostile";
+    writeFile(hostile / "shell.php", kShell);
+    ASSERT_TRUE(makeSelfLinkedTree(hostile));
+
+    writeFile(dir.file("clean.yaml"),
+              "scan:\n  directories:\n    - " + clean.string() + "\n  follow_symlinks: true\n");
+    writeFile(dir.file("hostile.yaml"),
+              "scan:\n  directories:\n    - " + hostile.string() + "\n  follow_symlinks: true\n");
+
+    InterruptGuard guard;
+    LoopDeadline deadline(std::chrono::seconds(10));
+
+    EXPECT_EQ(scanExitCode({clean}, dir.file("clean.txt").string(), dir.file("clean.yaml")), 0)
+        << "a loop is not an incomplete answer";
+    EXPECT_EQ(scanExitCode({hostile}, dir.file("hostile.txt").string(), dir.file("hostile.yaml")),
+              2)
+        << "and it does not displace the finding either";
+    EXPECT_FALSE(deadline.fired()) << "one of the two scans followed the loop";
+}
+
+TEST(InterruptedScanTest, AnInterruptedScanOfATreeWithNoFileInItDoesNotExitZero) {
+    TempDir dir;
+    const fs::path root = dir.path() / "site";
+    for (int i = 0; i < 20; ++i) {
+        fs::create_directories(root / ("d" + std::to_string(i)));
+    }
+
+    InterruptGuard guard;
+    g_interrupted.store(true, std::memory_order_relaxed);
+    const int code = scanExitCode({root}, dir.file("report.txt").string());
+
+    EXPECT_EQ(code, 130) << "an interrupted scan of a tree the file callback never sees "
+                            "used to report a completed clean run";
+}
+
+// The companion, and the one that would catch a scanner that had learned to call every
+// run interrupted.
+TEST(InterruptedScanTest, TheSameTreeUninterruptedStillExitsZero) {
+    TempDir dir;
+    const fs::path root = dir.path() / "site";
+    for (int i = 0; i < 20; ++i) {
+        fs::create_directories(root / ("d" + std::to_string(i)));
+    }
+
+    InterruptGuard guard;
+    EXPECT_EQ(scanExitCode({root}, dir.file("report.txt").string()), 0);
+}
+
+// And that the ranking holds where it matters most: a scan cut short after it found a
+// webshell exits 130, not 2, because a caller reading 2 would take the tree as examined.
+TEST(InterruptedScanTest, AnInterruptOutranksTheFinding) {
+    TempDir dir;
+    const fs::path root = dir.path() / "site";
+    writeFile(root / "shell.php", kShell);
+
+    InterruptGuard guard;
+    EXPECT_EQ(scanExitCode({root}, dir.file("found.txt").string()), 2)
+        << "the finding, with nothing interrupting it";
+
+    g_interrupted.store(true, std::memory_order_relaxed);
+    EXPECT_EQ(scanExitCode({root}, dir.file("halted.txt").string()), 130);
 }

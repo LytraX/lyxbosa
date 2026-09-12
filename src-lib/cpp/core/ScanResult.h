@@ -136,6 +136,24 @@ struct ScanResult {
     // tally - but the operator asked for this tree and did not get all of it.
     size_t directoriesUnreadable = 0;
 
+    // Directories the walk declined to enter because entering one would have re-entered
+    // a directory it was already inside - what a directory symlink pointing at an
+    // ancestor makes, and what made a scan of two links to `.` run without end.
+    //
+    // A third fact rather than a shade of either neighbour, and deliberately not an
+    // error. directoriesUnreadable is a tree the scan asked for and did not get;
+    // rootsMissing is a path the operator got wrong. This one is neither: the refused
+    // directory's contents are read at the path it leads back to, so the answer is
+    // complete and the exit code must not move - see the ranking in ScanUseCase. What
+    // it does say is that the tree contains a loop, which explains a directory count
+    // larger than the operator expected and is worth knowing about a web root.
+    //
+    // A count and not a list, exactly like directoriesUnreadable beside it. Listing the
+    // paths was the alternative and rootsMissing does list them, because a root that is
+    // not there cannot be acted on without its name; a loop needs no action, and one
+    // fan-out tree can produce thousands of them.
+    size_t directoriesCycleSkipped = 0;
+
     // Roots the operator named that the walk could not enter: absent, or there but
     // not a directory. A different fact from directoriesUnreadable, which is a tree
     // the scanner reached and could not read - this one was never there to reach, so

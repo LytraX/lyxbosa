@@ -303,6 +303,7 @@ scan with `-o json`, which is what a pipeline reads:
     "unreadable": 0
   },
   "directoriesUnreadable": 0,
+  "directoriesCycleSkipped": 0,
   "filesQuarantined": 0,
   "rootsMissing": [],
   "durationMs": 205
