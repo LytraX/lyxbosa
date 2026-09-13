@@ -13,6 +13,7 @@
 #endif
 
 #include "system/CliArgs.h"
+#include "infrastructure/Delivery.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 // drainReports() is called below. The declaration used to arrive only transitively
@@ -137,12 +138,6 @@ int main(int argc, char* argv[]) {
 
     auto args = CliArgs::parse(argc, argv);
 
-    // Explicit --help goes to stdout with a success exit code
-    if (args.success && args.command == Command::Help) {
-        fmt::print("{}", CliArgs::getHelpText());
-        return 0;
-    }
-
     if (!args.success) {
         fmt::print(stderr, "{}\n", args.errorMessage);
         return 1;
@@ -163,6 +158,16 @@ int main(int argc, char* argv[]) {
     // Setup infrastructure
     Terminal terminal(termCaps);
 
+    // Explicit --help goes to stdout with a success exit code - when it arrives. The text is
+    // the whole answer, and it is long enough that the write which cannot be delivered throws
+    // from fmt on musl and on Windows, so it ends the way every other answer on standard
+    // output ends: see Delivery.h.
+    if (args.command == Command::Help) {
+        CheckedOutput out(stdout);
+        out.print("{}", CliArgs::getHelpText());
+        return finishAnswerOnStandardOutput(terminal, out, "the help text", 0);
+    }
+
     // Dispatch to use case (args passed by ref for potential prompting)
     switch (args.command) {
         case Command::Scan:
@@ -175,7 +180,7 @@ int main(int argc, char* argv[]) {
             return ValidateConfigUseCase(terminal).execute(args);
 
         case Command::InitConfig:
-            return InitConfigUseCase().execute();
+            return InitConfigUseCase(terminal).execute();
 
         case Command::Update:
             return UpdateUseCase(terminal, caps).execute(args);

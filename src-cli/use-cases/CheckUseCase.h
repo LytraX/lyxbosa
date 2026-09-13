@@ -2,6 +2,7 @@
 
 #include "utils/SafeText.h"
 
+#include "infrastructure/Delivery.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "infrastructure/InputPrompt.h"
@@ -21,7 +22,18 @@ public:
     CheckUseCase(const Terminal& terminal, const TerminalCaps& caps)
         : terminal_(terminal), caps_(caps) {}
 
+    // Everything the command prints on standard output is its answer, so it is written
+    // through one CheckedOutput and asked whether it arrived after the last line - see
+    // Delivery.h. The exit code decided by run() stands unless it said the answer was
+    // delivered: a clean file or a finding printed into a full disk exits 1, not 0 or 2.
     int execute(CliArgs& args) {
+        CheckedOutput out(stdout);
+        const int code = run(args, out);
+        return finishAnswerOnStandardOutput(terminal_, out, "the report", code);
+    }
+
+private:
+    int run(CliArgs& args, CheckedOutput& out) {
         // Prompt for file if none provided
         if (!args.checkFile) {
             if (!caps_.stdinIsTty()) {
@@ -35,7 +47,7 @@ public:
             auto file = prompt.promptFile("File to check");
 
             if (!file || file->empty()) {
-                fmt::print("Check cancelled.\n");
+                out.print("Check cancelled.\n");
                 return 0;
             }
 
@@ -90,27 +102,28 @@ public:
             // as an excluded loose file is counted and changes no exit code - but the
             // verdict says so rather than claiming the whole container was read.
             if (result.archive && result.archive->totalSkipped() > 0) {
-                terminal_.print(Terminal::success(),
+                terminal_.printTo(out, Terminal::success(),
                                 "No matches found in what was scanned of: {}\n",
                                 pathForDisplay(filePath));
             } else {
-                terminal_.print(Terminal::success(), "No matches found in: {}\n",
+                terminal_.printTo(out, Terminal::success(), "No matches found in: {}\n",
                                 pathForDisplay(filePath));
             }
-            printCoverage(result);
+            printCoverage(out, result);
             return 0;
         }
 
         if (!result.matches.empty()) {
-            terminal_.print(Terminal::info(), "File: {}\n", pathForDisplay(filePath));
-            fmt::print("Matches: {}\n\n", result.matches.size());
-            printCompactMatches(result.matches);
+            terminal_.printTo(out, Terminal::info(), "File: {}\n", pathForDisplay(filePath));
+            out.print("Matches: {}\n\n", result.matches.size());
+            printCompactMatches(out, result.matches);
         }
 
         for (const auto& member : members) {
-            terminal_.print(Terminal::info(), "\nMember: {}\n", pathForDisplay(member.path));
-            fmt::print("Matches: {}\n\n", member.matches.size());
-            printCompactMatches(member.matches);
+            terminal_.printTo(out, Terminal::info(), "\nMember: {}\n",
+                              pathForDisplay(member.path));
+            out.print("Matches: {}\n\n", member.matches.size());
+            printCompactMatches(out, member.matches);
         }
 
         if (complete) {
@@ -123,36 +136,35 @@ public:
         // was gone: the exit code says whether the command did what was asked, and 2
         // means "these are the matches" rather than "these are some of them".
         if (matched) {
-            fmt::print("\n");   // the findings above are a block; this is the verdict
+            out.print("\n");   // the findings above are a block; this is the verdict
         }
         if (result.skipReason) {
-            terminal_.print(Terminal::warning(), "Not scanned ({}): {}\n",
+            terminal_.printTo(out, Terminal::warning(), "Not scanned ({}): {}\n",
                             skipReasonLabel(*result.skipReason), pathForDisplay(filePath));
         } else {
-            terminal_.print(Terminal::warning(), "Not fully examined: {}\n",
+            terminal_.printTo(out, Terminal::warning(), "Not fully examined: {}\n",
                             pathForDisplay(filePath));
         }
-        printCoverage(result);
+        printCoverage(out, result);
         return 1;
     }
 
-private:
     // What the container did not cover, in the scan summary's own words. The lines
     // come from archive::membersNotScannedLine() and the labels from SkipReason.h, so
     // `check` and `scan` cannot end up describing one archive two different ways -
     // that disagreement is what makes an operator stop trusting the tool.
-    void printCoverage(const FileResult& result) const {
+    void printCoverage(CheckedOutput& out, const FileResult& result) const {
         if (!result.archive) {
             return;
         }
         const archive::Stats& stats = *result.archive;
 
         if (stats.archivesUnreadable > 0) {
-            terminal_.print(Terminal::warning(),
+            terminal_.printTo(out, Terminal::warning(),
                             "  Archives unreadable: {}\n", stats.archivesUnreadable);
         }
         if (stats.archivesTruncated > 0) {
-            terminal_.print(Terminal::warning(),
+            terminal_.printTo(out, Terminal::warning(),
                             "  Archives stopped early: {} (a guard fired; the rest of "
                             "the stream was not read)\n", stats.archivesTruncated);
         }
@@ -160,7 +172,7 @@ private:
         if (!line.empty()) {
             const auto style = archive::membersUnexamined(stats) > 0 ? Terminal::warning()
                                                                      : Terminal::muted();
-            terminal_.print(style, "  {}\n", line);
+            terminal_.printTo(out, style, "  {}\n", line);
         }
     }
 
@@ -172,7 +184,7 @@ private:
         size_t maxCol;
     };
 
-    void printCompactMatches(const std::vector<FileMatch>& matches) const {
+    void printCompactMatches(CheckedOutput& out, const std::vector<FileMatch>& matches) const {
         // Group matches by category+line
         std::map<std::string, MatchGroup> groups;
 
@@ -193,42 +205,43 @@ private:
         for (const auto& [key, group] : groups) {
             const auto& match = *group.first;
 
-            fmt::print("  ");
+            out.print("  ");
             if (match.suppressed) {
                 // The same marker the scan printer uses: a finding an annotation lowered
                 // says so, and says what it was, rather than reading as a plain Low.
-                terminal_.print(Terminal::muted(), "[SUPPRESSED:{}]",
+                terminal_.printTo(out, Terminal::muted(), "[SUPPRESSED:{}]",
                                 upperSeverity(match.originalSeverity));
             } else {
                 switch (match.severity) {
                     case Severity::Critical:
-                        terminal_.print(Terminal::critical(), "[CRITICAL]");
+                        terminal_.printTo(out, Terminal::critical(), "[CRITICAL]");
                         break;
                     case Severity::High:
-                        terminal_.print(Terminal::high(), "[HIGH]");
+                        terminal_.printTo(out, Terminal::high(), "[HIGH]");
                         break;
                     case Severity::Medium:
-                        terminal_.print(Terminal::medium(), "[MEDIUM]");
+                        terminal_.printTo(out, Terminal::medium(), "[MEDIUM]");
                         break;
                     case Severity::Low:
-                        terminal_.print(Terminal::low(), "[LOW]");
+                        terminal_.printTo(out, Terminal::low(), "[LOW]");
                         break;
                 }
             }
 
             // Show line with column range if multiple hits
             if (group.count > 1) {
-                fmt::print(" {} ({}:{}-{}) - {}", match.ruleName, match.line,
+                out.print(" {} ({}:{}-{}) - {}", match.ruleName, match.line,
                           group.minCol, group.maxCol, match.category);
-                terminal_.print(Terminal::medium(), " x{} hits", group.count);
-                fmt::print("\n");
+                terminal_.printTo(out, Terminal::medium(), " x{} hits", group.count);
+                out.print("\n");
             } else {
-                fmt::print(" {} ({}:{}) - {}\n", match.ruleName, match.line, match.column, match.category);
+                out.print(" {} ({}:{}) - {}\n", match.ruleName, match.line, match.column,
+                          match.category);
             }
 
             // Show context only for first match in group
             if (!match.context.empty()) {
-                terminal_.print(Terminal::context(), "    {}\n", match.context);
+                terminal_.printTo(out, Terminal::context(), "    {}\n", match.context);
             }
         }
     }

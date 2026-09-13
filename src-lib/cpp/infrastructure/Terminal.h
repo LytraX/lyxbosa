@@ -104,6 +104,18 @@ public:
         }
     }
 
+    // Colored output to a destination that is asked afterwards whether it arrived - a
+    // CheckedOutput, see Delivery.h - by the same rule print() applies to stdout.
+    template<typename Out, typename... Args>
+    void printTo(Out& out, fmt::text_style style, fmt::format_string<Args...> fmt_str,
+                 Args&&... args) const {
+        if (caps_.colorOut) {
+            out.print(style, fmt_str, std::forward<Args>(args)...);
+        } else {
+            out.print(fmt_str, std::forward<Args>(args)...);
+        }
+    }
+
     // Colored output to stderr
     template<typename... Args>
     void printErr(fmt::text_style style, fmt::format_string<Args...> fmt_str, Args&&... args) const {
