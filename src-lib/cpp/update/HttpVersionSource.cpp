@@ -9,7 +9,7 @@
 
 #include "update/HttpTransport.h"
 
-#include <re2/re2.h>
+#include <nlohmann/json.hpp>
 
 namespace lyxbosa {
 
@@ -29,32 +29,49 @@ FetchOutcome failed(std::string detail) {
 }  // namespace
 
 std::optional<std::string> extractTagName(std::string_view body) {
-    // The whole of the rule, in one place: the key, a colon, a quoted value, and a
-    // value that may not contain a quote, a backslash or a control character and may
-    // not be longer than 64 bytes. Everything it refuses becomes "no notice today".
+    // A real parse, in the library's non-throwing mode: a body that is not one well-formed
+    // JSON document - truncated, followed by anything, not valid UTF-8 - comes back
+    // discarded, and that is a refusal like every other one here.
     //
-    // RE2 rather than a hand-rolled scan because RE2 is already linked and this is
-    // what it is for. It is also the safe engine to point at network-supplied text:
-    // it has no backtracking, so the bound below is a bound on the work as well as on
-    // the answer, which is not true of a std::regex written the same way.
+    // nlohmann::json rather than ordered_json, which is what the report writer uses. The
+    // order of keys is irrelevant to one lookup, and ordered_json finds a key by walking
+    // every key before it: a 256 KiB object of tens of thousands of short keys would cost
+    // a quadratic number of comparisons to build, where the sorted map costs n log n.
     //
-    // Latin-1 so the classes are bytes. In UTF-8 mode a body that is not valid UTF-8
-    // would fail to match for a reason that has nothing to do with the version in it,
-    // and this needs to read the same bytes a scan would.
-    static const RE2::Options options = [] {
-        RE2::Options opts;
-        opts.set_encoding(RE2::Options::EncodingLatin1);
-        opts.set_log_errors(false);
-        return opts;
-    }();
-    // R"rx(...)rx" rather than R"(...)": the pattern itself ends in `")`, which closes
-    // a default-delimited raw string in the middle of the regex.
-    static const RE2 kTagName(
-        R"rx("tag_name"\s*:\s*"([^"\\\x00-\x1f]{1,64})")rx", options);
+    // NOTHING BELOW MAY COPY, DUMP OR COMPARE `doc`, and that is the whole of the nesting
+    // defence. The 256 KiB cap admits 131,072 levels of `[`, and in nlohmann/json 3.12
+    // parsing and destroying are both iterative: measured on a 32 KiB thread stack, a body
+    // nested to the cap parses and is destroyed. The copy constructor, dump() and operator==
+    // recurse once per level, and each of the three exhausts a 128 KiB stack - musl's
+    // default for the thread this runs on in the portable build - on that same body.
+    // tests/update_test.cpp runs this function over such bodies on a 128 KiB stack, so an
+    // edit that starts doing any of the three crashes the suite rather than a scan.
+    const nlohmann::json doc = nlohmann::json::parse(
+        body.data(), body.data() + body.size(), /*cb=*/nullptr, /*allow_exceptions=*/false);
 
-    std::string tag;
-    if (!RE2::PartialMatch(re2::StringPiece(body.data(), body.size()), kTagName, &tag)) {
+    // Only the top-level object's own key. A `tag_name` inside an asset, or anywhere else
+    // in the document, is not the release's.
+    if (!doc.is_object()) {
         return std::nullopt;
+    }
+    const auto it = doc.find("tag_name");
+    if (it == doc.end() || !it->is_string()) {
+        return std::nullopt;
+    }
+
+    // The rule, applied to the value as decoded: 1 to 64 bytes, and no quote, backslash or
+    // control character. An escape in the response is decoded first, so `\u002e` is a dot
+    // and accepted, and `\"` is a quote and refused. Everything refused becomes "no notice
+    // today".
+    const std::string& tag = it->get_ref<const std::string&>();
+    if (tag.empty() || tag.size() > 64) {
+        return std::nullopt;
+    }
+    for (const char raw : tag) {
+        const auto c = static_cast<unsigned char>(raw);
+        if (c == '"' || c == '\\' || c < 0x20) {
+            return std::nullopt;
+        }
     }
     return tag;
 }

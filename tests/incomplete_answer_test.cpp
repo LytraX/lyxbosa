@@ -59,6 +59,9 @@
 #include <mutex>
 #include <thread>
 #include <fstream>
+#include <iostream>
+#include <iterator>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -542,6 +545,147 @@ TEST(ReportDeliveryTest, AReportPathThatCannotBeOpenedIsStillRefusedBeforeTheSca
     EXPECT_EQ(scanExitCode({dir.path() / "tree"}, impossible.string()), 1);
 }
 
+// A JSON report that stopped because a finding could not be encoded. The realistic way to
+// reach it is a custom rule whose name is not valid UTF-8: the name comes from the
+// configuration file as written, the writer refuses it, and the report is incomplete. It
+// used to be written with the raw bytes, which made a document no parser accepts, and the
+// scan exited by its findings. JsonReportWriter.h says why the report is now left open.
+namespace {
+
+// A configuration scanning `root` with one custom rule, named `ruleName`, that matches
+// kShell. The byte 0xFF passes through yaml-cpp inside a double-quoted scalar unchanged.
+void writeRuleConfig(const fs::path& path, const fs::path& root, const std::string& ruleName) {
+    writeFile(path, "scan:\n  directories:\n    - " + root.string() +
+                        "\nrules:\n  - name: \"" + ruleName +
+                        "\"\n    description: probe\n    severity: high\n"
+                        "    category: probe\n    patterns:\n"
+                        "      - type: string\n        value: \"base64_decode\"\n");
+}
+
+// True when `text` ends with the closing brace of a document and then one line ending. The
+// report file is opened in text mode, so on Windows that line ending reaches the disk as
+// CRLF, as it always has; which one is not what these cases are about.
+bool endsClosed(const std::string& text) {
+    std::string_view rest = text;
+    if (rest.size() >= 2 && rest.substr(rest.size() - 2) == "\r\n") {
+        rest.remove_suffix(2);
+    } else if (!rest.empty() && rest.back() == '\n') {
+        rest.remove_suffix(1);
+    } else {
+        return false;
+    }
+    return !rest.empty() && rest.back() == '}';
+}
+
+struct DeliveryRun {
+    int code = 0;
+    std::string out;
+    std::string err;
+};
+
+// `lyxbosa scan -c CONFIG -o json [-O REPORT] --quiet --force`. --quiet is on because a
+// report that was not delivered is not progress chatter and must survive it.
+DeliveryRun scanJson(const fs::path& config, const std::optional<fs::path>& report) {
+    CliArgs args;
+    args.configFile = config.string();
+    args.force = true;
+    args.quarantine = false;
+    args.quiet = true;
+    args.noPreCount = true;
+    args.outputFormat = ReportFormat::Json;
+    args.outputFormatExplicit = true;
+    if (report) {
+        args.outputFile = report->string();
+    }
+
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+
+    DeliveryRun run;
+    testing::internal::CaptureStdout();
+    testing::internal::CaptureStderr();
+    const auto release = [&run] {
+        run.err = testing::internal::GetCapturedStderr();
+        run.out = testing::internal::GetCapturedStdout();
+        // The writer marks the stream it stopped on, and for the report on standard output
+        // that stream is this process's std::cout, which every later case shares.
+        std::cout.clear();
+    };
+    try {
+        run.code = ScanUseCase(terminal, caps).execute(args);
+    } catch (...) {
+        // Released before gtest reports the exception, or its report is captured with the
+        // rest and nobody sees which case failed.
+        release();
+        throw;
+    }
+    release();
+    return run;
+}
+
+}  // namespace
+
+TEST(ReportDeliveryTest, AJsonReportThatCouldNotEncodeAFindingIsNotDelivered) {
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "shell.php", kShell);
+    writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", "Probe\xff name");
+    const fs::path report = dir.file("report.json");
+
+    const DeliveryRun run = scanJson(dir.file("lyxbosa.yaml"), report);
+
+    EXPECT_EQ(run.code, 1) << run.err;
+    EXPECT_TRUE(contains(run.err, "the report could not be written to")) << run.err;
+    EXPECT_TRUE(contains(run.err, "could not be written as JSON")) << run.err;
+    EXPECT_TRUE(contains(run.err, "invalid UTF-8")) << run.err;
+    EXPECT_TRUE(contains(run.err, "shell.php")) << "the reason names the file: " << run.err;
+    EXPECT_FALSE(contains(run.err, "Report written")) << run.err;
+
+    // What reached the disk is the frame and nothing a parser would call complete.
+    std::ifstream in(report, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(in)), {});
+    EXPECT_EQ(written.find('\xff'), std::string::npos) << "the raw byte never reaches the file";
+    EXPECT_EQ(written.find('}'), std::string::npos) << written;
+}
+
+TEST(ReportDeliveryTest, AJsonReportOnStandardOutputThatCouldNotEncodeAFindingExitsOne) {
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "shell.php", kShell);
+    writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", "Probe\xff name");
+
+    const DeliveryRun run = scanJson(dir.file("lyxbosa.yaml"), std::nullopt);
+
+    EXPECT_EQ(run.code, 1) << run.err;
+    EXPECT_TRUE(contains(run.err, "the report written to standard output is incomplete"))
+        << run.err;
+    EXPECT_TRUE(contains(run.err, "invalid UTF-8")) << run.err;
+    EXPECT_EQ(run.out.find('\xff'), std::string::npos);
+    EXPECT_EQ(run.out.find('}'), std::string::npos) << run.out;
+}
+
+// The companion to both: the same rule with a name that is valid UTF-8 is delivered, to a
+// file and to standard output, and the scan exits by its finding. Without it the two cases
+// above would pass against a command that refused every JSON report.
+TEST(ReportDeliveryTest, TheSameRuleWithAValidNameIsDeliveredAndExitsTwo) {
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "shell.php", kShell);
+    writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", "Probe \xce\xb1 name");
+    const fs::path report = dir.file("report.json");
+
+    const DeliveryRun toFile = scanJson(dir.file("lyxbosa.yaml"), report);
+    EXPECT_EQ(toFile.code, 2) << toFile.err;
+    EXPECT_FALSE(contains(toFile.err, "could not be written")) << toFile.err;
+    std::ifstream in(report, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(in)), {});
+    EXPECT_TRUE(contains(written, "\"rule\":\"Probe \xce\xb1 name\"")) << written;
+    EXPECT_TRUE(endsClosed(written)) << written;
+
+    const DeliveryRun toStdout = scanJson(dir.file("lyxbosa.yaml"), std::nullopt);
+    EXPECT_EQ(toStdout.code, 2) << toStdout.err;
+    EXPECT_FALSE(contains(toStdout.err, "incomplete")) << toStdout.err;
+    EXPECT_TRUE(contains(toStdout.out, "\"rule\":\"Probe \xce\xb1 name\"")) << toStdout.out;
+    EXPECT_TRUE(endsClosed(toStdout.out)) << toStdout.out;
+}
+
 // ===========================================================================
 // A quarantine that could not complete
 // ===========================================================================
@@ -726,8 +870,8 @@ TEST(UnquarantinedReportTest, JsonCarriesTheFileAndTheCount) {
     writer.onFile(result.files.front());
     writer.end(result, /*interrupted=*/false);
 
-    EXPECT_TRUE(contains(out.str(), "\"quarantineFailed\": true")) << out.str();
-    EXPECT_TRUE(contains(out.str(), "\"filesQuarantineFailed\": 1")) << out.str();
+    EXPECT_TRUE(contains(out.str(), "\"quarantineFailed\":true")) << out.str();
+    EXPECT_TRUE(contains(out.str(), "\"filesQuarantineFailed\":1")) << out.str();
 }
 
 // The companion, and the reason the per-file key is written only when it is true: a run
@@ -747,8 +891,8 @@ TEST(UnquarantinedReportTest, JsonSaysNothingPerFileWhenNothingFailed) {
     writer.onFile(result.files.front());
     writer.end(result, /*interrupted=*/false);
 
-    EXPECT_FALSE(contains(out.str(), "quarantineFailed\": true")) << out.str();
-    EXPECT_TRUE(contains(out.str(), "\"filesQuarantineFailed\": 0")) << out.str();
+    EXPECT_FALSE(contains(out.str(), "quarantineFailed\":true")) << out.str();
+    EXPECT_TRUE(contains(out.str(), "\"filesQuarantineFailed\":0")) << out.str();
     EXPECT_TRUE(contains(out.str(), "/var/www/shell.php"))
         << "a container moved for what was inside it has no matches of its own and "
            "still belongs in the report";
@@ -1131,20 +1275,20 @@ TEST(ContainedMemberReportTest, JsonCarriesTheDestinationOfAFileThatMoved) {
     moved.quarantinePath = "/var/quarantine/var/www/html/backup.zip";
 
     const std::string json = jsonFor(moved);
-    EXPECT_TRUE(contains(json, "\"quarantined\": true")) << json;
+    EXPECT_TRUE(contains(json, "\"quarantined\":true")) << json;
     EXPECT_TRUE(contains(json,
-                         "\"quarantinePath\": \"/var/quarantine/var/www/html/backup.zip\""))
+                         "\"quarantinePath\":\"/var/quarantine/var/www/html/backup.zip\""))
         << json;
 }
 
 TEST(ContainedMemberReportTest, JsonCarriesTheContainerOutcomeAndTheMembersAddress) {
     const std::string json = jsonFor(containedMember());
 
-    EXPECT_TRUE(contains(json, "\"containerQuarantine\": \"moved\"")) << json;
-    EXPECT_TRUE(contains(json, "\"quarantinePath\": \"/var/quarantine/var/www/html/"
+    EXPECT_TRUE(contains(json, "\"containerQuarantine\":\"moved\"")) << json;
+    EXPECT_TRUE(contains(json, "\"quarantinePath\":\"/var/quarantine/var/www/html/"
                                "backup.zip!wp-content/uploads/shell.php\""))
         << json;
-    EXPECT_TRUE(contains(json, "\"quarantined\": false"))
+    EXPECT_TRUE(contains(json, "\"quarantined\":false"))
         << "the member itself was not moved, and the row still says so: " << json;
 }
 
@@ -1157,7 +1301,7 @@ TEST(ContainedMemberReportTest, JsonSaysMoveFailedAndOffersNoDestination) {
     member.quarantinePath.clear();
 
     const std::string json = jsonFor(member);
-    EXPECT_TRUE(contains(json, "\"containerQuarantine\": \"moveFailed\"")) << json;
+    EXPECT_TRUE(contains(json, "\"containerQuarantine\":\"moveFailed\"")) << json;
     EXPECT_FALSE(contains(json, "quarantinePath")) << json;
 }
 
@@ -1170,7 +1314,7 @@ TEST(ContainedMemberReportTest, JsonSaysNeitherWhenNoDecisionWasTaken) {
     EXPECT_FALSE(contains(json, "containerQuarantine"))
         << "an absent key is how a report says nothing was attempted: " << json;
     EXPECT_FALSE(contains(json, "quarantinePath")) << json;
-    EXPECT_TRUE(contains(json, "\"quarantined\": false")) << json;
+    EXPECT_TRUE(contains(json, "\"quarantined\":false")) << json;
 }
 
 // One CSV line, split on commas. Enough for these cases: none of the fields they look at
@@ -1481,7 +1625,7 @@ TEST(LoopCoverageTest, JsonCarriesTheCountAndCarriesZero) {
 
         // Unconditional: a consumer must not have to tell an old report from a
         // loop-free one by whether the key is there.
-        EXPECT_TRUE(contains(out.str(), "\"directoriesCycleSkipped\": " +
+        EXPECT_TRUE(contains(out.str(), "\"directoriesCycleSkipped\":" +
                                             std::to_string(skipped)))
             << out.str();
     }

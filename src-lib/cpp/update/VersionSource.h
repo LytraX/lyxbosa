@@ -31,10 +31,12 @@
 //   found, which is also no notice today. Every other failure path in this design
 //   already degrades to silence, so these two are not new behaviour.
 //
-// What is NOT done is parse the response as JSON. One field is extracted, bounded,
-// from a bounded body, and then validated against a strict version grammar. A general
-// parser over 20 KB of network-supplied text is a larger thing to have in a scanner
-// that runs as root than the problem justifies.
+// The response is parsed as JSON, with nlohmann/json in its non-throwing mode, over a body
+// capped at 256 KiB. One field is read - `tag_name`, from the top-level object only - and
+// its decoded value is bounded and then validated against a strict version grammar. The
+// parser is the one the JSON report is already written with, so it adds no dependency;
+// extractTagName() says what it was measured to withstand and what it must never be
+// asked to do with what it parsed.
 //
 // If a rate-limit refusal is ever actually observed, the manifest is the answer, and
 // it is then a release-job change with its own --selftest rather than a guess.
@@ -131,11 +133,12 @@ using http::TrustStoreEnvironment;
 using http::systemCaBundleDirs;
 using http::systemCaBundleFiles;
 
-// Pull `"tag_name": "v2.2.1"` out of a releases API response.
+// Read `"tag_name": "v2.2.1"` from a releases API response.
 //
-// Not a JSON parser and not trying to be: it finds the key, requires a colon and a
-// quoted value, and refuses a value containing an escape, a control character or more
-// than 64 characters. Everything it refuses becomes "no notice today".
+// The body must be one well-formed JSON document whose top level is an object with a
+// `tag_name` string. The value, once its escapes are decoded, must be 1 to 64 bytes with
+// no quote, backslash or control character. A duplicated key resolves to its last
+// occurrence, which is what the parser keeps. Everything refused becomes "no notice today".
 std::optional<std::string> extractTagName(std::string_view body);
 
 // The real one. Uses libcurl; see the header comment.

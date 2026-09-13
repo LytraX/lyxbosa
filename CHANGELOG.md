@@ -22,6 +22,55 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Changed
+
+- **The JSON report is written by a JSON library rather than by hand.** Every value, the
+  summary included, is serialized by nlohmann/json, and each file's record is still written
+  the moment the file is found. A JSON parser reads the same data as from 3.0.0: the key
+  order and the rules for which keys are present are unchanged. The layout is not. The report
+  is compact, with each file's record on a line of its own, where 3.0.0 indented it.
+
+- **`update --check` and the periodic check read the releases API response as JSON.** The
+  release's version is taken from `tag_name` on the response's top-level object, after the
+  response has parsed as one well-formed document. It was previously the first
+  `"tag_name": "..."` found anywhere in the text. Against GitHub's real response the two
+  agree; they differ on responses GitHub does not send, which are listed under
+  Compatibility.
+
+- **nlohmann-json is a new build dependency, and reflect-cpp is no longer one.** Nothing
+  used reflect-cpp.
+
+### Fixed
+
+- **A JSON report that cannot represent a finding is no longer written as invalid JSON.** A
+  custom rule's `name` and `category` are written into the report as the configuration
+  file spells them, and bytes there that are not valid UTF-8 were written through raw — a
+  document no standard parser accepts, from a scan that exited by its findings. JSON cannot
+  represent such a string, so the report now stops at the file whose finding could not be
+  written and is left unterminated rather than closed, so that no parser reads it as a
+  complete answer. stderr names the file and the reason and the scan exits `1`. File paths
+  were never affected: they are escaped, with their bytes in `pathBytesHex`.
+
+### Compatibility
+
+- **The JSON report's whitespace changed.** It is compact: `"key":value` with no space after
+  the colon, no indentation, and each file's record on one line. A JSON parser is unaffected;
+  a script that matched the report's text, such as `"quarantined": true`, needs adjusting.
+- **`scan` exits 1 where it exited 2 or 0**, when the report is JSON and a finding carries a
+  custom rule name or category that is not valid UTF-8. This holds for a report written to
+  standard output as well as for `-O`; the stdout case adds the line `Error: the report
+  written to standard output is incomplete`. Such a report never parsed before.
+- **An update notice is no longer shown for some responses that produced one**, and one
+  response that produced none now does. None of these is a response GitHub sends:
+  - a body that is not a single well-formed JSON document — truncated, followed by more
+    text, or not valid UTF-8 anywhere — is refused even if it contains a well-formed tag;
+  - a `tag_name` nested inside another object, such as an asset, is not the release's and
+    is ignored;
+  - a `tag_name` given twice resolves to its last occurrence, not its first;
+  - an escaped character in the tag is decoded before the tag is checked, so an escape that
+    decodes to an allowed character is accepted where it was refused, and the 64-byte
+    limit applies to the decoded value.
+
 ## [3.0.0] - 2026-09-13
 
 Quarantine keeps its evidence, silent failures say so, and a file name can be the finding.

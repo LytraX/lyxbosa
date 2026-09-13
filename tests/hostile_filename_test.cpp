@@ -34,6 +34,8 @@
 #include "rules/filename.h"
 #include "utils/SafeText.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -797,40 +799,6 @@ std::string unhex(std::string_view hex) {
     return out;
 }
 
-// The value of `key` in the first JSON object that has one, or empty, with RFC 8259
-// escaping undone. Crude on purpose - a real parser here would be testing the parser -
-// but the unescaping is not optional: a Windows path is all backslashes, JSON doubles
-// every one of them, and a case that skipped this step compared `C:\\Users` against
-// `C:\Users` and called the report wrong.
-std::string jsonValue(const std::string& document, const std::string& key) {
-    const std::string needle = "\"" + key + "\": \"";
-    const size_t at = document.find(needle);
-    if (at == std::string::npos) return {};
-
-    std::string out;
-    for (size_t i = at + needle.size(); i < document.size(); ++i) {
-        const char c = document[i];
-        if (c == '"') break;
-        if (c != '\\') {
-            out += c;
-            continue;
-        }
-        if (++i >= document.size()) break;
-        switch (document[i]) {
-            case '"':  out += '"';  break;
-            case '\\': out += '\\'; break;
-            case '/':  out += '/';  break;
-            case 'b':  out += '\b'; break;
-            case 'f':  out += '\f'; break;
-            case 'n':  out += '\n'; break;
-            case 'r':  out += '\r'; break;
-            case 't':  out += '\t'; break;
-            default:   out += document[i]; break;   // \uXXXX is not produced here
-        }
-    }
-    return out;
-}
-
 TEST(HostileFilenameTest, AnEscapeSequenceInANameNeverReachesAStreamRaw) {
     // The reason every path goes through one escape, spelled as a case. A name is
     // attacker-chosen on a compromised host and carries ESC exactly as file content
@@ -902,9 +870,15 @@ TEST(HostileFilenameTest, EveryReportedFileCanBeReopenedFromTheReportAlone) {
         EXPECT_TRUE(safe_text::isValidUtf8(document))
             << "the document a parser has to accept is not valid UTF-8";
 
-        const std::string hex = jsonValue(document, "pathBytesHex");
+        // Read the way a program consuming the report reads it: parsed, not searched. The
+        // report's whitespace is not part of what it promises.
+        ASSERT_TRUE(nlohmann::json::accept(document)) << document;
+        const nlohmann::json parsed = nlohmann::json::parse(document);
+        ASSERT_EQ(parsed.at("files").size(), 1u) << document;
+        const nlohmann::json& record = parsed.at("files").at(0);
+        const std::string hex = record.value("pathBytesHex", std::string());
         const std::string reconstructed =
-            hex.empty() ? jsonValue(document, "path") : unhex(hex);
+            hex.empty() ? record.value("path", std::string()) : unhex(hex);
 
         // The presence of the hex is itself the statement that `path` is a rendering.
         EXPECT_EQ(hex.empty(), !pathDisplayIsLossy(file.path))

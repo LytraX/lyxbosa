@@ -221,7 +221,6 @@ Current `vcpkg.json`:
     "argparse",      // CLI argument parsing
     "yaml-cpp",      // YAML config parsing
     "fmt",           // Modern formatting
-    "reflectcpp",    // Struct serialization (brings CTRE as transitive dep)
     "re2",           // Google RE2 regex library
     "xxhash"         // Fast hashing for caching/dedup
   ]
@@ -241,7 +240,6 @@ We use **two regex libraries** for different purposes:
 - **Zero runtime cost**: Patterns are compiled into machine code at compile time
 - **Type-safe**: Compile errors for invalid regex syntax
 - **Optimized**: Can be 10-100x faster than runtime regex engines
-- Already available as transitive dependency of reflectcpp
 
 #### Why RE2 for dynamic patterns?
 - **Safe**: Guarantees linear time matching (no catastrophic backtracking)
