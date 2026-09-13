@@ -169,7 +169,7 @@ LyxBoSa/
 │   │   ├── Reporter.h/cpp       # Generate reports
 │   │   └── Alerter.h/cpp        # Send notifications
 │   ├── infrastructure/
-│   │   └── Console.h/cpp        # Console output
+│   │   └── Terminal.h, report/  # Terminal, progress and report output
 │   ├── system/
 │   │   └── CliArgs.h            # CLI argument definitions
 │   └── utils/
