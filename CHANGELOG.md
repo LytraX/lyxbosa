@@ -53,9 +53,10 @@ A refused standard output exits 1 instead of aborting, corrupting the heap or cl
   (`the configuration`, `the help text` for the last two), then
   `what reached it, if anything, is incomplete`, then the system's reason, such as
   `the write failed: No space left on device`. `--quiet` does not suppress it, and a scan's
-  report never goes to standard output under `--silent`. This includes a scan with `-O` whose
-  terminal goes away while it prints the text view: the report file is complete and
-  `Report written to` still says so, and the run exits 1.
+  report never goes to standard output under `--silent`. A scan with `-O` is not affected:
+  its report is the file, so if its terminal goes away while it prints the readable view,
+  stderr says `Warning: what this scan printed to standard output did not all arrive` and the
+  run still exits by its findings.
 - **A closed pipe prints nothing, and exits 141 where it could exit 0 or 2.** With SIGPIPE at
   its default disposition, `lyxbosa scan -o json | head` is ended by the signal and exits 141
   exactly as before. A process that inherits SIGPIPE ignored — a systemd service does by
