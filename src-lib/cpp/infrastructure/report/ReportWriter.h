@@ -9,7 +9,9 @@
 
 #include "core/ScanResult.h"
 #include "config/Types.h"
+#include <optional>
 #include <ostream>
+#include <string>
 
 namespace lyxbosa {
 
@@ -27,6 +29,15 @@ public:
     // Called once at the end, including when the scan was interrupted, so the
     // report is always closed off properly.
     virtual void end(const ScanResult& result, bool interrupted) = 0;
+
+    // Why this writer stopped writing, when it did: the report it produced is incomplete
+    // for a reason that is not the stream's. Empty for a report written in full.
+    //
+    // A writer that stops also sets badbit on its stream, so a caller holding only the
+    // stream cannot read the incomplete document as a delivered one. This is for the
+    // caller holding the writer, which is owed the reason as well as the fact - and for
+    // standard output, whose stream state nothing else asks about.
+    virtual std::optional<std::string> failure() const { return std::nullopt; }
 };
 
 }  // namespace lyxbosa

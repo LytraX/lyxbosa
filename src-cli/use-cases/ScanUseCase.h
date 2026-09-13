@@ -554,8 +554,24 @@ private:
         }
 
         // Close both reports off properly, interrupted or not.
+        //
+        // A writer can also have stopped part-way, because a value in a finding could not be
+        // encoded in the report's format - JsonReportWriter.h says when. Standard output has
+        // no delivery check of its own below, so that is asked of the writer here: a report
+        // on stdout that stopped is an undelivered report exactly as a file one is, and a
+        // caller redirecting it to a file has no other way to learn it is incomplete.
+        bool reportUndelivered = false;
         if (consoleWriter) {
             consoleWriter->end(result, interrupted);
+            if (const auto why = consoleWriter->failure()) {
+                reportUndelivered = true;
+                if (!args.silent) {
+                    terminal_.printErr(Terminal::error(),
+                        "\nError: the report written to standard output is incomplete\n"
+                        "       {}\n",
+                        *why);
+                }
+            }
         }
 
         // Delivering the report is part of completing the command. The stream used to
@@ -564,15 +580,18 @@ private:
         // and the run that matters is the unattended one, which then has neither a
         // report nor anything saying it lost one. The write, the flush and the close
         // are all asked, because they fail at different moments: a short report never
-        // leaves the buffer until close.
-        bool reportUndelivered = false;
+        // leaves the buffer until close. A writer that stopped sets badbit on the stream,
+        // and is asked as well: for the reason, which the stream cannot carry, and so that
+        // this answer does not rest on one side of that pair alone.
         if (fileWriter) {
             fileWriter->end(result, interrupted);
             fileStream.flush();
             fileStream.close();
-            reportUndelivered = fileStream.fail();
+            const auto why = fileWriter->failure();
+            const bool fileUndelivered = fileStream.fail() || why.has_value();
+            reportUndelivered = reportUndelivered || fileUndelivered;
 
-            if (reportUndelivered) {
+            if (fileUndelivered) {
                 // Held back only by --silent, which promises no output at all. --quiet
                 // suppresses progress and the summary, and this is neither: it is the
                 // command's own deliverable not existing.
@@ -581,6 +600,9 @@ private:
                         "\nError: the report could not be written to {}\n"
                         "       what is on disk there, if anything, is incomplete\n",
                         *plan.file);
+                    if (why) {
+                        terminal_.printErr(Terminal::error(), "       {}\n", *why);
+                    }
                 }
             } else if (!quiet) {
                 terminal_.printErr(Terminal::success(), "Report written to {}\n", *plan.file);

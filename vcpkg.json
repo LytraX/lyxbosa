@@ -4,6 +4,7 @@
   "dependencies": [
     "argparse",
     "yaml-cpp",
+    "nlohmann-json",
     "fmt",
     "re2",
     "xxhash",

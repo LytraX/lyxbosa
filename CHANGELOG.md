@@ -22,6 +22,35 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Changed
+
+- **The JSON report is written by a JSON library rather than by hand.** Every value, the
+  summary included, is serialized by nlohmann/json, and each file's record is still written
+  the moment the file is found. Nothing a consumer reads changes: the layout, the key order
+  and the rules for which keys are present are those of 3.0.0, and a report of the same tree
+  is byte-identical to 3.0.0's apart from `durationMs`.
+
+- **nlohmann-json is a new build dependency, and reflect-cpp is no longer one.** Nothing
+  used reflect-cpp.
+
+### Fixed
+
+- **A JSON report that cannot represent a finding is no longer written as invalid JSON.** A
+  custom rule's `name` and `category` are written into the report as the configuration
+  file spells them, and bytes there that are not valid UTF-8 were written through raw — a
+  document no standard parser accepts, from a scan that exited by its findings. JSON cannot
+  represent such a string, so the report now stops at the file whose finding could not be
+  written and is left unterminated rather than closed, so that no parser reads it as a
+  complete answer. stderr names the file and the reason and the scan exits `1`. File paths
+  were never affected: they are escaped, with their bytes in `pathBytesHex`.
+
+### Compatibility
+
+- **`scan` exits 1 where it exited 2 or 0**, when the report is JSON and a finding carries a
+  custom rule name or category that is not valid UTF-8. This holds for a report written to
+  standard output as well as for `-O`; the stdout case adds the line `Error: the report
+  written to standard output is incomplete`. Such a report never parsed before.
+
 ## [3.0.0] - 2026-09-13
 
 Quarantine keeps its evidence, silent failures say so, and a file name can be the finding.

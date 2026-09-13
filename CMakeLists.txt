@@ -62,6 +62,7 @@ add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/MP>)
 find_package(fmt CONFIG REQUIRED)
 find_package(argparse CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(libzip CONFIG REQUIRED)
@@ -272,6 +273,18 @@ set(UPDATE_SOURCES
     src-lib/cpp/update/UpdateApply.cpp
 )
 
+# The JSON report. Deliberately not in LIB_SOURCES, for the benchmark's reason above and
+# because the fuzz targets compile that list: neither writes a report.
+#
+# A source file rather than the header it used to live in, because the header is included
+# by the CLI's own translation unit and by three test files, and nlohmann/json costs about
+# two seconds of every translation unit that includes it. Here it is compiled once, into
+# lyxbosa_core, and both executables link that one object. The header it implements names
+# no nlohmann type, and has to keep it that way for this to stay true.
+set(REPORT_SOURCES
+    src-lib/cpp/infrastructure/report/JsonReportWriter.cpp
+)
+
 # Everything the update sources need beyond the library's own dependencies, in one place
 # so the CLI and the test binary cannot drift apart on it.
 function(lyxbosa_configure_update target)
@@ -327,6 +340,7 @@ set(LYXBOSA_CORE_LIBRARIES
     fmt::fmt
     argparse::argparse
     yaml-cpp::yaml-cpp
+    nlohmann_json::nlohmann_json
     re2::re2
     libzip::zip
     ZLIB::ZLIB
@@ -340,10 +354,10 @@ set(LYXBOSA_CORE_LIBRARIES
 # source. What differs between the two is LYXBOSA_TUI_ENABLED on the CLI, and
 # LYXBOSA_FUZZ_DIR, LYXBOSA_KEYRING_FILE_PATH and the fuzz/ include directory on the test
 # binary. Those stay on the executable that needs them and apply to its own sources -
-# src-cli/lyxbosa.cpp and tests/*.cpp - and no file in LIB_SOURCES or UPDATE_SOURCES reads
-# any of them, directly or through a header. It has to stay that way, and nothing fails if
-# it does not: a shared source that started reading one would compile without it, quietly,
-# in both binaries. So a setting that changes how a shared source compiles belongs on
+# src-cli/lyxbosa.cpp and tests/*.cpp - and no file in LIB_SOURCES, UPDATE_SOURCES or
+# REPORT_SOURCES reads any of them, directly or through a header. It has to stay that way,
+# and nothing fails if it does not: a shared source that started reading one would compile
+# without it, quietly, in both binaries. So a setting that changes how a shared source compiles belongs on
 # lyxbosa_core, where both binaries get it alike, and a setting only one executable has is
 # never read by a shared source.
 #
@@ -361,7 +375,7 @@ set(LYXBOSA_CORE_LIBRARIES
 # The fuzz targets further down do not use it. They compile LIB_SOURCES themselves under
 # the sanitizers, and objects built without that instrumentation would still link and run
 # while leaving uninstrumented the very code the fuzzer is there to exercise.
-add_library(lyxbosa_core OBJECT ${LIB_SOURCES} ${UPDATE_SOURCES})
+add_library(lyxbosa_core OBJECT ${LIB_SOURCES} ${UPDATE_SOURCES} ${REPORT_SOURCES})
 target_include_directories(lyxbosa_core PRIVATE
     ${CMAKE_SOURCE_DIR}/src-lib/cpp
     ${CMAKE_SOURCE_DIR}/src-cli
@@ -506,6 +520,7 @@ if(BUILD_TESTS)
     tests/update_apply_test.cpp
     tests/build_identity_test.cpp
     tests/hostile_filename_test.cpp
+    tests/json_report_test.cpp
     tests/fuzz_replay_test.cpp
     $<TARGET_OBJECTS:lyxbosa_core>
   )
