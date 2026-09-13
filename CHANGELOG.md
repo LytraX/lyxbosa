@@ -22,6 +22,10 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [3.0.0] - 2026-09-13
+
+Quarantine keeps its evidence, silent failures say so, and a file name can be the finding.
+
 ### Added
 
 - **Six rules that read a file's name rather than its bytes (`FN001`-`FN006`).** On a
@@ -66,12 +70,23 @@ commit list that CI generates per tag.
   Such a file is reported with its row saying plainly that the bytes were never read.
   `scan.exclude` is the operator saying *do not look here* and is obeyed.
 
+- **The four Linux release binaries rebuild byte for byte from their tag.** The build clock
+  is pinned with `SOURCE_DATE_EPOCH`, the builder images name their base layer by digest and
+  their compiler by exact release, and vcpkg is checked out at a fixed commit, so anyone can
+  build the tagged source in the same container and compare the hash with the line in that
+  release's signed `SHA256SUMS`. A signature says who published the bytes; a matching rebuild
+  says the bytes are what the source says. Every binary a release publishes is also the one
+  its test suite ran against, rather than a second build of the same source. The Windows
+  binaries are outside the rebuild claim, because the MSVC linker writes the current time
+  into everything it produces. [docs/RELEASING.md](docs/RELEASING.md#rebuilding-a-release)
+  is the procedure.
+
 ### Removed
 
 - **An unused debug-console module is gone from the source and the binary.** Nothing called
   it, but it was linked into the release binaries, and its source held the only calls in the
-  tree that hand a string to a shell — two of them building a command line around a log file
-  path without quoting it. Those two sat behind a debug macro no build defines and were
+  scanner's code that hand a string to a shell — two of them building a command line around a
+  log file path without quoting it. Those two sat behind a debug macro no build defines and were
   never compiled into a release; they are deleted rather than repaired because nothing needs
   them. Nothing a scan does, prints or reports changes.
 
@@ -110,45 +125,6 @@ commit list that CI generates per tag.
   it printed any match — so JSON and CSV named the finding and the text report did not.
   Both text views now print the skip and the finding, the compact line carrying
   `(not scanned: <reason>)` after the severity counts.
-
-### Compatibility
-
-- **New rule codes `FN001`-`FN006` appear in reports**, in the `category` field of a JSON
-  match, the `category` column of a CSV row and the rule line of the text report. A
-  consumer with a fixed list of rule codes, or one that maps a code to a remediation, sees
-  six it does not know. They can be turned off with `builtin_rules.disable: [FN001, ...]`
-  or `category:filename`.
-- **`scan` exits 2 where it exited 0** on a tree holding a file with a hostile name and
-  nothing else. A name finding is an ordinary finding and moves the exit code like any
-  other match.
-- **Files no `scan.include` pattern covers can now appear in a report.** They are still
-  counted as `excluded` and their bytes are still not read; what is new is a row for one
-  whose *name* is a finding. `report_excluded` is unchanged and still off by default — it
-  governs rows for excluded files with nothing to say about them.
-- **JSON gains `filesWithHostileNames`**, always present, beside `filesWithMatches`.
-- **The text summary gains `Files with a hostile name: N`** when the count is not zero.
-  Suppressed by `--quiet` with the rest of the summary.
-- **The compact text line gains `(not scanned: <reason>)`** on a file that was skipped and
-  still carried a finding, and the verbose view now prints that file's matches under its
-  skip line. A file that was skipped with nothing found prints exactly what it did before.
-- **A path or a quoted excerpt containing bytes that are not valid UTF-8 now renders as
-  `\xNN` escapes rather than raw bytes.** A consumer that was reading those bytes back out
-  of a report was reading from a document no standard JSON parser would accept; one that
-  parsed reports successfully is unaffected, because such a document never parsed.
-- **JSON gains `pathBytesHex` and `quarantinePathBytesHex`**, each present on a file only
-  when that path's rendering is inexact — never in an ordinary tree. A consumer that needs
-  the real bytes reads the hex when it is there and the rendered path when it is not.
-- **CSV gains `file_bytes_hex` and `quarantine_path_bytes_hex` as its last two columns.**
-  Appended, so every existing column keeps its index — `container_quarantine` is still
-  index 13 and is no longer the last field on the line. A reader that takes the last field
-  positionally rather than by header name needs adjusting. Both are empty for every path
-  the escape rendered exactly.
-- **`check` escapes the path it was given.** It printed `File: <path>` and its three
-  verdict lines with the raw argument, so a file named with an ESC sequence reached the
-  terminal unescaped from the one command most likely to be pointed at a single suspicious
-  file. The member lines in the same output had always been escaped.
-
-### Fixed
 
 - **Three commands no longer report an operation that did not happen as one that did.**
   One defect in three places, so one entry.
@@ -273,6 +249,12 @@ commit list that CI generates per tag.
 
 ### Compatibility
 
+**Exit codes.**
+
+- **`scan` and `check` exit 2 where they exited 0** when a file's *name* is a finding and
+  nothing else is: a tree holding such a file for `scan`, the file itself for `check`. A
+  name finding is an ordinary finding and moves the exit code like any other match, so a
+  script of the form `lyxbosa check "$f" && echo clean` no longer calls such a file clean.
 - **`check` exits 1 where it exited 0**, when a container's members could not all be read —
   a truncated archive, a member over a size limit, a spent budget, a compression ratio or a
   nesting depth. It previously printed `No matches found` and exited 0, which is what a
@@ -283,42 +265,112 @@ commit list that CI generates per tag.
   rather than "these are some of them", which is the rule `scan` already follows for a missing
   root. **A monitor keyed on 2 will see 1 on such a file**; 1 reads as "look at this", which is
   the safe direction, but a script that treats 1 as an error to skip past needs adjusting.
+- **`check` exits 0 where it exited 1** on an archive larger than `scan.max_file_size` whose
+  members were all read or deliberately passed over. `scan.max_file_size` does not govern an
+  archive, and `scan` never called such a file skipped; `check` printed `Not scanned (over
+  size limit)` about it anyway. It now gives the verdict `scan` gives. 2.5.0 made an
+  oversize file exit 1, and that still holds for every file that is not an archive.
 - **`scan` exits 1 where it exited 0**, when the report could not be written. Delivering the
   report is part of completing the command: `-O /dev/full` previously printed `Report written`
   and exited 0.
-- **CSV gains `quarantine_failed` as its last column.** Appended, so every existing column
-  keeps its index.
-- **JSON gains two keys**: `filesQuarantineFailed` always, and `quarantineFailed` on a file
-  only when true.
-- **The text summary gains `Files NOT quarantined: N (still in place)`**, and the per-file
-  line gains `NOT quarantined - still at <path>`. Both are held back by `--silent` only, never
-  by `--quiet`: a file the tool was asked to contain and could not is not progress chatter.
 - **`scan` exits 130 where it exited 0**, when a scan of a tree holding no regular file was
   interrupted. Such a run previously reported a completed clean scan.
-- **JSON gains `directoriesCycleSkipped`**, always present beside `directoriesUnreadable`, and
-  the text summary gains `Directories not re-entered: N` when the count is not zero. It is a
-  coverage note rather than a failure — nothing was left unread — so `--quiet` suppresses it
-  along with the rest of the summary. CSV is unchanged: it carries one row per match and no
-  directory-level count, which is where `directoriesUnreadable` already sits.
-- **JSON gains two per-file keys**, each present only when it has something to say:
-  `quarantinePath`, the destination of a file that was moved, and `containerQuarantine`,
-  which is `"moved"` or `"moveFailed"` on a row for a finding inside an archive. A consumer
-  that enumerates keys sees two more; one that reads by name is unaffected, and a report
-  from a run that moved nothing is unchanged.
-- **CSV gains `quarantine_path` and `container_quarantine` as its last two columns.**
-  Appended, so every existing column keeps its index — `quarantine_failed` is still index
-  11 and is no longer the last field on the line. A reader that takes the last field
-  positionally rather than by header name needs adjusting.
+
+**What gets reported.**
+
+- **New rule codes `FN001`-`FN006` appear in reports**, in the `category` field of a JSON
+  match, the `category` column of a CSV row and the rule line of the text report. A
+  consumer with a fixed list of rule codes, or one that maps a code to a remediation, sees
+  six it does not know. They can be turned off with `builtin_rules.disable: [FN001, ...]`
+  or `category:filename`.
+- **Files no `scan.include` pattern covers can now appear in a report.** They are still
+  counted as `excluded` and their bytes are still not read; what is new is a row for one
+  whose *name* is a finding. `report_excluded` is unchanged and still off by default — it
+  governs rows for excluded files with nothing to say about them.
+- **A path or a quoted excerpt containing bytes that are not valid UTF-8 now renders as
+  `\xNN` escapes rather than raw bytes.** A consumer that was reading those bytes back out
+  of a report was reading from a document no standard JSON parser would accept; one that
+  parsed reports successfully is unaffected, because such a document never parsed.
+
+**Quarantine.**
+
+- **With `preserve_structure: true`, the default, a quarantined file lands somewhere else.**
+  The destination was `<directory>/<path relative to the scan root>` and is now
+  `<directory>/<the source's absolute path>`: a file at `/var/www/a/wp/shell.php` scanned
+  from `/var/www/a` went to `<directory>/wp/shell.php` and now goes to
+  `<directory>/var/www/a/wp/shell.php`. On Windows the drive becomes the first component
+  (`C:` → `C`). A script that collects samples from the quarantine directory by their
+  scan-relative path needs adjusting; `quarantinePath` in JSON and `quarantine_path` in CSV
+  say where each one went. Flat mode is unchanged.
+- **An occupied destination is no longer replaced.** Under `preserve_structure` a second
+  file bound for the same destination replaced the first; it now takes a numeric suffix, as
+  flat mode already did.
+- **`--quarantine` moves an archive for what is inside it.** A container holding a member
+  with a content finding is moved; it was left in place unless its own bytes matched.
+  `filesQuarantined` counts it, and every report gains a row for it with `quarantined:
+  true` and no matches of its own, in JSON, CSV and both text views. A run without
+  `--quarantine`, or with `--dry-run`, reports exactly the rows it did.
 - **`quarantined: false` on an archive member no longer means the finding was not
   contained.** It never did, but there was nothing else to read; `containerQuarantine` is
   now the field that answers it. **A consumer that counted unquarantined findings by
   testing `quarantined == false` was already counting members of containers that had been
   moved**, and should test `containerQuarantine` too.
-- **The compact text line gains `moved: <path>` under a file that was quarantined.** The
-  verbose view already printed it; the default console view printed nothing, so a
-  `--quarantine` run named no destination anywhere a human could read it. A finding inside
-  a moved container gains `moved with its container: <path>`, and one whose container could
-  not be moved gains `container NOT quarantined - still at <path>` in both views.
+
+**JSON.**
+
+- **Three summary keys, always present:** `filesWithHostileNames` beside
+  `filesWithMatches`, `filesQuarantineFailed` beside `filesQuarantined`, and
+  `directoriesCycleSkipped` beside `directoriesUnreadable`.
+- **Five per-file keys, each present only when it has something to say:**
+  `quarantineFailed`, only when true; `quarantinePath`, the destination of a file that was
+  moved; `containerQuarantine`, `"moved"` or `"moveFailed"` on a row for a finding inside an
+  archive; and `pathBytesHex` and `quarantinePathBytesHex`, the path in hex when its
+  rendering is inexact — never in an ordinary tree. A consumer that needs the real bytes
+  reads the hex when it is there and the rendered path when it is not. A consumer that
+  enumerates keys sees more; one that reads by name is unaffected, and a run that moved
+  nothing over a tree of ordinary names emits none of them.
+
+**CSV.**
+
+- **Five columns, appended after `skip_reason`:** `quarantine_failed`, `quarantine_path`,
+  `container_quarantine`, `file_bytes_hex` and `quarantine_path_bytes_hex`, at indexes 11 to
+  15. Every existing column keeps its index, but `skip_reason` (index 10) is no longer the
+  last field on the line, so a reader that takes the last field positionally rather than by
+  header name needs adjusting. The two hex columns are empty for every path the escape
+  rendered exactly. There is no column for `directoriesCycleSkipped`: CSV carries one row per
+  match and no directory-level count, which is where `directoriesUnreadable` already sits.
+
+**Text output.**
+
+- **The summary gains three lines**, each only when its count is not zero:
+  `Files with a hostile name: N`, `Directories not re-entered: N` and
+  `Files NOT quarantined: N (still in place)`. `--quiet` suppresses them with the rest of the
+  summary. A directory not re-entered is a coverage note rather than a failure: it was
+  already open above itself and was read there, so no exit code moves for it.
+- **A file that could not be quarantined is reported whatever `--quiet` says.** Its
+  per-file line gains `NOT quarantined - still at <path>`, and stderr gains
+  `Error: N file(s) could not be moved to the quarantine directory` followed by the paths.
+  Only `--silent` holds those back: a file the tool was asked to contain and could not is not
+  progress chatter.
+- **The compact line gains `moved: <path>` under a file that was quarantined.** The verbose
+  view already printed it; the default console view printed nothing, so a `--quarantine` run
+  named no destination anywhere a human could read it. A finding inside a moved container
+  gains `moved with its container: <path>`, and one whose container could not be moved gains
+  `container NOT quarantined - still at <path>`, in both views.
+- **The compact line gains `(not scanned: <reason>)`** on a file that was skipped and still
+  carried a finding, and the verbose view now prints that file's matches under its skip
+  line. A file that was skipped with nothing found prints exactly what it did before.
+- **`check` on an archive says what it read.** Where the selection policy did not open some
+  members the verdict reads `No matches found in what was scanned of: <path>` rather than
+  `No matches found in: <path>`, followed by `Members not scanned: N (...)`; where members
+  went unread it reads `Not fully examined: <path>`. A script matching the old sentence
+  should key on the exit code instead.
+- **`check` escapes the path it was given.** It printed `File: <path>` and its three
+  verdict lines with the raw argument, so a file named with an ESC sequence reached the
+  terminal unescaped from the one command most likely to be pointed at a single suspicious
+  file. The member lines in the same output had always been escaped.
+
+Configuration schema and CLI flags are unchanged, and so is every exit code not listed above.
 
 ## [2.5.0] - 2026-09-11
 
@@ -1229,7 +1281,8 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/LytraX/lyxbosa/compare/v2.5.0...v3.0.0
 [2.5.0]: https://github.com/LytraX/lyxbosa/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/LytraX/lyxbosa/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/LytraX/lyxbosa/compare/v2.2.1...v2.3.0
