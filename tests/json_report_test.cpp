@@ -7,18 +7,18 @@
 // and is now written by nlohmann/json - streamed, because a scan can report on hundreds of
 // thousands of files. The literal document in this file is what the hand-written writer at
 // v3.0.0 produced for `everything()` below, captured by compiling that writer against the
-// same function; the new one produces it byte for byte. So a change to layout or key order
-// fails here first, and has to be made on purpose - with a Compatibility line in
-// CHANGELOG.md, because a consumer reading the report line by line would notice.
+// same function. It is compared as parsed data, key order included, and never as text: the
+// layout is not part of what a report promises, and it changed when the indentation went.
 //
-// WHY THE SECOND CHECK IS A PARSE AND A RE-RENDER
-// -----------------------------------------------
+// WHY THE SECOND CHECK REMOVES NEWLINES AND COMPARES
+// --------------------------------------------------
 // The one piece the library cannot write is the frame: the outer object and the `files`
-// array, which stays open for the whole scan. TheStreamedDocumentIsTheLibrarysOwnRendering
-// asserts that parsing the streamed document and asking the library to render it again
-// gives back the same bytes. A frame that dropped a comma fails to parse; one that doubled
-// a newline, misplaced a bracket or indented a line differently parses and fails the
-// comparison.
+// array, which stays open for the whole scan. The frame places each record on a line of its
+// own, and those newlines are the only raw newlines in the document, because the library
+// escapes every newline inside a string. So removing them must leave exactly the library's
+// compact rendering of the whole document. A frame that dropped a comma fails to parse; one
+// that added a space, misplaced a bracket or split a record over two lines parses and fails
+// the comparison.
 
 #include <gtest/gtest.h>
 
@@ -27,6 +27,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <optional>
 
 #include <sstream>
@@ -287,10 +288,12 @@ const char* const kEverything = R"JSON({
 // Layout, key order and the frame
 // ===========================================================================
 
-TEST(JsonReportTest, TheLayoutAndKeyOrderAreThoseOfTheWriterItReplaced) {
+TEST(JsonReportTest, TheDataAndKeyOrderAreThoseOfTheWriterItReplaced) {
     const Streamed got = stream(everything());
     ASSERT_FALSE(got.failure) << *got.failure;
-    EXPECT_EQ(got.text, kEverything);
+    // ordered_json compares objects member by member in order, so this pins key order as
+    // well as every key and value - and nothing about whitespace.
+    EXPECT_EQ(Json::parse(got.text), Json::parse(kEverything)) << got.text;
 }
 
 TEST(JsonReportTest, TheStreamedDocumentIsTheLibrarysOwnRendering) {
@@ -322,7 +325,16 @@ TEST(JsonReportTest, TheStreamedDocumentIsTheLibrarysOwnRendering) {
             const Streamed got = stream(result, interrupted);
             ASSERT_FALSE(got.failure) << name;
             ASSERT_TRUE(Json::accept(got.text)) << name << "\n" << got.text;
-            EXPECT_EQ(Json::parse(got.text).dump(2) + "\n", got.text) << name;
+            const Json parsed = Json::parse(got.text);
+            std::string withoutFrameNewlines = got.text;
+            std::erase(withoutFrameNewlines, '\n');
+            EXPECT_EQ(parsed.dump(), withoutFrameNewlines) << name;
+            EXPECT_EQ(got.text.back(), '\n') << name;
+            // One line to open, one per record, one to close; a single line when empty.
+            const size_t records = parsed["files"].size();
+            EXPECT_EQ(static_cast<size_t>(std::count(got.text.begin(), got.text.end(), '\n')),
+                      records == 0 ? 1u : records + 2)
+                << name << "\n" << got.text;
         }
     }
 }
@@ -334,7 +346,7 @@ TEST(JsonReportTest, EachRecordIsWrittenWhenItArrives) {
     std::ostringstream out;
     JsonReportWriter writer(out);
     writer.begin();
-    EXPECT_EQ(out.str(), "{\n  \"files\": [");
+    EXPECT_EQ(out.str(), "{\"files\":[");
 
     FileResult first = plainFinding();
     writer.onFile(first);

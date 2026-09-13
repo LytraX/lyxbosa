@@ -26,9 +26,9 @@ commit list that CI generates per tag.
 
 - **The JSON report is written by a JSON library rather than by hand.** Every value, the
   summary included, is serialized by nlohmann/json, and each file's record is still written
-  the moment the file is found. Nothing a consumer reads changes: the layout, the key order
-  and the rules for which keys are present are those of 3.0.0, and a report of the same tree
-  is byte-identical to 3.0.0's apart from `durationMs`.
+  the moment the file is found. A JSON parser reads the same data as from 3.0.0: the key
+  order and the rules for which keys are present are unchanged. The layout is not. The report
+  is compact, with each file's record on a line of its own, where 3.0.0 indented it.
 
 - **`update --check` and the periodic check read the releases API response as JSON.** The
   release's version is taken from `tag_name` on the response's top-level object, after the
@@ -53,6 +53,9 @@ commit list that CI generates per tag.
 
 ### Compatibility
 
+- **The JSON report's whitespace changed.** It is compact: `"key":value` with no space after
+  the colon, no indentation, and each file's record on one line. A JSON parser is unaffected;
+  a script that matched the report's text, such as `"quarantined": true`, needs adjusting.
 - **`scan` exits 1 where it exited 2 or 0**, when the report is JSON and a finding carries a
   custom rule name or category that is not valid UTF-8. This holds for a report written to
   standard output as well as for `-O`; the stdout case adds the line `Error: the report

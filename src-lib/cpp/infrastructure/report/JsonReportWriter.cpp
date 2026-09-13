@@ -12,60 +12,43 @@ namespace {
 
 using Json = nlohmann::ordered_json;
 
-constexpr int kIndent = 2;
-
-// A value as the library renders it, moved `depth` levels in. The re-indent is exact: the
-// library escapes every newline inside a string, so each raw newline in its output is one
-// it placed between two lines of structure.
-//
-// Throws what dump() throws, which is a type_error for a string that is not valid UTF-8.
-std::string render(const Json& value, int depth) {
-    const std::string dumped = value.dump(kIndent);
-    const std::string pad(static_cast<size_t>(depth * kIndent), ' ');
-    std::string out;
-    out.reserve(dumped.size());
-    for (char c : dumped) {
-        out += c;
-        if (c == '\n') {
-            out += pad;
-        }
-    }
-    return out;
-}
-
 // THE FRAME. The outermost object and the `files` array are the only structure the library
-// cannot render, because the array stays open for the whole scan; these five functions are
+// cannot render, because the array stays open for the whole scan. These five functions are
 // all of the punctuation written by hand, and each piece of it is written in one place.
-// Keys and values inside them are rendered by the library.
-
-std::string padding(int depth) {
-    return std::string(static_cast<size_t>(depth * kIndent), ' ');
-}
+// Every key and value is the library's compact rendering.
+//
+// The layout is compact, with each file's record on a line of its own: a report of hundreds
+// of thousands of files can then be read, searched and cut record by record, and nothing in
+// it is indentation. A newline placed here is the only raw newline in the document, because
+// the library escapes every newline inside a string - which is what lets a test remove them
+// and compare what remains with the library's rendering of the whole document.
+//
+// dump() throws a type_error for a string that is not valid UTF-8.
 
 // `{` and the key of the array that stays open.
 std::string openDocument() {
-    return "{\n" + padding(1) + Json("files").dump() + ": [";
+    return "{" + Json("files").dump() + ":[";
 }
 
 // One element of the open array: the comma that separates it from the one before, if there
-// was one, and the record at the depth it sits at.
+// was one, and the record on a line of its own.
 std::string arrayElement(bool first, const Json& value) {
-    return (first ? "\n" : ",\n") + padding(2) + render(value, 2);
+    return (first ? "\n" : ",\n") + value.dump();
 }
 
 // `]`, on a line of its own when the array holds anything - `[]` otherwise, which is how
 // the library writes an empty array.
 std::string closeArray(bool empty) {
-    return empty ? "]" : "\n" + padding(1) + "]";
+    return empty ? "]" : "\n]";
 }
 
 // A member after the array: the comma, the key and the value.
 std::string member(std::string_view key, const Json& value) {
-    return ",\n" + padding(1) + Json(key).dump() + ": " + render(value, 1);
+    return "," + Json(key).dump() + ":" + value.dump();
 }
 
 std::string closeDocument() {
-    return "\n}\n";
+    return "}\n";
 }
 
 Json fileRecord(const FileResult& result) {

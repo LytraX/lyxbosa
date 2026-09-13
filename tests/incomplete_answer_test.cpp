@@ -676,13 +676,13 @@ TEST(ReportDeliveryTest, TheSameRuleWithAValidNameIsDeliveredAndExitsTwo) {
     EXPECT_FALSE(contains(toFile.err, "could not be written")) << toFile.err;
     std::ifstream in(report, std::ios::binary);
     const std::string written((std::istreambuf_iterator<char>(in)), {});
-    EXPECT_TRUE(contains(written, "\"rule\": \"Probe \xce\xb1 name\"")) << written;
+    EXPECT_TRUE(contains(written, "\"rule\":\"Probe \xce\xb1 name\"")) << written;
     EXPECT_TRUE(endsClosed(written)) << written;
 
     const DeliveryRun toStdout = scanJson(dir.file("lyxbosa.yaml"), std::nullopt);
     EXPECT_EQ(toStdout.code, 2) << toStdout.err;
     EXPECT_FALSE(contains(toStdout.err, "incomplete")) << toStdout.err;
-    EXPECT_TRUE(contains(toStdout.out, "\"rule\": \"Probe \xce\xb1 name\"")) << toStdout.out;
+    EXPECT_TRUE(contains(toStdout.out, "\"rule\":\"Probe \xce\xb1 name\"")) << toStdout.out;
     EXPECT_TRUE(endsClosed(toStdout.out)) << toStdout.out;
 }
 
@@ -870,8 +870,8 @@ TEST(UnquarantinedReportTest, JsonCarriesTheFileAndTheCount) {
     writer.onFile(result.files.front());
     writer.end(result, /*interrupted=*/false);
 
-    EXPECT_TRUE(contains(out.str(), "\"quarantineFailed\": true")) << out.str();
-    EXPECT_TRUE(contains(out.str(), "\"filesQuarantineFailed\": 1")) << out.str();
+    EXPECT_TRUE(contains(out.str(), "\"quarantineFailed\":true")) << out.str();
+    EXPECT_TRUE(contains(out.str(), "\"filesQuarantineFailed\":1")) << out.str();
 }
 
 // The companion, and the reason the per-file key is written only when it is true: a run
@@ -891,8 +891,8 @@ TEST(UnquarantinedReportTest, JsonSaysNothingPerFileWhenNothingFailed) {
     writer.onFile(result.files.front());
     writer.end(result, /*interrupted=*/false);
 
-    EXPECT_FALSE(contains(out.str(), "quarantineFailed\": true")) << out.str();
-    EXPECT_TRUE(contains(out.str(), "\"filesQuarantineFailed\": 0")) << out.str();
+    EXPECT_FALSE(contains(out.str(), "quarantineFailed\":true")) << out.str();
+    EXPECT_TRUE(contains(out.str(), "\"filesQuarantineFailed\":0")) << out.str();
     EXPECT_TRUE(contains(out.str(), "/var/www/shell.php"))
         << "a container moved for what was inside it has no matches of its own and "
            "still belongs in the report";
@@ -1275,20 +1275,20 @@ TEST(ContainedMemberReportTest, JsonCarriesTheDestinationOfAFileThatMoved) {
     moved.quarantinePath = "/var/quarantine/var/www/html/backup.zip";
 
     const std::string json = jsonFor(moved);
-    EXPECT_TRUE(contains(json, "\"quarantined\": true")) << json;
+    EXPECT_TRUE(contains(json, "\"quarantined\":true")) << json;
     EXPECT_TRUE(contains(json,
-                         "\"quarantinePath\": \"/var/quarantine/var/www/html/backup.zip\""))
+                         "\"quarantinePath\":\"/var/quarantine/var/www/html/backup.zip\""))
         << json;
 }
 
 TEST(ContainedMemberReportTest, JsonCarriesTheContainerOutcomeAndTheMembersAddress) {
     const std::string json = jsonFor(containedMember());
 
-    EXPECT_TRUE(contains(json, "\"containerQuarantine\": \"moved\"")) << json;
-    EXPECT_TRUE(contains(json, "\"quarantinePath\": \"/var/quarantine/var/www/html/"
+    EXPECT_TRUE(contains(json, "\"containerQuarantine\":\"moved\"")) << json;
+    EXPECT_TRUE(contains(json, "\"quarantinePath\":\"/var/quarantine/var/www/html/"
                                "backup.zip!wp-content/uploads/shell.php\""))
         << json;
-    EXPECT_TRUE(contains(json, "\"quarantined\": false"))
+    EXPECT_TRUE(contains(json, "\"quarantined\":false"))
         << "the member itself was not moved, and the row still says so: " << json;
 }
 
@@ -1301,7 +1301,7 @@ TEST(ContainedMemberReportTest, JsonSaysMoveFailedAndOffersNoDestination) {
     member.quarantinePath.clear();
 
     const std::string json = jsonFor(member);
-    EXPECT_TRUE(contains(json, "\"containerQuarantine\": \"moveFailed\"")) << json;
+    EXPECT_TRUE(contains(json, "\"containerQuarantine\":\"moveFailed\"")) << json;
     EXPECT_FALSE(contains(json, "quarantinePath")) << json;
 }
 
@@ -1314,7 +1314,7 @@ TEST(ContainedMemberReportTest, JsonSaysNeitherWhenNoDecisionWasTaken) {
     EXPECT_FALSE(contains(json, "containerQuarantine"))
         << "an absent key is how a report says nothing was attempted: " << json;
     EXPECT_FALSE(contains(json, "quarantinePath")) << json;
-    EXPECT_TRUE(contains(json, "\"quarantined\": false")) << json;
+    EXPECT_TRUE(contains(json, "\"quarantined\":false")) << json;
 }
 
 // One CSV line, split on commas. Enough for these cases: none of the fields they look at
@@ -1625,7 +1625,7 @@ TEST(LoopCoverageTest, JsonCarriesTheCountAndCarriesZero) {
 
         // Unconditional: a consumer must not have to tell an old report from a
         // loop-free one by whether the key is there.
-        EXPECT_TRUE(contains(out.str(), "\"directoriesCycleSkipped\": " +
+        EXPECT_TRUE(contains(out.str(), "\"directoriesCycleSkipped\":" +
                                             std::to_string(skipped)))
             << out.str();
     }
