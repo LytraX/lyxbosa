@@ -187,8 +187,20 @@ cmake -B "$BuildDir" -S "$ProjectRoot" `
 Assert-LastExitCode "Configure"
 
 # The CLI and the test binary in one build.
+#
+# --parallel adds MSBuild's /m, which runs projects that do not depend on each other at
+# once. CMakeLists.txt already sets /MP, so each project compiles on every processor, and
+# what /m overlaps is what comes after lyxbosa_core: src-cli/lyxbosa.cpp and its link beside
+# the test sources and theirs. On a 2-core, 4-thread affinity mask with /MP4, standing in
+# for a hosted runner, a clean build took 106.8 and 106.7 s with it against 109.8 and 109.7 s
+# without, the peak working set of cl.exe unchanged at 1.5 GiB and at most one more
+# compiler process alive; on 56 threads, 16.3 to 16.6 s against 22.3 to 22.8 s.
+#
+# That depends on the shared sources compiling first. When each executable compiled them
+# itself, /m ran two full projects at once on a runner that had no processor to spare for
+# either: no faster, twice the compiler processes, and 0.85 GiB more memory.
 Write-Host "Building..."
-cmake --build "$BuildDir" --config Release
+cmake --build "$BuildDir" --config Release --parallel
 Assert-LastExitCode "Build"
 
 if ($RunTests) {
@@ -196,14 +208,16 @@ if ($RunTests) {
     # be told which one was built. A ctest run without it finds no tests and, worse,
     # reports that as success.
     #
-    # Serial, for the reason docker/build/Linux/build-inside.sh gives: the scan-root
-    # cases share a scratch directory name across processes and collide under
-    # --parallel. The whole run is seconds either way.
-    Write-Host "Running tests..."
+    # One test process per logical processor, for the reasons and on the condition
+    # docker/build/Linux/build-inside.sh gives. Starting a process costs more here than on
+    # Linux, so a serial run is the slower of the two by far.
+    $TestJobs = [Environment]::ProcessorCount
+    Write-Host "Running tests, $TestJobs at a time..."
     ctest --test-dir "$BuildDir" `
         -C Release `
         --output-on-failure `
-        --timeout 300
+        --timeout 300 `
+        --parallel $TestJobs
     Assert-LastExitCode "Tests"
 } else {
     Write-Host "Tests not run: this machine is $HostArch and cannot execute an $Arch binary" -ForegroundColor Yellow

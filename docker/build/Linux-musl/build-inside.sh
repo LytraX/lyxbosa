@@ -95,11 +95,11 @@ if [ "${LYXBOSA_RUN_TESTS:-1}" != "0" ]; then
     adduser -D -h /home/tester tester
     chown tester /build
 
-    # Serial, for the reason docker/build/Linux/build-inside.sh gives: scan_root_test
-    # names its scratch directory the same way in every process, so two of its cases
-    # running at once share a directory.
-    echo "=== Running tests as $(id -un tester) (uid $(id -u tester)) ==="
-    su tester -c "HOME=/home/tester ctest --test-dir /build --output-on-failure --timeout 300"
+    # One test process per CPU this container may use, for the reasons and on the condition
+    # docker/build/Linux/build-inside.sh gives.
+    TEST_JOBS="$(nproc)"
+    echo "=== Running tests as $(id -un tester) (uid $(id -u tester)), ${TEST_JOBS} at a time ==="
+    su tester -c "HOME=/home/tester ctest --test-dir /build --output-on-failure --timeout 300 --parallel ${TEST_JOBS}"
 else
     echo "=== Tests not run in this container: ${LYXBOSA_TESTS_SKIPPED_BECAUSE:-caller asked for a build only} ==="
 fi

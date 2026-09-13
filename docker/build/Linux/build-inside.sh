@@ -86,17 +86,25 @@ if [ "${LYXBOSA_RUN_TESTS:-1}" != "0" ]; then
     useradd --create-home --home-dir /home/tester tester
     chown tester /build
 
-    # Serial, and not because the machine is small. tests/scan_root_test.cpp names its
-    # scratch directory from a per-process counter and a hash of the temp directory, both
-    # of which are the same in every test process, so two of its cases running at once
-    # share a directory and one removes it under the other. Measured 2026-09-10: 4 of 284
-    # fail under --parallel 56 and 284 of 284 pass serially, in 8 seconds. There is
-    # nothing here worth buying with a flaky run.
-    echo "=== Running tests as $(id -un tester) (uid $(id -u tester)) ==="
+    # One test process per CPU this container may use. gtest_discover_tests makes every case
+    # its own ctest entry, so the suite is several hundred short runs of the test binary and
+    # most of a serial run is spent starting processes rather than testing.
+    #
+    # Side by side is sound only because every suite gives each fixture a scratch directory
+    # no other process can arrive at, named from a clock reading, std::random_device or a
+    # process id. A new suite has to do the same. A fixture that shares a path across
+    # processes fails intermittently, and only here, where the cases overlap.
+    #
+    # The count is spelled out because this image's ctest needs one after --parallel, and it
+    # is nproc rather than a constant so that a runner and a workstation each use what they
+    # have; a container's cpuset is what nproc reports.
+    TEST_JOBS="$(nproc)"
+    echo "=== Running tests as $(id -un tester) (uid $(id -u tester)), ${TEST_JOBS} at a time ==="
     runuser -u tester -- env HOME=/home/tester \
         ctest --test-dir /build \
               --output-on-failure \
-              --timeout 300
+              --timeout 300 \
+              --parallel "${TEST_JOBS}"
 else
     echo "=== Tests not run in this container: ${LYXBOSA_TESTS_SKIPPED_BECAUSE:-caller asked for a build only} ==="
 fi
