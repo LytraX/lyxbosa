@@ -22,6 +22,10 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [3.1.0] - 2026-09-13
+
+A compact JSON report from a JSON library, and rules that would corrupt a report refused at load.
+
 ### Changed
 
 - **The JSON report is written by a JSON library rather than by hand.** Every value, the
@@ -46,18 +50,14 @@ commit list that CI generates per tag.
   starts, whatever the report format.** A rule's `name` and `category` are written into
   every report exactly as the configuration spells them. Bytes there that are not valid
   UTF-8 were written through raw — a JSON document no standard parser accepts, and CSV and
-  text reports in no encoding at all — and a control character such as ESC reached the
-  terminal the text report was read on. The three formats did not even agree about it. The
+  verbose text reports in no encoding at all — and a control character such as ESC reached
+  the terminal from `check`, and from a CSV or verbose text report printed there. The
   configuration is now refused when it loads, by `scan`, `check` and `validate-config`
   alike, with an error that gives the rule's position, its name with escapes, and the
   offending byte and its offset. A rule's `description` is held to the same rule, except
-  that it may contain line breaks. A pattern's `value` is not: it never appears in a report.
-  File paths were never affected: they are escaped, with their bytes in `pathBytesHex`.
-- **Every report format refuses a finding it cannot write, in the same words.** For a rule
-  set that did not come through the configuration loader, a finding whose rule name or
-  category is not plain text stops the text, CSV and JSON reports alike at that file. The
-  report is left incomplete, a JSON one unterminated so that no parser reads it as a
-  complete answer, stderr names the file and the reason, and the scan exits `1`.
+  that it may contain tabs and line breaks. A pattern's `value` is not: it never appears in
+  a report. File paths were never affected: they are escaped, with their bytes in
+  `pathBytesHex`.
 - **Configuration values quoted on the terminal are escaped.** The pre-scan summary printed
   the directories, the include and exclude globs, the quarantine directory and the alert
   recipient as they were given; the refusals about the quarantine directory, the notices
@@ -68,23 +68,31 @@ commit list that CI generates per tag.
 
 ### Compatibility
 
-- **The JSON report's whitespace changed.** It is compact: `"key":value` with no space after
-  the colon, no indentation, and each file's record on one line. A JSON parser is unaffected;
-  a script that matched the report's text, such as `"quarantined": true`, needs adjusting.
+- **The JSON report's whitespace changed, and nothing else in it did.** It is compact:
+  `"key":value` with no space after the colon and no indentation. The first line is
+  `{"files":[`, each file's record is on a line of its own followed by the comma that
+  separates it from the next, and the closing `]` shares the last line with the whole
+  summary; a report that lists no files is a single line. Every key, value and escape is
+  spelled as in 3.0.0, so a JSON parser is unaffected; a script that matched the report's
+  text, such as `"quarantined": true`, needs adjusting.
 - **A configuration that loaded in 3.0.0 is refused** when a custom rule's `name` or
   `category` is not valid UTF-8 or contains any control character, tab and line break
   included, or when its `description` is not valid UTF-8 or contains a control character
   other than tab, line feed or carriage return. `scan`, `check` and `validate-config` exit
-  `1` before anything is scanned, with `Error: Rule 1 ("Probe\xff name"): its name is not
-  valid UTF-8 (byte 0xff at offset 5).` followed by what a name has to be. In 3.0.0 such a
-  scan ran and exited by its findings, its CSV and text reports carried the bytes raw, and
-  its JSON report did not parse.
-- **An update notice is no longer shown for some responses that produced one**, and one
-  response that produced none now does. None of these is a response GitHub sends:
+  `1` before anything is scanned, with no report file and nothing on standard output, and
+  print `Error: Rule 1 ("Probe\xff name"): its name is not valid UTF-8 (byte 0xff at
+  offset 5).` followed by what a name has to be. In 3.0.0 `validate-config` accepted such a
+  file and a scan ran and exited by its findings: a name that was not valid UTF-8 left the
+  JSON report unparseable and the byte raw in the CSV and verbose text reports, and a
+  control character was written raw by `check` and into the CSV and verbose text reports.
+- **An update notice is no longer shown for some responses that produced one**, and a
+  response with an escape in its tag that produced none now can. None of these is a
+  response GitHub sends:
   - a body that is not a single well-formed JSON document — truncated, followed by more
     text, or not valid UTF-8 anywhere — is refused even if it contains a well-formed tag;
-  - a `tag_name` nested inside another object, such as an asset, is not the release's and
-    is ignored;
+  - a `tag_name` that is not a key of the top-level object — one nested inside an asset or
+    another object, or a body whose top level is an array — is not the release's and is
+    ignored;
   - a `tag_name` given twice resolves to its last occurrence, not its first;
   - an escaped character in the tag is decoded before the tag is checked, so an escape that
     decodes to an allowed character is accepted where it was refused, and the 64-byte
@@ -1349,7 +1357,8 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/LytraX/lyxbosa/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/LytraX/lyxbosa/compare/v2.5.0...v3.0.0
 [2.5.0]: https://github.com/LytraX/lyxbosa/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/LytraX/lyxbosa/compare/v2.3.0...v2.4.0
