@@ -22,32 +22,46 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [3.1.1] - 2026-09-13
+
+A refused standard output exits 1 instead of aborting, corrupting the heap or claiming success.
+
 ### Fixed
 
+- **`check` no longer corrupts its own heap, and no command aborts, when standard output
+  refuses what it prints.** On the standard Linux build, `check` printing a long answer into a
+  standard output that refused it — a full disk, a descriptor not open for writing, or a closed
+  pipe with SIGPIPE ignored — went on writing past the end of a buffer and corrupted the
+  process's heap. Without glibc's malloc checking such a run could still exit 2, as if the answer
+  had been printed; with it, the process aborted with `free(): invalid next size (normal)` and
+  exit 134. On the portable Linux build, `check`, `init-config` and `lyxbosa --help` aborted
+  with exit 134 and `terminate called after throwing an instance of 'std::system_error'` on any
+  refused write, a short answer included, and on Windows `init-config` and `--help` aborted with
+  exit 3. Each now stops writing at the first write that is refused, and exits as described
+  under Compatibility.
 - **An answer on standard output that did not arrive is no longer reported as one that did.**
-  `scan` without `-O`, `check`, `init-config` and `lyxbosa --help` never asked whether what
-  they wrote reached standard output. A JSON scan with a finding, redirected into a full disk,
-  exited 2 with nothing on stderr: the code that says the report was delivered. They now ask
-  after the last byte, as a report written with `-O` already was. A write refused for any reason
-  other than a closed pipe exits 1 and names the reason on stderr. Some of these did not exit
-  normally at all. On the portable Linux build, `check`, `init-config` and `--help` aborted
-  with exit 134, and on Windows `init-config` and `--help` aborted with exit 3. On the glibc
-  build, `check` printing a long answer into a refused standard output corrupted the process's
-  heap.
+  `scan`, `check`, `init-config` and `lyxbosa --help` never asked whether what they wrote
+  reached standard output. A JSON scan with a finding, redirected into a full disk, exited 2
+  with nothing on stderr: the code that says the report was delivered. They now ask after the
+  last byte, as a report written with `-O` already was.
 
 ### Compatibility
 
 - **`scan`, `check`, `init-config` and `lyxbosa --help` exit 1 where they exited 0 or 2** when
   standard output refuses what they write — a full disk, an I/O error, a descriptor that is not
   open for writing. stderr then says `Error: the report could not be written to standard output`
-  (`the configuration`, `the help text` for the last two), with the system's reason on the line
-  after. `--quiet` does not suppress it, and a scan's report never goes to standard output under
-  `--silent`.
+  (`the configuration`, `the help text` for the last two), then
+  `what reached it, if anything, is incomplete`, then the system's reason, such as
+  `the write failed: No space left on device`. `--quiet` does not suppress it, and a scan's
+  report never goes to standard output under `--silent`. This includes a scan with `-O` whose
+  terminal goes away while it prints the text view: the report file is complete and
+  `Report written to` still says so, and the run exits 1.
 - **A closed pipe prints nothing, and exits 141 where it could exit 0 or 2.** With SIGPIPE at
-  its default disposition, `lyxbosa scan -o json | head` is ended by the signal exactly as
-  before. A process that inherits SIGPIPE ignored — a systemd service does by default — and
-  every run on Windows, which has no SIGPIPE, now exit 141 there instead of 0 or 2. 1 and 130
-  are not replaced.
+  its default disposition, `lyxbosa scan -o json | head` is ended by the signal and exits 141
+  exactly as before. A process that inherits SIGPIPE ignored — a systemd service does by
+  default — and every run on Windows, which has no SIGPIPE, now exit 141 there instead of 0 or
+  2, when a write reaches the pipe after its reader has gone. An answer that was already in the
+  pipe when the reader left exits 0 or 2 as before. 1 and 130 are not replaced.
 - **A report that `-O` could not write gains a line** giving the system's reason, for example
   `the write failed: No space left on device`. With the full-screen progress UI,
   `Report written to` is printed below the scan summary rather than above it.
@@ -1387,7 +1401,8 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v3.1.1...HEAD
+[3.1.1]: https://github.com/LytraX/lyxbosa/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/LytraX/lyxbosa/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/LytraX/lyxbosa/compare/v2.5.0...v3.0.0
 [2.5.0]: https://github.com/LytraX/lyxbosa/compare/v2.4.0...v2.5.0
