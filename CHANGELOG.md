@@ -22,6 +22,10 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [3.2.0] - 2026-09-14
+
+A default Windows scan no longer walks through a directory junction, and what a walk passed by is counted.
+
 ### Fixed
 
 - **On Windows, a directory junction is no longer walked through with `scan.follow_symlinks`
@@ -79,11 +83,18 @@ commit list that CI generates per tag.
   links were passed by. Set `scan.follow_symlinks: true` to read through them as before. A
   junction back into the tree was refused as a loop before and still is, so those scans end
   exactly as they did, and a junction that loops back now reads as a link not followed rather
-  than as `Directories not re-entered`.
+  than as `Directories not re-entered`, so `directoriesCycleSkipped` falls by one for each.
+- **On Windows, a junction to a directory elsewhere in the same tree no longer doubles what is
+  reported about that directory.** Its files were read at their own path and read again under
+  the junction's, and counted and reported both times. They are now read once, at their own
+  path: nothing goes unread, but `Files scanned`, `Files with matches` and their JSON keys fall
+  by the second reading, and a finding that was reported under both paths is reported under
+  its own path only. A caller that looks for a finding by the path through the junction no
+  longer finds it there.
 - **The text summary gains a line on every platform** whenever a scan with the default
-  configuration passes a link, which on Linux and macOS means any tree holding a symbolic link:
-  `Links not followed: N`. `--quiet` suppresses it with the rest of the summary. It moves no
-  exit code.
+  configuration passes a link, which on Linux and macOS means any tree holding a symbolic link
+  to a file, or, in a recursive scan, to a directory: `Links not followed: N`. `--quiet`
+  suppresses it with the rest of the summary. It moves no exit code.
 - **JSON gains one summary key**, `linksNotFollowed`, between `directoriesCycleSkipped` and
   `filesQuarantined`. A consumer that enumerates keys sees one more; one that reads by name is
   unaffected. CSV carries no directory-level count and gains no column.
@@ -99,11 +110,15 @@ commit list that CI generates per tag.
 - **`Directories unreadable` and `directoriesUnreadable` count differently for the same tree.**
   They go down by every directory that was read and was counted only because of its last
   entry — any directory whose last-listed entry is a dangling symbolic link, on Linux and
-  Windows alike. They go up, and `Directories parsed` with them, by every subdirectory of a
+  Windows alike, or an entry whose type cannot be read. They go up, and `Directories parsed` with them, by every subdirectory of a
   directory the scanning user may list but not search, which is now entered and found
   unlistable instead of being dropped. A caller that treats a non-zero `directoriesUnreadable`
   as an incomplete scan sees the first kind no longer and the second kind for the first time.
   Neither moves an exit code.
+- **What a file is found to contain does not change.** No detection rule, archive handling or
+  part of the match engine changed. On Linux, over trees holding no symbolic link, no entry of
+  unknown type and no directory that can be listed but not searched, a scan reports every
+  count and every finding exactly as 3.1.1 did, with the two new keys at zero.
 
 ## [3.1.1] - 2026-09-13
 
@@ -1485,7 +1500,8 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v3.1.1...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/LytraX/lyxbosa/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/LytraX/lyxbosa/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/LytraX/lyxbosa/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/LytraX/lyxbosa/compare/v2.5.0...v3.0.0

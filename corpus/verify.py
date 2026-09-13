@@ -140,6 +140,13 @@ def unscanned_failure(sample, chk, what="sample"):
 #   directoriesUnreadable  a directory the walk could not list. An UNKNOWN number of files
 #                          never entered the denominator, so the shortfall cannot even be
 #                          sized, let alone corrected for.
+#   entriesUnreadable      an entry the host would not give the type of, so the scanner could
+#                          not say whether it was a file or a directory and read neither.
+#                          Behind one there may be a single file or a whole tree, so the
+#                          shortfall is unsized exactly as an unlistable directory's is, and
+#                          it is the host's refusal and not the scanner's choice: on Linux a
+#                          link into a directory this user may not search or one that leads
+#                          back to itself, on Windows an app execution alias.
 #   filesSkipped.unreadable
 #                          a KNOWN number of files the host would not let the scanner open.
 #                          Known is not enough. Which files a host withholds is the host's
@@ -159,10 +166,23 @@ def unscanned_failure(sample, chk, what="sample"):
 #                          denominator - the rate is over files the scanner READ - and the
 #                          counts are printed so a reader can see what policy left out.
 #   archives.*             decided by the bytes: a corrupt member is corrupt on every host.
+#   linksNotFollowed       links the walk did not go through because scan.follow_symlinks is
+#                          off. Policy, the same as an exclusion: the setting and the links in
+#                          the tree decide it, identically on every run, and the host decides
+#                          nothing. What lies behind such a link never entered
+#                          totalFilesScanned, so nothing has to be subtracted for it - it is
+#                          outside the tree the figure describes, as an excluded file is - and
+#                          the count is printed so a reader can see how many links were passed.
+#                          A link to a path inside the tree loses nothing at all, because the
+#                          target is read where it is.
 #
 # The line between the two is who chose the shortfall. A shortfall the scanner chose is
 # reproducible and belongs to the definition of the figure; a shortfall the host chose is
 # neither, and the figure is withheld until the host is made to comply.
+#
+# directoriesCycleSkipped is in neither list. A directory not re-entered because entering it
+# would close a loop is read at the path the loop leads back to, so nothing is left unread and
+# there is nothing to refuse over or to disclose.
 #
 # And one more, which is not a shortfall but the inability to see one:
 #
@@ -178,7 +198,16 @@ COVERAGE_REFUSAL_RULE = "who chose the shortfall: the scanner's policy discloses
 
 # The keys a report has to carry before its figure can be trusted. Each is a channel the
 # rule reads; a report without one cannot say whether the event it reports happened.
-COVERAGE_CHANNELS = ("interrupted", "filesSkipped", "directoriesUnreadable", "rootsMissing")
+#
+# A scanner built before entriesUnreadable is refused by design: it passed an entry of
+# unknown type by without a trace, so its report cannot say whether it left one unread.
+COVERAGE_CHANNELS = ("interrupted", "filesSkipped", "directoriesUnreadable",
+                     "entriesUnreadable", "rootsMissing")
+
+# Channels that only disclose. They are not required: a report without one refuses nothing,
+# because what they count leaves no figure wrong. The disclosure carries None rather than 0
+# for such a report, so a scanner that cannot count them is not read as one that counted none.
+DISCLOSURE_CHANNELS = ("linksNotFollowed",)
 
 def coverage_refusal(report, returncode=None, stderr=b""):
     """The reasons the false-positive figure must be refused for `report`, or [] when the
@@ -205,6 +234,10 @@ def coverage_refusal(report, returncode=None, stderr=b""):
     if dirs:
         reasons.append("%d directorie(s) could not be listed, so an unknown number of files "
                        "never entered the denominator" % dirs)
+    entries = report.get("entriesUnreadable", 0) or 0
+    if entries:
+        reasons.append("%d entr(y/ies) the host would not give the type of, so it is unknown "
+                       "whether each was a file or a whole tree, and none was read" % entries)
     skipped = report.get("filesSkipped")
     unreadable = skipped.get("unreadable", 0) if isinstance(skipped, dict) else 0
     if unreadable:
@@ -250,10 +283,13 @@ def benign_figures(report, returncode=None, stderr=b""):
             "totalFilesScanned": report.get("totalFilesScanned", 0),
             "filesSkipped": skipped if isinstance(skipped, dict) else {"total": skipped},
             "directoriesUnreadable": report.get("directoriesUnreadable", 0),
+            "entriesUnreadable": report.get("entriesUnreadable", 0),
             "rootsMissing": report.get("rootsMissing") or [],
             "interrupted": bool(report.get("interrupted")),
             "archives": report.get("archives"),
         }
+        for k in DISCLOSURE_CHANNELS:
+            out["coverage"][k] = report.get(k)
     reasons = coverage_refusal(report, returncode, stderr)
     if reasons:
         out["refused"] = reasons
@@ -722,6 +758,18 @@ def main():
                       "reached and not read;" % (sk.get("size", 0), sk.get("excluded", 0)))
                 print("                 they are not in the denominator (policy, the same on "
                       "every run)")
+            # Printed at zero too, unlike the line above, as the known-miss sub-lines are: a line
+            # that appeared only when the count was non-zero could not tell a tree with no links
+            # from a scanner that cannot count them.
+            links = cov.get("linksNotFollowed")
+            if links is None:
+                print("                 links not followed: not reported by this scanner, so "
+                      "how many were passed is unknown")
+            else:
+                print("                 %d link(s) not followed (scan.follow_symlinks off); "
+                      "what lies only behind them" % links)
+                print("                 never entered the denominator (policy, the same on "
+                      "every run)")
         if res.get("unscanned"):
             print("  UNSCANNED      %4d sample(s) `check` could not read - listed under "
                   "failures, counted nowhere else" % res["unscanned"])
@@ -844,7 +892,8 @@ def inject():
     def report(**kw):
         d = {"files": [], "interrupted": False, "totalFilesScanned": 10,
              "filesSkipped": {"total": 0, "size": 0, "excluded": 0, "unreadable": 0},
-             "directoriesUnreadable": 0, "rootsMissing": []}
+             "directoriesUnreadable": 0, "entriesUnreadable": 0, "rootsMissing": [],
+             "directoriesCycleSkipped": 0, "linksNotFollowed": 0}
         for k, v in kw.items():
             if k in ("size", "excluded", "unreadable"):
                 d["filesSkipped"][k] = v
@@ -862,6 +911,10 @@ def inject():
     why = coverage_refusal(report(directoriesUnreadable=1))
     case("one unreadable directory refuses", len(why) == 1)
     case("  ...and the reason says the shortfall is unknown", bool(why) and "unknown" in why[0])
+    why = coverage_refusal(report(entriesUnreadable=1))
+    case("one entry of unknown type refuses", len(why) == 1)
+    case("  ...and the reason says a file or a whole tree may be behind it",
+         bool(why) and "1 entr" in why[0] and "whole tree" in why[0])
     why = coverage_refusal(report(rootsMissing=["/gone"]))
     case("a root that vanished refuses", len(why) == 1 and "/gone" in why[0])
     case("an interrupted scan refuses", len(coverage_refusal(report(interrupted=True))) == 1)
@@ -870,8 +923,8 @@ def inject():
     case("  ...and quotes the exit code and what the scanner said",
          bool(why) and "exited 1" in why[0] and "not usable" in why[0])
     case("every channel at once is every reason, not the first one",
-         len(coverage_refusal(report(unreadable=2, directoriesUnreadable=1,
-                                     rootsMissing=["/a"], interrupted=True))) == 4)
+         len(coverage_refusal(report(unreadable=2, directoriesUnreadable=1, entriesUnreadable=3,
+                                     rootsMissing=["/a"], interrupted=True))) == 5)
     old = report(); del old["rootsMissing"]
     why = coverage_refusal(old)
     case("a report that lacks a channel is refused: absence is not coverage",
@@ -879,6 +932,12 @@ def inject():
     old = report(); del old["filesSkipped"]; del old["directoriesUnreadable"]
     case("  ...naming every channel it lacks",
          any("filesSkipped" in w and "directoriesUnreadable" in w for w in coverage_refusal(old)))
+    # The shape of every scanner built before the key: it passed such an entry by without a
+    # trace, so a zero it never wrote is not a zero.
+    old = report(); del old["entriesUnreadable"]
+    why = coverage_refusal(old)
+    case("a report that lacks entriesUnreadable is refused, naming it",
+         len(why) == 1 and "entriesUnreadable" in why[0])
 
     print()
     print("=== the channels that disclose and do NOT refuse ===")
@@ -892,6 +951,19 @@ def inject():
     case("  ...and the figure is over the files read: 1 FP of 3, not of 10",
          fig["refused"] is None and fig["files_read"] == 3
          and fig["false_positives"] == 1 and fig["clean"] == 2)
+    case("links not followed do not refuse", coverage_refusal(report(linksNotFollowed=4)) == [])
+    fig = benign_figures(report(linksNotFollowed=4))
+    case("  ...and are disclosed with their count, the denominator untouched: 10 read",
+         fig["refused"] is None and fig["coverage"].get("linksNotFollowed") == 4
+         and fig["files_read"] == 10)
+    old = report(); del old["linksNotFollowed"]
+    case("  ...and a report that lacks linksNotFollowed is not refused over it",
+         coverage_refusal(old) == [])
+    case("  ...but its disclosure is unknown, not zero",
+         "linksNotFollowed" in benign_figures(old)["coverage"]
+         and benign_figures(old)["coverage"]["linksNotFollowed"] is None)
+    case("a directory not re-entered as a loop does not refuse",
+         coverage_refusal(report(directoriesCycleSkipped=2)) == [])
     fig = benign_figures(report(unreadable=1))
     case("a refused sweep counts no sample, not even the readable ones",
          fig["refused"] and fig["files_read"] == 0 and fig["clean"] == 0)
@@ -1020,6 +1092,43 @@ def inject():
             fig = benign_figures(report, r.returncode, r.stderr)
             case("the same tree with access restored is reported again",
                  fig["refused"] is None and fig["files_read"] == 3)
+
+            # Links, both kinds of fact. A link out of the tree is policy and is disclosed; a
+            # link that leads back to itself is an entry the host will not give the type of,
+            # which is the one shape of that channel root cannot read past, so both are
+            # observable whoever runs this.
+            outside = os.path.join(tmp, "outside")
+            os.makedirs(outside)
+            with open(os.path.join(outside, "behind.php"), "w") as fh:
+                fh.write("<?php echo 'behind';\n")
+            made = [os.path.join(tree, "to-file.php"), os.path.join(tree, "to-dir")]
+            os.symlink(os.path.join(outside, "behind.php"), made[0])
+            os.symlink(outside, made[1])
+            try:
+                rep = os.path.join(tmp, "links.json")
+                report, r = benign_sweep([tree], rep)
+                fig = benign_figures(report, r.returncode, r.stderr)
+                case("links out of the tree do not refuse the figure",
+                     report is not None and fig["refused"] is None)
+                case("  ...and are disclosed as 2 links not followed, 3 files read",
+                     fig["coverage"].get("linksNotFollowed") == 2 and fig["files_read"] == 3)
+
+                loop = os.path.join(tree, "loop.php")
+                os.symlink(loop, loop)
+                made.append(loop)
+                rep = os.path.join(tmp, "loop.json")
+                report, r = benign_sweep([tree], rep)
+                fig = benign_figures(report, r.returncode, r.stderr)
+                case("a link that leads back to itself refuses the figure",
+                     report is not None and bool(fig["refused"]))
+                case("  ...for that reason and no other, the links beside it notwithstanding",
+                     len(fig["refused"] or []) == 1 and "1 entr" in (fig["refused"] or [""])[0])
+                case("  ...and the readable files are not counted around it",
+                     fig["files_read"] == 0 and fig["clean"] == 0)
+            finally:
+                for p in made:
+                    if os.path.lexists(p):
+                        os.remove(p)
 
             # Two scanners can be under test here and they behave differently on a root
             # that is not there: one built from a source that refuses up front (exit 1, no
