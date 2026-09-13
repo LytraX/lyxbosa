@@ -565,7 +565,14 @@ if(BUILD_TESTS)
   # It is set here rather than only for that one configure so that every build of this
   # tree discovers its cases the same way, and so the mode that ships is the mode that
   # was exercised on somebody's desk.
-  gtest_discover_tests(lyxbosa_tests DISCOVERY_MODE PRE_TEST)
+  #
+  # DISCOVERY_TIMEOUT is 60 seconds rather than CMake's default of 5. Listing the cases takes
+  # milliseconds - measured at 0.01 s on Linux and 0.02 s on Windows - so the limit is only
+  # ever reached by a runner that stalls starting a process, and one such stall on a hosted
+  # Windows runner failed a whole pull request run that passed when re-run. A release build
+  # needs every job to pass, so a stall must not be able to fail one. A listing that truly
+  # hangs still fails, a minute later.
+  gtest_discover_tests(lyxbosa_tests DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 60)
 endif()
 
 # The lyxbosa_core guard: a shared source may not read a definition only one executable has.
