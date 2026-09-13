@@ -158,7 +158,7 @@ LyxBoSa/
 │   ├── patterns/
 │   │   ├── Pattern.h            # Base pattern interface
 │   │   ├── StringPattern.h/cpp  # Exact string match
-│   │   ├── RegexPattern.h/cpp   # Regex match (std::regex or CTRE)
+│   │   ├── RegexPattern.h/cpp   # Regex match (RE2)
 │   │   ├── EntropyPattern.h/cpp # Entropy analysis
 │   │   └── HashPattern.h/cpp    # File hash match
 │   ├── config/
@@ -227,21 +227,12 @@ Current `vcpkg.json`:
 }
 ```
 
-### Regex Strategy: CTRE + RE2
+### Regex Strategy: RE2
 
-We use **two regex libraries** for different purposes:
+Every pattern is compiled with **RE2** at run time, the built-in signatures and the
+patterns loaded from the YAML configuration alike, behind a literal prefilter.
 
-| Library | Use Case | Patterns | Performance |
-|---------|----------|----------|-------------|
-| **CTRE** | Built-in hardcoded signatures | Compile-time | Extremely fast (zero runtime overhead) |
-| **RE2** | User-defined patterns from YAML config | Runtime | Fast with safety guarantees |
-
-#### Why CTRE for built-in signatures?
-- **Zero runtime cost**: Patterns are compiled into machine code at compile time
-- **Type-safe**: Compile errors for invalid regex syntax
-- **Optimized**: Can be 10-100x faster than runtime regex engines
-
-#### Why RE2 for dynamic patterns?
+#### Why RE2
 - **Safe**: Guarantees linear time matching (no catastrophic backtracking)
 - **Fast**: Optimized for high-performance pattern matching
 - **Battle-tested**: Used extensively at Google for log scanning, security tools
@@ -508,34 +499,8 @@ pattern: "eval\\s*\\("
 
 Recommendation: Use unquoted or single-quoted strings for regex patterns.
 
-### CTRE Usage (Built-in Signatures)
-CTRE is used for hardcoded, compile-time regex patterns:
-
-```cpp
-#include <ctre.hpp>
-
-// Compile-time pattern - zero runtime overhead
-static constexpr auto eval_base64 = ctll::fixed_string{R"(eval\s*\(\s*base64_decode)"};
-
-// Match check
-if (ctre::search<eval_base64>(content)) {
-    // Found match
-}
-
-// Get match with position
-if (auto match = ctre::search<eval_base64>(content)) {
-    auto matched_text = match.to_view();
-    auto start_pos = match.data() - content.data();
-}
-
-// Multiple patterns in one pass
-static constexpr auto webshell_patterns = ctll::fixed_string{
-    R"(c99shell|FilesMan|Web Shell by)"
-};
-```
-
-### Google RE2 Usage (Dynamic Patterns)
-RE2 is used for user-defined patterns loaded from YAML config:
+### Google RE2 Usage
+RE2 is used for every pattern, built-in and from the YAML configuration:
 
 ```cpp
 #include <re2/re2.h>
