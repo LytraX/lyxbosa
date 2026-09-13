@@ -456,6 +456,27 @@ TEST_F(StdoutDeliveryTest, ADestinationThatRefusesEveryByteFailsOnEveryPlatform)
             << refused.err;
         EXPECT_EQ(occurrences(refused.err, "Error:"), 1u) << refused.err;
     }
+
+    // `check` and `init-config` through the same descriptor. The long file's answer overflows
+    // the buffer, which on Windows is the write fmt throws from: this is where that platform
+    // observes the throw being caught rather than ending the process with exit 3.
+    const auto refusedWith = [](const CommandRun& run, std::string_view what) {
+        return run.err.rfind("\nError: " + std::string(what) +
+                                 " could not be written to standard output\n"
+                                 "       what reached it, if anything, is incomplete\n"
+                                 "       the write failed: ",
+                             0) == 0;
+    };
+    for (const fs::path& file : {dirty() / "shell.php", clean() / "page.php", longFile()}) {
+        SCOPED_TRACE(file.filename().string());
+        const CommandRun refused = withStdoutAt(readOnly.fd(), [&] { return check(file); });
+        EXPECT_EQ(refused.code, 1);
+        EXPECT_TRUE(refusedWith(refused, "the report")) << refused.err;
+    }
+    const CommandRun config = withStdoutAt(readOnly.fd(), [] { return initConfig(); });
+    EXPECT_EQ(config.code, 1);
+    EXPECT_TRUE(refusedWith(config, "the configuration")) << config.err;
+
     EXPECT_EQ(fs::file_size(readable), 0u);
 }
 
