@@ -66,6 +66,15 @@ commit list that CI generates per tag.
   Such a file is reported with its row saying plainly that the bytes were never read.
   `scan.exclude` is the operator saying *do not look here* and is obeyed.
 
+### Removed
+
+- **An unused debug-console module is gone from the source and the binary.** Nothing called
+  it, but it was linked into the release binaries, and its source held the only calls in the
+  tree that hand a string to a shell — two of them building a command line around a log file
+  path without quoting it. Those two sat behind a debug macro no build defines and were
+  never compiled into a release; they are deleted rather than repaired because nothing needs
+  them. Nothing a scan does, prints or reports changes.
+
 ### Fixed
 
 - **A file name carrying bytes that are not valid UTF-8 no longer makes the report invalid
