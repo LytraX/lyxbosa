@@ -50,6 +50,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -578,6 +580,63 @@ TEST_F(StdoutDeliveryTest, AFileAndStandardOutputAreDescribedInOneShape) {
 // ===========================================================================
 // check and init-config
 // ===========================================================================
+
+// With -O the report is the file, and standard output carries only the readable view of it -
+// which the scan prints only when standard output is a terminal. When that terminal goes away
+// mid-run the report on disk is complete, so the run exits by its findings: an action that
+// failed beside a complete answer does not outrank a finding (AGENTS.md). The view's failure is
+// still said, as a warning. The terminal is a pseudo-terminal whose other side is already
+// closed, so isatty() says yes and every write to it fails with EIO.
+TEST_F(StdoutDeliveryTest, AScanWithAReportFileExitsByItsFindingsWhenItsTerminalGoesAway) {
+#ifdef _WIN32
+    GTEST_SKIP() << "Windows has no pseudo-terminal this process can put on its own standard "
+                    "output, so a terminal that goes away mid-run cannot be set up here";
+#else
+    const int master = ::posix_openpt(O_RDWR | O_NOCTTY);
+    const char* slaveName =
+        (master >= 0 && ::grantpt(master) == 0 && ::unlockpt(master) == 0) ? ::ptsname(master)
+                                                                           : nullptr;
+    const int slave = slaveName ? ::open(slaveName, O_RDWR | O_NOCTTY) : -1;
+    if (slave < 0) {
+        const int why = errno;
+        if (master >= 0) ::close(master);
+        GTEST_SKIP() << "this host could not open a pseudo-terminal (" << std::strerror(why)
+                     << "), so a terminal that goes away mid-run cannot be observed";
+    }
+    Descriptor terminal(slave);
+
+    TempDir out;
+    const fs::path report = out.path() / "report.json";
+    CliArgs args = scanArgs(dirty(), ReportFormat::Json, /*quiet=*/false);
+    args.outputFile = report.string();
+    args.progress = ProgressWhen::None;
+
+    bool sawATerminal = false;
+    const CommandRun run = withStdoutAt(terminal.fd(), [&] {
+        const Terminal quiet(/*useAnsi=*/false);
+        // Standard output is a terminal when the scan decides what to print...
+        const TerminalCaps caps = TerminalCaps::detect();
+        sawATerminal = caps.stdoutIsTty();
+        // ...and has gone by the time it prints: every write to the slave now fails with EIO.
+        ::close(master);
+        return ScanUseCase(quiet, caps).execute(args);
+    });
+    ASSERT_TRUE(sawATerminal) << "the case needs standard output to be a terminal at the start";
+
+    EXPECT_EQ(run.code, 2) << "the report file is complete, so the findings decide\n" << run.err;
+    EXPECT_EQ(run.err.find("Error:"), std::string::npos) << run.err;
+    EXPECT_NE(run.err.find("Warning: what this scan printed to standard output did not all "
+                           "arrive"),
+              std::string::npos)
+        << run.err;
+    EXPECT_NE(run.err.find("Report written to"), std::string::npos) << run.err;
+
+    std::ifstream in(report, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(in)), {});
+    EXPECT_NE(written.find("shell.php"), std::string::npos) << written;
+    EXPECT_NE(written.find("\"filesWithMatches\":1"), std::string::npos) << written;
+#endif
+}
 
 // `check` printed its answer into a destination that refused it and exited 2 for the shell, 0
 // for the clean page - whose answer fits in the buffer and fails only when the command flushes

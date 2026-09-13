@@ -611,8 +611,26 @@ private:
                 }
             }
         };
+        // With -O the report is the file, and standard output carries only the readable view of
+        // it. A view that did not arrive - the terminal went away mid-run - is said, and does
+        // not make the run undelivered: the answer that was asked for is on disk, and an action
+        // that failed beside a complete answer does not outrank a finding (AGENTS.md). The exit
+        // code stays the findings', unless the file itself fails below.
         if (consoleWriter) {
-            settle(deliver(stdoutOut, consoleWriter->failure()), kStandardOutput, kWhatReachedIt);
+            const Delivery view = deliver(stdoutOut, consoleWriter->failure());
+            if (!plan.file) {
+                settle(view, kStandardOutput, kWhatReachedIt);
+            } else if (view.failed()) {
+                terminal_.printErr(Terminal::warning(),
+                    "\nWarning: what this scan printed to standard output did not all arrive\n");
+                if (view.stopped) {
+                    terminal_.printErr(Terminal::warning(), "         {}\n", *view.stopped);
+                }
+                if (view.refused) {
+                    terminal_.printErr(Terminal::warning(), "         the write failed: {}\n",
+                                       view.refused->reason());
+                }
+            }
         }
         if (fileWriter) {
             const std::string destination = pathForDisplay(std::filesystem::path(*plan.file));
