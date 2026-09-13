@@ -722,6 +722,11 @@ private:
         // so that a directory count larger than an operator expected has an explanation,
         // and it moves no exit code.
         //
+        // A link not followed does not join it either, though it can leave content unread:
+        // follow_symlinks off is the operator's configuration asking for exactly that, as an
+        // exclude pattern does, and an excluded file moves no exit code. The count is in the
+        // summary and the JSON so the operator can see how much was left behind links.
+        //
         // The interrupt above outranks all of these because it is the one case where the
         // answer really is partial, and it is checked first so that a scan cut short
         // after finding a webshell exits 130 and not 2: the finding is in the report,

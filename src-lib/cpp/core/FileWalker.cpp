@@ -56,10 +56,13 @@ static bool portable_fnmatch(const char* pattern, const char* str) {
 #include <fnmatch.h>
 #endif
 
-// For the directory identity below. Separate from the block above, which is about
-// glob matching and nothing else.
+// For the directory identity and the link classification below. Separate from the block
+// above, which is about glob matching and nothing else.
 #ifdef _WIN32
 #include <windows.h>
+#include <winioctl.h>
+#include <cwctype>
+#include <string_view>
 #else
 #include <sys/stat.h>
 #endif
@@ -165,6 +168,141 @@ DirectoryProbe probeDirectory(const std::filesystem::path& dir) {
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Which entries scan.follow_symlinks governs
+// ---------------------------------------------------------------------------
+//
+// A link, to this walk, is a name that stands for a path somewhere else. On POSIX that is
+// a symbolic link and nothing more. On Windows two reparse tags make one:
+//
+//   IO_REPARSE_TAG_SYMLINK      a symbolic link, to a file or to a directory
+//   IO_REPARSE_TAG_MOUNT_POINT  a directory junction - unless what it stores is the root
+//                               of a volume, which makes it a volume mount point
+//
+// A junction is a link in every way the setting cares about: anybody who can write to a
+// directory can make one, with no privilege, pointing anywhere on the machine. So it takes
+// the same rule as a directory symbolic link. std::filesystem does not say so by itself -
+// Microsoft's library reports a junction as file_type::junction, is_symlink() is false for
+// it, and a walk that asked is_symlink() alone descended one with follow_symlinks off.
+// That was measured with the MSVC build, not read off the library.
+//
+// A volume mount point carries the same tag and is not a link. It is how Windows attaches
+// a volume at a folder - what a mount is on Linux, where the walk crosses mounts without
+// asking - and the volume behind it holds content reachable by no other path under the
+// root. Refusing it would drop that content from the scan. It is told from a junction by
+// what the file system stores for it, a volume GUID path and nothing after it, and never
+// by the entry's name.
+//
+// Every other reparse tag is not a link. OneDrive and other cloud placeholders,
+// deduplicated files, app execution aliases and the rest are the file or directory they
+// present themselves as, and treating a reparse point as a link merely because it is one
+// would drop real content without a word.
+//
+// When the file system will not say what a mount-point-tagged entry stores, the entry is
+// not a link and the walk goes through it. The asymmetry is DirectoryId's: walking a link
+// the operator did not ask for costs time, which the loop check and the interrupt bound,
+// and refusing a directory that was not a link costs coverage, which nothing recovers.
+#ifdef _WIN32
+
+// `\??\Volume{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}\`, the form the mount manager writes
+// into a volume mount point. A junction to a directory INSIDE a volume named that way has
+// more after the brace and is a junction.
+bool isVolumeRoot(std::wstring_view target) {
+    constexpr std::wstring_view prefix = L"\\??\\Volume{";
+    constexpr size_t guidLength = 36;
+    if (!target.empty() && target.back() == L'\\') {
+        target.remove_suffix(1);
+    }
+    if (target.size() != prefix.size() + guidLength + 1 || target.back() != L'}') {
+        return false;
+    }
+    if (::_wcsnicmp(target.data(), prefix.data(), prefix.size()) != 0) {
+        return false;
+    }
+    for (size_t i = 0; i < guidLength; ++i) {
+        const wchar_t c = target[prefix.size() + i];
+        const bool dash = (i == 8 || i == 13 || i == 18 || i == 23);
+        if (dash ? c != L'-' : !std::iswxdigit(c)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Whether the mount-point-tagged entry at `path` is a junction, asked of the reparse data
+// the file system stores for it. False for a volume mount point, for any other tag, and
+// for data that cannot be read - see above for why that last one is not a link.
+bool isJunction(const std::filesystem::path& path) {
+    // FILE_FLAG_OPEN_REPARSE_POINT opens the junction itself rather than what it leads
+    // to, and FSCTL_GET_REPARSE_POINT needs no access right beyond opening it.
+    const HANDLE handle = ::CreateFileW(
+        path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    // On the heap: 16 KiB is more than a walk running on a small thread should put on its
+    // stack, and this is reached only by entries that are already reparse points.
+    std::vector<unsigned char> data(MAXIMUM_REPARSE_DATA_BUFFER_SIZE);
+    DWORD returned = 0;
+    const BOOL read = ::DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, nullptr, 0,
+                                        data.data(), static_cast<DWORD>(data.size()),
+                                        &returned, nullptr);
+    ::CloseHandle(handle);
+
+    // The layout ntifs.h declares and user mode has no header for: the tag, a data length
+    // and a reserved word, then four USHORTs - substitute name offset and length, print
+    // name offset and length - and the names, offsets counted from the end of those four.
+    constexpr size_t namesStart = 16;
+    if (!read || returned < namesStart) {
+        return false;
+    }
+    ULONG tag = 0;
+    std::memcpy(&tag, data.data(), sizeof(tag));
+    if (tag != IO_REPARSE_TAG_MOUNT_POINT) {
+        return false;
+    }
+    USHORT offset = 0;
+    USHORT length = 0;
+    std::memcpy(&offset, data.data() + 8, sizeof(offset));
+    std::memcpy(&length, data.data() + 10, sizeof(length));
+    if (namesStart + size_t{offset} + size_t{length} > returned) {
+        return false;
+    }
+    std::wstring substitute(length / sizeof(wchar_t), L'\0');
+    std::memcpy(substitute.data(), data.data() + namesStart + offset,
+                substitute.size() * sizeof(wchar_t));
+    return !isVolumeRoot(substitute);
+}
+
+#endif  // _WIN32
+
+bool isLink(const std::filesystem::directory_entry& entry) {
+    std::error_code ec;
+#ifdef _WIN32
+    // The type the directory listing reported for the entry itself. It costs nothing - the
+    // listing already carried the reparse tag - and it settles every entry except the
+    // ambiguous one: symlink is IO_REPARSE_TAG_SYMLINK, and a reparse point with any tag
+    // but the two above comes back as the directory or file it presents itself as.
+    const std::filesystem::file_type own = entry.symlink_status(ec).type();
+    if (ec) {
+        return false;
+    }
+    if (own == std::filesystem::file_type::symlink) {
+        return true;
+    }
+    if (own == std::filesystem::file_type::directory ||
+        own == std::filesystem::file_type::regular) {
+        return false;
+    }
+    // What is left is IO_REPARSE_TAG_MOUNT_POINT, which Microsoft's library names
+    // file_type::junction for both of its uses. Only the file system can tell them apart.
+    return isJunction(entry.path());
+#else
+    return entry.is_symlink(ec);
+#endif
+}
+
 }  // namespace
 
 FileWalker::FileWalker(const ScanConfig& config)
@@ -189,7 +327,7 @@ std::optional<std::string> rootUnusableReason(const std::filesystem::path& dir) 
 
 size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs,
                         std::vector<std::filesystem::path>* missingRoots,
-                        size_t* cycleSkippedDirs) const {
+                        size_t* cycleSkippedDirs, size_t* linksNotFollowed) const {
     size_t dirCount = 0;
     bool stopped = false;
 
@@ -205,7 +343,12 @@ size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs,
             }
             continue;
         }
-        dirCount += walkDirectory(dir, callback, stopped, unreadableDirs, cycleSkippedDirs);
+        // A root that is itself a link is walked whatever followSymlinks says, on the same
+        // grounds: the operator named that path, so it is the tree they asked for, and
+        // refusing it would report a clean scan of nothing. The setting is about links the
+        // walk finds inside the tree, and walkDirectory() applies it only to those.
+        dirCount += walkDirectory(dir, callback, stopped, unreadableDirs, cycleSkippedDirs,
+                                  linksNotFollowed);
         // `stopped` is set by a callback that refused and by the interrupt flag, and
         // either way the roots after this one are not walked. Which of the two it was
         // is interrupted()'s answer and not this loop's; Scanner::scan() asks it.
@@ -216,7 +359,8 @@ size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs,
 }
 
 size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,
-                                 size_t* unreadableDirs, size_t* cycleSkippedDirs) const {
+                                 size_t* unreadableDirs, size_t* cycleSkippedDirs,
+                                 size_t* linksNotFollowed) const {
     namespace fs = std::filesystem;
 
     // An explicit stack of directories still to read, rather than one C++ call frame
@@ -333,12 +477,22 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
         }
 
         if (entry.is_directory(ec)) {
-            // A linked directory is queued only when the operator asked for it. Whether
-            // queueing it would close a loop is not decided here: the answer needs the
-            // directory's identity and the identities of everything above it, and the
-            // loop below is where both are known.
-            if (config_.recursive && (!entry.is_symlink(ec) || config_.followSymlinks)) {
-                children.push_back(entry.path());
+            // A linked directory is queued only when the operator asked for it - and a
+            // link is what isLink() says, which on Windows includes a junction and does not
+            // include a volume mount point. Whether queueing it would close a loop is not
+            // decided here: the answer needs the directory's identity and the identities
+            // of everything above it, and the loop below is where both are known.
+            //
+            // A link refused here is counted, because nothing else about the scan moves
+            // when it happens: the tree behind it is simply absent from every total. Only
+            // in a recursive walk, where the link would otherwise have been entered - a
+            // walk that enters no subdirectory has refused nothing by not entering this one.
+            if (config_.recursive) {
+                if (config_.followSymlinks || !isLink(entry)) {
+                    children.push_back(entry.path());
+                } else if (linksNotFollowed) {
+                    ++*linksNotFollowed;
+                }
             }
             return true;
         }
@@ -347,14 +501,20 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
             return true;
         }
 
-        // Check symlink handling
-        if (entry.is_symlink(ec) && !config_.followSymlinks) {
+        // A linked file under the same rule and into the same count. A link that leads
+        // nowhere is neither of these - it fails both questions above and is not a link to
+        // content this scan declined to read.
+        const bool link = isLink(entry);
+        if (link && !config_.followSymlinks) {
+            if (linksNotFollowed) {
+                ++*linksNotFollowed;
+            }
             return true;
         }
 
         FileInfo info;
         info.path = entry.path();
-        info.isSymlink = entry.is_symlink(ec);
+        info.isSymlink = link;
 
         // Filters first. An excluded file is excluded whatever its size - deciding
         // that a 6 GB file the operator told us to ignore was "skipped for size"

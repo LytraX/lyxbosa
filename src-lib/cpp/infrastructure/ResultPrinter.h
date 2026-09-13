@@ -215,6 +215,16 @@ public:
                   result.directoriesCycleSkipped);
         }
 
+        // In the same block and plain for the same reason - the operator's configuration
+        // asked for it - but worded as what it can be, which the loop line is not: a tree
+        // reachable only through a link was not read. Only when there are some, so a tree
+        // without links reads exactly as it always did.
+        if (result.linksNotFollowed > 0) {
+            plain("Links not followed: {} (scan.follow_symlinks is off - anything reached "
+                  "only through them was not scanned)\n",
+                  result.linksNotFollowed);
+        }
+
         // Named and not there. Listed rather than counted, because the operator can
         // only act on it if they are told which path it was.
         if (!result.rootsMissing.empty()) {

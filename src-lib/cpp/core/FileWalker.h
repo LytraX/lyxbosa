@@ -88,9 +88,15 @@ public:
     // entering one would have re-entered a directory it was already inside. Their
     // contents are covered at the path they lead back to, so this is not a coverage
     // gap - but it is not nothing either, and no other count moves when it happens.
+    //
+    // `linksNotFollowed` counts the links, to a directory or to a file, that the walk did
+    // not go through because followSymlinks is off. That one can be a gap: whatever is
+    // reachable only through such a link was not read. A root the operator named is
+    // walked even when it is a link, and is not counted.
     size_t walk(FileCallback callback, size_t* unreadableDirs = nullptr,
                 std::vector<std::filesystem::path>* missingRoots = nullptr,
-                size_t* cycleSkippedDirs = nullptr) const;
+                size_t* cycleSkippedDirs = nullptr,
+                size_t* linksNotFollowed = nullptr) const;
 
     // Walk a single directory and everything under it (stopped is set to true if
     // callback returns false). Returns the number of directories entered.
@@ -118,9 +124,17 @@ public:
     // stops the default configuration looping is the absence of such a link on the
     // hosts tried and not anything this walk checks: a FUSE filesystem or a hostile
     // network server can present a directory inside itself with no symlink anywhere.
+    //
+    // LINKS. followSymlinks governs symbolic links everywhere and, on Windows, directory
+    // junctions too - a junction is a link anybody can create, and Microsoft's library
+    // does not call it a symlink. A volume mount point shares a junction's reparse tag and
+    // is walked like any directory, as a mount is on POSIX. Other reparse points - cloud
+    // placeholders, deduplicated files - are the files and directories they present. The
+    // implementation says how each is told apart. `dir` itself is walked whatever it is.
     size_t walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,
                          size_t* unreadableDirs = nullptr,
-                         size_t* cycleSkippedDirs = nullptr) const;
+                         size_t* cycleSkippedDirs = nullptr,
+                         size_t* linksNotFollowed = nullptr) const;
 
     // Count total files and bytes without processing (fast pre-scan). The
     // optional callback receives the running file count so a long count is not

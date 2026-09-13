@@ -130,7 +130,12 @@ private:
             pending.pop_back();
             for (const auto& entry : fs::directory_iterator(current, ec)) {
                 out.push_back(entry.path());
-                if (entry.is_directory(ec) && !entry.is_symlink(ec)) {
+                // Only what is a directory in itself. The question the walk used to ask -
+                // a directory, and not is_symlink() - is true of a junction on Windows, so
+                // this sweep descended one: a junction to its own parent never ended, and a
+                // volume mount point would have handed every file on the volume to the
+                // remove() below. symlink_status() calls both of them something else.
+                if (entry.symlink_status(ec).type() == fs::file_type::directory) {
                     pending.push_back(entry.path());
                 }
             }
@@ -154,6 +159,7 @@ ScanConfig configFor(const fs::path& root) {
 struct Walked {
     size_t directories = 0;
     size_t unreadable = 0;
+    size_t linksNotFollowed = 0;
     bool stopped = false;
     std::vector<fs::path> files;
 
@@ -173,13 +179,19 @@ Walked walkOf(const ScanConfig& scan, const fs::path& root, size_t stopAfter = 0
             out.files.push_back(info.path);
             return stopAfter == 0 || out.files.size() < stopAfter;
         },
-        out.stopped, &out.unreadable);
+        out.stopped, &out.unreadable, /*cycleSkippedDirs=*/nullptr, &out.linksNotFollowed);
     return out;
 }
 
 // Matches rule RCE004 - irrelevant to the walk, which never reads a file, but it keeps
 // the fixtures identical to the ones the scanner cases use.
 constexpr std::string_view kFinding = "<?php eval($_POST[\"x\"]); ?>\n";
+
+// For the cases about links, which assert what the walk reached and never what a rule
+// found. Harmless on purpose: resident antivirus takes a file holding kFinding out of a
+// temporary directory between writing it and walking it, and a file taken there would
+// read as a link the walk did not go through.
+constexpr std::string_view kHarmless = "<?php echo 1; ?>\n";
 
 #ifndef _WIN32
 
@@ -271,9 +283,11 @@ struct InterruptGuard {
 };
 
 struct BoundedWalk {
-    size_t directories = 0;   // entered, as walkDirectory counted them
-    size_t cycleSkipped = 0;  // refused because entering would have closed a loop
+    size_t directories = 0;       // entered, as walkDirectory counted them
+    size_t cycleSkipped = 0;      // refused because entering would have closed a loop
+    size_t linksNotFollowed = 0;  // refused because followSymlinks is off
     size_t files = 0;
+    std::vector<fs::path> entered;  // in the order the walk entered them
     bool stopped = false;
     bool boundHit = false;
 };
@@ -295,9 +309,9 @@ BoundedWalk boundedWalk(const ScanConfig& scan, const fs::path& root, size_t bou
     BoundedWalk out;
     FileWalker walker(scan);
 
-    size_t entered = 0;
-    walker.setDirectoryCallback([&](const fs::path&) {
-        if (++entered >= bound) {
+    walker.setDirectoryCallback([&](const fs::path& dir) {
+        out.entered.push_back(dir);
+        if (out.entered.size() >= bound) {
             out.boundHit = true;
             g_interrupted.store(true, std::memory_order_relaxed);
         }
@@ -305,7 +319,7 @@ BoundedWalk boundedWalk(const ScanConfig& scan, const fs::path& root, size_t bou
 
     out.directories = walker.walkDirectory(
         root, [&out](const FileInfo&) { ++out.files; return true; }, out.stopped,
-        /*unreadableDirs=*/nullptr, &out.cycleSkipped);
+        /*unreadableDirs=*/nullptr, &out.cycleSkipped, &out.linksNotFollowed);
     return out;
 }
 
@@ -622,6 +636,237 @@ TEST(FileWalkerSymlinkTest, ALinkedFileIsReportedOnlyWhenFollowSymlinksIsSet) {
     EXPECT_TRUE(with.files[0].filename() == "link.php");
 }
 
+// What a link the walk did not go through costs, counted. Every one that leads to content:
+// the directory link and the file link, and not the link that leads nowhere, which is not
+// content this scan declined to read. The companions are in the same case - following
+// counts nothing, and a walk that enters no subdirectory has refused no directory link by
+// not entering it - because each is the other half of one number.
+TEST(FileWalkerSymlinkTest, EveryLinkNotFollowedIsCountedAndNothingElseIs) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(tree.path() / "real" / "target.php", kHarmless);
+    tree.write(tree.path() / "real.php", kHarmless);
+    tree.write(root / "own.php", kHarmless);
+    std::error_code ec;
+    fs::create_directory_symlink(tree.path() / "real", root / "dirlink", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(tree.path() / "real.php", root / "filelink.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(tree.path() / "nowhere.php", root / "dangling.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    const Walked byDefault = walkOf(configFor(root), root);
+    EXPECT_EQ(byDefault.linksNotFollowed, 2u) << "the directory link and the file link";
+    EXPECT_EQ(byDefault.files.size(), 1u) << "own.php, and nothing reached through a link";
+
+    ScanConfig following = configFor(root);
+    following.followSymlinks = true;
+    const Walked followed = walkOf(following, root);
+    EXPECT_EQ(followed.linksNotFollowed, 0u) << "every link was followed";
+    EXPECT_EQ(followed.files.size(), 3u) << "own.php, target.php and filelink.php";
+
+    ScanConfig flat = configFor(root);
+    flat.recursive = false;
+    const Walked notRecursive = walkOf(flat, root);
+    EXPECT_EQ(notRecursive.linksNotFollowed, 1u)
+        << "the file link only: a walk that enters no subdirectory refused nothing by not "
+           "entering the directory link";
+}
+
+// A root that is a link is the tree the operator named, and is walked whatever the setting
+// says - by walk() and by the counting traversal, which is the same walk on another
+// thread. Refusing it would report a clean scan of nothing.
+namespace {
+
+void expectARootThatIsALinkIsWalked(const fs::path& root) {
+    for (const bool follow : {false, true}) {
+        ScanConfig scan = configFor(root);
+        scan.followSymlinks = follow;
+        const FileWalker walker(scan);
+
+        size_t files = 0;
+        size_t links = 0;
+        std::vector<fs::path> missing;
+        const size_t directories = walker.walk(
+            [&files](const FileInfo&) { ++files; return true; }, /*unreadableDirs=*/nullptr,
+            &missing, /*cycleSkippedDirs=*/nullptr, &links);
+        const CountResult counted = walker.countFiles();
+
+        EXPECT_TRUE(missing.empty()) << "followSymlinks " << follow;
+        EXPECT_EQ(directories, 2u) << "the root and its subdirectory, followSymlinks " << follow;
+        EXPECT_EQ(files, 2u) << "followSymlinks " << follow;
+        EXPECT_EQ(counted.files, 2u) << "the count, followSymlinks " << follow;
+        EXPECT_EQ(links, 0u) << "a root that was walked is not a link that was refused";
+    }
+}
+
+}  // namespace
+
+TEST(FileWalkerSymlinkTest, ARootThatIsASymbolicLinkIsWalkedWhateverFollowSymlinksSays) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+
+    TempTree tree;
+    tree.write(tree.path() / "real" / "own.php", kHarmless);
+    tree.write(tree.path() / "real" / "sub" / "deep.php", kHarmless);
+    std::error_code ec;
+    fs::create_directory_symlink(tree.path() / "real", tree.path() / "root", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    expectARootThatIsALinkIsWalked(tree.path() / "root");
+}
+
+// ===========================================================================
+// Junctions and volume mount points
+// ===========================================================================
+//
+// THE DEFECT THESE CASES EXIST FOR
+// --------------------------------
+// The walk decided a directory was a link by asking is_symlink(). Microsoft's library
+// reports a directory junction as file_type::junction, for which is_symlink() is false, so
+// on Windows a junction was descended with follow_symlinks off - measured with the MSVC
+// build, where a tree holding one read the file behind it under both settings while a
+// directory symbolic link beside it was refused. A junction needs no privilege to create.
+//
+// A volume mount point carries the same reparse tag and is not a link, so the cases pair a
+// junction that must now be refused with a mount point that must still be entered: a walk
+// that had learned to refuse the tag, rather than the junction, would pass the first and
+// drop a volume from every scan.
+//
+// Junctions exist only on Windows. On every other platform each case skips and says so.
+
+TEST(FileWalkerJunctionTest, AJunctionIsNotDescendedByDefault) {
+    TempTree tree;
+    tree.write(tree.path() / "real" / "target.php", kHarmless);
+    tree.write(tree.path() / "tree" / "own.php", kHarmless);
+    if (const auto why =
+            test::whyCannotCreateJunction(tree.path() / "tree" / "link", tree.path() / "real")) {
+        GTEST_SKIP() << *why;
+    }
+
+    const Walked seen = walkOf(configFor(tree.path() / "tree"), tree.path() / "tree");
+
+    EXPECT_EQ(seen.directories, 1u) << "the junction was followed with followSymlinks off";
+    EXPECT_TRUE(seen.sawFilename("own.php"));
+    EXPECT_FALSE(seen.sawFilename("target.php"));
+    EXPECT_EQ(seen.linksNotFollowed, 1u) << "and the refusal is counted";
+}
+
+TEST(FileWalkerJunctionTest, AJunctionIsDescendedWhenFollowSymlinksIsSet) {
+    TempTree tree;
+    tree.write(tree.path() / "real" / "target.php", kHarmless);
+    tree.write(tree.path() / "tree" / "own.php", kHarmless);
+    if (const auto why =
+            test::whyCannotCreateJunction(tree.path() / "tree" / "link", tree.path() / "real")) {
+        GTEST_SKIP() << *why;
+    }
+
+    ScanConfig scan = configFor(tree.path() / "tree");
+    scan.followSymlinks = true;
+    const Walked seen = walkOf(scan, tree.path() / "tree");
+
+    EXPECT_EQ(seen.directories, 2u) << "the junction was entered";
+    EXPECT_TRUE(seen.sawFilename("target.php"));
+    EXPECT_EQ(seen.linksNotFollowed, 0u);
+}
+
+// What a mount point stores is the root of a volume and nothing after it. A junction to a
+// directory INSIDE a volume, spelled through that volume's GUID path, begins exactly the
+// same way - so a walk that asked only how the stored path begins would take this for a
+// mount point and walk through a link the operator did not ask it to follow.
+TEST(FileWalkerJunctionTest, AJunctionSpelledThroughItsVolumeGuidPathIsStillAJunction) {
+    TempTree tree;
+    tree.write(tree.path() / "real" / "target.php", kHarmless);
+    tree.write(tree.path() / "tree" / "own.php", kHarmless);
+    if (const auto why = test::whyCannotCreateJunctionThroughVolumeGuid(
+            tree.path() / "tree" / "link", tree.path() / "real")) {
+        GTEST_SKIP() << *why;
+    }
+
+    const Walked seen = walkOf(configFor(tree.path() / "tree"), tree.path() / "tree");
+
+    EXPECT_EQ(seen.directories, 1u)
+        << "a junction whose stored path names a directory inside a volume was walked as "
+           "though it were the volume's mount point";
+    EXPECT_FALSE(seen.sawFilename("target.php"));
+    EXPECT_EQ(seen.linksNotFollowed, 1u);
+}
+
+// The companion that keeps the two cases above honest, under both settings.
+//
+// The mount point attaches the whole volume holding the temporary directory, so the walk is
+// bounded at two directories - the root, then the volume - and the interrupt goes up as
+// the volume is entered, before one entry of it is read. The reparse point is removed
+// before the tree is deleted, so nothing that cleans up can be led into the volume either.
+TEST(FileWalkerJunctionTest, AVolumeMountPointIsWalkedWhateverFollowSymlinksSays) {
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    const fs::path mount = root / "volume";
+    if (const auto why = test::whyCannotCreateVolumeMountPoint(mount, tree.path())) {
+        GTEST_SKIP() << *why;
+    }
+    // Declared after the tree, so it is destroyed first.
+    struct Unmount {
+        fs::path path;
+        ~Unmount() { test::removeReparsePoint(path); }
+    } unmount{mount};
+
+    for (const bool follow : {false, true}) {
+        ScanConfig scan = configFor(root);
+        scan.followSymlinks = follow;
+        const BoundedWalk seen = boundedWalk(scan, root, /*bound=*/2);
+
+        ASSERT_EQ(seen.entered.size(), 2u)
+            << "the volume mount point was not entered with followSymlinks " << follow
+            << ", so everything on the volume behind it was left out of the scan";
+        EXPECT_EQ(seen.entered[1], mount);
+        EXPECT_EQ(seen.linksNotFollowed, 0u) << "a mount point is not a link, followSymlinks "
+                                             << follow;
+        EXPECT_EQ(seen.files, 1u) << "own.php, and nothing read from the volume";
+    }
+}
+
+TEST(FileWalkerJunctionTest, ARootThatIsAJunctionIsWalkedWhateverFollowSymlinksSays) {
+    TempTree tree;
+    tree.write(tree.path() / "real" / "own.php", kHarmless);
+    tree.write(tree.path() / "real" / "sub" / "deep.php", kHarmless);
+    if (const auto why =
+            test::whyCannotCreateJunction(tree.path() / "root", tree.path() / "real")) {
+        GTEST_SKIP() << *why;
+    }
+
+    expectARootThatIsALinkIsWalked(tree.path() / "root");
+}
+
+// The counting traversal, by name, for the reason its loop case gives: it runs on a
+// spawned thread, and a count that went through a junction the scan then refused would be
+// a progress total the scan never reaches.
+TEST(FileWalkerJunctionTest, TheCountingTraversalGoesThroughAJunctionOnlyWhenAsked) {
+    TempTree tree;
+    tree.write(tree.path() / "real" / "target.php", kHarmless);
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    if (const auto why = test::whyCannotCreateJunction(root / "link", tree.path() / "real")) {
+        GTEST_SKIP() << *why;
+    }
+
+    const BoundedCount byDefault = boundedCount(configFor(root), /*bound=*/1000);
+    EXPECT_EQ(byDefault.result.files, 1u) << "countFiles() went through the junction";
+    EXPECT_EQ(byDefault.entered, 1u);
+
+    ScanConfig scan = configFor(root);
+    scan.followSymlinks = true;
+    const BoundedCount followed = boundedCount(scan, /*bound=*/1000);
+    EXPECT_EQ(followed.result.files, 2u);
+    EXPECT_EQ(followed.entered, 2u);
+}
+
 // ===========================================================================
 // The order the walk now promises
 // ===========================================================================
@@ -762,6 +1007,57 @@ TEST(FileWalkerCycleTest, NothingIsRefusedAsALoopWhenLinksAreNotFollowed) {
     EXPECT_EQ(seen.directories, 1u);
     EXPECT_EQ(seen.cycleSkipped, 0u)
         << "the link was never a candidate, so refusing it is not a fact about this scan";
+}
+
+// The loop through a junction. Whether a loop ends was never a question of what kind of
+// link closed it - the walk compares the volume serial and file id of what a path leads to
+// - and this is that claim observed rather than trusted: the review's reproduction with
+// two junctions in place of the two symbolic links. Against a walk without the identity
+// check it does not end, so it is bounded like its neighbours.
+TEST(FileWalkerCycleTest, TwoJunctionsToTheWalkedDirectoryAreRefusedAndTheWalkEnds) {
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    for (const char* name : {"a", "b"}) {
+        if (const auto why = test::whyCannotCreateJunction(root / name, root)) {
+            GTEST_SKIP() << *why;
+        }
+    }
+
+    ScanConfig scan = configFor(root);
+    scan.followSymlinks = true;
+    const BoundedWalk seen = boundedWalk(scan, root, /*bound=*/1000);
+
+    EXPECT_FALSE(seen.boundHit)
+        << "the walk was still entering directories after 1000 of them in a tree that "
+           "holds one, so the loop through the junctions was followed rather than refused";
+    EXPECT_EQ(seen.directories, 1u);
+    EXPECT_EQ(seen.cycleSkipped, 2u) << "both junctions back to the walked directory";
+    EXPECT_EQ(seen.files, 1u) << "the one real file, read once";
+}
+
+// The same fixture by default. Before junctions were links this walk queued both of them
+// and refused them as a loop - the refusal was right, and it was also the only thing that
+// stopped a walk the operator had told not to follow links from going through them. Now
+// neither is a candidate: nothing is refused as a loop and both are counted as not followed.
+TEST(FileWalkerCycleTest, JunctionsToTheWalkedDirectoryAreNotCandidatesByDefault) {
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    for (const char* name : {"a", "b"}) {
+        if (const auto why = test::whyCannotCreateJunction(root / name, root)) {
+            GTEST_SKIP() << *why;
+        }
+    }
+
+    const BoundedWalk seen = boundedWalk(configFor(root), root, /*bound=*/1000);
+
+    EXPECT_FALSE(seen.boundHit);
+    EXPECT_EQ(seen.directories, 1u);
+    EXPECT_EQ(seen.cycleSkipped, 0u)
+        << "the junctions were queued with followSymlinks off and only the loop check "
+           "stopped the walk going through them";
+    EXPECT_EQ(seen.linksNotFollowed, 2u);
 }
 
 // The counting traversal, by name, because the review asked for it and because it is the

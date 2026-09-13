@@ -283,6 +283,19 @@ struct ScanResult {
     // fan-out tree can produce thousands of them.
     size_t directoriesCycleSkipped = 0;
 
+    // Links the walk did not go through because scan.follow_symlinks is off: symbolic
+    // links to a directory or a file and, on Windows, directory junctions.
+    //
+    // Beside the loop count and unlike it, because this one can be a gap. Whatever is
+    // reachable only through such a link was not read, and nothing else in the result says
+    // so - the tree behind it is simply absent from every total. It is still not an error
+    // and moves no exit code: the operator's configuration asked for exactly this, the same
+    // way an exclude pattern did, and the count is what lets them see how much it was.
+    //
+    // A count and not a list, for the reason the loop count gives: a hosting account can
+    // hold thousands of them (a `www` link per site) and none needs acting on by name.
+    size_t linksNotFollowed = 0;
+
     // Roots the operator named that the walk could not enter: absent, or there but
     // not a directory. A different fact from directoriesUnreadable, which is a tree
     // the scanner reached and could not read - this one was never there to reach, so

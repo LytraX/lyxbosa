@@ -163,6 +163,9 @@ Json summary(const ScanResult& result, bool interrupted) {
     // to learn a count was zero is a consumer that reads an old report and a loop-free one
     // as the same thing.
     s["directoriesCycleSkipped"] = result.directoriesCycleSkipped;
+    // Unconditional for the same reason, and beside the loop count because both are about
+    // what the walk did at a link.
+    s["linksNotFollowed"] = result.linksNotFollowed;
     s["filesQuarantined"] = result.filesQuarantined;
     s["filesQuarantineFailed"] = result.filesQuarantineFailed;
 

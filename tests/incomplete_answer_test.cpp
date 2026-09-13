@@ -2119,6 +2119,154 @@ TEST(LoopCoverageTest, ALoopDoesNotMoveTheExitCode) {
     EXPECT_FALSE(deadline.fired()) << "one of the two scans followed the loop";
 }
 
+// ===========================================================================
+// Links the scan did not follow
+// ===========================================================================
+//
+// A link that follow_symlinks kept the walk out of left no trace: the tree behind it was
+// absent from every total, so a scan that skipped a whole site behind a `www` link read
+// exactly like a scan of a site that had nothing there. On Windows that became a coverage
+// change a user could notice, because a directory junction - which the walk used to go
+// through with the setting off - is now a link like any other. So the count exists, and
+// these cases hold it to the rule the loop count above is held to: on the result, in the
+// summary only when it is not zero, in the JSON always, and moving no exit code.
+
+namespace {
+
+AppConfig defaultConfigFor(const fs::path& root) {
+    AppConfig config = Config::loadFromString(Config::generateDefault());
+    config.scan.directories = {root.string()};
+    config.scan.recursive = true;
+    return config;
+}
+
+// A site with its own file, a directory link and a file link to content outside it. False
+// when a link could not be made, which a case asserts on after it has asked
+// whyCannotCreateSymlinks() - so a false here is a failure and not a reason to skip.
+bool makeLinkedSite(const fs::path& outside, const fs::path& site) {
+    writeFile(site / "index.php", "<?php echo 1; ?>\n");
+    writeFile(outside / "shared" / "lib.php", "<?php echo 2; ?>\n");
+    writeFile(outside / "config.php", "<?php echo 3; ?>\n");
+    std::error_code ec;
+    fs::create_directory_symlink(outside / "shared", site / "shared", ec);
+    if (ec) return false;
+    fs::create_symlink(outside / "config.php", site / "config.php", ec);
+    return !ec;
+}
+
+}  // namespace
+
+TEST(LinkCoverageTest, ALinkNotFollowedIsCountedOnTheResult) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    const fs::path site = dir.path() / "site";
+    ASSERT_TRUE(makeLinkedSite(dir.path() / "outside", site));
+
+    const ScanResult result = runScan(defaultConfigFor(site));
+
+    EXPECT_EQ(result.linksNotFollowed, 2u) << "the directory link and the file link";
+    EXPECT_EQ(result.totalFilesScanned, 1u) << "index.php alone";
+}
+
+// The companion. Without it, a scanner that counted every link whatever it did with it
+// would satisfy the case above.
+TEST(LinkCoverageTest, NothingIsCountedWhenLinksAreFollowed) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    const fs::path site = dir.path() / "site";
+    ASSERT_TRUE(makeLinkedSite(dir.path() / "outside", site));
+
+    const ScanResult result = runScan(followingConfig(site));
+
+    EXPECT_EQ(result.linksNotFollowed, 0u);
+    EXPECT_EQ(result.totalFilesScanned, 3u) << "index.php, and both files behind the links";
+}
+
+// The same through the whole scanner, on the platform the count was written for.
+TEST(LinkCoverageTest, AJunctionNotFollowedIsCountedOnTheResult) {
+    TempDir dir;
+    const fs::path site = dir.path() / "site";
+    writeFile(site / "index.php", "<?php echo 1; ?>\n");
+    writeFile(dir.path() / "outside" / "lib.php", "<?php echo 2; ?>\n");
+    if (const auto why = test::whyCannotCreateJunction(site / "shared", dir.path() / "outside")) {
+        GTEST_SKIP() << *why;
+    }
+    // Removed before the directory is, so no recursive delete can be led through it.
+    struct RemoveJunction {
+        fs::path path;
+        ~RemoveJunction() { test::removeReparsePoint(path); }
+    } removeJunction{site / "shared"};
+
+    const ScanResult byDefault = runScan(defaultConfigFor(site));
+    EXPECT_EQ(byDefault.linksNotFollowed, 1u);
+    EXPECT_EQ(byDefault.totalFilesScanned, 1u) << "the scanner read through the junction";
+
+    const ScanResult followed = runScan(followingConfig(site));
+    EXPECT_EQ(followed.linksNotFollowed, 0u);
+    EXPECT_EQ(followed.totalFilesScanned, 2u);
+}
+
+TEST(LinkCoverageTest, TheSummarySaysItAndSaysNothingWhenThereIsNone) {
+    ScanResult withLinks;
+    withLinks.totalDirectoriesScanned = 1;
+    withLinks.linksNotFollowed = 3;
+
+    const std::string said = summaryOf(withLinks);
+    EXPECT_TRUE(contains(said, "Links not followed: 3")) << said;
+    EXPECT_TRUE(contains(said, "follow_symlinks")) << said;
+
+    ScanResult none;
+    none.totalDirectoriesScanned = 1;
+    const std::string quiet = summaryOf(none);
+    EXPECT_FALSE(contains(quiet, "not followed"))
+        << "a tree with no link in it must read exactly as it always did: " << quiet;
+}
+
+TEST(LinkCoverageTest, JsonCarriesTheCountAndCarriesZero) {
+    for (const size_t links : {size_t{0}, size_t{3}}) {
+        ScanResult result;
+        result.linksNotFollowed = links;
+
+        std::ostringstream out;
+        JsonReportWriter writer(out);
+        writer.begin();
+        writer.end(result, /*interrupted=*/false);
+
+        EXPECT_TRUE(contains(out.str(), "\"linksNotFollowed\":" + std::to_string(links)))
+            << out.str();
+    }
+}
+
+// The ranking, asserted. The operator's configuration asked for links not to be followed,
+// as an exclude pattern asks for files not to be read, so a clean site behind links is
+// still a clean scan and a finding is still a finding.
+TEST(LinkCoverageTest, ALinkNotFollowedDoesNotMoveTheExitCode) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    const fs::path clean = dir.path() / "clean";
+    ASSERT_TRUE(makeLinkedSite(dir.path() / "outside", clean));
+
+    const fs::path hostile = dir.path() / "hostile";
+    writeFile(hostile / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(hostile / "shell.php", kShell)) {
+        GTEST_SKIP() << *why;
+    }
+    std::error_code ec;
+    fs::create_directory_symlink(dir.path() / "outside" / "shared", hostile / "shared", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    EXPECT_EQ(scanExitCode({clean}, dir.file("clean.txt").string()), 0)
+        << "a link not followed is not an incomplete answer";
+    EXPECT_EQ(scanExitCode({hostile}, dir.file("hostile.txt").string()), 2)
+        << "and it does not displace the finding either";
+}
+
 TEST(InterruptedScanTest, AnInterruptedScanOfATreeWithNoFileInItDoesNotExitZero) {
     TempDir dir;
     const fs::path root = dir.path() / "site";

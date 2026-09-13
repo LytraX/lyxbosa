@@ -323,11 +323,45 @@ Members not scanned: 906 (874 not code, 30 over size limit, 2 corrupt)
 `Directories unreadable` is a coverage fact too: a directory the scanner was pointed at
 and could not list is reported rather than treated as empty.
 
-## Symlinks, and directories the walk will not re-enter
+## Symlinks, junctions, and directories the walk will not re-enter
 
 `scan.follow_symlinks` is `false` by default. A linked directory is not descended into
-and a linked file is not read; both are simply not part of the scan. Turn it on and the
-walk treats a link to a directory as that directory.
+and a linked file is not read. Turn it on and the walk treats a link as what it leads to.
+
+A link is a symbolic link on every platform and, on Windows, a **directory junction** as
+well — what `mklink /J` makes. A junction needs no privilege to create and can point
+anywhere on the machine, so it takes exactly the rule a directory symbolic link takes.
+
+Two things on Windows share part of a link's machinery and are not links:
+
+- **A volume mount point** — a volume attached at a folder instead of a drive letter — is
+  walked like any other directory whatever `follow_symlinks` says, as a mount is on Linux.
+  It carries the same reparse tag as a junction, and the walk tells them apart by what the
+  file system stores for it: the root of a volume, where a junction stores a directory. The
+  volume holds content reachable by no other path under the root.
+- **Every other reparse point** — a OneDrive or other cloud placeholder, a deduplicated
+  file, an app execution alias — is the file or directory it presents, and is scanned as
+  one. None of them is decided by name.
+
+When the file system will not return what a junction-tagged entry stores, the walk goes
+through it as a directory: an unwanted walk through a link costs time, which the loop check
+below and Ctrl+C bound, and a refused directory would cost coverage that nothing recovers.
+
+A root named on the command line or in `scan.directories` is walked even when it is itself
+a link or a junction. The setting is about the links the walk finds inside the tree, and so
+is the count below; the pre-count behind the progress bar applies the same rule.
+
+Whatever is reachable only through a link the walk did not follow was not scanned, and no
+other count in the report goes down when that happens, so the links are counted:
+
+```
+Links not followed: 3 (scan.follow_symlinks is off - anything reached only through them was not scanned)
+```
+
+The line appears only when the count is not zero, and in JSON the count is
+`linksNotFollowed`, always present. A link that leads nowhere is not counted, and nothing
+is counted with the setting on. **It does not change the exit code**: the configuration
+asked for links not to be followed, as an exclude pattern asks for files not to be read.
 
 A tree can lead back into itself — a link pointing at a directory the walk is already
 inside is the ordinary way, and a network or FUSE filesystem can present one with no link

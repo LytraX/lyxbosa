@@ -22,6 +22,47 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Fixed
+
+- **On Windows, a directory junction is no longer walked through with `scan.follow_symlinks`
+  off.** The default has always been documented as not descending into a linked directory, and
+  a directory symbolic link was not descended into — but a junction, which is what `mklink /J`
+  makes and needs no privilege to create, was, because the walk asked only whether an entry was
+  a symbolic link. A junction now takes exactly the rule a directory symbolic link takes, in the
+  scan and in the pre-count behind the progress bar. A volume mount point, which carries the
+  same reparse tag, is still walked under either setting, as a mount is on Linux, and every
+  other reparse point — a cloud placeholder, a deduplicated file — is still scanned as the file
+  or directory it presents. A root named on the command line that is itself a junction or a
+  link is walked as before.
+
+### Added
+
+- **Links the scan did not follow are counted.** The summary gains
+  `Links not followed: N (scan.follow_symlinks is off - anything reached only through them was not scanned)`
+  when N is not zero, and JSON gains `linksNotFollowed`, always present, after
+  `directoriesCycleSkipped`. It counts the symbolic links to a directory or to a file, and on
+  Windows the junctions, that `scan.follow_symlinks: false` kept the walk out of. A link that
+  leads nowhere is not counted, and nothing is counted with the setting on.
+
+### Compatibility
+
+- **On Windows, a scan with the default `scan.follow_symlinks: false` covers less than it did
+  when the tree holds a directory junction.** Whatever is reachable only through a junction is
+  no longer read, and no longer in `Files scanned`, `Directories parsed` or the progress total;
+  a finding that was there is no longer reported and no longer makes the scan exit 2.
+  `Links not followed` in the summary and `linksNotFollowed` in JSON say how many junctions and
+  links were passed by. Set `scan.follow_symlinks: true` to read through them as before. A
+  junction back into the tree was refused as a loop before and still is, so those scans end
+  exactly as they did, and a junction that loops back now reads as a link not followed rather
+  than as `Directories not re-entered`.
+- **The text summary gains a line on every platform** whenever a scan with the default
+  configuration passes a link, which on Linux and macOS means any tree holding a symbolic link:
+  `Links not followed: N`. `--quiet` suppresses it with the rest of the summary. It moves no
+  exit code.
+- **JSON gains one summary key**, `linksNotFollowed`, between `directoriesCycleSkipped` and
+  `filesQuarantined`. A consumer that enumerates keys sees one more; one that reads by name is
+  unaffected. CSV carries no directory-level count and gains no column.
+
 ## [3.1.1] - 2026-09-13
 
 A refused standard output exits 1 instead of aborting, corrupting the heap or claiming success.
