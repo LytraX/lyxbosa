@@ -314,6 +314,7 @@ itself is compact, with each file's record on a line of its own:
     "unreadable": 0
   },
   "directoriesUnreadable": 0,
+  "entriesUnreadable": 0,
   "directoriesCycleSkipped": 0,
   "linksNotFollowed": 0,
   "filesQuarantined": 0,

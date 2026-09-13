@@ -93,10 +93,16 @@ public:
     // not go through because followSymlinks is off. That one can be a gap: whatever is
     // reachable only through such a link was not read. A root the operator named is
     // walked even when it is a link, and is not counted.
+    //
+    // `unreadableEntries` counts the entries whose type the host would not give - an app
+    // execution alias on Windows, a link to something this user may not reach - so the walk
+    // cannot say whether each was a file or a directory, and read neither. A link that leads
+    // nowhere is not counted, and the directory such an entry sat in is not unreadable.
     size_t walk(FileCallback callback, size_t* unreadableDirs = nullptr,
                 std::vector<std::filesystem::path>* missingRoots = nullptr,
                 size_t* cycleSkippedDirs = nullptr,
-                size_t* linksNotFollowed = nullptr) const;
+                size_t* linksNotFollowed = nullptr,
+                size_t* unreadableEntries = nullptr) const;
 
     // Walk a single directory and everything under it (stopped is set to true if
     // callback returns false). Returns the number of directories entered.
@@ -131,10 +137,15 @@ public:
     // is walked like any directory, as a mount is on POSIX. Other reparse points - cloud
     // placeholders, deduplicated files - are the files and directories they present. The
     // implementation says how each is told apart. `dir` itself is walked whatever it is.
+    //
+    // SPECIAL FILES. A FIFO, a socket or a device node - an entry whose type was read and is
+    // neither a directory nor a regular file - is never handed to the callback and is not
+    // counted. The implementation says why.
     size_t walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,
                          size_t* unreadableDirs = nullptr,
                          size_t* cycleSkippedDirs = nullptr,
-                         size_t* linksNotFollowed = nullptr) const;
+                         size_t* linksNotFollowed = nullptr,
+                         size_t* unreadableEntries = nullptr) const;
 
     // Count total files and bytes without processing (fast pre-scan). The
     // optional callback receives the running file count so a long count is not
