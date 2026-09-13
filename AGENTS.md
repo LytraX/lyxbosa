@@ -381,3 +381,22 @@ Every branch starts from `master`. Never branch off another feature branch: if t
 needs the current one's work, push it, merge it, then branch from the updated `master`.
 Chained branches leave ancestry nobody can follow, and a prompt that depends on unmerged work
 is chaining one level up.
+
+## Commit messages follow the Angular convention
+
+Every commit subject is `<type>: <subject>` or `<type>(<scope>): <subject>`, in lowercase,
+with an imperative subject and no trailing full stop:
+
+```
+fix: a walk that cannot loop for ever, and one that can be stopped
+build: compile the sources the CLI and the tests share once
+release: close out v2.2.1, and add the signing key to the keyring
+```
+
+Use a type this repository already uses: `feat`, `fix`, `docs`, `build`, `ci`, `test`,
+`perf`, `chore`, `release`, `corpus`, `rules`. A scope is optional. Do not invent a type.
+The body says why, and ends with the attribution trailer.
+
+A sentence-case subject with no type, such as `Remove the unused module`, is wrong. 220 of
+the 221 commits on `master` follow this convention; the exception is the initial commit.
+Run `git log --oneline -10` before your first commit and match it.
