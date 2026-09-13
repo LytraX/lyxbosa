@@ -280,7 +280,8 @@ $ lyxbosa scan /var/www/html --recursive --force --verbose
 ```
 
 `(6:5)` is line and column; `RCE001` is the rule code, from the categories above. The same
-scan with `-o json`, which is what a pipeline reads:
+scan with `-o json`, which is what a pipeline reads. It is shown indented here; the report
+itself is compact, with each file's record on a line of its own:
 
 ```json
 {
@@ -304,6 +305,7 @@ scan with `-o json`, which is what a pipeline reads:
   "totalFilesScanned": 4,
   "totalDirectoriesScanned": 8,
   "filesWithMatches": 1,
+  "filesWithHostileNames": 0,
   "filesSkippedSize": 0,
   "filesSkipped": {
     "total": 0,
@@ -314,6 +316,7 @@ scan with `-o json`, which is what a pipeline reads:
   "directoriesUnreadable": 0,
   "directoriesCycleSkipped": 0,
   "filesQuarantined": 0,
+  "filesQuarantineFailed": 0,
   "rootsMissing": [],
   "durationMs": 205
 }
