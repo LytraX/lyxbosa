@@ -148,6 +148,13 @@ are correct as of the round that recorded them and are deliberately never regene
   just before the lock is taken survives. Each case was watched failing against a copy with
   the destination, the write or the read moved.
 
+- **`review-app.py --inject` no longer crashes when `corpus/local/index.db` is stale.** Its
+  startup-rebuild case disabled the rebuild and still let the real freshness check run, so a
+  stale database raised through the case and ended the whole suite with a traceback. The case
+  now stops each start at the database read, so it no longer depends on that database's state,
+  asserts that a stale start rebuilds *before* it reads and a fresh one reads without
+  rebuilding, and reports anything raised before the read as that case's failure.
+
 ### Added
 
 - **`corpus/release-assets.sh` refuses to print the commands that cut a corpus tag while
