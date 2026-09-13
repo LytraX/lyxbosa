@@ -62,7 +62,6 @@ add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/MP>)
 find_package(fmt CONFIG REQUIRED)
 find_package(argparse CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
-find_package(reflectcpp CONFIG REQUIRED)
 find_package(re2 CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(libzip CONFIG REQUIRED)
@@ -328,7 +327,6 @@ set(LYXBOSA_CORE_LIBRARIES
     fmt::fmt
     argparse::argparse
     yaml-cpp::yaml-cpp
-    reflectcpp::reflectcpp
     re2::re2
     libzip::zip
     ZLIB::ZLIB
