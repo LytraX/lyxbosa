@@ -19,9 +19,15 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
+
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 
 using namespace lyxbosa;
 using namespace std::chrono_literals;
@@ -907,9 +913,8 @@ TEST(ExtractTagNameTest, RefusesAnythingItCannotBeSureOf) {
     EXPECT_FALSE(extractTagName(R"({"tag_name":")"));           // no closing quote
     EXPECT_FALSE(extractTagName(R"({"tag_name":"v2.2.1)"));
     EXPECT_FALSE(extractTagName(R"({"tag_name":""})"));         // empty
-    EXPECT_FALSE(extractTagName(R"({"tag_name":123})"));        // not a string
-    EXPECT_FALSE(extractTagName("{\"tag_name\":\"v2.\n2.1\"}"));  // control character
-    EXPECT_FALSE(extractTagName("{\"tag_name\":\"v2\\.2.1\"}"));  // a backslash escape
+    EXPECT_FALSE(extractTagName("{\"tag_name\":\"v2.\n2.1\"}"));  // a raw control character
+    EXPECT_FALSE(extractTagName("{\"tag_name\":\"v2\\.2.1\"}"));  // not an escape JSON has
     EXPECT_FALSE(extractTagName(
         "{\"tag_name\":\"" + std::string(200, 'a') + "\"}"));   // past the cap
 }
@@ -919,6 +924,210 @@ TEST(ExtractTagNameTest, ARateLimitBodyProducesNoVersion) {
     const std::string body =
         R"({"message":"API rate limit exceeded","documentation_url":"https://docs.github.com"})";
     EXPECT_FALSE(extractTagName(body));
+}
+
+// ---------------------------------------------------------------------------
+// What changed when the response began to be parsed
+// ---------------------------------------------------------------------------
+//
+// The field used to be found with a regular expression that took the first
+// `"tag_name": "..."` anywhere in the body. Each case below is one way the two readings of
+// a response differ, and each pairs the answer that changed with the neighbouring answer
+// that must not have - a case that only asserted a refusal would pass against a function
+// that refused everything.
+
+namespace {
+
+// `{"tag_name":"<value>"}`, with the value spliced in as written.
+std::string tagged(const std::string& value) {
+    return "{\"tag_name\":\"" + value + "\"}";
+}
+
+// A JSON \u escape for four hex digits, spelled out a piece at a time so that no source
+// file or tool that handles this one ever sees the sequence as an escape of its own.
+std::string jsonEscape(const std::string& hex) {
+    return std::string(1, '\\') + "u" + hex;
+}
+
+}  // namespace
+
+// A `tag_name` belongs to the release only at the top level. The regular expression took
+// one nested inside an asset, and took it even when the release's own came later.
+TEST(ExtractTagNameTest, ATagNameNestedInsideAnotherObjectIsNotTheReleases) {
+    EXPECT_FALSE(extractTagName(R"({"assets":[{"tag_name":"v9.9.9"}]})"));
+    EXPECT_FALSE(extractTagName(R"({"author":{"tag_name":"v9.9.9"},"name":"x"})"));
+    EXPECT_FALSE(extractTagName(R"([{"tag_name":"v9.9.9"}])"));  // not an object at all
+    EXPECT_FALSE(extractTagName(R"("tag_name")"));
+
+    EXPECT_EQ(extractTagName(R"({"tag_name":"v9.9.9"})"), std::optional<std::string>("v9.9.9"));
+    EXPECT_EQ(extractTagName(R"({"assets":[{"tag_name":"v0.0.1"}],"tag_name":"v2.2.1"})"),
+              std::optional<std::string>("v2.2.1"));
+}
+
+// A key given twice resolves to what the parser keeps, which is the last occurrence. The
+// regular expression answered with the first.
+TEST(ExtractTagNameTest, ADuplicatedKeyResolvesToItsLastOccurrence) {
+    EXPECT_EQ(extractTagName(R"({"tag_name":"v1.0.0","tag_name":"v2.0.0"})"),
+              std::optional<std::string>("v2.0.0"));
+    // And the last one is held to the rule on its own: a valid first value does not rescue
+    // an invalid last one.
+    EXPECT_FALSE(extractTagName(R"({"tag_name":"v1.0.0","tag_name":7})"));
+    EXPECT_EQ(extractTagName(R"({"tag_name":7,"tag_name":"v2.0.0"})"),
+              std::optional<std::string>("v2.0.0"));
+}
+
+// Escapes are decoded before the rule is applied. The regular expression refused any
+// backslash, so an escaped character that decodes to something allowed was refused and
+// now is not; one that decodes to something the rule forbids is still refused, and is
+// refused for what it decodes to.
+TEST(ExtractTagNameTest, AnEscapeIsDecodedBeforeTheRuleIsApplied) {
+    EXPECT_EQ(extractTagName(tagged("v2" + jsonEscape("002e") + "2.1")),
+              std::optional<std::string>("v2.2.1"));
+    EXPECT_EQ(extractTagName(tagged("v2\\/2")), std::optional<std::string>("v2/2"));
+
+    EXPECT_FALSE(extractTagName(tagged("v2\\\"2")));                // a quote
+    EXPECT_FALSE(extractTagName(tagged("v2\\\\2")));                // a backslash
+    EXPECT_FALSE(extractTagName(tagged("v2\\n2")));                 // a newline
+    EXPECT_FALSE(extractTagName(tagged("v2" + jsonEscape("0022"))));  // a quote, spelled out
+    EXPECT_FALSE(extractTagName(tagged("v2" + jsonEscape("0000"))));  // NUL
+    EXPECT_FALSE(extractTagName(tagged("v2" + jsonEscape("001f"))));  // the last control byte
+    EXPECT_EQ(extractTagName(tagged("v2" + jsonEscape("0020"))),      // the first byte past it
+              std::optional<std::string>("v2 "));
+}
+
+// The body is one JSON document or it is nothing. The regular expression found a well-formed
+// tag inside a body that was not JSON at all, or that had more after it.
+TEST(ExtractTagNameTest, AWellFormedTagInsideMalformedJsonIsRefused) {
+    const std::string good = R"({"tag_name":"v2.2.1","draft":false})";
+    ASSERT_EQ(extractTagName(good), std::optional<std::string>("v2.2.1"));
+
+    EXPECT_FALSE(extractTagName(R"({"tag_name":"v2.2.1","draft":false)"));   // unclosed
+    EXPECT_FALSE(extractTagName(R"({"tag_name":"v2.2.1","draft":false}})"));  // one too many
+    EXPECT_FALSE(extractTagName(R"({"tag_name":"v2.2.1","draft":false,})"));  // trailing comma
+    EXPECT_FALSE(extractTagName(R"({"tag_name":"v2.2.1","draft":fals})"));    // bad literal
+    EXPECT_FALSE(extractTagName(R"({"tag_name":"v2.2.1"} {"tag_name":"v3"})"));
+    EXPECT_FALSE(extractTagName(R"({'tag_name':'v2.2.1'})"));
+    EXPECT_FALSE(extractTagName("<html>\"tag_name\": \"v2.2.1\"</html>"));
+    EXPECT_FALSE(extractTagName(good + "\n// a comment"));
+}
+
+// A body that is not valid UTF-8 anywhere is not JSON, even where the tag itself is plain
+// ASCII. The regular expression read the body as Latin-1 and did not look.
+TEST(ExtractTagNameTest, ABodyThatIsNotUtf8AnywhereIsRefused) {
+    EXPECT_EQ(extractTagName("{\"tag_name\":\"v2.2.1\",\"body\":\"caf\xc3\xa9\"}"),
+              std::optional<std::string>("v2.2.1"));
+    EXPECT_FALSE(extractTagName("{\"tag_name\":\"v2.2.1\",\"body\":\"caf\xe9\"}"));
+    EXPECT_FALSE(extractTagName("{\"tag_name\":\"v2.2.1\",\"body\":\"\xc0\xaf\"}"));
+}
+
+// Present and of the wrong type is a refusal, not a conversion.
+TEST(ExtractTagNameTest, ATagNameThatIsNotAStringIsRefused) {
+    EXPECT_FALSE(extractTagName(R"({"tag_name":123})"));
+    EXPECT_FALSE(extractTagName(R"({"tag_name":2.2})"));
+    EXPECT_FALSE(extractTagName(R"({"tag_name":true})"));
+    EXPECT_FALSE(extractTagName(R"({"tag_name":null})"));
+    EXPECT_FALSE(extractTagName(R"({"tag_name":["v2.2.1"]})"));
+    EXPECT_FALSE(extractTagName(R"({"tag_name":{"name":"v2.2.1"}})"));
+
+    EXPECT_EQ(extractTagName(R"({"tag_name":"123"})"), std::optional<std::string>("123"));
+}
+
+// The cap is 64 bytes of the decoded value: not characters, and not the bytes of the
+// response that spelled it.
+TEST(ExtractTagNameTest, TheCapIsSixtyFourDecodedBytes) {
+    EXPECT_EQ(extractTagName(tagged(std::string(64, 'a'))),
+              std::optional<std::string>(std::string(64, 'a')));
+    EXPECT_FALSE(extractTagName(tagged(std::string(65, 'a'))));
+
+    // 32 two-byte characters are 64 bytes; one more is 66.
+    std::string e32;
+    for (int i = 0; i < 32; ++i) e32 += "\xc3\xa9";
+    EXPECT_EQ(extractTagName(tagged(e32)), std::optional<std::string>(e32));
+    EXPECT_FALSE(extractTagName(tagged(e32 + "\xc3\xa9")));
+    // 63 plus one two-byte character is 65.
+    EXPECT_FALSE(extractTagName(tagged(std::string(63, 'a') + "\xc3\xa9")));
+
+    // 384 bytes of escapes that decode to 64.
+    std::string escaped;
+    for (int i = 0; i < 64; ++i) escaped += jsonEscape("0061");
+    EXPECT_EQ(extractTagName(tagged(escaped)),
+              std::optional<std::string>(std::string(64, 'a')));
+    EXPECT_FALSE(extractTagName(tagged(escaped + jsonEscape("0061"))));
+}
+
+// ---------------------------------------------------------------------------
+// A body nested as deeply as the size cap allows
+// ---------------------------------------------------------------------------
+//
+// HttpVersionSource.cpp caps the body at 256 KiB, which admits 131,072 levels of `[`. The
+// periodic check runs on a worker thread, and in the portable build that thread has musl's
+// default stack of 128 KiB. nlohmann/json 3.12 parses and destroys a value without
+// recursing - measured, both complete on a 32 KiB stack - while copying, dumping or
+// comparing the same value recurses once per level and exhausts 128 KiB. So these run
+// extractTagName on exactly that stack, and an edit that made it do any of the three
+// crashes here.
+
+namespace {
+
+const size_t kBodyCap = 256 * 1024;
+
+#ifndef _WIN32
+// Runs `fn` on a thread whose stack is `bytes`, as the portable build's worker has.
+void onStackOf(size_t bytes, const std::function<void()>& fn) {
+    pthread_attr_t attr;
+    ASSERT_EQ(pthread_attr_init(&attr), 0);
+    ASSERT_EQ(pthread_attr_setstacksize(&attr, bytes), 0);
+    pthread_t thread;
+    const auto trampoline = [](void* p) -> void* {
+        (*static_cast<const std::function<void()>*>(p))();
+        return nullptr;
+    };
+    ASSERT_EQ(pthread_create(&thread, &attr, trampoline,
+                             const_cast<void*>(static_cast<const void*>(&fn))),
+              0);
+    pthread_join(thread, nullptr);
+    pthread_attr_destroy(&attr);
+}
+#else
+// No stack size to choose: a std::thread on Windows has 1 MiB, which is what the updater's
+// worker runs on there, and the case still runs the same bodies through the same function.
+void onStackOf(size_t, const std::function<void()>& fn) {
+    std::thread(fn).join();
+}
+#endif
+
+}  // namespace
+
+TEST(ExtractTagNameTest, ABodyNestedToTheCapNeitherCrashesNorYieldsATag) {
+    const size_t kStack = 128 * 1024;
+    std::optional<std::string> nestedArrays = std::string("unset");
+    std::optional<std::string> unterminated = std::string("unset");
+    std::optional<std::string> nestedObjects = std::string("unset");
+    std::optional<std::string> tagBeforeNesting;
+
+    onStackOf(kStack, [&] {
+        nestedArrays = extractTagName(std::string(kBodyCap / 2, '[') +
+                                      std::string(kBodyCap / 2, ']'));
+        unterminated = extractTagName(std::string(kBodyCap, '['));
+
+        const std::string open = "{\"tag_name\":";
+        const size_t levels = (kBodyCap - 8) / (open.size() + 1);
+        std::string objects;
+        for (size_t i = 0; i < levels; ++i) objects += open;
+        objects += "\"v1\"" + std::string(levels, '}');
+        nestedObjects = extractTagName(objects);
+
+        const std::string head = "{\"tag_name\":\"v9.9.9\",\"x\":";
+        const size_t room = (kBodyCap - head.size() - 1) / 2;
+        tagBeforeNesting = extractTagName(head + std::string(room, '[') +
+                                          std::string(room, ']') + "}");
+    });
+
+    EXPECT_FALSE(nestedArrays);
+    EXPECT_FALSE(unterminated);
+    EXPECT_FALSE(nestedObjects) << "the top-level tag_name is an object, not a string";
+    EXPECT_EQ(tagBeforeNesting, std::optional<std::string>("v9.9.9"))
+        << "a real tag beside the deepest nesting the cap allows is still read";
 }
 
 // ---------------------------------------------------------------------------

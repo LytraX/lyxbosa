@@ -30,6 +30,13 @@ commit list that CI generates per tag.
   and the rules for which keys are present are those of 3.0.0, and a report of the same tree
   is byte-identical to 3.0.0's apart from `durationMs`.
 
+- **`update --check` and the periodic check read the releases API response as JSON.** The
+  release's version is taken from `tag_name` on the response's top-level object, after the
+  response has parsed as one well-formed document. It was previously the first
+  `"tag_name": "..."` found anywhere in the text. Against GitHub's real response the two
+  agree; they differ on responses GitHub does not send, which are listed under
+  Compatibility.
+
 - **nlohmann-json is a new build dependency, and reflect-cpp is no longer one.** Nothing
   used reflect-cpp.
 
@@ -50,6 +57,16 @@ commit list that CI generates per tag.
   custom rule name or category that is not valid UTF-8. This holds for a report written to
   standard output as well as for `-O`; the stdout case adds the line `Error: the report
   written to standard output is incomplete`. Such a report never parsed before.
+- **An update notice is no longer shown for some responses that produced one**, and one
+  response that produced none now does. None of these is a response GitHub sends:
+  - a body that is not a single well-formed JSON document — truncated, followed by more
+    text, or not valid UTF-8 anywhere — is refused even if it contains a well-formed tag;
+  - a `tag_name` nested inside another object, such as an asset, is not the release's and
+    is ignored;
+  - a `tag_name` given twice resolves to its last occurrence, not its first;
+  - an escaped character in the tag is decoded before the tag is checked, so an escape that
+    decodes to an allowed character is accepted where it was refused, and the 64-byte
+    limit applies to the decoded value.
 
 ## [3.0.0] - 2026-09-13
 
