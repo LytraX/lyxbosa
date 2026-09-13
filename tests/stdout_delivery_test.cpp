@@ -508,7 +508,9 @@ TEST_F(StdoutDeliveryTest, WithSigpipeAtItsDefaultAClosedPipeEndsTheRunSilently)
     GTEST_SKIP() << "Windows has no SIGPIPE, so a closed pipe never ends the process; the "
                     "case above observes what happens there instead";
 #else
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    // The default "fast" style forks, so the child scans the tree this process already wrote.
+    // "threadsafe" re-executes the binary instead, and a child that rebuilds the suite's
+    // thousand-file tree and is then killed by the signal leaves the tree behind on every run.
     EXPECT_EXIT(
         {
             struct sigaction dfl = {};
