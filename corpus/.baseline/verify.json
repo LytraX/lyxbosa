@@ -1,32 +1,69 @@
 {
  "benign": {
-  "clean": 6,
-  "false_positives": 0,
-  "samples": 6
+  "clean": 197515,
+  "coverage": {
+   "archives": {
+    "bytesExpanded": 6187644,
+    "membersScanned": 207,
+    "membersSkipped": {
+     "budget": 0,
+     "corrupt": 0,
+     "depth": 0,
+     "policy": 441,
+     "ratio": 0,
+     "size": 0
+    },
+    "opened": 460,
+    "stoppedEarly": 0,
+    "unreadable": 0
+   },
+   "directoriesUnreadable": 0,
+   "filesSkipped": {
+    "excluded": 17330,
+    "size": 0,
+    "total": 17330,
+    "unreadable": 0
+   },
+   "interrupted": false,
+   "rootsMissing": [],
+   "totalFilesScanned": 197553
+  },
+  "false_positive_rules": {
+   "EXP006": 11,
+   "OBF002": 1,
+   "OBF013": 1,
+   "OBF014": 1,
+   "OBF018": 1,
+   "OBF025": 132,
+   "PHI008": 1
+  },
+  "false_positives": 44,
+  "refused": null,
+  "samples": 197559
  },
  "corpus": {
-  "local_only": 48227,
+  "local_only": 48234,
   "published": 44573,
   "reviewed_fraction": 0.4803,
-  "total_blobs": 92800
+  "total_blobs": 92807
  },
  "detection": {
-  "detected": 730,
-  "known_miss": 569,
+  "detected": 735,
+  "known_miss": 571,
   "known_miss_detected_not_shippable": 3,
-  "known_miss_rule_gap": 558,
+  "known_miss_rule_gap": 560,
   "known_miss_unclassified": 0,
   "known_miss_unverified": 8,
   "no_expectation": 0,
   "observed_by_rerun": 131,
-  "rate": 0.562,
+  "rate": 0.5628,
   "reconciles": true,
-  "recorded_only": 599,
-  "reviewed": 1299,
+  "recorded_only": 604,
+  "reviewed": 1306,
   "verified_by_rerun": 131
  },
  "failures": [],
- "false_positive_rate": 0.0,
+ "false_positive_rate": 0.000223,
  "fp_fixtures": {
   "known_still_firing": 30,
   "newly_fixed": 0,
@@ -34,7 +71,8 @@
   "pinned": 31,
   "regressed": 0,
   "resolved": 31,
-  "unresolved": 0
+  "unresolved": 0,
+  "unscanned": 0
  },
  "held": {
   "carries content, which is not maskable and is never published": 4124,
@@ -60,6 +98,7 @@
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 5 members read; byte-masking a container corrupts it (5.5)": 2,
   "marked local_only: benign customer-site cache metadata: no rule fires on it and it is not reproducible from a pinned source, so it is accounted for but not published": 144,
   "marked local_only: permanent": 311,
+  "marked local_only: verdict proposed 2026-09-12 from the operator's collection notes; awaiting human confirmation before publication": 7,
   "marked local_only: verdict proposed by an automated review pass on 2026-09-05; awaiting human confirmation before publication": 757,
   "obfuscated and did not decode: held local-only permanently": 100,
   "plaintext gate did not pass": 5,
@@ -90,15 +129,15 @@
  "regressions": {
   "known_miss_newly_detected": 0,
   "new_failures": 0,
-  "recall_delta": null,
-  "recall_delta_note": "withheld: the reviewed malicious set changed by +128 samples (3 -> 131), so this run's recall is over a different population than the baseline's. The two figures are not comparable; re-baseline deliberately, or compare only the samples present in both runs.",
-  "reviewed_malicious_before": 3,
-  "reviewed_malicious_delta": 128,
+  "recall_delta": 0.0,
+  "recall_delta_note": null,
+  "reviewed_malicious_before": 131,
+  "reviewed_malicious_delta": 0,
   "reviewed_malicious_now": 131
  },
  "techniques": {
   "covered_by_tested_samples": 95,
-  "known": 123,
+  "known": 124,
   "uncovered": [
    "bcrypt-password-gate",
    "card-data-harvest",
@@ -113,6 +152,7 @@
    "generated-spam-page",
    "hex-escaped-function-names",
    "host-keyed-option",
+   "htaccess-data-extension-executable",
    "mail-exfil",
    "mass-deployment",
    "obfuscated-php-payload",
@@ -130,6 +170,7 @@
    "user-list-hiding"
   ]
  },
+ "unscanned": 0,
  "vulnerable": {
   "detected": 0,
   "missed": 0,
