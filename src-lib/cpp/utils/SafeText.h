@@ -48,6 +48,7 @@
 // should be written that tries - the value is for a person to read and for a person to
 // go and look with. docs/SCANNING.md says so where an integrator will see it.
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -177,6 +178,44 @@ inline bool needsSanitizing(std::string_view in) {
         i += len;
     }
     return false;
+}
+
+// Why `in` is not plain text, or empty when it is. Plain text is exactly what sanitize()
+// leaves untouched, so without `lineBreaks` this is empty precisely when needsSanitizing()
+// is false; `lineBreaks` also admits tab, line feed and carriage return, for a value that is
+// prose rather than a label.
+//
+// For a string that is written as it is rather than escaped: a rule's name and category,
+// which a person searches reports for and which must therefore arrive as the operator
+// wrote them or not at all. The loader refuses a configuration with this sentence and every
+// report writer refuses a finding with it, so the two say the same thing about one string.
+// It finishes a sentence about the value - "its name " + "is not valid UTF-8 (byte 0xff at
+// offset 5)" - and quotes no byte of it, so it is safe to print whatever the value holds.
+inline std::optional<std::string> whyNotPlainText(std::string_view in, bool lineBreaks = false) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    const auto byteAt = [&in](size_t at) {
+        const auto c = static_cast<unsigned char>(in[at]);
+        return std::string("0x") + kHex[(c >> 4) & 0xf] + kHex[c & 0xf] + " at offset " +
+               std::to_string(at);
+    };
+
+    size_t i = 0;
+    while (i < in.size()) {
+        const auto c = static_cast<unsigned char>(in[i]);
+        if (c < 0x20 || c == 0x7f) {
+            if (lineBreaks && (c == '\t' || c == '\n' || c == '\r')) {
+                ++i;
+                continue;
+            }
+            return "carries a control character (" + byteAt(i) + ")";
+        }
+        const size_t len = detail::sequenceLength(in, i);
+        if (len == 0) {
+            return "is not valid UTF-8 (byte " + byteAt(i) + ")";
+        }
+        i += len;
+    }
+    return std::nullopt;
 }
 
 // Sanitize, then cut to `limit` bytes without splitting a UTF-8 sequence or an

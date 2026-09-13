@@ -727,6 +727,42 @@ TEST(SafeTextUtf8Test, NeedsSanitizingAgreesWithSanitizeExactly) {
     }
 }
 
+// The question the loader and the report writers ask of a rule's name, held to the escaper
+// over the same cases: a string it refuses is exactly one the escaper would have rewritten,
+// in both directions, so "refused at load" and "would have been escaped" cannot drift into
+// two definitions of plain text. With line breaks allowed only tab, LF and CR move.
+TEST(SafeTextUtf8Test, WhyNotPlainTextAgreesWithNeedsSanitizingExactly) {
+    const std::vector<std::string> cases = {
+        "plain.php", "a\nb", "a\tb", "a\rb", "a\x1b[2Jb", "a\xC0\xAF" "b",
+        "\xCE\x95\xCE\xBB\xCE\xBB", "\x80", "\xE2\x82\xAC", "\xE2\x82", "\xF0\x9F\x94\x92",
+        "\xF0\x9F\x94", "\x7f", "O'Brien, \"Sons\".pdf", "\xED\xA0\x80", "\xC1\xBF",
+        std::string("a\0b", 3), "",
+    };
+    for (const auto& value : cases) {
+        EXPECT_EQ(safe_text::whyNotPlainText(value).has_value(),
+                  safe_text::needsSanitizing(value))
+            << "the two disagree about " << safe_text::sanitize(value);
+
+        // Each line break stood in for by a letter rather than removed, so that no two bytes
+        // either side of one can close into a sequence that was not there.
+        std::string lettered = value;
+        for (char& c : lettered) {
+            if (c == '\t' || c == '\n' || c == '\r') c = 'x';
+        }
+        EXPECT_EQ(safe_text::whyNotPlainText(value, /*lineBreaks=*/true).has_value(),
+                  safe_text::needsSanitizing(lettered))
+            << "line breaks changed more than line breaks for " << safe_text::sanitize(value);
+    }
+
+    // What it says, which the configuration refusal quotes: the first offending byte, its
+    // offset, and never the byte itself.
+    EXPECT_EQ(safe_text::whyNotPlainText("ab\x1b" "c"),
+              "carries a control character (0x1b at offset 2)");
+    EXPECT_EQ(safe_text::whyNotPlainText("\xCE\x95" "\xC0\xAF"),
+              "is not valid UTF-8 (byte 0xc0 at offset 2)");
+    EXPECT_FALSE(safe_text::whyNotPlainText("\xCE\x95\xCE\xBB\xCE\xBB"));
+}
+
 TEST(SafeTextUtf8Test, AReportOfANameThatIsNotUtf8IsStillUtf8) {
     // Reproduced end to end rather than at the escaper alone, because the defect was
     // never in one function - it was that the JSON writer trusted what reached it.

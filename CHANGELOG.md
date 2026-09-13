@@ -42,24 +42,36 @@ commit list that CI generates per tag.
 
 ### Fixed
 
-- **A JSON report that cannot represent a finding is no longer written as invalid JSON.** A
-  custom rule's `name` and `category` are written into the report as the configuration
-  file spells them, and bytes there that are not valid UTF-8 were written through raw — a
-  document no standard parser accepts, from a scan that exited by its findings. JSON cannot
-  represent such a string, so the report now stops at the file whose finding could not be
-  written and is left unterminated rather than closed, so that no parser reads it as a
-  complete answer. stderr names the file and the reason and the scan exits `1`. File paths
-  were never affected: they are escaped, with their bytes in `pathBytesHex`.
+- **A custom rule whose name or category is not plain text is refused before the scan
+  starts, whatever the report format.** A rule's `name` and `category` are written into
+  every report exactly as the configuration spells them. Bytes there that are not valid
+  UTF-8 were written through raw — a JSON document no standard parser accepts, and CSV and
+  text reports in no encoding at all — and a control character such as ESC reached the
+  terminal the text report was read on. The three formats did not even agree about it. The
+  configuration is now refused when it loads, by `scan`, `check` and `validate-config`
+  alike, with an error that gives the rule's position, its name with escapes, and the
+  offending byte and its offset. A rule's `description` is held to the same rule, except
+  that it may contain line breaks. A pattern's `value` is not: it never appears in a report.
+  File paths were never affected: they are escaped, with their bytes in `pathBytesHex`.
+- **Every report format refuses a finding it cannot write, in the same words.** For a rule
+  set that did not come through the configuration loader, a finding whose rule name or
+  category is not plain text stops the text, CSV and JSON reports alike at that file. The
+  report is left incomplete, a JSON one unterminated so that no parser reads it as a
+  complete answer, stderr names the file and the reason, and the scan exits `1`.
 
 ### Compatibility
 
 - **The JSON report's whitespace changed.** It is compact: `"key":value` with no space after
   the colon, no indentation, and each file's record on one line. A JSON parser is unaffected;
   a script that matched the report's text, such as `"quarantined": true`, needs adjusting.
-- **`scan` exits 1 where it exited 2 or 0**, when the report is JSON and a finding carries a
-  custom rule name or category that is not valid UTF-8. This holds for a report written to
-  standard output as well as for `-O`; the stdout case adds the line `Error: the report
-  written to standard output is incomplete`. Such a report never parsed before.
+- **A configuration that loaded in 3.0.0 is refused** when a custom rule's `name` or
+  `category` is not valid UTF-8 or contains any control character, tab and line break
+  included, or when its `description` is not valid UTF-8 or contains a control character
+  other than tab, line feed or carriage return. `scan`, `check` and `validate-config` exit
+  `1` before anything is scanned, with `Error: Rule 1 ("Probe\xff name"): its name is not
+  valid UTF-8 (byte 0xff at offset 5).` followed by what a name has to be. In 3.0.0 such a
+  scan ran and exited by its findings, its CSV and text reports carried the bytes raw, and
+  its JSON report did not parse.
 - **An update notice is no longer shown for some responses that produced one**, and one
   response that produced none now does. None of these is a response GitHub sends:
   - a body that is not a single well-formed JSON document — truncated, followed by more

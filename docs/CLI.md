@@ -113,6 +113,15 @@ lyxbosa validate-config [options] FILE
 
 Reports the rule, pattern and directory counts. Exit code 0 when valid, 1 when not.
 
+A custom rule's `name` and `category` are written into every report exactly as given, so
+each must be valid UTF-8 with no control characters; a `description` may also contain line
+breaks. A file that breaks this is refused here, and by `scan` and `check` before they read
+anything, with the rule's position, its name with escapes, and the offending byte:
+
+```
+Error: Rule 1 ("Probe\xff name"): its name is not valid UTF-8 (byte 0xff at offset 5). ...
+```
+
 ## `init-config` — print the default configuration
 
 ```

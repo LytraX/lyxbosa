@@ -981,6 +981,28 @@ TEST(DefacementContextTest, IgnoresProseAfterHackedBy) {
 // terminal as a command. See utils/SafeText.h.
 // ============================================================================
 
+// Every report writes a finding's rule name and category as they are and refuses one that is
+// not plain text - see unwritableFinding() in ReportWriter.h. A custom rule is held to that
+// when its configuration loads; a built-in one never passes through the loader, so it is held
+// to it here, and an FN rule's description, which is a name finding's context, with it. A
+// built-in rule that failed this would stop every report on the first file it matched.
+TEST(SafeTextTest, EveryBuiltinRuleNameAndCategoryIsPlainText) {
+    const auto& all = Registry::instance().getAllRules();
+    ASSERT_GT(all.size(), 100u) << "the registry is not the one this was written against";
+    for (const auto* rule : all) {
+        const std::string code = rule->code.toString();
+        EXPECT_FALSE(safe_text::whyNotPlainText(code)) << code;
+        EXPECT_FALSE(safe_text::whyNotPlainText(rule->name))
+            << code << ": its name " << *safe_text::whyNotPlainText(rule->name);
+        EXPECT_FALSE(safe_text::whyNotPlainText(rule->description, /*lineBreaks=*/true))
+            << code << ": its description "
+            << *safe_text::whyNotPlainText(rule->description, true);
+    }
+
+    // The same question can say no about a name spelled the way these are declared.
+    EXPECT_TRUE(safe_text::whyNotPlainText(std::string_view("Eval\x1b[2J shell")));
+}
+
 TEST(SafeTextTest, EscapesTerminalControlSequences) {
     using namespace lyxbosa::safe_text;
 

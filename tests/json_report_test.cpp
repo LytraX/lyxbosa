@@ -495,8 +495,9 @@ TEST(JsonReportTest, APathThatIsNotUtf8IsRenderedAndCarriedInHex) {
 // A value that cannot be written
 // ===========================================================================
 
-// A rule's name and category come from a configuration file and are not rendered the way a
-// path is, so bytes that are not UTF-8 reach the library, which refuses them. The writer
+// A rule's name and category are not rendered the way a path is. The loader refuses a
+// configuration whose rule is not plain text, so this is the writer's own refusal, for a rule
+// set built without it - the same question every writer asks, see ReportWriter.h. The writer
 // must not let that escape into the scan, must not write half a record, and must leave a
 // document no parser takes for complete - while saying why, and marking the stream.
 TEST(JsonReportTest, AValueThatIsNotUtf8StopsTheReportWithoutThrowing) {
@@ -516,7 +517,8 @@ TEST(JsonReportTest, AValueThatIsNotUtf8StopsTheReportWithoutThrowing) {
         ASSERT_TRUE(writer.failure().has_value());
         EXPECT_NE(writer.failure()->find("/var/www/site/bad.php"), std::string::npos)
             << *writer.failure();
-        EXPECT_NE(writer.failure()->find("invalid UTF-8"), std::string::npos)
+        EXPECT_NE(writer.failure()->find("is not valid UTF-8 (byte 0xff at offset 5)"),
+                  std::string::npos)
             << *writer.failure();
         EXPECT_TRUE(out.bad()) << "a caller holding only the stream must see it too";
 

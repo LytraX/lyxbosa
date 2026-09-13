@@ -1,9 +1,11 @@
 #include "Config.h"
 #include <yaml-cpp/yaml.h>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <fmt/format.h>
 #include "utils/ByteSize.h"
+#include "utils/SafeText.h"
 
 namespace lyxbosa {
 
@@ -250,6 +252,45 @@ AnnotationsConfig parseAnnotationsConfig(const YAML::Node& node) {
     }
 
     return ac;
+}
+
+// Why a custom rule's text cannot be used as written, or empty when it can.
+//
+// REFUSED RATHER THAN ESCAPED. A rule's name and category are written into every report as
+// they are - not rendered the way a path is - because they are what a person searches a
+// report for, and a name silently rewritten on the way in is one that search no longer
+// finds. So a name that is not valid UTF-8, which no JSON string can spell and which breaks
+// the encoding a CSV claims, or one carrying ESC, which drives the terminal the text report
+// is read on, is refused here: before a scan starts, naming the rule and the byte, to the
+// person who wrote the file. The report writers refuse the same finding in the same words -
+// see unwritableFinding() in ReportWriter.h - for a rule set that was not loaded from here.
+//
+// A description is held to the same rule except that it may break lines, since a YAML block
+// scalar is how a long one is written. No output prints it; it is checked so that the
+// first one that does is handed text.
+//
+// A pattern's value is not checked, and must not be. It never reaches an output - a finding
+// quotes the scanned file, not the needle - and a needle carrying ESC is exactly how a rule
+// looks for terminal escapes planted in a file.
+std::optional<std::string> ruleTextProblem(const RuleConfig& rule, size_t position) {
+    const auto refuse = [&](std::string_view field, const std::string& why) {
+        return fmt::format("Rule {} (\"{}\"): its {} {}. A rule's name and category are "
+                           "written into reports exactly as configured, so they must be "
+                           "valid UTF-8 without control characters; a description may also "
+                           "contain line breaks",
+                           position, safe_text::sanitize(rule.name), field, why);
+    };
+
+    if (auto why = safe_text::whyNotPlainText(rule.name)) {
+        return refuse("name", *why);
+    }
+    if (auto why = safe_text::whyNotPlainText(rule.category)) {
+        return refuse("category", *why);
+    }
+    if (auto why = safe_text::whyNotPlainText(rule.description, /*lineBreaks=*/true)) {
+        return refuse("description", *why);
+    }
+    return std::nullopt;
 }
 
 }  // namespace
@@ -562,6 +603,9 @@ builtin_rules:
 
 # Custom rules (optional - in addition to built-in rules)
 # Add your own patterns here. These are checked AFTER built-in rules.
+# A rule's name and category are written into reports exactly as given, so they must
+# be valid UTF-8 with no control characters; a configuration that breaks this is
+# refused before any scan starts.
 # rules:
 #   - name: My Custom Pattern
 #     description: Description of what this detects
@@ -644,9 +688,13 @@ std::string Config::validate(const AppConfig& config) {
     }
 
     // Check each custom rule has at least one pattern
-    for (const auto& rule : config.rules) {
+    for (size_t index = 0; index < config.rules.size(); ++index) {
+        const auto& rule = config.rules[index];
         if (rule.name.empty()) {
             return "Each rule must have a name";
+        }
+        if (auto problem = ruleTextProblem(rule, index + 1)) {
+            return *problem;
         }
         if (rule.patterns.empty()) {
             return fmt::format("Rule '{}' must have at least one pattern", rule.name);
