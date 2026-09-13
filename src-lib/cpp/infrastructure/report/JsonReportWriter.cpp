@@ -159,6 +159,10 @@ Json summary(const ScanResult& result, bool interrupted) {
     s["filesSkipped"] = std::move(skipped);
 
     s["directoriesUnreadable"] = result.directoriesUnreadable;
+    // Beside the unreadable directories because it is the same kind of gap, and unconditional
+    // for the reason every count here is: a consumer must not have to tell an old report from
+    // a tree with none of these by whether the key is there.
+    s["entriesUnreadable"] = result.entriesUnreadable;
     // Unconditional like the key above it. A consumer that has to test for a key's presence
     // to learn a count was zero is a consumer that reads an old report and a loop-free one
     // as the same thing.

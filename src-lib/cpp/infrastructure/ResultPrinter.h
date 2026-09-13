@@ -204,6 +204,17 @@ public:
                    result.directoriesUnreadable);
         }
 
+        // Directly under the unreadable directories and coloured like them, because it is the
+        // same kind of gap - the host would not let the scan read it. Worded with what is not
+        // known, so that it cannot be read as a count of files or of directories. Only when
+        // there are some, so a tree without any reads exactly as it always did.
+        if (result.entriesUnreadable > 0) {
+            styled(Terminal::warning(),
+                   "Entries unreadable: {} (the host would not say whether each is a file or a "
+                   "directory - none was scanned)\n",
+                   result.entriesUnreadable);
+        }
+
         // Beside the unreadable count because both are directory-level coverage facts
         // and an operator reads this block as one thing - but worded so it cannot be
         // read as a gap, because it is not one. Plain rather than warning-coloured for

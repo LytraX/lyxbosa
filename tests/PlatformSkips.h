@@ -31,6 +31,11 @@
 #include <cwchar>
 #include <vector>
 #else
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <cerrno>
+#include <cstring>
 #include <unistd.h>
 #endif
 
@@ -356,6 +361,139 @@ inline void removeReparsePoint(const std::filesystem::path& link) {
 #endif
     std::error_code ec;
     std::filesystem::remove(link, ec);
+}
+
+// Entries whose type cannot be read, and entries whose type is read and is neither a file
+// nor a directory.
+//
+// The first kind is the one a directory walk has to count, because it cannot say what it
+// passed by. Each platform makes it differently, and each way was measured before it was
+// written here:
+//
+//   POSIX    a symbolic link to itself. Asking its type fails with ELOOP, for every user
+//            including root, so it needs no permission bits and no skip.
+//   Windows  an app execution alias - the reparse point `winget.exe` and its neighbours are
+//            in %LOCALAPPDATA%\Microsoft\WindowsApps - written with FSCTL_SET_REPARSE_POINT
+//            onto an empty file. Microsoft's library cannot open one to ask its type and
+//            fails with ERROR_CANT_ACCESS_FILE, exactly as it does for a real alias.
+//
+// Either way the answer is taken from the host after the entry is made: if asking its type
+// succeeds, or says the path leads nowhere, nothing can be observed and the sentence says so.
+namespace detail {
+
+inline std::optional<std::string> whyTheTypeWasAnswered(const std::filesystem::path& entry,
+                                                        const char* what) {
+    std::error_code ec;
+    const auto type = std::filesystem::status(entry, ec).type();
+    if (!ec) {
+        return std::string("this host answered the type of ") + what + ", so no entry whose "
+               "type cannot be read can be made here to observe";
+    }
+    if (type == std::filesystem::file_type::not_found) {
+        return std::string("this host says ") + what + " leads nowhere (" + ec.message() +
+               "), which is an answer, so no entry whose type cannot be read can be made here "
+               "to observe";
+    }
+    return std::nullopt;
+}
+
+}  // namespace detail
+
+// Nullopt when an entry whose type cannot be read now stands at `entry`.
+inline std::optional<std::string> whyCannotMakeAnEntryOfUnknownType(
+    const std::filesystem::path& entry) {
+#ifdef _WIN32
+    const HANDLE handle =
+        ::CreateFileW(entry.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return "the file for an app execution alias could not be created (" +
+               detail::windowsError(::GetLastError()) + "), so the walk's handling of an entry "
+               "whose type cannot be read cannot be observed";
+    }
+    // Version 3 of the alias: package family name, application user model id, target and
+    // application type, each NUL-terminated. Well-formed and never launched.
+    std::vector<wchar_t> strings;
+    for (const wchar_t* part : {L"LyxBoSa.Fixture_0000000000000",
+                                L"LyxBoSa.Fixture_0000000000000!App",
+                                L"C:\\Windows\\System32\\notepad.exe", L"0"}) {
+        strings.insert(strings.end(), part, part + std::wcslen(part) + 1);
+    }
+    const ULONG tag = 0x8000001BL;  // IO_REPARSE_TAG_APPEXECLINK
+    const ULONG version = 3;
+    const auto dataLength =
+        static_cast<USHORT>(sizeof(version) + strings.size() * sizeof(wchar_t));
+    std::vector<unsigned char> data(8 + dataLength, 0);
+    std::memcpy(data.data(), &tag, sizeof(tag));
+    std::memcpy(data.data() + 4, &dataLength, sizeof(dataLength));
+    std::memcpy(data.data() + 8, &version, sizeof(version));
+    std::memcpy(data.data() + 12, strings.data(), strings.size() * sizeof(wchar_t));
+    DWORD returned = 0;
+    const BOOL written = ::DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, data.data(),
+                                           static_cast<DWORD>(data.size()), nullptr, 0,
+                                           &returned, nullptr);
+    const DWORD error = ::GetLastError();
+    ::CloseHandle(handle);
+    if (!written) {
+        std::error_code ec;
+        std::filesystem::remove(entry, ec);
+        return "this host would not let this process make an app execution alias - "
+               "FSCTL_SET_REPARSE_POINT was refused (" + detail::windowsError(error) +
+               ") - so the walk's handling of an entry whose type cannot be read cannot be "
+               "observed";
+    }
+    return detail::whyTheTypeWasAnswered(entry, "an app execution alias");
+#else
+    std::error_code ec;
+    std::filesystem::create_symlink(entry.filename(), entry, ec);
+    if (ec) {
+        return "a symbolic link to itself could not be created (" + ec.message() +
+               "), so the walk's handling of an entry whose type cannot be read cannot be "
+               "observed";
+    }
+    return detail::whyTheTypeWasAnswered(entry, "a symbolic link to itself");
+#endif
+}
+
+// Nullopt when `dir` now holds a FIFO named `fifo` and a socket named `socket`, both of
+// which answer their type, and neither of which is a file or a directory.
+inline std::optional<std::string> whyCannotMakeSpecialFiles(const std::filesystem::path& dir) {
+#ifdef _WIN32
+    (void)dir;
+    return "Windows keeps named pipes and devices out of the file system, and Microsoft's "
+           "library cannot open an AF_UNIX socket file to ask its type - it refuses as it "
+           "does for an app execution alias - so there is no entry here whose type is read "
+           "and is neither a file nor a directory";
+#else
+    const std::filesystem::path fifo = dir / "fifo";
+    if (::mkfifo(fifo.c_str(), 0600) != 0) {
+        return std::string("mkfifo was refused (") + std::strerror(errno) + "), so the walk's "
+               "handling of a special file cannot be observed";
+    }
+    const std::filesystem::path socketPath = dir / "socket";
+    sockaddr_un address{};
+    if (socketPath.native().size() >= sizeof(address.sun_path)) {
+        return "the temporary directory's path is too long to bind a socket in (" +
+               std::to_string(socketPath.native().size()) + " bytes, and sun_path holds " +
+               std::to_string(sizeof(address.sun_path)) + "), so the walk's handling of one "
+               "cannot be observed";
+    }
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, socketPath.c_str(), socketPath.native().size());
+    const int sock = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock < 0) {
+        return std::string("an AF_UNIX socket could not be opened (") + std::strerror(errno) +
+               "), so the walk's handling of one cannot be observed";
+    }
+    const int bound = ::bind(sock, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+    const int bindErrno = errno;
+    ::close(sock);
+    if (bound != 0) {
+        return std::string("an AF_UNIX socket could not be bound in the temporary directory (") +
+               std::strerror(bindErrno) + "), so the walk's handling of one cannot be observed";
+    }
+    return std::nullopt;
+#endif
 }
 
 // Nullopt when the bytes just written to `path` are the bytes on disk now.

@@ -65,6 +65,7 @@ static bool portable_fnmatch(const char* pattern, const char* str) {
 #include <string_view>
 #else
 #include <sys/stat.h>
+#include <cerrno>
 #endif
 
 namespace lyxbosa {
@@ -101,6 +102,13 @@ struct DirectoryId {
 // is_directory() of every popped path so that a subdirectory removed mid-walk stays
 // quiet - and asking a second time would double that syscall on every directory of
 // every scan, including the ones with no symlink in them.
+//
+// Quiet means gone, and only gone. A path the host will not describe for any other reason
+// - on POSIX, a subdirectory of a directory this user may list and may not search - comes
+// back as a directory with no identity, so the walk enters it and the listing fails and is
+// counted as unreadable on its own terms. Calling that one gone dropped the subdirectory
+// and everything under it without a word, while a file beside it in the same directory was
+// counted as unreadable.
 struct DirectoryProbe {
     bool isDirectory = false;
     std::optional<DirectoryId> id;
@@ -111,8 +119,12 @@ DirectoryProbe probeDirectory(const std::filesystem::path& dir) {
 
 #ifdef _WIN32
     const DWORD attributes = ::GetFileAttributesW(dir.c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES ||
-        (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = ::GetLastError();
+        out.isDirectory = error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND;
+        return out;
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
         return out;
     }
     out.isDirectory = true;
@@ -157,7 +169,12 @@ DirectoryProbe probeDirectory(const std::filesystem::path& dir) {
     // stat() and not lstat(): the walk wants the identity of whatever the path leads
     // to, and for a symlinked directory that is the target. That is the whole question.
     struct ::stat info {};
-    if (::stat(dir.c_str(), &info) != 0 || !S_ISDIR(info.st_mode)) {
+    if (::stat(dir.c_str(), &info) != 0) {
+        const int error = errno;
+        out.isDirectory = error != ENOENT && error != ENOTDIR;
+        return out;
+    }
+    if (!S_ISDIR(info.st_mode)) {
         return out;
     }
     out.isDirectory = true;
@@ -194,9 +211,11 @@ DirectoryProbe probeDirectory(const std::filesystem::path& dir) {
 // by the entry's name.
 //
 // Every other reparse tag is not a link. OneDrive and other cloud placeholders,
-// deduplicated files, app execution aliases and the rest are the file or directory they
-// present themselves as, and treating a reparse point as a link merely because it is one
-// would drop real content without a word.
+// deduplicated files and the rest are the file or directory they present themselves as,
+// and treating a reparse point as a link merely because it is one would drop real content
+// without a word. An app execution alias is not a link either, and it presents nothing: the
+// library cannot open one to ask its type, so walkDirectory() counts it as an entry whose
+// type could not be read.
 //
 // When the file system will not say what a mount-point-tagged entry stores, the entry is
 // not a link and the walk goes through it. The asymmetry is DirectoryId's: walking a link
@@ -327,7 +346,8 @@ std::optional<std::string> rootUnusableReason(const std::filesystem::path& dir) 
 
 size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs,
                         std::vector<std::filesystem::path>* missingRoots,
-                        size_t* cycleSkippedDirs, size_t* linksNotFollowed) const {
+                        size_t* cycleSkippedDirs, size_t* linksNotFollowed,
+                        size_t* unreadableEntries) const {
     size_t dirCount = 0;
     bool stopped = false;
 
@@ -348,7 +368,7 @@ size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs,
         // refusing it would report a clean scan of nothing. The setting is about links the
         // walk finds inside the tree, and walkDirectory() applies it only to those.
         dirCount += walkDirectory(dir, callback, stopped, unreadableDirs, cycleSkippedDirs,
-                                  linksNotFollowed);
+                                  linksNotFollowed, unreadableEntries);
         // `stopped` is set by a callback that refused and by the interrupt flag, and
         // either way the roots after this one are not walked. Which of the two it was
         // is interrupted()'s answer and not this loop's; Scanner::scan() asks it.
@@ -360,7 +380,7 @@ size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs,
 
 size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback callback, bool& stopped,
                                  size_t* unreadableDirs, size_t* cycleSkippedDirs,
-                                 size_t* linksNotFollowed) const {
+                                 size_t* linksNotFollowed, size_t* unreadableEntries) const {
     namespace fs = std::filesystem;
 
     // An explicit stack of directories still to read, rather than one C++ call frame
@@ -434,8 +454,6 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
 
     size_t dirCount = 0;
 
-    std::error_code ec;
-
     // Deliberately *not* skip_permission_denied. That option's whole job is to
     // report a directory the scanner cannot read as no error at all, which left
     // an unreadable tree indistinguishable from an empty one - the scan quietly
@@ -457,6 +475,34 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
     // second thing that looked like it did.
     const auto options = fs::directory_options::none;
 
+    // An entry whose type the host would not give.
+    //
+    // The walk asks every entry two questions - is it a directory, is it a regular file - and
+    // a refusal answers neither. Measured: an app execution alias on Windows refuses both with
+    // ERROR_CANT_ACCESS_FILE, and on Linux a link refuses them with EACCES when what it leads
+    // to sits behind a directory this user may not search, and with ELOOP when it leads back
+    // to itself. Each of those was passed by as though it were not in the listing.
+    //
+    // Counted on its own rather than in either tally beside it, because each of those is a
+    // claim about what the entry was. SkipReason::Unreadable is a file handed to the scanner:
+    // it enters Files scanned and the progress total, gets a report row, and has FN rules
+    // asked of its name as a file's. directoriesUnreadable is a directory the walk entered and
+    // could not list. Nobody can say which of the two this was - behind the refusal there may
+    // be one file or a whole tree - so it is neither, and the count says only what is known:
+    // the scan did not read it. The directory it was listed in was read, and is not touched.
+    //
+    // A refusal that says the path leads nowhere is not one of these. A dangling link and an
+    // entry removed since the listing are answered - nothing is there - and the library calls
+    // that file_type::not_found on both platforms. The status is asked again to learn which it
+    // was, so that the library's own definition of not found decides it rather than a list of
+    // error numbers per host; and only here, so an entry whose type was read never pays for it.
+    auto noteTypeRefused = [&](const fs::directory_entry& entry) {
+        std::error_code again;
+        if (entry.status(again).type() != fs::file_type::not_found && unreadableEntries) {
+            ++*unreadableEntries;
+        }
+    };
+
     auto processEntry = [&](const fs::directory_entry& entry) -> bool {
         if (stopped) return false;
 
@@ -476,7 +522,18 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
             return false;
         }
 
-        if (entry.is_directory(ec)) {
+        // Its own error_code, and never the iterator's. The iterator's says whether this
+        // directory could be listed; this one says whether one entry in it could be asked
+        // about. Shared, the last entry's answer was what the walk read as the directory's,
+        // so a directory whose last entry was a dangling link reported itself unreadable.
+        std::error_code typeEc;
+        const bool directory = entry.is_directory(typeEc);
+        if (typeEc) {
+            noteTypeRefused(entry);
+            return true;
+        }
+
+        if (directory) {
             // A linked directory is queued only when the operator asked for it - and a
             // link is what isLink() says, which on Windows includes a junction and does not
             // include a volume mount point. Whether queueing it would close a loop is not
@@ -497,13 +554,35 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
             return true;
         }
 
-        if (!entry.is_regular_file(ec)) {
+        const bool regular = entry.is_regular_file(typeEc);
+        if (typeEc) {
+            noteTypeRefused(entry);
+            return true;
+        }
+
+        if (!regular) {
+            // Neither, and the host said so: a FIFO, a socket, a character or block device, or
+            // a link to one. Passed by without a count, and deliberately.
+            //
+            // None of these is content a scan leaves unread. A scan reads a file's bytes and
+            // these have none of their own: opening a FIFO waits for a writer that may never
+            // come, which would hang the scan; a device yields whatever the device produces
+            // for as long as it is read; and a socket does not open at all. So the walk must
+            // never hand one to the callback, and passing one by leaves nothing out. A count
+            // would add a line to every scan of a home directory where a database or PHP-FPM
+            // left a socket, saying something no operator can act on - which is what separates
+            // these from an entry of unknown type, which may be exactly the file a count
+            // exists to reveal.
+            //
+            // Windows cannot always say this much. Microsoft's library cannot open an AF_UNIX
+            // socket file to ask its type and refuses exactly as it does for an app execution
+            // alias, so there such a socket is an entry of unknown type, and counted.
             return true;
         }
 
         // A linked file under the same rule and into the same count. A link that leads
-        // nowhere is neither of these - it fails both questions above and is not a link to
-        // content this scan declined to read.
+        // nowhere never gets this far - the library answers not found for it above - and is
+        // not a link to content this scan declined to read.
         const bool link = isLink(entry);
         if (link && !config_.followSymlinks) {
             if (linksNotFollowed) {
@@ -609,13 +688,14 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
         ++dirCount;
         children.clear();
 
+        // The iterator's alone: set when this directory could not be opened for listing. A
+        // listing that fails part-way throws from the increment instead, and is caught below.
+        std::error_code listEc;
         try {
-            for (const auto& entry : fs::directory_iterator(current.path, options, ec)) {
+            for (const auto& entry : fs::directory_iterator(current.path, options, listEc)) {
                 if (!processEntry(entry)) break;
             }
-            // directory_options::skip_permission_denied means the iterator swallows an
-            // unreadable subdirectory silently; `ec` is where it says so.
-            if (ec && unreadableDirs) {
+            if (listEc && unreadableDirs) {
                 ++*unreadableDirs;
             }
         } catch (const fs::filesystem_error&) {

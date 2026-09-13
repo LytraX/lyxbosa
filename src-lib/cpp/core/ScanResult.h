@@ -265,6 +265,20 @@ struct ScanResult {
     // tally - but the operator asked for this tree and did not get all of it.
     size_t directoriesUnreadable = 0;
 
+    // Entries the walk found in a directory it read and could not ask the type of: an app
+    // execution alias on Windows, or a link to something behind a directory this user may
+    // not search. Nothing was read from any of them.
+    //
+    // Beside the unreadable directories and not inside them, and not in the file tally
+    // either, because each of those says what the thing was and nobody can say that here -
+    // behind one of these there may be a single file or a whole tree. It is a gap the host
+    // chose, like the two beside it, and like them it moves no exit code; see the ranking in
+    // ScanUseCase. A count and not a list, as directoriesUnreadable is.
+    //
+    // Not a link that leads nowhere, which is answered - there is nothing there - and not a
+    // FIFO, socket or device node, whose type was read and which has no content to scan.
+    size_t entriesUnreadable = 0;
+
     // Directories the walk declined to enter because entering one would have re-entered
     // a directory it was already inside - what a directory symlink pointing at an
     // ancestor makes, and what made a scan of two links to `.` run without end.

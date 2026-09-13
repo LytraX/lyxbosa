@@ -120,6 +120,13 @@ public:
         fs::permissions(dir, fs::perms::none);
     }
 
+    // Listable and not searchable: the names in `dir` can be read, and nothing can be asked
+    // of the paths they name.
+    void forbidSearch(const fs::path& dir) {
+        locked_.push_back(dir);
+        fs::permissions(dir, fs::perms::owner_read);
+    }
+
 private:
     static void collect(const fs::path& dir, std::vector<fs::path>& out) {
         std::error_code ec;
@@ -160,6 +167,7 @@ struct Walked {
     size_t directories = 0;
     size_t unreadable = 0;
     size_t linksNotFollowed = 0;
+    size_t unreadableEntries = 0;  // entries whose type the host would not give
     bool stopped = false;
     std::vector<fs::path> files;
 
@@ -179,7 +187,8 @@ Walked walkOf(const ScanConfig& scan, const fs::path& root, size_t stopAfter = 0
             out.files.push_back(info.path);
             return stopAfter == 0 || out.files.size() < stopAfter;
         },
-        out.stopped, &out.unreadable, /*cycleSkippedDirs=*/nullptr, &out.linksNotFollowed);
+        out.stopped, &out.unreadable, /*cycleSkippedDirs=*/nullptr, &out.linksNotFollowed,
+        &out.unreadableEntries);
     return out;
 }
 
@@ -567,6 +576,242 @@ TEST(FileWalkerTest, ASubdirectoryThatVanishesMidWalkIsQuiet) {
         << "a subdirectory that disappeared under a running scan is not a coverage gap";
     EXPECT_EQ(seen.directories, 1u) << "only the root was entered";
     EXPECT_FALSE(seen.stopped);
+}
+
+// ===========================================================================
+// Entries whose type cannot be read, and entries that are neither file nor directory
+// ===========================================================================
+//
+// THE DEFECTS THESE CASES EXIST FOR
+// ---------------------------------
+// The walk asked each entry is_directory() and then is_regular_file(), and passed by an
+// entry for which both were false - whether they were false because it is a FIFO or because
+// the host refused to say. Measured before the repair: an app execution alias on Windows, a
+// link on Linux to something behind a directory this user may not search, and a link to
+// itself each left every count at zero, in the walk and in the pre-count, and the scan
+// exited 0. The real %LOCALAPPDATA%\Microsoft\WindowsApps held 100 aliases, and none of them
+// was reported.
+//
+// Both questions also wrote into the error_code the directory iterator had been given, and
+// the walk read it after the loop to decide whether the directory could be listed. So the
+// last entry's answer became the directory's: a directory whose last entry was a dangling
+// link - an ordinary thing in a web root - was counted unreadable, and so were 28 of the 29
+// directories under WindowsApps, every one of which had been read.
+//
+// And a subdirectory of a directory this user may list and not search was dropped as though
+// it had vanished mid-walk: the stat that asks which directory it is failed, and every stat
+// failure was taken for a race. A file beside it was counted as unreadable; the subdirectory
+// and everything below it were counted as nothing.
+//
+// WHY THE DIRECTORY CASES PUT THE ENTRY ALONE
+// -------------------------------------------
+// An entry's answer leaked into its directory only when it was the LAST in the listing, and
+// listing order is the file system's - newest first on tmpfs, name order on NTFS, hash order
+// on ext4. The only entry in a directory is the last one on every file system, so that is
+// the fixture, rather than a name chosen to sort last on one of them.
+
+TEST(FileWalkerUnknownTypeTest, AnEntryWhoseTypeCannotBeReadIsCountedUnderEitherSetting) {
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(root / "unknown")) {
+        GTEST_SKIP() << *why;
+    }
+
+    for (const bool follow : {false, true}) {
+        ScanConfig scan = configFor(root);
+        scan.followSymlinks = follow;
+        const Walked seen = walkOf(scan, root);
+
+        EXPECT_EQ(seen.unreadableEntries, 1u)
+            << "the entry was passed by as though it were not in the listing, followSymlinks "
+            << follow;
+        EXPECT_EQ(seen.files.size(), 1u) << "own.php, and the entry was not handed over as a file";
+        EXPECT_EQ(seen.unreadable, 0u) << "the directory it sits in was read";
+        EXPECT_EQ(seen.linksNotFollowed, 0u)
+            << "whatever it is, following links would not have read it";
+        EXPECT_EQ(seen.directories, 1u);
+        EXPECT_EQ(FileWalker(scan).countFiles().files, 1u)
+            << "the pre-count is the same walk, and counts the entry as no file of work";
+    }
+}
+
+// The companion. A link that leads nowhere is answered - nothing is there - and a walk that
+// counted every refusal, that one included, would satisfy the case above and put a line into
+// every scan of a tree with a stale link in it.
+TEST(FileWalkerUnknownTypeTest, ALinkThatLeadsNowhereIsNotAnEntryOfUnknownType) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    std::error_code ec;
+    fs::create_symlink(tree.path() / "nowhere.php", root / "gone.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    for (const bool follow : {false, true}) {
+        ScanConfig scan = configFor(root);
+        scan.followSymlinks = follow;
+        const Walked seen = walkOf(scan, root);
+
+        EXPECT_EQ(seen.unreadableEntries, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(seen.files.size(), 1u);
+        EXPECT_EQ(seen.unreadable, 0u);
+    }
+}
+
+// Not only a loop. A link to a file and a link to a directory, both behind a directory this
+// user may not search: neither can say what it leads to, so a repair that had learned to
+// count ELOOP and nothing else fails here.
+TEST(FileWalkerUnknownTypeTest, ALinkToWhatThisUserMayNotReachIsAnEntryOfUnknownType) {
+    if (const auto why = test::whyCannotDenyOwnAccess()) {
+        GTEST_SKIP() << *why << " - a link into a mode-000 directory would still be followed";
+    }
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    tree.write(tree.path() / "locked" / "target.php", kHarmless);
+    tree.write(tree.path() / "locked" / "dir" / "inner.php", kHarmless);
+    std::error_code ec;
+    fs::create_symlink(tree.path() / "locked" / "target.php", root / "link.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_directory_symlink(tree.path() / "locked" / "dir", root / "linkdir", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    tree.lock(tree.path() / "locked");
+
+    for (const bool follow : {false, true}) {
+        ScanConfig scan = configFor(root);
+        scan.followSymlinks = follow;
+        const Walked seen = walkOf(scan, root);
+
+        EXPECT_EQ(seen.unreadableEntries, 2u) << "followSymlinks " << follow;
+        EXPECT_EQ(seen.files.size(), 1u);
+        EXPECT_EQ(seen.unreadable, 0u);
+        EXPECT_EQ(seen.directories, 1u);
+    }
+}
+
+// The directory it sat in was read. Against the walk that shared the iterator's error_code
+// this directory was counted unreadable. The other direction - a directory that really
+// cannot be listed is still counted - is AnUnreadableSubdirectoryIsCountedAndTheWalkContinues.
+TEST(FileWalkerUnknownTypeTest, ADirectoryWhoseLastEntryHasNoReadableTypeWasStillRead) {
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    fs::create_directories(root / "sub");
+    if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(root / "sub" / "unknown")) {
+        GTEST_SKIP() << *why;
+    }
+
+    const Walked seen = walkOf(configFor(root), root);
+
+    EXPECT_EQ(seen.directories, 2u) << "the root and sub";
+    EXPECT_EQ(seen.unreadable, 0u)
+        << "sub was listed, and the answer about its only entry was read as the listing's";
+    EXPECT_EQ(seen.unreadableEntries, 1u);
+}
+
+// The same leak from the entry nobody would think to look at: a dangling link, which is not
+// counted anywhere, alone in a directory that was read.
+TEST(FileWalkerUnknownTypeTest, ADirectoryWhoseLastEntryIsADanglingLinkWasStillRead) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    fs::create_directories(root / "sub");
+    std::error_code ec;
+    fs::create_symlink(tree.path() / "nowhere.php", root / "sub" / "gone.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    const Walked seen = walkOf(configFor(root), root);
+
+    EXPECT_EQ(seen.directories, 2u);
+    EXPECT_EQ(seen.unreadable, 0u) << "a directory holding one stale link was reported unreadable";
+    EXPECT_EQ(seen.unreadableEntries, 0u);
+}
+
+// Listable and not searchable. The file inside is handed over and counted unreadable when its
+// size cannot be read; the subdirectory is entered and counted unreadable when it cannot be
+// listed - and is not dropped as a subdirectory that vanished, which is what a failed stat
+// used to be taken for. The other direction, a subdirectory that really did vanish and is
+// still quiet, is ASubdirectoryThatVanishesMidWalkIsQuiet above.
+TEST(FileWalkerTest, ASubdirectoryOfADirectoryThatCannotBeSearchedIsUnreadable) {
+    if (const auto why = test::whyCannotDenyOwnAccess()) {
+        GTEST_SKIP() << *why << " - a directory without search permission would still be searched";
+    }
+
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    const fs::path half = root / "half";
+    tree.write(root / "own.php", kHarmless);
+    tree.write(half / "file.php", kHarmless);
+    tree.write(half / "sub" / "deep.php", kHarmless);
+    tree.forbidSearch(half);
+
+    // The subdirectory has to be named a directory by the listing itself, or its type is asked
+    // with the same stat the permission refuses and it is an entry of unknown type - which is
+    // the cases above, and which this case would report as a defect it is not about.
+    std::error_code ec;
+    bool listingSaysDirectory = false;
+    for (const auto& entry : fs::directory_iterator(half, ec)) {
+        std::error_code typeEc;
+        if (entry.path().filename() == "sub") {
+            listingSaysDirectory = entry.is_directory(typeEc) && !typeEc;
+        }
+    }
+    if (!listingSaysDirectory) {
+        GTEST_SKIP() << "this file system does not name an entry's type in its listing, so a "
+                        "subdirectory that cannot be searched is an entry of unknown type here "
+                        "and not the case this observes";
+    }
+
+    const Walked seen = walkOf(configFor(root), root);
+
+    EXPECT_EQ(seen.unreadable, 1u) << "sub was dropped as though it had vanished";
+    EXPECT_EQ(seen.directories, 3u) << "the root, half and sub, which was entered and not listed";
+    EXPECT_TRUE(seen.sawFilename("file.php")) << "the file beside it is handed over, unreadable";
+    EXPECT_FALSE(seen.sawFilename("deep.php"));
+    EXPECT_EQ(seen.unreadableEntries, 0u) << "the listing named both entries' types";
+}
+
+// Answered, and neither a file nor a directory. Not handed over, because a scan reads bytes
+// and these have none of their own - reading a FIFO waits for a writer that may never come -
+// and not counted, because nothing was left unread. The companion in the other direction is
+// AnEntryWhoseTypeCannotBeReadIsCountedUnderEitherSetting: a walk that counted every entry
+// that is not a file or a directory passes that and fails this.
+TEST(FileWalkerSpecialFileTest, AFifoASocketAndALinkToADeviceAreNeitherHandedOverNorCounted) {
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    tree.write(root / "own.php", kHarmless);
+    if (const auto why = test::whyCannotMakeSpecialFiles(root)) {
+        GTEST_SKIP() << *why;
+    }
+    std::error_code ec;
+    fs::create_symlink("/dev/null", root / "null", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    for (const bool follow : {false, true}) {
+        ScanConfig scan = configFor(root);
+        scan.followSymlinks = follow;
+        const Walked seen = walkOf(scan, root);
+
+        ASSERT_EQ(seen.files.size(), 1u) << "a special file was handed to the scanner to read, "
+                                            "followSymlinks " << follow;
+        EXPECT_TRUE(seen.sawFilename("own.php"));
+        EXPECT_EQ(seen.unreadableEntries, 0u) << "each of them answered its type";
+        EXPECT_EQ(seen.unreadable, 0u);
+        EXPECT_EQ(seen.linksNotFollowed, 0u) << "a link to a device leads to nothing to read";
+        EXPECT_FALSE(seen.stopped);
+    }
 }
 
 // ===========================================================================

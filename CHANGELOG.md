@@ -34,9 +34,34 @@ commit list that CI generates per tag.
   other reparse point — a cloud placeholder, a deduplicated file — is still scanned as the file
   or directory it presents. A root named on the command line that is itself a junction or a
   link is walked as before.
+- **An entry whose type cannot be read is no longer passed by without a trace.** When the
+  scanner could not ask whether an entry was a file or a directory, it went on as though the
+  entry were not there: every count stayed the same, in the scan and in the pre-count, and
+  the scan exited as a clean one would. On Windows that is every app execution alias — the
+  `winget.exe` and its neighbours in `%LOCALAPPDATA%\Microsoft\WindowsApps` — and an AF_UNIX
+  socket file; on Linux, a symbolic link to something behind a directory the
+  scanning user may not search, or a link that leads back to itself. Such an entry is now
+  counted as `Entries unreadable`; see *Added*.
+- **A directory is no longer reported unreadable because of its last entry.** The question
+  asked of each entry and the question of whether the directory could be listed shared one
+  answer, so a directory whose last entry was a dangling symbolic link, or one of the entries
+  above, was counted in `Directories unreadable` although it had been read in full. Listing
+  order decides which entry is last, so the same tree could give a different count on another
+  file system. Measured on Windows before the repair: 28 of the 29 directories under
+  `WindowsApps` were reported unreadable.
+- **A subdirectory of a directory the scanning user may list but not search is reported
+  unreadable** rather than dropped as though it had been removed during the scan, with
+  everything below it. A file beside it in the same directory was already reported unreadable.
 
 ### Added
 
+- **Entries the scan could not ask the type of are counted.** The summary gains
+  `Entries unreadable: N (the host would not say whether each is a file or a directory - none was scanned)`
+  when N is not zero, and JSON gains `entriesUnreadable`, always present, after
+  `directoriesUnreadable`. Such an entry is not in `Files not scanned` and not in
+  `Directories unreadable`, because nobody can say which of the two it was. A link that leads
+  nowhere is not counted, and neither is a FIFO, a socket or a device node on Linux:
+  its type is read, and it has no contents a scan could read.
 - **Links the scan did not follow are counted.** The summary gains
   `Links not followed: N (scan.follow_symlinks is off - anything reached only through them was not scanned)`
   when N is not zero, and JSON gains `linksNotFollowed`, always present, after
@@ -62,6 +87,23 @@ commit list that CI generates per tag.
 - **JSON gains one summary key**, `linksNotFollowed`, between `directoriesCycleSkipped` and
   `filesQuarantined`. A consumer that enumerates keys sees one more; one that reads by name is
   unaffected. CSV carries no directory-level count and gains no column.
+- **What a scan reads and detects does not change for entries whose type cannot be read.**
+  None of them was read before and none is read now, so no finding appears or disappears and
+  no exit code moves; what changes is that they are counted. The summary gains
+  `Entries unreadable: N` when N is not zero — on Windows, a scan that reaches a user
+  profile's `AppData\Local\Microsoft\WindowsApps` shows it — and `--quiet` suppresses it with
+  the rest of the summary.
+- **JSON gains one more summary key**, `entriesUnreadable`, between `directoriesUnreadable` and
+  `directoriesCycleSkipped`. A consumer that enumerates keys sees one more; one that reads by
+  name is unaffected. CSV gains no column.
+- **`Directories unreadable` and `directoriesUnreadable` count differently for the same tree.**
+  They go down by every directory that was read and was counted only because of its last
+  entry — any directory whose last-listed entry is a dangling symbolic link, on Linux and
+  Windows alike. They go up, and `Directories parsed` with them, by every subdirectory of a
+  directory the scanning user may list but not search, which is now entered and found
+  unlistable instead of being dropped. A caller that treats a non-zero `directoriesUnreadable`
+  as an incomplete scan sees the first kind no longer and the second kind for the first time.
+  Neither moves an exit code.
 
 ## [3.1.1] - 2026-09-13
 

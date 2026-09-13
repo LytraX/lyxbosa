@@ -2267,6 +2267,123 @@ TEST(LinkCoverageTest, ALinkNotFollowedDoesNotMoveTheExitCode) {
         << "and it does not displace the finding either";
 }
 
+// ===========================================================================
+// Entries whose type cannot be read
+// ===========================================================================
+//
+// An entry the host would not describe - an app execution alias on Windows, a link to itself
+// or to something this user may not reach on Linux - was passed by with every count at zero,
+// and when it was the last entry of a directory, that directory was counted unreadable
+// although it had been read. tests/file_walker_test.cpp has the walk's side and says how each
+// was measured. These hold the count to the rule the loop and link counts above are held to:
+// on the result, in the summary only when it is not zero, in the JSON always, and moving no
+// exit code.
+
+TEST(EntryCoverageTest, AnEntryWhoseTypeCannotBeReadIsCountedOnTheResult) {
+    TempDir dir;
+    const fs::path site = dir.path() / "site";
+    writeFile(site / "index.php", "<?php echo 1; ?>\n");
+    fs::create_directories(site / "sub");
+    for (const fs::path& entry : {site / "unknown", site / "sub" / "unknown"}) {
+        if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(entry)) {
+            GTEST_SKIP() << *why;
+        }
+    }
+
+    const ScanResult result = runScan(defaultConfigFor(site));
+
+    EXPECT_EQ(result.entriesUnreadable, 2u) << "one in the root and one alone in sub";
+    EXPECT_EQ(result.directoriesUnreadable, 0u)
+        << "sub was read; the answer about its only entry is not the answer about sub";
+    EXPECT_EQ(result.totalDirectoriesScanned, 2u);
+    EXPECT_EQ(result.totalFilesScanned, 1u) << "index.php alone: neither entry is a file of work";
+    EXPECT_EQ(result.skips.total(), 0u) << "neither entry is a file the scan skipped either";
+    EXPECT_TRUE(result.files.empty()) << "and neither has a report row claiming it was a file";
+}
+
+// The companion. A dangling link is answered - nothing is there - so a scanner that counted
+// every refusal would satisfy the case above and fail this one. The link sits alone in a
+// directory, which also holds the directory count to what the walk did and not to what the
+// link's answer was.
+TEST(EntryCoverageTest, NothingIsCountedForALinkThatLeadsNowhere) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    const fs::path site = dir.path() / "site";
+    writeFile(site / "index.php", "<?php echo 1; ?>\n");
+    fs::create_directories(site / "sub");
+    std::error_code ec;
+    fs::create_symlink(dir.path() / "nowhere.php", site / "sub" / "gone.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    const ScanResult result = runScan(defaultConfigFor(site));
+
+    EXPECT_EQ(result.entriesUnreadable, 0u);
+    EXPECT_EQ(result.directoriesUnreadable, 0u)
+        << "a directory holding one stale link was reported unreadable";
+    EXPECT_EQ(result.totalFilesScanned, 1u);
+}
+
+TEST(EntryCoverageTest, TheSummarySaysItAndSaysNothingWhenThereIsNone) {
+    ScanResult withEntries;
+    withEntries.totalDirectoriesScanned = 1;
+    withEntries.entriesUnreadable = 4;
+
+    const std::string said = summaryOf(withEntries);
+    EXPECT_TRUE(contains(said, "Entries unreadable: 4")) << said;
+    EXPECT_TRUE(contains(said, "a file or a directory")) << said;
+    EXPECT_FALSE(contains(said, "Directories unreadable"))
+        << "an entry of unknown type is not an unreadable directory: " << said;
+
+    ScanResult none;
+    none.totalDirectoriesScanned = 1;
+    const std::string quiet = summaryOf(none);
+    EXPECT_FALSE(contains(quiet, "Entries unreadable"))
+        << "a tree with none of these must read exactly as it always did: " << quiet;
+}
+
+TEST(EntryCoverageTest, JsonCarriesTheCountAndCarriesZero) {
+    for (const size_t entries : {size_t{0}, size_t{4}}) {
+        ScanResult result;
+        result.entriesUnreadable = entries;
+
+        std::ostringstream out;
+        JsonReportWriter writer(out);
+        writer.begin();
+        writer.end(result, /*interrupted=*/false);
+
+        EXPECT_TRUE(contains(out.str(), "\"entriesUnreadable\":" + std::to_string(entries)))
+            << out.str();
+    }
+}
+
+// The ranking, asserted. An entry the host would not describe leaves the rest of the answer
+// whole, so a clean tree is still a clean scan - every Windows profile holds such entries -
+// and a finding beside one is still a 2 rather than a 1 that would hide it.
+TEST(EntryCoverageTest, AnEntryWhoseTypeCannotBeReadDoesNotMoveTheExitCode) {
+    TempDir dir;
+    const fs::path clean = dir.path() / "clean";
+    writeFile(clean / "index.php", "<?php echo 1; ?>\n");
+    if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(clean / "unknown")) {
+        GTEST_SKIP() << *why;
+    }
+
+    const fs::path hostile = dir.path() / "hostile";
+    writeFile(hostile / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(hostile / "shell.php", kShell)) {
+        GTEST_SKIP() << *why;
+    }
+    if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(hostile / "unknown")) {
+        GTEST_SKIP() << *why;
+    }
+
+    EXPECT_EQ(scanExitCode({clean}, dir.file("clean.txt").string()), 0)
+        << "an entry of unknown type is not an incomplete answer";
+    EXPECT_EQ(scanExitCode({hostile}, dir.file("hostile.txt").string()), 2)
+        << "and it does not displace the finding either";
+}
+
 TEST(InterruptedScanTest, AnInterruptedScanOfATreeWithNoFileInItDoesNotExitZero) {
     TempDir dir;
     const fs::path root = dir.path() / "site";

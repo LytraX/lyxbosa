@@ -106,6 +106,7 @@ ScanResult everything() {
     result.skips.skip(SkipReason::Excluded, 3);
     result.skips.skip(SkipReason::Unreadable, 4);
     result.directoriesUnreadable = 7;
+    result.entriesUnreadable = 30;
     result.directoriesCycleSkipped = 8;
     result.linksNotFollowed = 29;
     result.filesQuarantined = 2;
@@ -257,6 +258,7 @@ const char* const kEverything = R"JSON({
     "unreadable": 4
   },
   "directoriesUnreadable": 7,
+  "entriesUnreadable": 30,
   "directoriesCycleSkipped": 8,
   "linksNotFollowed": 29,
   "filesQuarantined": 2,
@@ -397,14 +399,15 @@ TEST(JsonReportTest, EverySummaryCountIsPresentAtZeroAndArchivesIsNot) {
                                "files", "interrupted", "totalFilesScanned",
                                "totalDirectoriesScanned", "filesWithMatches",
                                "filesWithHostileNames", "filesSkippedSize", "filesSkipped",
-                               "directoriesUnreadable", "directoriesCycleSkipped",
-                               "linksNotFollowed", "filesQuarantined",
-                               "filesQuarantineFailed", "rootsMissing",
+                               "directoriesUnreadable", "entriesUnreadable",
+                               "directoriesCycleSkipped", "linksNotFollowed",
+                               "filesQuarantined", "filesQuarantineFailed", "rootsMissing",
                                "durationMs"}));
     for (const auto* key : {"totalFilesScanned", "totalDirectoriesScanned", "filesWithMatches",
                             "filesWithHostileNames", "filesSkippedSize",
-                            "directoriesUnreadable", "directoriesCycleSkipped",
-                            "linksNotFollowed", "filesQuarantined", "filesQuarantineFailed"}) {
+                            "directoriesUnreadable", "entriesUnreadable",
+                            "directoriesCycleSkipped", "linksNotFollowed", "filesQuarantined",
+                            "filesQuarantineFailed"}) {
         ASSERT_TRUE(doc.contains(key)) << key;
         EXPECT_TRUE(doc.at(key).is_number_unsigned()) << key;
         EXPECT_EQ(doc.at(key), 0) << key;

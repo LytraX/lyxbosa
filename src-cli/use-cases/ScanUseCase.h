@@ -727,6 +727,13 @@ private:
         // exclude pattern does, and an excluded file moves no exit code. The count is in the
         // summary and the JSON so the operator can see how much was left behind links.
         //
+        // An entry whose type could not be read does not join it, exactly as an unreadable
+        // directory beside it does not. A host that will not describe one entry in a tree has
+        // not made the answer about the rest of the tree partial, and every app execution
+        // alias under a Windows profile is one: ranking it above the findings would turn such
+        // a scan into a 1 and hide a detection from a caller watching for 2. The count names
+        // what was left, in the summary and in the JSON.
+        //
         // The interrupt above outranks all of these because it is the one case where the
         // answer really is partial, and it is checked first so that a scan cut short
         // after finding a webshell exits 130 and not 2: the finding is in the report,

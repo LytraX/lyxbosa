@@ -321,7 +321,29 @@ Members not scanned: 906 (874 not code, 30 over size limit, 2 corrupt)
 ```
 
 `Directories unreadable` is a coverage fact too: a directory the scanner was pointed at
-and could not list is reported rather than treated as empty.
+and could not list is reported rather than treated as empty. That includes a subdirectory
+of a directory the scanning user may list but not search, which is entered and cannot be
+listed.
+
+An entry the host will not describe is a third. When the scanner cannot ask whether an
+entry is a file or a directory — an app execution alias in a Windows profile, or a link to
+something behind a directory the scanning user may not search, or a link that leads back to
+itself — nothing behind it is read, and it is counted:
+
+```
+Entries unreadable: 3 (the host would not say whether each is a file or a directory - none was scanned)
+```
+
+The line appears only when the count is not zero, and in JSON the count is
+`entriesUnreadable`, always present. It is in neither `Files not scanned` nor `Directories
+unreadable`, because each of those says what the thing was, and the directory the entry was
+listed in is not reported unreadable: it was read. A link that leads nowhere is not counted.
+Like the unreadable directories beside it, **it does not change the exit code**.
+
+A FIFO, a socket or a device node is neither read nor counted. None of them has contents a
+scan could read — reading a FIFO waits for a writer that may never come — so passing one by
+leaves nothing out. On Windows the scanner cannot ask an AF_UNIX socket file its type, so
+there a socket is counted with the entries above.
 
 ## Symlinks, junctions, and directories the walk will not re-enter
 
@@ -340,8 +362,10 @@ Two things on Windows share part of a link's machinery and are not links:
   file system stores for it: the root of a volume, where a junction stores a directory. The
   volume holds content reachable by no other path under the root.
 - **Every other reparse point** — a OneDrive or other cloud placeholder, a deduplicated
-  file, an app execution alias — is the file or directory it presents, and is scanned as
-  one. None of them is decided by name.
+  file — is the file or directory it presents, and is scanned as one. None of them is
+  decided by name. An app execution alias is not a link either, but the scanner cannot ask
+  one what it is, so it is counted as an entry it could not read — see
+  [Skipped files](#skipped-files).
 
 When the file system will not return what a junction-tagged entry stores, the walk goes
 through it as a directory: an unwanted walk through a link costs time, which the loop check
@@ -404,7 +428,8 @@ an object shaped like `archives.membersSkipped`:
 ```json
 "filesSkippedSize": 183,
 "filesSkipped": { "total": 208, "size": 183, "excluded": 18, "unreadable": 7 },
-"directoriesUnreadable": 2
+"directoriesUnreadable": 2,
+"entriesUnreadable": 3
 ```
 
 CSV carries `skipped`, `skip_reason`, `quarantine_failed`, `quarantine_path` and
