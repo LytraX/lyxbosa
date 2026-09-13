@@ -26,6 +26,10 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <winioctl.h>
+#include <cstring>
+#include <cwchar>
+#include <vector>
 #else
 #include <unistd.h>
 #endif
@@ -145,6 +149,213 @@ inline std::optional<std::string> whyCannotCreateSymlinks() {
     }
     fs::remove(probe, ec);
     return std::nullopt;
+}
+
+// Directory junctions and volume mount points, made from code.
+//
+// Both are an NTFS reparse point with the tag IO_REPARSE_TAG_MOUNT_POINT on an empty
+// directory, and they differ only in what the reparse data stores: a junction stores a
+// directory path, a volume mount point stores the root of a volume. So one writer makes
+// both, with FSCTL_SET_REPARSE_POINT, rather than running `mklink /J`: there is no command
+// line to quote a path through, the failure comes back as an error number a skip can
+// name, and `mklink` has no way to make the second kind at all.
+//
+// Neither exists anywhere but Windows, so on every other platform each answers with the
+// sentence that says so and a case skips on it. On Windows the answer is taken from the
+// host - the reparse point is written and the error reported - never assumed.
+#ifdef _WIN32
+namespace detail {
+
+inline std::string windowsError(DWORD code) {
+    return "error " + std::to_string(code);
+}
+
+// Writes an IO_REPARSE_TAG_MOUNT_POINT reparse point storing `substitute` onto a new,
+// empty directory at `link`. The layout is ntifs.h's MountPointReparseBuffer, which user
+// mode has no header for.
+inline std::optional<std::string> writeMountPointReparse(const std::filesystem::path& link,
+                                                         const std::wstring& substitute) {
+    std::error_code ec;
+    std::filesystem::create_directory(link, ec);
+    if (ec) {
+        return "the directory for the reparse point could not be created (" + ec.message() + ")";
+    }
+    const HANDLE handle =
+        ::CreateFileW(link.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        const DWORD error = ::GetLastError();
+        std::filesystem::remove(link, ec);
+        return "the directory for the reparse point would not open for writing (" +
+               windowsError(error) + ")";
+    }
+
+    // The substitute name, then the print name - the same string, as the mount manager
+    // writes them - each NUL-terminated, after eight bytes of offsets and lengths. Nothing
+    // the walk asks reads the print name.
+    const size_t nameBytes = (substitute.size() + 1) * 2 * sizeof(wchar_t);
+    std::vector<unsigned char> data(16 + nameBytes, 0);
+    const ULONG tag = IO_REPARSE_TAG_MOUNT_POINT;
+    const auto dataLength = static_cast<USHORT>(8 + nameBytes);
+    const auto nameLength = static_cast<USHORT>(substitute.size() * sizeof(wchar_t));
+    const auto printOffset = static_cast<USHORT>(nameLength + sizeof(wchar_t));
+    const USHORT zero = 0;
+    std::memcpy(data.data(), &tag, sizeof(tag));
+    std::memcpy(data.data() + 4, &dataLength, sizeof(dataLength));
+    std::memcpy(data.data() + 8, &zero, sizeof(zero));          // substitute name offset
+    std::memcpy(data.data() + 10, &nameLength, sizeof(nameLength));
+    std::memcpy(data.data() + 12, &printOffset, sizeof(printOffset));
+    std::memcpy(data.data() + 14, &nameLength, sizeof(nameLength));
+    std::memcpy(data.data() + 16, substitute.data(), nameLength);
+    std::memcpy(data.data() + 16 + printOffset, substitute.data(), nameLength);
+
+    DWORD returned = 0;
+    const BOOL written = ::DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, data.data(),
+                                           static_cast<DWORD>(data.size()), nullptr, 0,
+                                           &returned, nullptr);
+    const DWORD error = ::GetLastError();
+    ::CloseHandle(handle);
+    if (!written) {
+        std::filesystem::remove(link, ec);
+        return "FSCTL_SET_REPARSE_POINT was refused (" + windowsError(error) + ")";
+    }
+    return std::nullopt;
+}
+
+// The root of the volume holding `path`, as a reparse point stores it -
+// \??\Volume{...}\ - and the rest of `path` below that root. Nullopt on success.
+inline std::optional<std::string> volumeGuidRootOf(const std::filesystem::path& path,
+                                                   std::wstring& root, std::wstring& rest) {
+    std::wstring absolute = std::filesystem::absolute(path).native();
+    if (absolute.rfind(L"\\\\?\\", 0) == 0) {
+        absolute.erase(0, 4);
+    }
+    wchar_t volumePath[MAX_PATH + 1] = {};
+    if (!::GetVolumePathNameW(absolute.c_str(), volumePath, MAX_PATH)) {
+        return "the volume holding the temporary directory would not name its root (" +
+               windowsError(::GetLastError()) + ")";
+    }
+    wchar_t volumeName[MAX_PATH + 1] = {};
+    if (!::GetVolumeNameForVolumeMountPointW(volumePath, volumeName, MAX_PATH)) {
+        return "the volume holding the temporary directory has no volume GUID path (" +
+               windowsError(::GetLastError()) + ")";
+    }
+    // \\?\Volume{...}\ as the API spells it.
+    root = volumeName;
+    if (root.rfind(L"\\\\?\\", 0) != 0) {
+        return "the volume GUID path came back in an unexpected form";
+    }
+    root.replace(0, 4, L"\\??\\");
+    const size_t prefix = std::wcslen(volumePath);
+    rest = absolute.size() > prefix ? absolute.substr(prefix) : std::wstring();
+    return std::nullopt;
+}
+
+}  // namespace detail
+#endif
+
+// Nullopt when a directory junction now stands at `link`, leading to the directory
+// `target`.
+inline std::optional<std::string> whyCannotCreateJunction(const std::filesystem::path& link,
+                                                          const std::filesystem::path& target) {
+#ifdef _WIN32
+    // An absolute path in the NT namespace, without the \\?\ a long path may carry.
+    std::wstring absolute = std::filesystem::absolute(target).native();
+    if (absolute.rfind(L"\\\\?\\", 0) == 0) {
+        absolute.erase(0, 4);
+    }
+    if (const auto why = detail::writeMountPointReparse(link, L"\\??\\" + absolute)) {
+        return "this host would not let this process make a directory junction - " + *why +
+               " - so the walk's handling of one cannot be observed";
+    }
+    return std::nullopt;
+#else
+    (void)link;
+    (void)target;
+    return "a directory junction is an NTFS reparse point and exists only on Windows, so "
+           "there is none here for the walk to be asked about";
+#endif
+}
+
+// Nullopt when a volume mount point now stands at `link`, attaching the root of the volume
+// that holds `onVolumeOf` - which, for a case, is the volume holding its temporary tree.
+//
+// The case that uses this must never read far into what it attaches: it is a whole volume.
+// It carries the reparse data the mount manager writes for one, put straight onto the file
+// system, so nothing is registered with the mount manager and there is nothing to undo but
+// the reparse point itself - which removeReparsePoint() below does, before the directory
+// is deleted.
+inline std::optional<std::string> whyCannotCreateVolumeMountPoint(
+    const std::filesystem::path& link, const std::filesystem::path& onVolumeOf) {
+#ifdef _WIN32
+    std::wstring root;
+    std::wstring rest;
+    if (const auto why = detail::volumeGuidRootOf(onVolumeOf, root, rest)) {
+        return *why + ", so no volume mount point can be made to observe";
+    }
+    if (const auto why = detail::writeMountPointReparse(link, root)) {
+        return "this host would not let this process make a volume mount point - " + *why +
+               " - so the walk's handling of one cannot be observed";
+    }
+    return std::nullopt;
+#else
+    (void)link;
+    (void)onVolumeOf;
+    return "a volume mount point in a folder is an NTFS reparse point and exists only on "
+           "Windows, so there is none here for the walk to be asked about";
+#endif
+}
+
+// Nullopt when a directory junction now stands at `link`, leading to the directory `target`
+// but spelled through the volume's GUID path - \??\Volume{...}\path\to\target - which is
+// what a volume mount point stores with a path after it. It is a junction and not a mount
+// point, and this is the fixture that lets a case say so.
+inline std::optional<std::string> whyCannotCreateJunctionThroughVolumeGuid(
+    const std::filesystem::path& link, const std::filesystem::path& target) {
+#ifdef _WIN32
+    std::wstring root;
+    std::wstring rest;
+    if (const auto why = detail::volumeGuidRootOf(target, root, rest)) {
+        return *why + ", so no junction through it can be made to observe";
+    }
+    if (rest.empty()) {
+        return "the target is the root of its volume, which would make a mount point and "
+               "not the junction this case is about";
+    }
+    if (const auto why = detail::writeMountPointReparse(link, root + rest)) {
+        return "this host would not let this process make a directory junction - " + *why +
+               " - so the walk's handling of one cannot be observed";
+    }
+    return std::nullopt;
+#else
+    (void)link;
+    (void)target;
+    return "a directory junction is an NTFS reparse point and exists only on Windows, so "
+           "there is none here for the walk to be asked about";
+#endif
+}
+
+// Removes the reparse point at `link` and then the empty directory it was on. For a mount
+// point this is the only safe order: whatever deletes the directory then sees a directory
+// and nothing it could lead into.
+inline void removeReparsePoint(const std::filesystem::path& link) {
+#ifdef _WIN32
+    const HANDLE handle =
+        ::CreateFileW(link.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                      FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (handle != INVALID_HANDLE_VALUE) {
+        // A Microsoft tag is deleted by naming it in a header with no data after it.
+        unsigned char header[8] = {};
+        const ULONG tag = IO_REPARSE_TAG_MOUNT_POINT;
+        std::memcpy(header, &tag, sizeof(tag));
+        DWORD returned = 0;
+        ::DeviceIoControl(handle, FSCTL_DELETE_REPARSE_POINT, header, sizeof(header), nullptr,
+                          0, &returned, nullptr);
+        ::CloseHandle(handle);
+    }
+#endif
+    std::error_code ec;
+    std::filesystem::remove(link, ec);
 }
 
 // Nullopt when the bytes just written to `path` are the bytes on disk now.

@@ -107,6 +107,7 @@ ScanResult everything() {
     result.skips.skip(SkipReason::Unreadable, 4);
     result.directoriesUnreadable = 7;
     result.directoriesCycleSkipped = 8;
+    result.linksNotFollowed = 29;
     result.filesQuarantined = 2;
     result.filesQuarantineFailed = 1;
     result.rootsMissing = {"/var/www/gone", "/srv/also gone"};
@@ -257,6 +258,7 @@ const char* const kEverything = R"JSON({
   },
   "directoriesUnreadable": 7,
   "directoriesCycleSkipped": 8,
+  "linksNotFollowed": 29,
   "filesQuarantined": 2,
   "filesQuarantineFailed": 1,
   "rootsMissing": [
@@ -396,12 +398,13 @@ TEST(JsonReportTest, EverySummaryCountIsPresentAtZeroAndArchivesIsNot) {
                                "totalDirectoriesScanned", "filesWithMatches",
                                "filesWithHostileNames", "filesSkippedSize", "filesSkipped",
                                "directoriesUnreadable", "directoriesCycleSkipped",
-                               "filesQuarantined", "filesQuarantineFailed", "rootsMissing",
+                               "linksNotFollowed", "filesQuarantined",
+                               "filesQuarantineFailed", "rootsMissing",
                                "durationMs"}));
     for (const auto* key : {"totalFilesScanned", "totalDirectoriesScanned", "filesWithMatches",
                             "filesWithHostileNames", "filesSkippedSize",
                             "directoriesUnreadable", "directoriesCycleSkipped",
-                            "filesQuarantined", "filesQuarantineFailed"}) {
+                            "linksNotFollowed", "filesQuarantined", "filesQuarantineFailed"}) {
         ASSERT_TRUE(doc.contains(key)) << key;
         EXPECT_TRUE(doc.at(key).is_number_unsigned()) << key;
         EXPECT_EQ(doc.at(key), 0) << key;

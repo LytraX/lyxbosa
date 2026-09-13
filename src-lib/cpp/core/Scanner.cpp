@@ -578,7 +578,7 @@ ScanResult Scanner::scan() {
 
     result.totalDirectoriesScanned =
         walker.walk(fileCallback, &result.directoriesUnreadable, &result.rootsMissing,
-                    &result.directoriesCycleSkipped);
+                    &result.directoriesCycleSkipped, &result.linksNotFollowed);
 
     // The walk stops on the interrupt flag itself now, not only when the file callback
     // above refuses - and that callback is reached by a regular file, so a tree holding
