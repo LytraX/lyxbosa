@@ -38,6 +38,31 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Fixed
 
+- **`corpus/verify.py` reported a false-positive rate over a tree holding an entry the scanner
+  did not read.** From v3.2.0 the scanner counts, as `entriesUnreadable`, an entry the host
+  would not give the type of — on Linux a link into a directory the scanning user may not
+  search, or one that leads back to itself; on Windows an app execution alias. Behind one there
+  may be a single file or a whole tree, so the shortfall is unsized, as an unlistable
+  directory's is, and the host chose it. The suite now refuses the figure when the count is not
+  zero, and refuses a report that lacks the key: **a scanner built before v3.2.0 is refused by
+  design**, because it passed such an entry by without a trace and its report cannot say
+  whether it left one unread.
+
+  **`linksNotFollowed` does not refuse; it is disclosed**, beside the size-cap and exclusion
+  counts, on every run. A link not followed is `scan.follow_symlinks: false` doing what it
+  says, identically on every run of the same tree — policy, like an exclusion, and nothing the
+  host chose. What lies behind such a link never entered `totalFilesScanned`, so nothing is
+  subtracted for it. A report without the key refuses nothing and is disclosed as *not
+  reported*, not as zero. `directoriesCycleSkipped` is neither: a directory not re-entered is
+  read at the path the loop leads back to.
+
+  `--inject` goes from 41 cases to 54, both directions: a non-zero count refuses, a missing key
+  refuses, links not followed do not refuse and are disclosed with their count, a missing
+  `linksNotFollowed` is disclosed as unknown, and a loop count refuses nothing. With the real
+  scanner, links out of the tree leave the figure standing and a link that leads back to
+  itself — observable as root too — refuses it for that reason alone. Each new case was watched
+  failing against a copy of the suite with the change removed or inverted.
+
 - **`corpus/verify.py` reported a false-positive rate over whatever the host let the scanner
   open, and counted what it could not open as clean.** The denominator was `totalFilesScanned`,
   which counts a file the scanner reached and could not read; the clean count was that minus
