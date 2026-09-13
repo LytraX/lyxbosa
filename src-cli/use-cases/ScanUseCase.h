@@ -115,7 +115,8 @@ public:
                     "       the next scan finds it again, and if that path is served the\n"
                     "       file is still reachable. Point quarantine.directory somewhere\n"
                     "       outside every scanned root.\n",
-                    config.actions.quarantine.directory, *under);
+                    pathForDisplay(std::filesystem::path(config.actions.quarantine.directory)),
+                    pathForDisplay(std::filesystem::path(*under)));
                 return 1;
             }
         }
@@ -131,8 +132,8 @@ public:
                     "       explicitly: add --quarantine to confirm, --no-quarantine to\n"
                     "       scan without moving anything, or --dry-run to report only.\n",
                     config.actions.quarantine.directory.empty()
-                        ? "the quarantine directory"
-                        : config.actions.quarantine.directory);
+                        ? std::string("the quarantine directory")
+                        : pathForDisplay(std::filesystem::path(config.actions.quarantine.directory)));
                 return 1;
             }
         }
@@ -370,7 +371,8 @@ private:
             if (mismatch == scanPath.end()) {
                 terminal_.printErr(Terminal::warning(),
                     "Warning: the report file is inside a scanned directory ({}).\n"
-                    "         It will be picked up by later scans.\n", dir);
+                    "         It will be picked up by later scans.\n",
+                    pathForDisplay(std::filesystem::path(dir)));
                 return;
             }
         }
@@ -452,7 +454,8 @@ private:
             fileStream.open(outPath, std::ios::out | std::ios::trunc);
             if (!fileStream) {
                 terminal_.printErr(Terminal::error(),
-                    "Error: cannot open output file for writing: {}\n", *plan.file);
+                    "Error: cannot open output file for writing: {}\n",
+                    pathForDisplay(outPath));
                 return 1;
             }
             warnIfOutputInsideScanTree(*plan.file, config);
@@ -599,13 +602,14 @@ private:
                     terminal_.printErr(Terminal::error(),
                         "\nError: the report could not be written to {}\n"
                         "       what is on disk there, if anything, is incomplete\n",
-                        *plan.file);
+                        pathForDisplay(std::filesystem::path(*plan.file)));
                     if (why) {
                         terminal_.printErr(Terminal::error(), "       {}\n", *why);
                     }
                 }
             } else if (!quiet) {
-                terminal_.printErr(Terminal::success(), "Report written to {}\n", *plan.file);
+                terminal_.printErr(Terminal::success(), "Report written to {}\n",
+                                   pathForDisplay(std::filesystem::path(*plan.file)));
             }
         }
 

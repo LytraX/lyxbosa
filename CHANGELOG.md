@@ -58,6 +58,13 @@ commit list that CI generates per tag.
   category is not plain text stops the text, CSV and JSON reports alike at that file. The
   report is left incomplete, a JSON one unterminated so that no parser reads it as a
   complete answer, stderr names the file and the reason, and the scan exits `1`.
+- **Configuration values quoted on the terminal are escaped.** The pre-scan summary printed
+  the directories, the include and exclude globs, the quarantine directory and the alert
+  recipient as they were given; the refusals about the quarantine directory, the notices
+  about the report file and the refusal of an `updates.check` or `updates.interval` value
+  quoted them the same way. A control character in any of them reached the terminal. Each
+  is now escaped where it is printed, a path exactly as it is rendered in every other
+  message about it.
 
 ### Compatibility
 

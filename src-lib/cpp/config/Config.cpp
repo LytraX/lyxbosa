@@ -4,6 +4,7 @@
 #include <optional>
 #include <sstream>
 #include <fmt/format.h>
+#include "infrastructure/PathUtils.h"
 #include "utils/ByteSize.h"
 #include "utils/SafeText.h"
 
@@ -697,14 +698,16 @@ std::string Config::validate(const AppConfig& config) {
             return *problem;
         }
         if (rule.patterns.empty()) {
-            return fmt::format("Rule '{}' must have at least one pattern", rule.name);
+            return fmt::format("Rule '{}' must have at least one pattern",
+                               safe_text::sanitize(rule.name));
         }
         for (const auto& pattern : rule.patterns) {
             // Heuristic and Entropy patterns don't require a value
             if (pattern.value.empty() &&
                 pattern.type != PatternType::Entropy &&
                 pattern.type != PatternType::Heuristic) {
-                return fmt::format("Pattern in rule '{}' must have a value", rule.name);
+                return fmt::format("Pattern in rule '{}' must have a value",
+                                   safe_text::sanitize(rule.name));
             }
         }
     }
@@ -721,7 +724,7 @@ std::string Config::validate(const AppConfig& config) {
     if (!config.updates.checkValid) {
         return fmt::format("Invalid updates.check value: '{}'. Valid values are: "
                            "off, on-demand, periodic",
-                           config.updates.checkRaw);
+                           safe_text::sanitize(config.updates.checkRaw));
     }
 
     // An interval of zero is "check on every run", which is the thing the whole
@@ -731,7 +734,7 @@ std::string Config::validate(const AppConfig& config) {
         return fmt::format("Invalid updates.interval value: '{}'. Use a duration such "
                            "as 24h, 7d, 90m or a bare number of seconds; 0 would mean "
                            "checking on every run",
-                           config.updates.intervalRaw);
+                           safe_text::sanitize(config.updates.intervalRaw));
     }
 
     return "";  // Valid
@@ -824,12 +827,15 @@ void printPatternList(std::string_view label, const std::vector<std::string>& it
     size_t shown = 0;
     for (const auto& item : items) {
         if (!all && shown >= kAlwaysShow) break;
-        if (!line.empty() && line.size() + 2 + item.size() > usable) {
+        // Escaped before it is measured: a glob is what the operator typed, and it can
+        // name the ESC in a hostile file name as surely as the name itself carries it.
+        const std::string shownItem = safe_text::sanitize(item);
+        if (!line.empty() && line.size() + 2 + shownItem.size() > usable) {
             fmt::print(stderr, "{:{}}{}\n", "", kIndent, line);
             line.clear();
         }
         if (!line.empty()) line += "  ";
-        line += item;
+        line += shownItem;
         ++shown;
     }
     if (!line.empty()) {
@@ -889,9 +895,15 @@ void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
 
     // What will be touched, first and unabbreviated. Everything else is a setting;
     // this is the answer to "am I about to scan the right thing".
+    //
+    // Every string below that the configuration or the command line supplied is escaped.
+    // A path is rendered as the walk will open it, through the same function that renders
+    // it in every other message about it; the rest - globs, the recipient - through the
+    // escaper directly. A root tab-completed on a compromised host is the attacker's name,
+    // and this block is printed before the operator has agreed to anything.
     fmt::print(stderr, "Directories ({})\n", config.scan.directories.size());
     for (const auto& dir : config.scan.directories) {
-        fmt::print(stderr, "    {}\n", dir);
+        fmt::print(stderr, "    {}\n", pathForDisplay(std::filesystem::path(dir)));
     }
     fmt::print(stderr, "\n");
 
@@ -948,7 +960,8 @@ void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
 
     // Actions - the other half of "what will be touched".
     std::string quarantine = config.actions.quarantine.enabled
-        ? fmt::format("quarantine to {}", config.actions.quarantine.directory)
+        ? fmt::format("quarantine to {}",
+                      pathForDisplay(std::filesystem::path(config.actions.quarantine.directory)))
         : std::string("quarantine disabled");
     printFactLine("Actions", {
         quarantine,
@@ -959,7 +972,7 @@ void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
             ? std::string("no alert")
             : config.actions.alert.to.empty()
                   ? std::string("alert enabled but no recipient")
-                  : fmt::format("alert to {}", config.actions.alert.to),
+                  : fmt::format("alert to {}", safe_text::sanitize(config.actions.alert.to)),
     }, width);
 
     if (!config.scan.include.empty() || !config.scan.exclude.empty()) {

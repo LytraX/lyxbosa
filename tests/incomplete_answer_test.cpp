@@ -910,6 +910,204 @@ TEST(RuleTextTest, EveryWriterRefusesTheSameFindingInTheSameWords) {
 }
 
 // ===========================================================================
+// Configuration values quoted on the terminal
+// ===========================================================================
+
+// A rule's name is refused at load because a report writes it as it is. The configuration's
+// other strings are not written into a report - a path in one is rendered by pathForDisplay -
+// but several are quoted on the terminal: the pre-scan summary, the refusals about the
+// quarantine directory and the report file, and the refusal of an `updates` value. Those were
+// quoted raw. Refusing them would be wrong for a path, which a scan has to be able to name
+// whatever bytes it holds, so they are escaped where they are printed: a path through the
+// function that renders it everywhere else, anything else through the escaper.
+//
+// Every value below carries ESC or BEL, and every case asserts that neither byte reaches the
+// output and that the escaped spelling does, beside a plain value printed verbatim.
+namespace {
+
+bool carriesTerminalControl(const std::string& text) {
+    return contains(text, "\x1b") || contains(text, "\x07");
+}
+
+std::string loadRefusal(const std::string& yaml) {
+    try {
+        Config::loadFromString(yaml);
+    } catch (const ConfigError& e) {
+        return e.what();
+    }
+    return "";
+}
+
+}  // namespace
+
+TEST(TerminalQuoteTest, ARefusedUpdatesValueIsQuotedEscaped) {
+    const std::string check = loadRefusal("updates:\n  check: \"of\\e[2Jf\"\n");
+    EXPECT_TRUE(contains(check, "Invalid updates.check value: 'of\\x1b[2Jf'")) << check;
+    EXPECT_FALSE(carriesTerminalControl(check));
+
+    const std::string interval = loadRefusal("updates:\n  interval: \"da\\e]0;x\\aily\"\n");
+    EXPECT_TRUE(contains(interval, "Invalid updates.interval value: 'da\\x1b]0;x\\x07ily'"))
+        << interval;
+    EXPECT_FALSE(carriesTerminalControl(interval));
+
+    // A plain typo is still quoted as it was typed.
+    EXPECT_TRUE(contains(loadRefusal("updates:\n  check: of\n"),
+                         "Invalid updates.check value: 'of'"));
+}
+
+TEST(TerminalQuoteTest, ThePreScanSummaryEscapesWhatTheConfigurationSupplied) {
+    AppConfig config = Config::loadFromString(Config::generateDefault());
+    config.scan.directories = {"/srv/a\x1b]0;x\x07" "b", "/srv/plain, dir"};
+    config.scan.include = {"*.p\x1b[31mhp", "*.\xce\xb1"};
+    config.scan.exclude = {};
+    config.actions.quarantine.enabled = true;
+    config.actions.quarantine.directory = "/q\x1b[31m";
+    config.actions.alert.enabled = true;
+    config.actions.alert.to = "soc\x1b]52;c;eA==\x07@example.com";
+
+    testing::internal::CaptureStderr();
+    Config::printSummary(config, 200, /*verbose=*/true);
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    EXPECT_FALSE(carriesTerminalControl(err)) << safe_text::sanitize(err);
+    EXPECT_TRUE(contains(err, "    /srv/a\\x1b]0;x\\x07b\n")) << err;
+    EXPECT_TRUE(contains(err, "    /srv/plain, dir\n")) << err;
+    EXPECT_TRUE(contains(err, "*.p\\x1b[31mhp  *.\xce\xb1")) << err;
+    EXPECT_TRUE(contains(err, "quarantine to /q\\x1b[31m")) << err;
+    EXPECT_TRUE(contains(err, "alert to soc\\x1b]52;c;eA==\\x07@example.com")) << err;
+}
+
+TEST(TerminalQuoteTest, TheQuarantineDirectoryIsQuotedEscapedWhenAScanIsRefused) {
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "shell.php", kShell);
+
+    // Inside the scanned tree: refused, naming both paths.
+    const fs::path inside = dir.path() / "tree" / "q\x1b[31m";
+    // Outside it, on an unattended run that did not pass --quarantine: refused, naming it.
+    const fs::path outside = dir.path() / "q\x1b]0;x\x07";
+
+    for (const auto& [destination, sentence] :
+         {std::pair{inside, std::string("is inside a scanned directory")},
+          std::pair{outside, std::string("which moves matched files to")}}) {
+        SCOPED_TRACE(sentence);
+        // Forward slashes, because a Windows separator inside a YAML double-quoted scalar
+        // is an escape. The scalar reads the escaper's \xNN back as the byte, so the
+        // configuration holds the raw control and the scan is handed exactly `raw`.
+        const std::string raw = destination.generic_string();
+        writeFile(dir.file("lyxbosa.yaml"),
+                  "actions:\n  quarantine:\n    enabled: true\n    directory: \"" +
+                      safe_text::sanitize(raw) + "\"\n");
+        CliArgs args;
+        args.configFile = dir.file("lyxbosa.yaml").string();
+        args.directories = {(dir.path() / "tree").string()};
+        args.force = true;
+        args.noPreCount = true;
+        const Terminal terminal(/*useAnsi=*/false);
+        const TerminalCaps caps = TerminalCaps::detect();
+        const DeliveryRun run = captured([&] { return ScanUseCase(terminal, caps).execute(args); });
+
+        EXPECT_EQ(run.code, 1) << run.err;
+        EXPECT_TRUE(contains(run.err, sentence)) << run.err;
+        EXPECT_TRUE(contains(run.err, pathForDisplay(fs::path(raw)))) << run.err;
+        EXPECT_NE(pathForDisplay(fs::path(raw)), raw)
+            << "the case lost its control byte on the way to the scan";
+        EXPECT_FALSE(carriesTerminalControl(run.err)) << safe_text::sanitize(run.err);
+    }
+}
+
+TEST(TerminalQuoteTest, TheReportFileIsQuotedEscapedWhetherOrNotItCouldBeWritten) {
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "page.php", "<?php echo 1;\n");
+    writeFile(dir.file("not-a-directory"), "x");
+
+    const auto scanTo = [&](const fs::path& report) {
+        CliArgs args;
+        args.directories = {(dir.path() / "tree").string()};
+        args.outputFile = report.string();
+        args.force = true;
+        args.quarantine = false;
+        args.noPreCount = true;
+        const Terminal terminal(/*useAnsi=*/false);
+        const TerminalCaps caps = TerminalCaps::detect();
+        return captured([&] { return ScanUseCase(terminal, caps).execute(args); });
+    };
+
+    // A report path that cannot be opened, on every platform: its parent is a file.
+    const fs::path unopenable = dir.file("not-a-directory") / "rep\x1b[31m.txt";
+    const DeliveryRun refused = scanTo(unopenable);
+    EXPECT_EQ(refused.code, 1) << refused.err;
+    EXPECT_TRUE(contains(refused.err, "cannot open output file for writing: " +
+                                          pathForDisplay(unopenable)))
+        << refused.err;
+    EXPECT_FALSE(carriesTerminalControl(refused.err)) << safe_text::sanitize(refused.err);
+
+    // One that can, where the filesystem allows the name - and inside the scanned tree, so
+    // the warning that names the scanned directory is printed too.
+    const fs::path hostileRoot = dir.path() / "tree" / "sub\x1b]0;x\x07";
+    std::error_code ec;
+    fs::create_directories(hostileRoot, ec);
+    if (ec || !fs::is_directory(hostileRoot)) {
+        GTEST_SKIP() << "this filesystem refused a directory name carrying ESC and BEL, so "
+                        "a report written under one cannot be observed here; the unopenable "
+                        "half above ran";
+    }
+    writeFile(hostileRoot / "page.php", "<?php echo 1;\n");
+
+    CliArgs args;
+    args.directories = {hostileRoot.string()};
+    args.outputFile = (hostileRoot / "report.txt").string();
+    args.force = true;
+    args.quarantine = false;
+    args.noPreCount = true;
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+    const DeliveryRun written =
+        captured([&] { return ScanUseCase(terminal, caps).execute(args); });
+
+    EXPECT_EQ(written.code, 0) << written.err;
+    EXPECT_TRUE(contains(written.err, "Report written to " +
+                                          pathForDisplay(hostileRoot / "report.txt")))
+        << written.err;
+    EXPECT_TRUE(contains(written.err, "the report file is inside a scanned directory (" +
+                                          pathForDisplay(hostileRoot) + ")"))
+        << written.err;
+    EXPECT_FALSE(carriesTerminalControl(written.err)) << safe_text::sanitize(written.err);
+}
+
+// The third message about the report file: opened, and then the write failed. A link with a
+// hostile name to the device that refuses every write, where the host has one.
+TEST(TerminalQuoteTest, AReportThatCouldNotBeWrittenIsQuotedEscaped) {
+    std::string sink;
+    if (const auto why = test::whyCannotFailAWrite(sink)) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "page.php", "<?php echo 1;\n");
+    const fs::path link = dir.file("full\x1b[31m.txt");
+    std::error_code ec;
+    fs::create_symlink(sink, link, ec);
+    if (ec) {
+        GTEST_SKIP() << "this host would not create a link named with ESC to " << sink
+                     << ", so a write that fails under such a name cannot be observed here";
+    }
+
+    CliArgs args;
+    args.directories = {(dir.path() / "tree").string()};
+    args.outputFile = link.string();
+    args.force = true;
+    args.quarantine = false;
+    args.noPreCount = true;
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+    const DeliveryRun run = captured([&] { return ScanUseCase(terminal, caps).execute(args); });
+
+    EXPECT_EQ(run.code, 1) << run.err;
+    EXPECT_TRUE(contains(run.err, "the report could not be written to " + pathForDisplay(link)))
+        << run.err;
+    EXPECT_FALSE(carriesTerminalControl(run.err)) << safe_text::sanitize(run.err);
+}
+
+// ===========================================================================
 // A quarantine that could not complete
 // ===========================================================================
 
