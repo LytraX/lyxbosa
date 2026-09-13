@@ -1,5 +1,6 @@
 #pragma once
 
+#include "infrastructure/Delivery.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "infrastructure/PlainProgress.h"
@@ -18,7 +19,6 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -443,7 +443,12 @@ private:
 
         // Open the report file before scanning: discovering it is unwritable
         // after a forty-minute scan would be cruel.
-        std::ofstream fileStream;
+        //
+        // Both destinations are written through a CheckedOutput, so that each is asked the
+        // same question in the same way once the last byte meant for it has gone - see
+        // Delivery.h, and the end of this function.
+        std::unique_ptr<CheckedOutput> fileOut;
+        std::unique_ptr<std::ostream> fileStream;
         std::unique_ptr<ReportWriter> fileWriter;
         if (plan.file) {
             const std::filesystem::path outPath(*plan.file);
@@ -451,15 +456,16 @@ private:
                 std::error_code ec;
                 std::filesystem::create_directories(outPath.parent_path(), ec);
             }
-            fileStream.open(outPath, std::ios::out | std::ios::trunc);
-            if (!fileStream) {
+            fileOut = CheckedOutput::open(outPath);
+            if (!fileOut) {
                 terminal_.printErr(Terminal::error(),
                     "Error: cannot open output file for writing: {}\n",
                     pathForDisplay(outPath));
                 return 1;
             }
+            fileStream = std::make_unique<std::ostream>(fileOut.get());
             warnIfOutputInsideScanTree(*plan.file, config);
-            fileWriter = makeReportWriter(plan.format, fileStream, /*color=*/false,
+            fileWriter = makeReportWriter(plan.format, *fileStream, /*color=*/false,
                                           kFileReportWidth, args.verbose, /*summary=*/true);
         }
 
@@ -478,8 +484,10 @@ private:
         // what keeps grep, copy-paste and scrollback working afterwards.
         const bool bufferConsole = (style == ProgressStyle::Tui);
         std::ostringstream consoleBuffer;
+        CheckedOutput stdoutOut(stdout);
+        std::ostream stdoutStream(&stdoutOut);
         std::ostream& consoleStream =
-            bufferConsole ? static_cast<std::ostream&>(consoleBuffer) : std::cout;
+            bufferConsole ? static_cast<std::ostream&>(consoleBuffer) : stdoutStream;
 
         std::unique_ptr<ReportWriter> consoleWriter;
         if (consoleWanted) {
@@ -557,66 +565,62 @@ private:
         }
 
         // Close both reports off properly, interrupted or not.
-        //
-        // A writer can also have stopped part-way, because a value in a finding could not be
-        // encoded in the report's format - JsonReportWriter.h says when. Standard output has
-        // no delivery check of its own below, so that is asked of the writer here: a report
-        // on stdout that stopped is an undelivered report exactly as a file one is, and a
-        // caller redirecting it to a file has no other way to learn it is incomplete.
-        bool reportUndelivered = false;
         if (consoleWriter) {
             consoleWriter->end(result, interrupted);
-            if (const auto why = consoleWriter->failure()) {
-                reportUndelivered = true;
-                if (!args.silent) {
-                    terminal_.printErr(Terminal::error(),
-                        "\nError: the report written to standard output is incomplete\n"
-                        "       {}\n",
-                        *why);
-                }
-            }
         }
-
-        // Delivering the report is part of completing the command. The stream used to
-        // be checked when it was opened and never again, so a full disk produced
-        // "Report written to /dev/full" and an exit code that said the run succeeded -
-        // and the run that matters is the unattended one, which then has neither a
-        // report nor anything saying it lost one. The write, the flush and the close
-        // are all asked, because they fail at different moments: a short report never
-        // leaves the buffer until close. A writer that stopped sets badbit on the stream,
-        // and is asked as well: for the reason, which the stream cannot carry, and so that
-        // this answer does not rest on one side of that pair alone.
         if (fileWriter) {
             fileWriter->end(result, interrupted);
-            fileStream.flush();
-            fileStream.close();
-            const auto why = fileWriter->failure();
-            const bool fileUndelivered = fileStream.fail() || why.has_value();
-            reportUndelivered = reportUndelivered || fileUndelivered;
-
-            if (fileUndelivered) {
-                // Held back only by --silent, which promises no output at all. --quiet
-                // suppresses progress and the summary, and this is neither: it is the
-                // command's own deliverable not existing.
-                if (!args.silent) {
-                    terminal_.printErr(Terminal::error(),
-                        "\nError: the report could not be written to {}\n"
-                        "       what is on disk there, if anything, is incomplete\n",
-                        pathForDisplay(std::filesystem::path(*plan.file)));
-                    if (why) {
-                        terminal_.printErr(Terminal::error(), "       {}\n", *why);
-                    }
-                }
-            } else if (!quiet) {
-                terminal_.printErr(Terminal::success(), "Report written to {}\n",
-                                   pathForDisplay(std::filesystem::path(*plan.file)));
-            }
         }
 
-        // Hand the buffered findings and summary to the primary buffer.
+        // Hand the buffered findings and summary to the primary buffer. This is the last
+        // write to standard output, so it comes before delivery is asked about: written after
+        // that question, as it once was, its failure could not change the answer. It also puts
+        // "Report written to" below the summary, which is where a run without the full-screen
+        // UI already had it.
         if (bufferConsole) {
-            std::cout << consoleBuffer.str();
-            std::cout.flush();
+            stdoutStream << consoleBuffer.str();
+        }
+
+        // Delivering the report is part of completing the command, on either destination. A
+        // stream checked when it was opened and never again produced "Report written to
+        // /dev/full" and an exit code that said the run succeeded - and then, on standard
+        // output, a JSON report written into a full disk that exited 2 with nothing on stderr.
+        // The run that matters is the unattended one, which then has neither a report nor
+        // anything saying it lost one.
+        //
+        // Each destination is asked two things. Whether it refused a write, taken at the write,
+        // the flush or the close that refused it: they fail at different moments, and a short
+        // report never leaves the buffer until the last flush. And whether the writer stopped
+        // part-way, because a value in a finding could not be encoded in the report's format -
+        // JsonReportWriter.h says when - which the destination cannot know.
+        //
+        // The message is held back only by --silent, which promises no output at all. --quiet
+        // suppresses progress and the summary, and this is neither: it is the command's own
+        // deliverable not existing. Standard output never carries a report under --silent -
+        // the refusal in execute() sees to that - so there it is never held back.
+        bool reportUndelivered = false;
+        bool readerGone = false;
+        const auto settle = [&](const Delivery& delivery, std::string_view destination,
+                                std::string_view whatIsLeft) {
+            if (delivery.readerGone()) {
+                readerGone = true;
+            } else if (delivery.failed()) {
+                reportUndelivered = true;
+                if (!args.silent) {
+                    sayUndelivered(terminal_, delivery, "the report", destination, whatIsLeft);
+                }
+            }
+        };
+        if (consoleWriter) {
+            settle(deliver(stdoutOut, consoleWriter->failure()), kStandardOutput, kWhatReachedIt);
+        }
+        if (fileWriter) {
+            const std::string destination = pathForDisplay(std::filesystem::path(*plan.file));
+            const Delivery delivery = deliver(*fileOut, fileWriter->failure());
+            settle(delivery, destination, kWhatIsOnDisk);
+            if (delivery.delivered() && !quiet) {
+                terminal_.printErr(Terminal::success(), "Report written to {}\n", destination);
+            }
         }
 
         // A newer release, if the check happened and finished and found one. It is
@@ -685,9 +689,10 @@ private:
         // the exit code answers "did this do what I asked", not "what did it find",
         // and the findings are in the report either way.
         //
-        // A report that could not be written joins it, because for `-O` the report IS
-        // the answer: exiting 2 would tell an unattended caller to go and read a file
-        // that is truncated or empty. A quarantine that failed deliberately does not
+        // A report that could not be written joins it, to a file or to standard output,
+        // because the report IS the answer: exiting 2 would tell an unattended caller to go
+        // and read a file, or a pipe's worth of JSON, that is truncated or empty. A
+        // quarantine that failed deliberately does not
         // join it - the answer is complete and delivered, the failure is named in it
         // and on stderr, and ranking it above the findings would turn every such run
         // into a 1 and hide a real detection from a caller watching for 2.
@@ -705,6 +710,14 @@ private:
         // and 2 would tell a caller the tree had been examined.
         if (!result.rootsMissing.empty() || reportUndelivered) {
             return 1;
+        }
+        // A reader that went away printed nothing and takes the findings' place alone: 2 or 0
+        // would say the report arrived, and 141 is what the same run exits with when SIGPIPE
+        // ends it. It outranks nothing above, because each of those says something a caller
+        // has to act on - the rule exitCodeAfterDelivery() in Delivery.h writes down for every
+        // command.
+        if (readerGone) {
+            return kExitReaderGone;
         }
         return result.filesWithMatches > 0 ? 2 : 0;
     }
