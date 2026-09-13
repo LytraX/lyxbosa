@@ -355,11 +355,11 @@ set(LYXBOSA_CORE_LIBRARIES
 # LYXBOSA_FUZZ_DIR, LYXBOSA_KEYRING_FILE_PATH and the fuzz/ include directory on the test
 # binary. Those stay on the executable that needs them and apply to its own sources -
 # src-cli/lyxbosa.cpp and tests/*.cpp - and no file in LIB_SOURCES, UPDATE_SOURCES or
-# REPORT_SOURCES reads any of them, directly or through a header. It has to stay that way,
-# and nothing fails if it does not: a shared source that started reading one would compile
-# without it, quietly, in both binaries. So a setting that changes how a shared source compiles belongs on
-# lyxbosa_core, where both binaries get it alike, and a setting only one executable has is
-# never read by a shared source.
+# REPORT_SOURCES reads any of them, directly or through a header. A shared source that
+# started reading one would compile without it, quietly, in both binaries, so the compiler
+# refuses it: see the guard at the end of this file. A setting that changes how a shared
+# source compiles belongs on lyxbosa_core, where both binaries get it alike, and a setting
+# only one executable has is never read by a shared source.
 #
 # It is compiled with everything the two executables had in common: the same include
 # directories, the usage requirements of the same libraries - the allocator's included - and
@@ -566,3 +566,76 @@ if(BUILD_TESTS)
   # was exercised on somebody's desk.
   gtest_discover_tests(lyxbosa_tests DISCOVERY_MODE PRE_TEST)
 endif()
+
+# The lyxbosa_core guard: a shared source may not read a definition only one executable has.
+#
+# The names come from the executables' own COMPILE_DEFINITIONS minus lyxbosa_core's, so a
+# definition given to one executable later is covered without editing this. Each name is
+# poisoned in a header force-included into lyxbosa_core alone, and GCC and Clang then refuse
+# any shared source that tests or uses it, directly or through a header it includes, while a
+# name inside a comment or a string is not a use. MSVC has no poison pragma, so the Linux
+# builds, which compile the same sources, are what enforce it. A small control runs at
+# configure time: the compiler must refuse a use of the first name and accept a file that
+# only mentions it. It is deferred to the end of this file, so a definition added anywhere,
+# including below this block, is read.
+function(lyxbosa_core_guard)
+  set(_lyxbosa_exe_only "")
+  foreach(_exe lyxbosa lyxbosa_tests)
+    if(TARGET ${_exe})
+      get_target_property(_defs ${_exe} COMPILE_DEFINITIONS)
+      if(_defs)
+        list(APPEND _lyxbosa_exe_only ${_defs})
+      endif()
+    endif()
+  endforeach()
+  get_target_property(_core_defs lyxbosa_core COMPILE_DEFINITIONS)
+  if(NOT _core_defs)
+    set(_core_defs "")
+  endif()
+  list(TRANSFORM _lyxbosa_exe_only REPLACE "=.*$" "")
+  list(TRANSFORM _core_defs REPLACE "=.*$" "")
+  if(_core_defs)
+    list(REMOVE_ITEM _lyxbosa_exe_only ${_core_defs})
+  endif()
+  list(REMOVE_DUPLICATES _lyxbosa_exe_only)
+  list(SORT _lyxbosa_exe_only)
+
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(TARGET lyxbosa_tests AND NOT _lyxbosa_exe_only)
+      message(FATAL_ERROR "lyxbosa_core guard: found no definition that only one executable "
+        "sets, but the test binary always sets some. The guard cannot read the targets.")
+    endif()
+    if(_lyxbosa_exe_only)
+      string(JOIN " " _lyxbosa_poisoned ${_lyxbosa_exe_only})
+      set(_poison "${CMAKE_BINARY_DIR}/generated/lyxbosa-core-poison.h")
+      file(CONFIGURE OUTPUT "${_poison}" CONTENT "#pragma GCC poison ${_lyxbosa_poisoned}\n" @ONLY)
+      target_compile_options(lyxbosa_core PRIVATE "SHELL:-include \"${_poison}\"")
+
+      list(GET _lyxbosa_exe_only 0 _probe)
+      set(_control "${CMAKE_BINARY_DIR}/generated/lyxbosa-core-poison-control")
+      file(WRITE "${_control}-use.cpp" "#ifdef ${_probe}\n#endif\n")
+      file(WRITE "${_control}-mention.cpp"
+        "// ${_probe} in a comment is not a use\nstatic const char* mention = \"${_probe}\";\n")
+      execute_process(
+        COMMAND "${CMAKE_CXX_COMPILER}" -fsyntax-only -include "${_poison}" "${_control}-use.cpp"
+        RESULT_VARIABLE _use_rc ERROR_VARIABLE _use_err OUTPUT_QUIET)
+      execute_process(
+        COMMAND "${CMAKE_CXX_COMPILER}" -fsyntax-only -include "${_poison}" "${_control}-mention.cpp"
+        RESULT_VARIABLE _mention_rc ERROR_VARIABLE _mention_err OUTPUT_QUIET)
+      if(_use_rc EQUAL 0 OR NOT _use_err MATCHES "poison")
+        message(FATAL_ERROR "lyxbosa_core guard: the compiler did not refuse a use of ${_probe}, "
+          "so the guard would not refuse a shared source that reads it.\n${_use_err}")
+      endif()
+      if(NOT _mention_rc EQUAL 0)
+        message(FATAL_ERROR "lyxbosa_core guard: the compiler refused a file that only mentions "
+          "${_probe} in a comment and a string.\n${_mention_err}")
+      endif()
+      message(STATUS "lyxbosa_core may not read: ${_lyxbosa_poisoned} "
+        "(control: a use refused, a mention accepted)")
+    endif()
+  else()
+    message(STATUS "lyxbosa_core guard: not enforced by ${CMAKE_CXX_COMPILER_ID}; "
+      "the GCC and Clang builds enforce it")
+  endif()
+endfunction()
+cmake_language(DEFER CALL lyxbosa_core_guard)
