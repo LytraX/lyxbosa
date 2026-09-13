@@ -234,7 +234,7 @@ instance of that round already scheduled. Five commands is a list somebody runs;
 list that gets skipped and then quoted as green. So the list grows by one, the runner
 **discovers** the suites by reading every `corpus/*.py` and every `corpus/*.sh` rather than
 holding a list of its own, and coverage stops depending on anybody's memory. It takes about
-34 seconds warm over 46 suites (roughly twice that on a cold run — page cache over the 62 MB
+34 seconds warm over 47 suites (roughly twice that on a cold run — page cache over the 62 MB
 index, not the tools), of which 7.8 seconds is `classify-known-miss.py` and 5.6 is
 `field-provenance.py`, plus about a second each for the shell suites.
 
