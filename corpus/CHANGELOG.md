@@ -136,6 +136,25 @@ are correct as of the round that recorded them and are deliberately never regene
   cutting a scanner tag rather than to a round, which is why it is recorded here as a fact
   about the measurement rather than as a result.
 
+- **`import-upload-probe.py` refuses a measurement that was not of the curated bytes, and its
+  control drives the real index write.** Its refusal for bytes that do not hash to the curated
+  sha256 was asked of bytes already found by that hash, so it could not fire. It is asked now
+  of the staged copy the scanner read, once the scan is done: an `.htaccess` emptied between
+  staging and reading would otherwise be recorded as a rule-gap miss about bytes the scanner
+  never saw. `--inject` (28 cases) exercises that refusal in both directions with a substituted
+  checker, and runs the function that appends to the index against a synthetic corpus in a
+  temporary directory, observing that only the local half is locked, read and written, that
+  the write and the read both happen with the lock held, and that a row another writer lands
+  just before the lock is taken survives. Each case was watched failing against a copy with
+  the destination, the write or the read moved.
+
+- **`review-app.py --inject` no longer crashes when `corpus/local/index.db` is stale.** Its
+  startup-rebuild case disabled the rebuild and still let the real freshness check run, so a
+  stale database raised through the case and ended the whole suite with a traceback. The case
+  now stops each start at the database read, so it no longer depends on that database's state,
+  asserts that a stale start rebuilds *before* it reads and a fresh one reads without
+  rebuilding, and reports anything raised before the read as that case's failure.
+
 ### Added
 
 - **`corpus/release-assets.sh` refuses to print the commands that cut a corpus tag while

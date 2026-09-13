@@ -164,9 +164,10 @@ const BuiltinRule RCE008 {
 };
 
 // RCE009: backtick operator with variable
-// Note: Using bounded quantifier because backticks are rare in PHP files,
-// causing [^`]* to scan entire files and overflow CTRE's recursive stack.
-// 500 chars is sufficient for any realistic backtick command.
+// Note: the quantifier is bounded for what it means, not for the engine. RE2 does not
+// recurse, so an unbounded [^`]* would be safe; but backticks are rare in PHP, and
+// unbounded it would pair a stray backtick with a superglobal anywhere later in the
+// file. 500 chars is sufficient for any realistic backtick command.
 namespace detail_RCE009 {
     static constexpr Pattern patterns[] = {
         { R"(`[^`]{0,500}\$_(GET|POST|REQUEST|COOKIE))",

@@ -205,9 +205,8 @@ Json summary(const ScanResult& result, bool interrupted) {
 // The library's refusal, in a sentence that is safe to print. Its message names a byte
 // offset and a byte value in hex and quotes nothing, but it is sanitized anyway: this line
 // reaches a terminal, and what it is about is text that failed a validity check.
-std::string refusal(std::string_view what, const nlohmann::json::exception& e) {
-    return fmt::format("{} could not be written as JSON: {}", what,
-                       safe_text::sanitize(e.what()));
+std::string libraryRefusal(const nlohmann::json::exception& e) {
+    return safe_text::sanitize(e.what());
 }
 
 }  // namespace
@@ -233,13 +232,21 @@ void JsonReportWriter::onFile(const FileResult& result) {
     if (failure_ || !worthReporting(result)) {
         return;
     }
+    // Asked first, and of all three writers, so that a finding this report refuses is one
+    // the CSV and text reports refuse too, in the same words - see ReportWriter.h.
+    if (const auto why = unwritableFinding(result)) {
+        stop(unwritableRecord(result, "JSON", *why));
+        return;
+    }
     // Rendered in full before any of it is written, so a refusal leaves no half of a record
-    // on the stream.
+    // on the stream. The library's own refusal is the last line behind the question above:
+    // every string this record holds is escaped or has been asked it, so nothing known
+    // reaches this catch, and it stays for whatever the next key adds.
     std::string text;
     try {
         text = arrayElement(!anyFile_, fileRecord(result));
     } catch (const nlohmann::json::exception& e) {
-        stop(refusal("the record for " + pathForDisplay(result.path), e));
+        stop(unwritableRecord(result, "JSON", libraryRefusal(e)));
         return;
     }
     anyFile_ = true;
@@ -257,7 +264,7 @@ void JsonReportWriter::end(const ScanResult& result, bool interrupted) {
             text += member(it.key(), it.value());
         }
     } catch (const nlohmann::json::exception& e) {
-        stop(refusal("the summary", e));
+        stop("the summary could not be written as JSON: " + libraryRefusal(e));
         return;
     }
     text += closeDocument();

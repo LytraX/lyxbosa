@@ -8,7 +8,8 @@
 namespace lyxbosa::rules::seo_spam {
 
 // SEO001: Hidden link injection
-// Note: Patterns use possessive [^...]*+ to avoid CTRE stack overflow on large files
+// Note: RE2 guarantees time linear in the input and does not recurse on it, so the
+// negated classes below cannot overflow a stack or go exponential on a large file.
 namespace detail_SEO001 {
     static constexpr Pattern patterns[] = {
         // The href must be a literal external URL. Themes and widgets legitimately
@@ -42,7 +43,8 @@ const BuiltinRule SEO001 {
 };
 
 // SEO002: Doorway page generator
-// Note: Pattern uses possessive [^,]*+ to avoid CTRE stack overflow on large files
+// Note: RE2 guarantees time linear in the input and does not recurse on it, so the
+// negated classes below cannot overflow a stack or go exponential on a large file.
 namespace detail_SEO002 {
     static constexpr Pattern patterns[] = {
         { R"((?i:file_put_contents)\s*\([^,]*\.html['"]\s*,.*?(viagra|cialis|casino|poker|pharmacy))",
@@ -94,7 +96,8 @@ const BuiltinRule SEO004 {
 };
 
 // SEO005: Keyword stuffing
-// Note: Pattern uses possessive [^>]*+ to avoid CTRE stack overflow on large files
+// Note: RE2 guarantees time linear in the input and does not recurse on it, so the
+// negated classes below cannot overflow a stack or go exponential on a large file.
 namespace detail_SEO005 {
     static constexpr Pattern patterns[] = {
         { R"(<meta\s+name\s*=\s*['"]keywords['"][^>]*content\s*=\s*['"][^'"]{500,}['"])",
@@ -111,7 +114,8 @@ const BuiltinRule SEO005 {
 };
 
 // SEO006: Japanese keyword hack
-// Note: Pattern uses possessive [^<]*+ to avoid CTRE stack overflow on large files
+// Note: RE2 guarantees time linear in the input and does not recurse on it, so the
+// negated classes below cannot overflow a stack or go exponential on a large file.
 namespace detail_SEO006 {
     static constexpr Pattern patterns[] = {
         { R"(<title>[^<]*[\x{3040}-\x{309F}\x{30A0}-\x{30FF}]{10,}[^<]*</title>)",

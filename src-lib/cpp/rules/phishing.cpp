@@ -63,7 +63,8 @@ const BuiltinRule PHI003 {
 };
 
 // PHI004: Fake login page
-// Note: Pattern uses possessive [^<]*+ to avoid CTRE stack overflow on large files
+// Note: RE2 guarantees time linear in the input and does not recurse on it, so the
+// negated classes below cannot overflow a stack or go exponential on a large file.
 namespace detail_PHI004 {
     static constexpr Pattern patterns[] = {
         { R"(<title>[^<]*(login|signin|sign in|verify|update|confirm)[^<]*</title>.*?<form.*?password)",
@@ -80,7 +81,8 @@ const BuiltinRule PHI004 {
 };
 
 // PHI005: Data exfiltration via curl/wget
-// Note: Pattern uses possessive [^;]*+ to avoid CTRE stack overflow on large files
+// Note: RE2 guarantees time linear in the input and does not recurse on it, so the
+// negated classes below cannot overflow a stack or go exponential on a large file.
 namespace detail_PHI005 {
     static constexpr Pattern patterns[] = {
         { R"(curl\s+[^;]*-d\s+[^;]*\$_(POST|GET|REQUEST)\s*\[)",

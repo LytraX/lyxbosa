@@ -35,16 +35,19 @@ namespace lyxbosa {
 // parses to. A frame that dropped or doubled a comma, or misplaced a bracket, fails that
 // comparison rather than producing a report no parser accepts.
 //
-// WHEN A VALUE CANNOT BE SERIALIZED. nlohmann refuses a string that is not valid UTF-8,
-// and JSON has no way to spell one. Paths reach this writer through pathForDisplay(), which
-// escapes such bytes and carries the real ones in the `...BytesHex` keys, but a rule's name
-// and category come from a configuration file and are written as they were read. So the
-// refusal is caught here, the record is not written, and the writer stops: it writes
-// nothing further, not even the closing brackets, sets badbit on its stream and keeps the
-// reason for failure(). The document is left unparseable deliberately. Closing it would
-// hand a consumer that does not read the exit code a valid report that silently lacks a
-// file; left open, no parser mistakes it for a complete answer. The scan itself carries on
-// and the command exits 1 with the reason on stderr - see ScanUseCase::runScan.
+// WHEN A VALUE CANNOT BE WRITTEN. Paths reach this writer through pathForDisplay(), which
+// escapes what JSON cannot spell and carries the real bytes in the `...BytesHex` keys. A
+// rule's name and category are written as they are, so they have to be plain text already:
+// Config::validate refuses a configuration whose rule breaks that, before a scan starts, and
+// this writer asks unwritableFinding() - the question the CSV and text writers ask too - for
+// a rule set that was not loaded through it. nlohmann's own refusal of a string that is not
+// valid UTF-8 is caught behind that, as the last line. Either refusal stops the writer the
+// same way: the record is not written, nothing further is, not even the closing brackets,
+// badbit is set on the stream and the reason is kept for failure(). The document is left
+// unparseable deliberately. Closing it would hand a consumer that does not read the exit
+// code a valid report that silently lacks a file; left open, no parser mistakes it for a
+// complete answer. The scan itself carries on and the command exits 1 with the reason on
+// stderr - see ScanUseCase::runScan.
 class JsonReportWriter : public ReportWriter {
 public:
     explicit JsonReportWriter(std::ostream& out) : out_(out) {}

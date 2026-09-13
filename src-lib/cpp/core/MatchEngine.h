@@ -179,7 +179,7 @@ private:
     std::vector<size_t> residualRuleOf_;   // set id -> index into builtinRules_
 
     std::vector<std::unique_ptr<Rule>> rules_;  // Custom YAML rules
-    std::vector<const rules::BuiltinRule*> builtinRules_;  // Built-in CTRE rules
+    std::vector<const rules::BuiltinRule*> builtinRules_;  // Built-in rules: RE2 patterns and analyzers
 
     // The FN rules that are live, kept apart from builtinRules_ because they must never
     // be run against content: they have no patterns, so the content loop would walk

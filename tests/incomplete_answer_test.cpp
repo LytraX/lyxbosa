@@ -46,6 +46,7 @@
 #include "infrastructure/ResultPrinter.h"
 #include "infrastructure/report/CsvReportWriter.h"
 #include "infrastructure/report/JsonReportWriter.h"
+#include "infrastructure/report/ReportWriterFactory.h"
 #include "system/CliArgs.h"
 #include "use-cases/CheckUseCase.h"
 #include "use-cases/ScanUseCase.h"
@@ -303,6 +304,9 @@ TEST(CheckCoverageTest, ATruncatedArchiveIsNotReportedAsClean) {
 // The companion that makes the case above mean something: a `check` that refused every
 // archive would pass it and fail this.
 TEST(CheckCoverageTest, TheSameArchiveIntactStillReportsTheShellAndExitsTwo) {
+    if (const auto why = test::whyTheTemporaryDirectoryWillNotHold(kShell)) {
+        GTEST_SKIP() << *why;
+    }
     TempDir dir;
     writeFile(dir.file("shell.php.gz"), gzipCompress(kShell));
 
@@ -373,6 +377,9 @@ TEST(CheckCoverageTest, MembersThePolicyDidNotSelectAreNamedAndStillExitZero) {
 // would be a worse defect than the one being fixed - and the exit code still says the
 // answer is partial, which is what `scan` already does for a root that was gone.
 TEST(CheckCoverageTest, AnIncompleteAnswerTakesTheExitCodeAndStillPrintsWhatWasFound) {
+    if (const auto why = test::whyTheTemporaryDirectoryWillNotHold(kShell)) {
+        GTEST_SKIP() << *why;
+    }
     TempDir dir;
     // A cap the shell member fits under and the other does not, so exactly one member
     // goes unread and the finding in the other is still there to be printed.
@@ -521,6 +528,10 @@ TEST(ReportDeliveryTest, AReportThatWritesStillExitsAsTheFindingsSay) {
     TempDir dir;
     writeFile(dir.path() / "clean" / "page.php", "<?php echo 1;\n");
     writeFile(dir.path() / "dirty" / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(dir.path() / "dirty" / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
 
     const fs::path cleanReport = dir.file("clean.txt");
     EXPECT_EQ(scanExitCode({dir.path() / "clean"}, cleanReport.string()), 0);
@@ -545,20 +556,34 @@ TEST(ReportDeliveryTest, AReportPathThatCannotBeOpenedIsStillRefusedBeforeTheSca
     EXPECT_EQ(scanExitCode({dir.path() / "tree"}, impossible.string()), 1);
 }
 
-// A JSON report that stopped because a finding could not be encoded. The realistic way to
-// reach it is a custom rule whose name is not valid UTF-8: the name comes from the
-// configuration file as written, the writer refuses it, and the report is incomplete. It
-// used to be written with the raw bytes, which made a document no parser accepts, and the
-// scan exited by its findings. JsonReportWriter.h says why the report is now left open.
+// ===========================================================================
+// A rule whose text is not plain text
+// ===========================================================================
+
+// A custom rule whose name or category is not plain text. Every report writes a rule's name
+// and category as the configuration spells them, so a name that is not valid UTF-8 made a JSON
+// document no parser accepts, a CSV cell in no encoding and a line of text written raw, and a
+// name carrying ESC drove the terminal the text report was read on. The three formats did not
+// even agree: JSON stopped and exited 1, CSV and text wrote the bytes and exited 2.
+//
+// The configuration is refused now, before a scan starts and whatever report was asked for, so
+// these cases are about a scan that never began: the same sentence, the same exit code, no
+// report file and nothing on standard output, in every format and from both commands. The
+// companion is the same rule with a name that is valid UTF-8 and not ASCII, delivered in all
+// three formats - without it, every refusal here would pass against a loader that refused all
+// custom rules.
 namespace {
 
-// A configuration scanning `root` with one custom rule, named `ruleName`, that matches
-// kShell. The byte 0xFF passes through yaml-cpp inside a double-quoted scalar unchanged.
-void writeRuleConfig(const fs::path& path, const fs::path& root, const std::string& ruleName) {
+// A configuration scanning `root` with one custom rule, named `ruleName` and filed under
+// `category`, that matches kShell. Bytes that are not valid UTF-8 and a raw ESC both pass
+// through yaml-cpp inside a double-quoted scalar unchanged, which is how the file an operator
+// saves from an editor in the wrong encoding reaches the loader.
+void writeRuleConfig(const fs::path& path, const fs::path& root, const std::string& ruleName,
+                     const std::string& category = "probe") {
     writeFile(path, "scan:\n  directories:\n    - " + root.string() +
                         "\nrules:\n  - name: \"" + ruleName +
                         "\"\n    description: probe\n    severity: high\n"
-                        "    category: probe\n    patterns:\n"
+                        "    category: \"" + category + "\"\n    patterns:\n"
                         "      - type: string\n        value: \"base64_decode\"\n");
 }
 
@@ -583,36 +608,21 @@ struct DeliveryRun {
     std::string err;
 };
 
-// `lyxbosa scan -c CONFIG -o json [-O REPORT] --quiet --force`. --quiet is on because a
-// report that was not delivered is not progress chatter and must survive it.
-DeliveryRun scanJson(const fs::path& config, const std::optional<fs::path>& report) {
-    CliArgs args;
-    args.configFile = config.string();
-    args.force = true;
-    args.quarantine = false;
-    args.quiet = true;
-    args.noPreCount = true;
-    args.outputFormat = ReportFormat::Json;
-    args.outputFormatExplicit = true;
-    if (report) {
-        args.outputFile = report->string();
-    }
-
-    const Terminal terminal(/*useAnsi=*/false);
-    const TerminalCaps caps = TerminalCaps::detect();
-
+// Runs `body` with standard output and standard error captured.
+template <typename Body>
+DeliveryRun captured(Body&& body) {
     DeliveryRun run;
     testing::internal::CaptureStdout();
     testing::internal::CaptureStderr();
     const auto release = [&run] {
         run.err = testing::internal::GetCapturedStderr();
         run.out = testing::internal::GetCapturedStdout();
-        // The writer marks the stream it stopped on, and for the report on standard output
-        // that stream is this process's std::cout, which every later case shares.
+        // A writer that stops marks the stream it stopped on, and for the report on standard
+        // output that stream is this process's std::cout, which every later case shares.
         std::cout.clear();
     };
     try {
-        run.code = ScanUseCase(terminal, caps).execute(args);
+        run.code = body();
     } catch (...) {
         // Released before gtest reports the exception, or its report is captured with the
         // rest and nobody sees which case failed.
@@ -623,67 +633,492 @@ DeliveryRun scanJson(const fs::path& config, const std::optional<fs::path>& repo
     return run;
 }
 
+// `lyxbosa scan -c CONFIG -o FORMAT [-O REPORT] --quiet --force`. --quiet is on because a
+// report that was not delivered is not progress chatter and must survive it.
+DeliveryRun scanWith(const fs::path& config, ReportFormat format,
+                     const std::optional<fs::path>& report) {
+    CliArgs args;
+    args.configFile = config.string();
+    args.force = true;
+    args.quarantine = false;
+    args.quiet = true;
+    args.noPreCount = true;
+    args.outputFormat = format;
+    args.outputFormatExplicit = true;
+    if (report) {
+        args.outputFile = report->string();
+    }
+
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+    return captured([&] { return ScanUseCase(terminal, caps).execute(args); });
+}
+
+DeliveryRun checkWith(const fs::path& config, const fs::path& file) {
+    CliArgs args;
+    args.configFile = config.string();
+    args.checkFile = file.string();
+
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+    return captured([&] { return CheckUseCase(terminal, caps).execute(args); });
+}
+
+std::string readAll(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), {});
+}
+
+constexpr ReportFormat kEveryFormat[] = {ReportFormat::Text, ReportFormat::Csv,
+                                         ReportFormat::Json};
+
+// The bytes the refusals below may never print, whatever else they say.
+bool carriesRawByte(const std::string& text) {
+    return contains(text, "\xff") || contains(text, "\x1b");
+}
+
+struct HostileText {
+    const char* label;
+    std::string name;
+    std::string category;
+    std::string expected;   // what the refusal has to say, exactly
+};
+
+std::vector<HostileText> hostileRuleText() {
+    return {
+        {"a name that is not valid UTF-8", "Probe\xff name", "probe",
+         "Rule 1 (\"Probe\\xff name\"): its name is not valid UTF-8 (byte 0xff at offset 5)."},
+        {"a name carrying ESC", "Probe \x1b[2J name", "probe",
+         "Rule 1 (\"Probe \\x1b[2J name\"): its name carries a control character "
+         "(0x1b at offset 6)."},
+        {"a category that is not valid UTF-8", "Probe name", "pro\xff" "be",
+         "Rule 1 (\"Probe name\"): its category is not valid UTF-8 (byte 0xff at offset 3)."},
+        {"a category carrying ESC", "Probe name", "pro\x1b]0;x\x07" "be",
+         "Rule 1 (\"Probe name\"): its category carries a control character "
+         "(0x1b at offset 3)."},
+    };
+}
+
 }  // namespace
 
-TEST(ReportDeliveryTest, AJsonReportThatCouldNotEncodeAFindingIsNotDelivered) {
-    TempDir dir;
-    writeFile(dir.path() / "tree" / "shell.php", kShell);
-    writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", "Probe\xff name");
-    const fs::path report = dir.file("report.json");
+TEST(RuleTextTest, AScanWithARuleThatIsNotPlainTextNeverStartsInAnyFormat) {
+    for (const auto& hostile : hostileRuleText()) {
+        SCOPED_TRACE(hostile.label);
+        TempDir dir;
+        writeFile(dir.path() / "tree" / "shell.php", kShell);
+        writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", hostile.name,
+                        hostile.category);
 
-    const DeliveryRun run = scanJson(dir.file("lyxbosa.yaml"), report);
+        std::optional<std::string> firstErr;
+        for (const ReportFormat format : kEveryFormat) {
+            SCOPED_TRACE(std::string(reportFormatToString(format)));
+            const fs::path report = dir.file("report." + std::string(reportFormatToString(format)));
 
-    EXPECT_EQ(run.code, 1) << run.err;
-    EXPECT_TRUE(contains(run.err, "the report could not be written to")) << run.err;
-    EXPECT_TRUE(contains(run.err, "could not be written as JSON")) << run.err;
-    EXPECT_TRUE(contains(run.err, "invalid UTF-8")) << run.err;
-    EXPECT_TRUE(contains(run.err, "shell.php")) << "the reason names the file: " << run.err;
-    EXPECT_FALSE(contains(run.err, "Report written")) << run.err;
+            for (const bool toFile : {true, false}) {
+                const DeliveryRun run = scanWith(dir.file("lyxbosa.yaml"), format,
+                                                 toFile ? std::optional(report) : std::nullopt);
+                EXPECT_EQ(run.code, 1) << run.err;
+                EXPECT_TRUE(contains(run.err, "Error: " + hostile.expected)) << run.err;
+                EXPECT_FALSE(carriesRawByte(run.err)) << "the refusal quotes the bytes raw";
+                EXPECT_EQ(run.out, "") << "a scan that never started wrote a report";
+                EXPECT_FALSE(fs::exists(report)) << "the report file was opened";
+                EXPECT_FALSE(contains(run.err, "Report written")) << run.err;
 
-    // What reached the disk is the frame and nothing a parser would call complete.
-    std::ifstream in(report, std::ios::binary);
-    const std::string written((std::istreambuf_iterator<char>(in)), {});
-    EXPECT_EQ(written.find('\xff'), std::string::npos) << "the raw byte never reaches the file";
-    EXPECT_EQ(written.find('}'), std::string::npos) << written;
+                // One sentence, not three that agree today.
+                if (!firstErr) firstErr = run.err;
+                EXPECT_EQ(run.err, *firstErr);
+            }
+        }
+
+        // `check` loads the same file and answers the same way.
+        const DeliveryRun checked = checkWith(dir.file("lyxbosa.yaml"),
+                                              dir.path() / "tree" / "shell.php");
+        EXPECT_EQ(checked.code, 1) << checked.err;
+        EXPECT_EQ(checked.err, *firstErr);
+        EXPECT_EQ(checked.out, "");
+    }
 }
 
-TEST(ReportDeliveryTest, AJsonReportOnStandardOutputThatCouldNotEncodeAFindingExitsOne) {
+// The companion: the same rule named in Greek, with a comma, a quote and a line break in the
+// category that CSV has to quote rather than refuse. Delivered in every format, to a file and
+// to standard output, and exits by its finding.
+TEST(RuleTextTest, TheSameRuleWithPlainTextIsDeliveredInEveryFormatAndExitsTwo) {
     TempDir dir;
     writeFile(dir.path() / "tree" / "shell.php", kShell);
-    writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", "Probe\xff name");
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(dir.path() / "tree" / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
+    const std::string name = "Probe \xce\xb1 name";
+    writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", name, "eval, \\\"quoted\\\"");
 
-    const DeliveryRun run = scanJson(dir.file("lyxbosa.yaml"), std::nullopt);
+    for (const ReportFormat format : kEveryFormat) {
+        SCOPED_TRACE(std::string(reportFormatToString(format)));
+        const fs::path report = dir.file("report." + std::string(reportFormatToString(format)));
+
+        const DeliveryRun toFile = scanWith(dir.file("lyxbosa.yaml"), format, report);
+        EXPECT_EQ(toFile.code, 2) << toFile.err;
+        EXPECT_FALSE(contains(toFile.err, "could not be written")) << toFile.err;
+        const std::string written = readAll(report);
+
+        const DeliveryRun toStdout = scanWith(dir.file("lyxbosa.yaml"), format, std::nullopt);
+        EXPECT_EQ(toStdout.code, 2) << toStdout.err;
+        EXPECT_FALSE(contains(toStdout.err, "incomplete")) << toStdout.err;
+
+        for (const std::string& text : {written, toStdout.out}) {
+            switch (format) {
+                case ReportFormat::Json:
+                    EXPECT_TRUE(contains(text, "\"rule\":\"Probe \xce\xb1 name\"")) << text;
+                    EXPECT_TRUE(contains(text, "\"category\":\"eval, \\\"quoted\\\"\"")) << text;
+                    EXPECT_TRUE(endsClosed(text)) << text;
+                    break;
+                case ReportFormat::Csv:
+                    EXPECT_TRUE(contains(text, ",Probe \xce\xb1 name,high,")) << text;
+                    EXPECT_TRUE(contains(text, ",\"eval, \"\"quoted\"\"\",")) << text;
+                    break;
+                case ReportFormat::Text:
+                    // The compact view names the file and counts; the summary closes it.
+                    EXPECT_TRUE(contains(text, "shell.php")) << text;
+                    break;
+            }
+        }
+        if (format == ReportFormat::Text) {
+            EXPECT_TRUE(contains(written, "Scan Summary")) << written;
+        }
+    }
+
+    const DeliveryRun checked = checkWith(dir.file("lyxbosa.yaml"),
+                                          dir.path() / "tree" / "shell.php");
+    EXPECT_EQ(checked.code, 2) << checked.err;
+    EXPECT_TRUE(contains(checked.out, name)) << checked.out;
+}
+
+// What the loader does and does not hold to the rule, directly. A description is prose and
+// may break lines, which is how a YAML block scalar writes a long one; a pattern's value is
+// never printed and may carry anything, since a needle holding ESC is how a rule looks for
+// escapes planted in a file; a file saved with Windows line endings still loads, because the
+// line ending is YAML's and not the scalar's. Each "loads" below is the companion of a
+// refusal beside it.
+TEST(RuleTextTest, TheLoaderRefusesOnlyTheTextAReportCarries) {
+    const auto rule = [](const std::string& fields) {
+        return "rules:\n  - name: \"Probe\"\n    severity: high\n" + fields +
+               "    patterns:\n      - type: string\n        value: \"x\"\n";
+    };
+    const auto refusal = [](const std::string& yaml) -> std::string {
+        try {
+            Config::loadFromString(yaml);
+        } catch (const ConfigError& e) {
+            return e.what();
+        }
+        return "";
+    };
+
+    // A description is held to the rule, except for line breaks.
+    EXPECT_TRUE(contains(refusal(rule("    description: \"one\\etwo\"\n")),
+                         "Rule 1 (\"Probe\"): its description carries a control character "
+                         "(0x1b at offset 3)."));
+    EXPECT_TRUE(contains(refusal(rule("    description: \"one\xfftwo\"\n")),
+                         "its description is not valid UTF-8 (byte 0xff at offset 3)"));
+    EXPECT_EQ(refusal(rule("    description: |\n      one\n      \ttwo\n")), "");
+
+    // A name or category may not break lines at all: one finding is one line of the text
+    // report, and a name is what a person types into a search.
+    EXPECT_TRUE(contains(refusal("rules:\n  - name: \"Pro\\nbe\"\n    patterns:\n"
+                                 "      - type: string\n        value: x\n"),
+                         "its name carries a control character (0x0a at offset 3)"));
+    EXPECT_TRUE(contains(refusal(rule("    category: \"a\\tb\"\n")),
+                         "its category carries a control character (0x09 at offset 1)"));
+
+    // The value is not checked.
+    EXPECT_EQ(refusal("rules:\n  - name: Probe\n    patterns:\n      - type: string\n"
+                      "        value: \"\\e]52;c;\"\n"),
+              "");
+
+    // Windows line endings are YAML's, not the name's.
+    const AppConfig crlf = Config::loadFromString(
+        "rules:\r\n  - name: Probe name\r\n    category: probe\r\n    description: |\r\n"
+        "      one\r\n      two\r\n    patterns:\r\n      - type: string\r\n"
+        "        value: x\r\n");
+    ASSERT_EQ(crlf.rules.size(), 1u);
+    EXPECT_EQ(crlf.rules[0].name, "Probe name");
+    EXPECT_EQ(crlf.rules[0].category, "probe");
+
+    // The rule is identified by position and by its escaped name, the only name it has.
+    EXPECT_TRUE(contains(refusal("rules:\n  - name: ok\n    patterns:\n      - type: string\n"
+                                 "        value: x\n  - name: \"b\xc0\xaf\"\n    patterns:\n"
+                                 "      - type: string\n        value: x\n"),
+                         "Rule 2 (\"b\\xc0\\xaf\"): its name is not valid UTF-8 (byte 0xc0 "
+                         "at offset 1)."));
+}
+
+// The second line, for a rule set that was not loaded through Config: every writer is handed
+// the same finding and refuses it in the same words, keeps nothing of the record, writes
+// nothing after it and marks its stream. Then the companion, a name each of them writes.
+TEST(RuleTextTest, EveryWriterRefusesTheSameFindingInTheSameWords) {
+    const auto finding = [](std::string name, std::string category) {
+        FileResult file;
+        file.path = "/var/www/site/bad.php";
+        FileMatch match;
+        match.ruleName = std::move(name);
+        match.category = std::move(category);
+        match.severity = Severity::High;
+        file.matches.push_back(match);
+        return file;
+    };
+
+    struct Case {
+        const char* label;
+        FileResult file;
+        const char* why;
+    };
+    const std::vector<Case> cases = {
+        {"name not UTF-8", finding("Probe\xff", "probe"),
+         "the name of rule \"Probe\\xff\" is not valid UTF-8 (byte 0xff at offset 5)"},
+        {"name with ESC", finding("Probe\x1b[2J", "probe"),
+         "the name of rule \"Probe\\x1b[2J\" carries a control character (0x1b at offset 5)"},
+        {"category not UTF-8", finding("Probe", "pro\xff"),
+         "the category of rule \"Probe\" is not valid UTF-8 (byte 0xff at offset 3)"},
+        {"category with ESC", finding("Probe", "pro\x1b"),
+         "the category of rule \"Probe\" carries a control character (0x1b at offset 3)"},
+    };
+
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.label);
+        for (const ReportFormat format : kEveryFormat) {
+            SCOPED_TRACE(std::string(reportFormatToString(format)));
+            std::ostringstream out;
+            const auto writer = makeReportWriter(format, out, /*color=*/false, 100,
+                                                 /*verbose=*/true, /*summary=*/true);
+            writer->begin();
+            const std::string before = out.str();
+
+            writer->onFile(c.file);
+            FileResult later = finding("Later", "probe");
+            later.path = "/var/www/site/later.php";
+            writer->onFile(later);
+            writer->end(ScanResult{}, false);
+
+            const std::string label =
+                format == ReportFormat::Json ? "JSON"
+                : format == ReportFormat::Csv ? "CSV" : "text";
+            EXPECT_TRUE(writer->failure().has_value()) << "this writer did not refuse";
+            EXPECT_EQ(writer->failure().value_or(""), "the record for /var/www/site/bad.php could not be "
+                                          "written as " + label + ": " + c.why);
+            EXPECT_EQ(out.str(), before) << "something was written after the refusal";
+            EXPECT_TRUE(out.bad()) << "a caller holding only the stream must see it too";
+        }
+    }
+
+    for (const ReportFormat format : kEveryFormat) {
+        SCOPED_TRACE(std::string(reportFormatToString(format)));
+        std::ostringstream out;
+        const auto writer = makeReportWriter(format, out, false, 100, true, true);
+        writer->begin();
+        writer->onFile(finding("\xce\x94\xce\xbf\xce\xba\xce\xb9\xce\xbc\xce\xae", "a, \"b\""));
+        writer->end(ScanResult{}, false);
+        EXPECT_FALSE(writer->failure()) << *writer->failure();
+        EXPECT_FALSE(out.bad());
+        EXPECT_TRUE(contains(out.str(), "\xce\x94\xce\xbf\xce\xba\xce\xb9\xce\xbc\xce\xae"))
+            << out.str();
+    }
+}
+
+// ===========================================================================
+// Configuration values quoted on the terminal
+// ===========================================================================
+
+// A rule's name is refused at load because a report writes it as it is. The configuration's
+// other strings are not written into a report - a path in one is rendered by pathForDisplay -
+// but several are quoted on the terminal: the pre-scan summary, the refusals about the
+// quarantine directory and the report file, and the refusal of an `updates` value. Those were
+// quoted raw. Refusing them would be wrong for a path, which a scan has to be able to name
+// whatever bytes it holds, so they are escaped where they are printed: a path through the
+// function that renders it everywhere else, anything else through the escaper.
+//
+// Every value below carries ESC or BEL, and every case asserts that neither byte reaches the
+// output and that the escaped spelling does, beside a plain value printed verbatim.
+namespace {
+
+bool carriesTerminalControl(const std::string& text) {
+    return contains(text, "\x1b") || contains(text, "\x07");
+}
+
+std::string loadRefusal(const std::string& yaml) {
+    try {
+        Config::loadFromString(yaml);
+    } catch (const ConfigError& e) {
+        return e.what();
+    }
+    return "";
+}
+
+}  // namespace
+
+TEST(TerminalQuoteTest, ARefusedUpdatesValueIsQuotedEscaped) {
+    const std::string check = loadRefusal("updates:\n  check: \"of\\e[2Jf\"\n");
+    EXPECT_TRUE(contains(check, "Invalid updates.check value: 'of\\x1b[2Jf'")) << check;
+    EXPECT_FALSE(carriesTerminalControl(check));
+
+    const std::string interval = loadRefusal("updates:\n  interval: \"da\\e]0;x\\aily\"\n");
+    EXPECT_TRUE(contains(interval, "Invalid updates.interval value: 'da\\x1b]0;x\\x07ily'"))
+        << interval;
+    EXPECT_FALSE(carriesTerminalControl(interval));
+
+    // A plain typo is still quoted as it was typed.
+    EXPECT_TRUE(contains(loadRefusal("updates:\n  check: of\n"),
+                         "Invalid updates.check value: 'of'"));
+}
+
+TEST(TerminalQuoteTest, ThePreScanSummaryEscapesWhatTheConfigurationSupplied) {
+    AppConfig config = Config::loadFromString(Config::generateDefault());
+    config.scan.directories = {"/srv/a\x1b]0;x\x07" "b", "/srv/plain, dir"};
+    config.scan.include = {"*.p\x1b[31mhp", "*.\xce\xb1"};
+    config.scan.exclude = {};
+    config.actions.quarantine.enabled = true;
+    config.actions.quarantine.directory = "/q\x1b[31m";
+    config.actions.alert.enabled = true;
+    config.actions.alert.to = "soc\x1b]52;c;eA==\x07@example.com";
+
+    testing::internal::CaptureStderr();
+    Config::printSummary(config, 200, /*verbose=*/true);
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    EXPECT_FALSE(carriesTerminalControl(err)) << safe_text::sanitize(err);
+    EXPECT_TRUE(contains(err, "    /srv/a\\x1b]0;x\\x07b\n")) << err;
+    EXPECT_TRUE(contains(err, "    /srv/plain, dir\n")) << err;
+    EXPECT_TRUE(contains(err, "*.p\\x1b[31mhp  *.\xce\xb1")) << err;
+    EXPECT_TRUE(contains(err, "quarantine to /q\\x1b[31m")) << err;
+    EXPECT_TRUE(contains(err, "alert to soc\\x1b]52;c;eA==\\x07@example.com")) << err;
+}
+
+TEST(TerminalQuoteTest, TheQuarantineDirectoryIsQuotedEscapedWhenAScanIsRefused) {
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "shell.php", kShell);
+
+    // Inside the scanned tree: refused, naming both paths.
+    const fs::path inside = dir.path() / "tree" / "q\x1b[31m";
+    // Outside it, on an unattended run that did not pass --quarantine: refused, naming it.
+    const fs::path outside = dir.path() / "q\x1b]0;x\x07";
+
+    for (const auto& [destination, sentence] :
+         {std::pair{inside, std::string("is inside a scanned directory")},
+          std::pair{outside, std::string("which moves matched files to")}}) {
+        SCOPED_TRACE(sentence);
+        // Forward slashes, because a Windows separator inside a YAML double-quoted scalar
+        // is an escape. The scalar reads the escaper's \xNN back as the byte, so the
+        // configuration holds the raw control and the scan is handed exactly `raw`.
+        const std::string raw = destination.generic_string();
+        writeFile(dir.file("lyxbosa.yaml"),
+                  "actions:\n  quarantine:\n    enabled: true\n    directory: \"" +
+                      safe_text::sanitize(raw) + "\"\n");
+        CliArgs args;
+        args.configFile = dir.file("lyxbosa.yaml").string();
+        args.directories = {(dir.path() / "tree").string()};
+        args.force = true;
+        args.noPreCount = true;
+        const Terminal terminal(/*useAnsi=*/false);
+        const TerminalCaps caps = TerminalCaps::detect();
+        const DeliveryRun run = captured([&] { return ScanUseCase(terminal, caps).execute(args); });
+
+        EXPECT_EQ(run.code, 1) << run.err;
+        EXPECT_TRUE(contains(run.err, sentence)) << run.err;
+        EXPECT_TRUE(contains(run.err, pathForDisplay(fs::path(raw)))) << run.err;
+        EXPECT_NE(pathForDisplay(fs::path(raw)), raw)
+            << "the case lost its control byte on the way to the scan";
+        EXPECT_FALSE(carriesTerminalControl(run.err)) << safe_text::sanitize(run.err);
+    }
+}
+
+TEST(TerminalQuoteTest, TheReportFileIsQuotedEscapedWhetherOrNotItCouldBeWritten) {
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "page.php", "<?php echo 1;\n");
+    writeFile(dir.file("not-a-directory"), "x");
+
+    const auto scanTo = [&](const fs::path& report) {
+        CliArgs args;
+        args.directories = {(dir.path() / "tree").string()};
+        args.outputFile = report.string();
+        args.force = true;
+        args.quarantine = false;
+        args.noPreCount = true;
+        const Terminal terminal(/*useAnsi=*/false);
+        const TerminalCaps caps = TerminalCaps::detect();
+        return captured([&] { return ScanUseCase(terminal, caps).execute(args); });
+    };
+
+    // A report path that cannot be opened, on every platform: its parent is a file.
+    const fs::path unopenable = dir.file("not-a-directory") / "rep\x1b[31m.txt";
+    const DeliveryRun refused = scanTo(unopenable);
+    EXPECT_EQ(refused.code, 1) << refused.err;
+    EXPECT_TRUE(contains(refused.err, "cannot open output file for writing: " +
+                                          pathForDisplay(unopenable)))
+        << refused.err;
+    EXPECT_FALSE(carriesTerminalControl(refused.err)) << safe_text::sanitize(refused.err);
+
+    // One that can, where the filesystem allows the name - and inside the scanned tree, so
+    // the warning that names the scanned directory is printed too.
+    const fs::path hostileRoot = dir.path() / "tree" / "sub\x1b]0;x\x07";
+    std::error_code ec;
+    fs::create_directories(hostileRoot, ec);
+    if (ec || !fs::is_directory(hostileRoot)) {
+        GTEST_SKIP() << "this filesystem refused a directory name carrying ESC and BEL, so "
+                        "a report written under one cannot be observed here; the unopenable "
+                        "half above ran";
+    }
+    writeFile(hostileRoot / "page.php", "<?php echo 1;\n");
+
+    CliArgs args;
+    args.directories = {hostileRoot.string()};
+    args.outputFile = (hostileRoot / "report.txt").string();
+    args.force = true;
+    args.quarantine = false;
+    args.noPreCount = true;
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+    const DeliveryRun written =
+        captured([&] { return ScanUseCase(terminal, caps).execute(args); });
+
+    EXPECT_EQ(written.code, 0) << written.err;
+    EXPECT_TRUE(contains(written.err, "Report written to " +
+                                          pathForDisplay(hostileRoot / "report.txt")))
+        << written.err;
+    EXPECT_TRUE(contains(written.err, "the report file is inside a scanned directory (" +
+                                          pathForDisplay(hostileRoot) + ")"))
+        << written.err;
+    EXPECT_FALSE(carriesTerminalControl(written.err)) << safe_text::sanitize(written.err);
+}
+
+// The third message about the report file: opened, and then the write failed. A link with a
+// hostile name to the device that refuses every write, where the host has one.
+TEST(TerminalQuoteTest, AReportThatCouldNotBeWrittenIsQuotedEscaped) {
+    std::string sink;
+    if (const auto why = test::whyCannotFailAWrite(sink)) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    writeFile(dir.path() / "tree" / "page.php", "<?php echo 1;\n");
+    const fs::path link = dir.file("full\x1b[31m.txt");
+    std::error_code ec;
+    fs::create_symlink(sink, link, ec);
+    if (ec) {
+        GTEST_SKIP() << "this host would not create a link named with ESC to " << sink
+                     << ", so a write that fails under such a name cannot be observed here";
+    }
+
+    CliArgs args;
+    args.directories = {(dir.path() / "tree").string()};
+    args.outputFile = link.string();
+    args.force = true;
+    args.quarantine = false;
+    args.noPreCount = true;
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+    const DeliveryRun run = captured([&] { return ScanUseCase(terminal, caps).execute(args); });
 
     EXPECT_EQ(run.code, 1) << run.err;
-    EXPECT_TRUE(contains(run.err, "the report written to standard output is incomplete"))
+    EXPECT_TRUE(contains(run.err, "the report could not be written to " + pathForDisplay(link)))
         << run.err;
-    EXPECT_TRUE(contains(run.err, "invalid UTF-8")) << run.err;
-    EXPECT_EQ(run.out.find('\xff'), std::string::npos);
-    EXPECT_EQ(run.out.find('}'), std::string::npos) << run.out;
-}
-
-// The companion to both: the same rule with a name that is valid UTF-8 is delivered, to a
-// file and to standard output, and the scan exits by its finding. Without it the two cases
-// above would pass against a command that refused every JSON report.
-TEST(ReportDeliveryTest, TheSameRuleWithAValidNameIsDeliveredAndExitsTwo) {
-    TempDir dir;
-    writeFile(dir.path() / "tree" / "shell.php", kShell);
-    writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", "Probe \xce\xb1 name");
-    const fs::path report = dir.file("report.json");
-
-    const DeliveryRun toFile = scanJson(dir.file("lyxbosa.yaml"), report);
-    EXPECT_EQ(toFile.code, 2) << toFile.err;
-    EXPECT_FALSE(contains(toFile.err, "could not be written")) << toFile.err;
-    std::ifstream in(report, std::ios::binary);
-    const std::string written((std::istreambuf_iterator<char>(in)), {});
-    EXPECT_TRUE(contains(written, "\"rule\":\"Probe \xce\xb1 name\"")) << written;
-    EXPECT_TRUE(endsClosed(written)) << written;
-
-    const DeliveryRun toStdout = scanJson(dir.file("lyxbosa.yaml"), std::nullopt);
-    EXPECT_EQ(toStdout.code, 2) << toStdout.err;
-    EXPECT_FALSE(contains(toStdout.err, "incomplete")) << toStdout.err;
-    EXPECT_TRUE(contains(toStdout.out, "\"rule\":\"Probe \xce\xb1 name\"")) << toStdout.out;
-    EXPECT_TRUE(endsClosed(toStdout.out)) << toStdout.out;
+    EXPECT_FALSE(carriesTerminalControl(run.err)) << safe_text::sanitize(run.err);
 }
 
 // ===========================================================================
@@ -702,6 +1137,10 @@ TEST(QuarantineFailureTest, AQuarantineThatCannotCompleteIsCountedAndTheFileIsNa
     const fs::path root = dir.path() / "site";
     const fs::path shell = root / "wp" / "shell.php";
     writeFile(shell, kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
     writeFile(dir.file("blocker"), "a regular file, so nothing can be made under it");
 
     const ScanResult result =
@@ -730,6 +1169,10 @@ TEST(QuarantineFailureTest, AQuarantineThatSucceedsIsCountedOnceAndNotAsAFailure
     const fs::path root = dir.path() / "site";
     const fs::path shell = root / "wp" / "shell.php";
     writeFile(shell, kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
 
     const ScanResult result = runScan(quarantineConfig(root, quarantine.path()));
 
@@ -776,7 +1219,11 @@ TEST(QuarantineFailureTest, TheDiagnosticSurvivesQuietAndCapsItsList) {
     TempDir dir;
     const fs::path root = dir.path() / "site";
     for (int i = 1; i <= 12; ++i) {
-        writeFile(root / ("shell" + std::to_string(i) + ".php"), kShell);
+        const fs::path shell = root / ("shell" + std::to_string(i) + ".php");
+        writeFile(shell, kShell);
+        if (const auto why = test::whyTheFixtureIsNotOnDisk(shell, kShell)) {
+            GTEST_SKIP() << *why;
+        }
     }
     writeFile(dir.file("blocker"), "a regular file");
     writeQuarantineConfig(dir.file("scan.yaml"), root, dir.file("blocker") / "quarantine");
@@ -796,6 +1243,10 @@ TEST(QuarantineFailureTest, TheDiagnosticIsAbsentWhenEveryMoveSucceeded) {
     TempDir quarantine;
     const fs::path root = dir.path() / "site";
     writeFile(root / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(root / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
     writeQuarantineConfig(dir.file("scan.yaml"), root, quarantine.path());
 
     const ScanRun run = scanQuietly(dir.file("scan.yaml"), dir.file("report.txt"));
@@ -1646,6 +2097,10 @@ TEST(LoopCoverageTest, ALoopDoesNotMoveTheExitCode) {
 
     const fs::path hostile = dir.path() / "hostile";
     writeFile(hostile / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(hostile / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
     ASSERT_TRUE(makeSelfLinkedTree(hostile));
 
     writeFile(dir.file("clean.yaml"),
@@ -1698,6 +2153,10 @@ TEST(InterruptedScanTest, AnInterruptOutranksTheFinding) {
     TempDir dir;
     const fs::path root = dir.path() / "site";
     writeFile(root / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(root / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
 
     InterruptGuard guard;
     EXPECT_EQ(scanExitCode({root}, dir.file("found.txt").string()), 2)

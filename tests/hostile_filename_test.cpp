@@ -34,9 +34,12 @@
 #include "rules/filename.h"
 #include "utils/SafeText.h"
 
+#include "PlatformSkips.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -63,6 +66,40 @@ std::set<std::string> codesFor(std::string_view name) {
 
 bool fires(std::string_view name) { return !fn::examine(name).empty(); }
 
+// The name a parameterised case over a file name is listed and failed under.
+//
+// Left to itself gtest names each case by its index and prints the parameter as the bytes of
+// the struct, so a failure read `RaisesTheRuleItIsTheControlFor/3` beside "24-byte object"
+// and a hex dump of three pointers - the name under test, the only thing the reader needed,
+// was nowhere. It cannot be used as it is either: gtest accepts only letters, digits and
+// underscores in a case name, and these names are made of everything else. So the case is
+// called by its rule, its position, and the name's ASCII letters and digits with each run of
+// anything else as one underscore - `FN001_00_x_sleep_20_y_6a9fe85b_f3_mdb`. The position is
+// what keeps it unique: two names differing only in punctuation collapse to the same
+// letters, and gtest refuses a duplicate at registration rather than running either.
+std::string caseName(std::string_view code, size_t index, std::string_view name) {
+    constexpr size_t kLetters = 48;
+    std::string out(code);
+    out += index < 10 ? "_0" : "_";
+    out += std::to_string(index);
+    out += '_';
+    std::string letters;
+    for (const char c : name) {
+        const auto u = static_cast<unsigned char>(c);
+        const bool keep = u < 0x80 && std::isalnum(u);
+        if (keep) {
+            letters += c;
+        } else if (!letters.empty() && letters.back() != '_') {
+            letters += '_';
+        }
+        if (letters.size() >= kLetters) break;
+    }
+    while (!letters.empty() && letters.back() == '_') {
+        letters.pop_back();
+    }
+    return out + (letters.empty() ? "no_letters" : letters);
+}
+
 // ---------------------------------------------------------------------------
 // The observed names, one per rule, exactly as they were on the server.
 //
@@ -77,6 +114,13 @@ struct Observed {
     const char* name;     // as it was on disk
     const char* what;     // what makes it that rule's case, for a failure message
 };
+
+// What gtest prints for `GetParam()` in the listing and beside a failure. Escaped, because
+// the names carry the newlines and control bytes they are the cases for.
+void PrintTo(const Observed& observed, std::ostream* os) {
+    *os << observed.code << " \"" << safe_text::sanitize(observed.name) << "\" ("
+        << observed.what << ")";
+}
 
 const Observed kObserved[] = {
     {"FN001", "x$(sleep 20)y-6a9fe85b-f3.mdb",      "a command substitution"},
@@ -264,34 +308,6 @@ void writeFile(const fs::path& path, const std::string& bytes) {
 // A webshell the content rules answer for.
 const char* kWebshell = "<?php eval(base64_decode($_POST['x'])); ?>";
 
-// Why the bytes just written are not the bytes now on disk, as a sentence, or nullopt.
-//
-// A fixture in this file is a real webshell, and on a host with resident antivirus it is
-// a real webshell to that too: Microsoft Defender takes one out of `%TEMP%` between the
-// write and the scan, and the case then fails with `hasHostileContent` false - which
-// reads as "the rules stopped matching a signature they have always matched" and is an
-// hour of looking in the wrong place. It is an environmental fact, not a defect in the
-// scanner, so the case says which and skips.
-std::optional<std::string> whyTheFixtureIsNotOnDisk(const fs::path& path,
-                                                    const std::string& expected) {
-    std::error_code ec;
-    if (!fs::exists(path, ec)) {
-        return "another program removed the webshell fixture at " +
-               pathForDisplay(path) + " between writing it and scanning it - resident "
-               "antivirus does this to a real signature - so nothing here can be "
-               "observed about what the rules would have said";
-    }
-    std::ifstream in(path, std::ios::binary);
-    const std::string actual((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
-    if (actual != expected) {
-        return "the webshell fixture at " + pathForDisplay(path) + " is not the bytes "
-               "that were written to it - something on this host rewrote or emptied it - "
-               "so this case cannot observe what the rules would have said";
-    }
-    return std::nullopt;
-}
-
 AppConfig scanConfig(const fs::path& root) {
     AppConfig config = Config::loadFromString(Config::generateDefault());
     config.scan.directories.clear();
@@ -331,7 +347,10 @@ TEST_P(ObservedNameTest, RaisesTheRuleItIsTheControlFor) {
         << observed.what;
 }
 
-INSTANTIATE_TEST_SUITE_P(Observed, ObservedNameTest, ::testing::ValuesIn(kObserved));
+INSTANTIATE_TEST_SUITE_P(Observed, ObservedNameTest, ::testing::ValuesIn(kObserved),
+                         [](const ::testing::TestParamInfo<Observed>& info) {
+                             return caseName(info.param.code, info.index, info.param.name);
+                         });
 
 TEST(HostileFilenameTest, EveryRuleHasAnObservedControl) {
     // The parameterised case above proves each name raises its rule. This one proves
@@ -434,6 +453,10 @@ struct SilentCase {
     const char* name;   // a benign name that is near-miss for it
 };
 
+void PrintTo(const SilentCase& silent, std::ostream* os) {
+    *os << silent.code << " \"" << safe_text::sanitize(silent.name) << "\"";
+}
+
 const SilentCase kSilent[] = {
     {"FN001", "~$O'Brien & Sons - Invoice.docx"},
     {"FN001", "price$.csv"},
@@ -457,7 +480,38 @@ TEST_P(SilentNameTest, StaysQuietOnAnOrdinaryName) {
         << silent.code << " fired on an ordinary business file name";
 }
 
-INSTANTIATE_TEST_SUITE_P(Silent, SilentNameTest, ::testing::ValuesIn(kSilent));
+INSTANTIATE_TEST_SUITE_P(Silent, SilentNameTest, ::testing::ValuesIn(kSilent),
+                         [](const ::testing::TestParamInfo<SilentCase>& info) {
+                             return caseName(info.param.code, info.index, info.param.name);
+                         });
+
+// The names the two suites above are listed under. gtest refuses an invalid or duplicated
+// name when the binary starts, so a generator that broke either rule would stop every case
+// rather than fail one; this says what the names are for, where a reader looks.
+TEST(HostileFilenameTest, EveryParameterisedCaseIsNamedForItsFileName) {
+    EXPECT_EQ(caseName("FN001", 0, "x$(sleep 20)y-6a9fe85b-f3.mdb"),
+              "FN001_00_x_sleep_20_y_6a9fe85b_f3_mdb");
+    EXPECT_EQ(caseName("FN003", 6, "zz.php\n-6a9ff590-7f.mdb"), "FN003_06_zz_php_6a9ff590_7f_mdb");
+    EXPECT_EQ(caseName("FN004", 12, "--"), "FN004_12_no_letters");
+
+    // Two names that differ only in what is not a letter collapse to the same letters, and
+    // the position is what still tells them apart.
+    EXPECT_NE(caseName("FN002", 2, "a;b.mdb"), caseName("FN002", 3, "a|b.mdb"));
+
+    std::set<std::string> seen;
+    const auto check = [&seen](const std::string& name) {
+        EXPECT_TRUE(seen.insert(name).second) << "duplicate case name " << name;
+        EXPECT_TRUE(std::all_of(name.begin(), name.end(), [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+        })) << name;
+    };
+    for (size_t i = 0; i < std::size(kObserved); ++i) {
+        check(caseName(kObserved[i].code, i, kObserved[i].name));
+    }
+    for (size_t i = 0; i < std::size(kSilent); ++i) {
+        check(caseName(kSilent[i].code, i, kSilent[i].name));
+    }
+}
 
 TEST(HostileFilenameTest, EveryRuleHasASilentControl) {
     std::set<std::string> covered;
@@ -542,8 +596,8 @@ TEST(HostileFilenameTest, AHostileNameOnAWebshellStillQuarantinesIt) {
         GTEST_SKIP() << *why;
     }
     writeFile(root.path() / fs::path(hostile), kWebshell);
-    if (const auto why = whyTheFixtureIsNotOnDisk(root.path() / fs::path(hostile),
-                                                  kWebshell)) {
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(root.path() / fs::path(hostile),
+                                                        kWebshell)) {
         GTEST_SKIP() << *why;
     }
 
@@ -725,6 +779,42 @@ TEST(SafeTextUtf8Test, NeedsSanitizingAgreesWithSanitizeExactly) {
         EXPECT_EQ(safe_text::needsSanitizing(value), safe_text::sanitize(value) != value)
             << "the two disagree about " << safe_text::sanitize(value);
     }
+}
+
+// The question the loader and the report writers ask of a rule's name, held to the escaper
+// over the same cases: a string it refuses is exactly one the escaper would have rewritten,
+// in both directions, so "refused at load" and "would have been escaped" cannot drift into
+// two definitions of plain text. With line breaks allowed only tab, LF and CR move.
+TEST(SafeTextUtf8Test, WhyNotPlainTextAgreesWithNeedsSanitizingExactly) {
+    const std::vector<std::string> cases = {
+        "plain.php", "a\nb", "a\tb", "a\rb", "a\x1b[2Jb", "a\xC0\xAF" "b",
+        "\xCE\x95\xCE\xBB\xCE\xBB", "\x80", "\xE2\x82\xAC", "\xE2\x82", "\xF0\x9F\x94\x92",
+        "\xF0\x9F\x94", "\x7f", "O'Brien, \"Sons\".pdf", "\xED\xA0\x80", "\xC1\xBF",
+        std::string("a\0b", 3), "",
+    };
+    for (const auto& value : cases) {
+        EXPECT_EQ(safe_text::whyNotPlainText(value).has_value(),
+                  safe_text::needsSanitizing(value))
+            << "the two disagree about " << safe_text::sanitize(value);
+
+        // Each line break stood in for by a letter rather than removed, so that no two bytes
+        // either side of one can close into a sequence that was not there.
+        std::string lettered = value;
+        for (char& c : lettered) {
+            if (c == '\t' || c == '\n' || c == '\r') c = 'x';
+        }
+        EXPECT_EQ(safe_text::whyNotPlainText(value, /*lineBreaks=*/true).has_value(),
+                  safe_text::needsSanitizing(lettered))
+            << "line breaks changed more than line breaks for " << safe_text::sanitize(value);
+    }
+
+    // What it says, which the configuration refusal quotes: the first offending byte, its
+    // offset, and never the byte itself.
+    EXPECT_EQ(safe_text::whyNotPlainText("ab\x1b" "c"),
+              "carries a control character (0x1b at offset 2)");
+    EXPECT_EQ(safe_text::whyNotPlainText("\xCE\x95" "\xC0\xAF"),
+              "is not valid UTF-8 (byte 0xc0 at offset 2)");
+    EXPECT_FALSE(safe_text::whyNotPlainText("\xCE\x95\xCE\xBB\xCE\xBB"));
 }
 
 TEST(SafeTextUtf8Test, AReportOfANameThatIsNotUtf8IsStillUtf8) {

@@ -207,7 +207,7 @@ struct AppConfig {
     ScanConfig scan;
     ArchiveConfig archives;                     // Archive (zip/tar/tar.gz) handling
     std::vector<RuleConfig> rules;              // Custom YAML rules
-    BuiltinRulesConfig builtinRules;            // Built-in CTRE rules config
+    BuiltinRulesConfig builtinRules;            // Which built-in rules load
     AnnotationsConfig annotations;              // Whether a file may mark its own findings
     ActionsConfig actions;
     UpdatesConfig updates;                      // Whether and how often to look for a newer release

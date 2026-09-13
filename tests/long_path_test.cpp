@@ -126,7 +126,11 @@ TEST(LongPathTest, AFileAtAPathPastMaxPathIsReadAndItsFindingReported) {
         ASSERT_TRUE(out.good()) << "this test binary could not create " << shown;
         out.write(kFinding.data(), static_cast<std::streamsize>(kFinding.size()));
     }
-    ASSERT_TRUE(fs::exists(tree.file())) << shown;
+    // Opened and written, so the path itself is not what is refused past this point: a file
+    // missing or unreadable now is the host taking a webshell, and says so.
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(tree.file(), kFinding)) {
+        GTEST_SKIP() << *why;
+    }
 
     Scanner scanner(configFor(tree.root()));
     scanner.setPreCount(false);

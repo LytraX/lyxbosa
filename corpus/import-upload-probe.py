@@ -46,7 +46,8 @@ half, without a human - this tool proposes, a person confirms with `publish-rows
 
 It refuses rather than guessing:
 
-  * bytes on disk that do not hash to the curated sha256;
+  * bytes the scanner read that do not hash to the curated sha256, asked of the staged copy
+    once the scan is done;
   * a webshell the scanner does not detect under a neutral name (its `must_detect` cannot be
     measured, so the classification is wrong);
   * an `.htaccess` a content rule DOES fire on (it is not a miss, so `rule-gap` would be false);
@@ -59,15 +60,21 @@ It refuses rather than guessing:
 `DIR` is the out-of-repo collection directory. This file is tracked and names it nowhere; the
 customer label lives only in the gitignored map beside the collection.
 """
-import argparse, hashlib, importlib.util, json, os, re, shutil, subprocess, sys, tempfile
+import argparse, contextlib, hashlib, importlib.util, json, os, re, shutil, subprocess, sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from indexio import read_jsonl, write_jsonl_atomic, index_lock            # noqa: E402
+from indexio import read_jsonl, write_jsonl_atomic, index_lock, LockBusy  # noqa: E402
 import gate_provenance                                                     # noqa: E402
 
-LOCAL = os.path.join(HERE, "local", "index-local.jsonl")
+def local_index(corpus_dir):
+    """The local half of the index under `corpus_dir`: the only file this tool writes."""
+    return os.path.join(corpus_dir, "local", "index-local.jsonl")
+
+
+LOCAL = local_index(HERE)
 SCANNER = os.environ.get("LYXBOSA_BIN") or os.path.join(ROOT, "build", "lyxbosa")
 
 REVIEW_BY = "agent:claude-opus-4-8"
@@ -172,13 +179,36 @@ def check(path):
     return rules, (top.lower() if top else None)
 
 
-def measure(path, kind):
-    """(rules, min_severity) over the bytes, under a name no name-rule reads."""
+def measure(data, sha, kind, checker=None):
+    """(rules, min_severity, refusal) for `data`, read by the scanner under a name no name-rule
+    reads. `refusal` is None when the measurement stands.
+
+    The curated-sha256 refusal is asked HERE, of the staged file the scanner is handed, and not
+    of `data`: `resolve()` keyed every blob by its own hash, so the bytes in memory cannot fail
+    it and a check on them was a refusal that could never fire. The file on disk can. A short
+    copy, or resident antivirus emptying a webshell between the write and the read, hands the
+    scanner different bytes - and for an `.htaccess` "no rule fires" on an empty file would be
+    recorded as a rule-gap miss about bytes the scanner never saw. So the staged copy is hashed
+    once the scan is done: a copy that was wrong before the scan is still wrong after it, and
+    one that changed while it was read is caught only there.
+
+    `checker` is `check` unless a control substitutes one."""
+    checker = checker or check
     tmp = tempfile.mkdtemp(prefix="import-upload-probe-")
     try:
         staged = os.path.join(tmp, NEUTRAL_NAME[kind])
-        shutil.copyfile(path, staged)
-        return check(staged)
+        with open(staged, "wb") as fh:
+            fh.write(data)
+
+        rules, min_sev = checker(staged)
+        if not os.path.isfile(staged):
+            return None, None, ("the file staged for the scanner was gone once the scan was "
+                                "done, so the measurement is not of the curated sample")
+        with open(staged, "rb") as fh:
+            if sha256_bytes(fh.read()) != sha:
+                return None, None, ("the bytes the scanner read do not hash to the curated "
+                                    "sha256, so the measurement is not of the curated sample")
+        return rules, min_sev, None
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -322,18 +352,11 @@ def main():
     rows, refused = [], []
     for sha in sorted(CURATED):
         data, count, stored_exts = located[sha]
-        if sha256_bytes(data) != sha:
-            refused.append((sha, "bytes do not hash to the curated sha256")); continue
         if carries_identifier(data):
             refused.append((sha, "carries a pseudonym-map identifier; not clean")); continue
-        # measure on a temp copy, under a neutral name
-        tmp = tempfile.mkdtemp(prefix="import-upload-probe-")
-        try:
-            src = os.path.join(tmp, "blob")
-            open(src, "wb").write(data)
-            rules, min_sev = measure(src, CURATED[sha]["kind"])
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+        rules, min_sev, refusal = measure(data, sha, CURATED[sha]["kind"])
+        if refusal:
+            refused.append((sha, refusal)); continue
         row, refusal = build_row(sha, data, count, stored_exts, CURATED[sha], rules,
                                  min_sev, frame)
         if refusal:
@@ -359,25 +382,38 @@ def main():
         print("\ndry run: pass --write to append to the local index")
         return 0
 
-    # Lock across the whole read-modify-write; re-read INSIDE the lock (AGENTS.md).
-    with index_lock(LOCAL):
-        current = read_jsonl(LOCAL)
-        have = {r["sha256"] for r in current}
-        fresh = [r for r in rows if r["sha256"] not in have]
-        skipped = len(rows) - len(fresh)
-        if skipped:
-            print("skipped %d row(s) already in the local half" % skipped)
-        write_jsonl_atomic(LOCAL, current + fresh)
-        print("local index: %d -> %d rows (+%d)" % (len(current), len(current) + len(fresh),
-                                                     len(fresh)))
+    before, added, skipped = append_rows(rows, HERE)
+    if skipped:
+        print("skipped %d row(s) already in the local half" % skipped)
+    print("local index: %d -> %d rows (+%d)" % (before, before + added, added))
     print("\nnext: shard-gate.py corpus/local/index-local.jsonl --fix, then make-summary.py")
     return 0
 
 
+def append_rows(rows, corpus_dir):
+    """Append the rows not already present to the local half under `corpus_dir`.
+
+    (rows before, rows added, rows skipped as already present). The lock is held across the
+    whole read-modify-write and the read is taken inside it (AGENTS.md, Index writes): a read
+    before the lock is a snapshot another writer can append to before this one rewrites the
+    file, and its rows would be dropped with every gate still passing. `corpus_dir` is a
+    parameter so that `--inject` drives this function, not a copy of it, against a temporary
+    corpus."""
+    path = local_index(corpus_dir)
+    with index_lock(path):
+        current = read_jsonl(path)
+        have = {r["sha256"] for r in current}
+        fresh = [r for r in rows if r["sha256"] not in have]
+        write_jsonl_atomic(path, current + fresh)
+    return len(current), len(fresh), len(rows) - len(fresh)
+
+
 # --------------------------------------------------------------------------- controls
 def inject():
-    """Both directions on the classification and the frame. Reads no collection and writes
-    nothing: synthetic bytes are enough for the driver's own decisions."""
+    """Both directions on the classification, the frame, the sha256 refusal and the write path.
+    Reads no collection. Writes only under a temporary directory it creates, holding a
+    synthetic corpus, and refuses to run the write cases if that directory is inside this
+    repository's corpus - the real index files are never opened."""
     fails, cases = [], []
 
     def case(label, ok):
@@ -430,11 +466,142 @@ def inject():
          b.get("recorded_rows_matches_indexed") is False)
 
     print()
+    print("=== measure(): the sha256 refusal is asked of the bytes the scanner is handed ===")
+    good = b"<?php synthetic"
+    good_sha = sha256_bytes(good)
+    calls = []
+
+    def quiet_checker(path):
+        calls.append(path)
+        return ["RCE008"], "high"
+
+    rules, _sev, ref = measure(good, good_sha, "webshell", quiet_checker)
+    case("curated bytes staged intact are measured and not refused",
+         ref is None and rules == ["RCE008"] and len(calls) == 1)
+    case("  ...under the neutral name, not the stored one",
+         os.path.basename(calls[0]) == NEUTRAL_NAME["webshell"])
+    _r, _s, ref = measure(good, "b" * 64, "webshell", quiet_checker)
+    case("bytes that do not hash to the curated sha256 are REFUSED", ref is not None)
+
+    def emptying_checker(path):
+        # What resident antivirus does to a webshell fixture: the file is still there, and
+        # it is not the bytes that were written.
+        open(path, "wb").close()
+        return [], None
+
+    _r, _s, ref = measure(good, good_sha, "htaccess", emptying_checker)
+    case("  ...and REFUSED when the bytes in memory are right and the copy the scanner read "
+         "is not", ref is not None and "the scanner read" in ref)
+
+    def removing_checker(path):
+        os.unlink(path)
+        return [], None
+
+    _r, _s, ref = measure(good, good_sha, "htaccess", removing_checker)
+    case("  ...and REFUSED when the staged copy was removed under the scan", ref is not None)
+
+    print()
+    print("=== append_rows(): the real write path, against a temporary corpus ===")
+    inject_write_path(case)
+
+    print()
     print("cases: %d · passed: %d · failed: %d"
           % (len(cases), len(cases) - len(fails), len(fails)))
     for f in fails:
         print("FAIL:", f)
     return 1 if fails else 0
+
+
+def inject_write_path(case):
+    """Drive append_rows() - the function main() calls - at a synthetic corpus in a temporary
+    directory, and observe the three things AGENTS.md asks of an index write without reading
+    the code: the destination is the local half and nothing else, the write happens with the
+    lock held, and the read happens inside the lock. Each is watched by wrapping the module's
+    own names for the indexio functions, which call through to the real ones."""
+    import threading
+    tmp = tempfile.mkdtemp(prefix="import-upload-probe-inject-")
+    try:
+        real_corpus = os.path.realpath(HERE)
+        inside_repo = os.path.realpath(tmp).startswith(real_corpus + os.sep)
+        case("the temporary corpus is not inside this repository's corpus", not inside_repo)
+        if inside_repo:
+            return
+
+        published = os.path.join(tmp, "index.jsonl")
+        local = local_index(tmp)
+        os.makedirs(os.path.dirname(local))
+        row = lambda n: {"sha256": "%064x" % n, "verdict": "malicious", "synthetic": True}
+        write_jsonl_atomic(published, [row(1), row(2)])
+        write_jsonl_atomic(local, [row(3)])
+        published_before = open(published, "rb").read()
+
+        g = globals()
+        saved = {k: g[k] for k in ("index_lock", "read_jsonl", "write_jsonl_atomic")}
+        seen = {"read": [], "write": [], "lock": []}
+
+        def held(path):
+            """True when another holder is refused the lock on `path` right now. Asked from a
+            second thread so the answer does not depend on how the lock treats one process."""
+            box = {}
+
+            def probe():
+                try:
+                    with saved["index_lock"](path, timeout=0, quiet=True):
+                        box["held"] = False
+                except LockBusy:
+                    box["held"] = True
+
+            t = threading.Thread(target=probe)
+            t.start()
+            t.join()
+            return box.get("held")
+
+        @contextlib.contextmanager
+        def watched_lock(path, *args, **kwargs):
+            seen["lock"].append(os.path.abspath(path))
+            # Another writer lands its row the instant before this one takes the lock. A read
+            # taken inside the lock sees it; one taken before the lock has already missed it.
+            saved["write_jsonl_atomic"](path, saved["read_jsonl"](path) + [row(99)])
+            with saved["index_lock"](path, *args, **kwargs):
+                yield
+
+        def watched_read(path):
+            seen["read"].append((os.path.abspath(path), held(path)))
+            return saved["read_jsonl"](path)
+
+        def watched_write(path, rows, *args, **kwargs):
+            seen["write"].append((os.path.abspath(path), held(path)))
+            return saved["write_jsonl_atomic"](path, rows, *args, **kwargs)
+
+        g.update(index_lock=watched_lock, read_jsonl=watched_read,
+                 write_jsonl_atomic=watched_write)
+        try:
+            result = append_rows([row(4), row(3)], tmp)
+        finally:
+            g.update(saved)
+
+        after = saved["read_jsonl"](local)
+        shas = [r["sha256"] for r in after]
+        case("the rows are appended to the local half, and a present one is skipped",
+             sorted(shas) == sorted([row(n)["sha256"] for n in (3, 99, 4)])
+             and result[1:] == (1, 1))
+        case("the published half is byte-identical afterwards",
+             open(published, "rb").read() == published_before)
+        case("  ...and was never locked, read or written",
+             all(p == os.path.abspath(local) for p in
+                 seen["lock"] + [p for p, _h in seen["read"]] + [p for p, _h in seen["write"]]))
+        case("every path touched is inside the temporary corpus",
+             all(os.path.realpath(p).startswith(os.path.realpath(tmp) + os.sep)
+                 for p in seen["lock"] + [p for p, _h in seen["read"] + seen["write"]]))
+        case("the write happened, and with the lock held",
+             len(seen["write"]) == 1 and all(h is True for _p, h in seen["write"]))
+        case("the read happened, and with the lock held",
+             len(seen["read"]) >= 1 and all(h is True for _p, h in seen["read"]))
+        case("  ...so a row another writer landed before the lock was taken is kept",
+             row(99)["sha256"] in shas)
+        case("the lock is free again afterwards", held(local) is False)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

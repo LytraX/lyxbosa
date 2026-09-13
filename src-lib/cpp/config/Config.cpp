@@ -1,9 +1,12 @@
 #include "Config.h"
 #include <yaml-cpp/yaml.h>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <fmt/format.h>
+#include "infrastructure/PathUtils.h"
 #include "utils/ByteSize.h"
+#include "utils/SafeText.h"
 
 namespace lyxbosa {
 
@@ -250,6 +253,45 @@ AnnotationsConfig parseAnnotationsConfig(const YAML::Node& node) {
     }
 
     return ac;
+}
+
+// Why a custom rule's text cannot be used as written, or empty when it can.
+//
+// REFUSED RATHER THAN ESCAPED. A rule's name and category are written into every report as
+// they are - not rendered the way a path is - because they are what a person searches a
+// report for, and a name silently rewritten on the way in is one that search no longer
+// finds. So a name that is not valid UTF-8, which no JSON string can spell and which breaks
+// the encoding a CSV claims, or one carrying ESC, which drives the terminal the text report
+// is read on, is refused here: before a scan starts, naming the rule and the byte, to the
+// person who wrote the file. The report writers refuse the same finding in the same words -
+// see unwritableFinding() in ReportWriter.h - for a rule set that was not loaded from here.
+//
+// A description is held to the same rule except that it may break lines, since a YAML block
+// scalar is how a long one is written. No output prints it; it is checked so that the
+// first one that does is handed text.
+//
+// A pattern's value is not checked, and must not be. It never reaches an output - a finding
+// quotes the scanned file, not the needle - and a needle carrying ESC is exactly how a rule
+// looks for terminal escapes planted in a file.
+std::optional<std::string> ruleTextProblem(const RuleConfig& rule, size_t position) {
+    const auto refuse = [&](std::string_view field, const std::string& why) {
+        return fmt::format("Rule {} (\"{}\"): its {} {}. A rule's name and category are "
+                           "written into reports exactly as configured, so they must be "
+                           "valid UTF-8 without control characters; a description may also "
+                           "contain line breaks",
+                           position, safe_text::sanitize(rule.name), field, why);
+    };
+
+    if (auto why = safe_text::whyNotPlainText(rule.name)) {
+        return refuse("name", *why);
+    }
+    if (auto why = safe_text::whyNotPlainText(rule.category)) {
+        return refuse("category", *why);
+    }
+    if (auto why = safe_text::whyNotPlainText(rule.description, /*lineBreaks=*/true)) {
+        return refuse("description", *why);
+    }
+    return std::nullopt;
 }
 
 }  // namespace
@@ -538,7 +580,7 @@ archives:
                           # then markup, then everything else - on a real site the
                           # first two are 54% of the files and 5.6% of the bytes.
 
-# Built-in detection rules (CTRE compile-time regex - extremely fast)
+# Built-in detection rules (compiled into the binary; patterns are matched with RE2)
 # Categories: WS (Webshell), BD (Backdoor), OBF (Obfuscation), PHI (Phishing),
 #             EXP (Exploit), DRP (Dropper), RCE (CodeExec), CRED (CredTheft),
 #             SEO (SeoSpam), DEFC (Defacement), PL (Perl), ARC (Archive),
@@ -562,6 +604,9 @@ builtin_rules:
 
 # Custom rules (optional - in addition to built-in rules)
 # Add your own patterns here. These are checked AFTER built-in rules.
+# A rule's name and category are written into reports exactly as given, so they must
+# be valid UTF-8 with no control characters; a configuration that breaks this is
+# refused before any scan starts.
 # rules:
 #   - name: My Custom Pattern
 #     description: Description of what this detects
@@ -644,19 +689,25 @@ std::string Config::validate(const AppConfig& config) {
     }
 
     // Check each custom rule has at least one pattern
-    for (const auto& rule : config.rules) {
+    for (size_t index = 0; index < config.rules.size(); ++index) {
+        const auto& rule = config.rules[index];
         if (rule.name.empty()) {
             return "Each rule must have a name";
         }
+        if (auto problem = ruleTextProblem(rule, index + 1)) {
+            return *problem;
+        }
         if (rule.patterns.empty()) {
-            return fmt::format("Rule '{}' must have at least one pattern", rule.name);
+            return fmt::format("Rule '{}' must have at least one pattern",
+                               safe_text::sanitize(rule.name));
         }
         for (const auto& pattern : rule.patterns) {
             // Heuristic and Entropy patterns don't require a value
             if (pattern.value.empty() &&
                 pattern.type != PatternType::Entropy &&
                 pattern.type != PatternType::Heuristic) {
-                return fmt::format("Pattern in rule '{}' must have a value", rule.name);
+                return fmt::format("Pattern in rule '{}' must have a value",
+                                   safe_text::sanitize(rule.name));
             }
         }
     }
@@ -673,7 +724,7 @@ std::string Config::validate(const AppConfig& config) {
     if (!config.updates.checkValid) {
         return fmt::format("Invalid updates.check value: '{}'. Valid values are: "
                            "off, on-demand, periodic",
-                           config.updates.checkRaw);
+                           safe_text::sanitize(config.updates.checkRaw));
     }
 
     // An interval of zero is "check on every run", which is the thing the whole
@@ -683,7 +734,7 @@ std::string Config::validate(const AppConfig& config) {
         return fmt::format("Invalid updates.interval value: '{}'. Use a duration such "
                            "as 24h, 7d, 90m or a bare number of seconds; 0 would mean "
                            "checking on every run",
-                           config.updates.intervalRaw);
+                           safe_text::sanitize(config.updates.intervalRaw));
     }
 
     return "";  // Valid
@@ -776,12 +827,15 @@ void printPatternList(std::string_view label, const std::vector<std::string>& it
     size_t shown = 0;
     for (const auto& item : items) {
         if (!all && shown >= kAlwaysShow) break;
-        if (!line.empty() && line.size() + 2 + item.size() > usable) {
+        // Escaped before it is measured: a glob is what the operator typed, and it can
+        // name the ESC in a hostile file name as surely as the name itself carries it.
+        const std::string shownItem = safe_text::sanitize(item);
+        if (!line.empty() && line.size() + 2 + shownItem.size() > usable) {
             fmt::print(stderr, "{:{}}{}\n", "", kIndent, line);
             line.clear();
         }
         if (!line.empty()) line += "  ";
-        line += item;
+        line += shownItem;
         ++shown;
     }
     if (!line.empty()) {
@@ -841,9 +895,15 @@ void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
 
     // What will be touched, first and unabbreviated. Everything else is a setting;
     // this is the answer to "am I about to scan the right thing".
+    //
+    // Every string below that the configuration or the command line supplied is escaped.
+    // A path is rendered as the walk will open it, through the same function that renders
+    // it in every other message about it; the rest - globs, the recipient - through the
+    // escaper directly. A root tab-completed on a compromised host is the attacker's name,
+    // and this block is printed before the operator has agreed to anything.
     fmt::print(stderr, "Directories ({})\n", config.scan.directories.size());
     for (const auto& dir : config.scan.directories) {
-        fmt::print(stderr, "    {}\n", dir);
+        fmt::print(stderr, "    {}\n", pathForDisplay(std::filesystem::path(dir)));
     }
     fmt::print(stderr, "\n");
 
@@ -900,7 +960,8 @@ void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
 
     // Actions - the other half of "what will be touched".
     std::string quarantine = config.actions.quarantine.enabled
-        ? fmt::format("quarantine to {}", config.actions.quarantine.directory)
+        ? fmt::format("quarantine to {}",
+                      pathForDisplay(std::filesystem::path(config.actions.quarantine.directory)))
         : std::string("quarantine disabled");
     printFactLine("Actions", {
         quarantine,
@@ -911,7 +972,7 @@ void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
             ? std::string("no alert")
             : config.actions.alert.to.empty()
                   ? std::string("alert enabled but no recipient")
-                  : fmt::format("alert to {}", config.actions.alert.to),
+                  : fmt::format("alert to {}", safe_text::sanitize(config.actions.alert.to)),
     }, width);
 
     if (!config.scan.include.empty() || !config.scan.exclude.empty()) {

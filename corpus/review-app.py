@@ -712,24 +712,53 @@ def inject():
     # gets worked around. Both directions, because "it rebuilt" proves nothing if it rebuilds
     # every time - that would make a 2-second cost unconditional and hide a genuinely stale
     # source behind a rebuild nobody asked for.
+    #
+    # The decision is made before the database is read, so each Review is stopped AT the read:
+    # `open_ro` is replaced by one that records the call and raises a control exception. The
+    # case used to let the real `open_ro` run with the rebuild disabled, and the real one is a
+    # freshness check - it answers about corpus/local/index.db as it happens to be on this
+    # machine, not about the decision. Whenever that database was stale it raised through
+    # here and took the whole suite down with a traceback instead of a case. Stopping at the
+    # read also asks the order, which the old case could not: a rebuild that came after the
+    # read would be a stale read followed by wasted work.
+    class ReachedTheRead(Exception):
+        pass
+
     calls = []
-    real_stale, real_build = derived_db.definitely_stale, derived_db.build
+    real = (derived_db.definitely_stale, derived_db.build, derived_db.open_ro)
+
+    def reached_the_read(*_a, **_k):
+        calls.append("read")
+        raise ReachedTheRead()
+
+    def startup(label, stale, want):
+        calls[:] = []
+        derived_db.definitely_stale = (
+            lambda *a, **k: (True, ["control: forced stale"]) if stale else (False, []))
+        try:
+            Review("control-startup-%d" % os.getpid(), log=lambda *_a: None)
+            got = "a Review was constructed without reading the database"
+        except ReachedTheRead:
+            got = list(calls)
+        except Exception as exc:                            # noqa: BLE001
+            # Reported as the case's answer, never raised: a control that crashes says
+            # nothing about which of its cases would have failed.
+            first = (str(exc).splitlines() or [""])[0]
+            got = "raised before the read: %s: %s" % (type(exc).__name__, first)
+        case(label, got, want)
+
     try:
         derived_db.build = lambda *a, **k: calls.append("build") or {"rows": 0}
-        derived_db.definitely_stale = lambda *a, **k: (True, ["control: forced stale"])
-        Review("control-stale-%d" % os.getpid(), log=lambda *_a: None)
-        case("a stale database is rebuilt at startup", calls, ["build"])
-        calls[:] = []
-        derived_db.definitely_stale = lambda *a, **k: (False, [])
-        Review("control-fresh-%d" % os.getpid(), log=lambda *_a: None)
-        case("  ...and a fresh one is not rebuilt", calls, [])
+        derived_db.open_ro = reached_the_read
+        startup("a stale database is rebuilt at startup, before it is read", True,
+                ["build", "read"])
+        startup("  ...and a fresh one is read without being rebuilt", False, ["read"])
     finally:
-        derived_db.definitely_stale, derived_db.build = real_stale, real_build
-    for sid in ("control-stale-%d" % os.getpid(), "control-fresh-%d" % os.getpid()):
-        for suffix in (".proposals.jsonl", ".log.jsonl"):
-            p = os.path.join(SESSION_DIR, sid + suffix)
-            if os.path.exists(p):
-                os.unlink(p)
+        derived_db.definitely_stale, derived_db.build, derived_db.open_ro = real
+    for suffix in (".proposals.jsonl", ".log.jsonl"):
+        p = os.path.join(SESSION_DIR, "control-startup-%d%s" % (os.getpid(), suffix))
+        if os.path.exists(p):
+            os.unlink(p)
 
     print("the app writes no index")
     def digest(p):

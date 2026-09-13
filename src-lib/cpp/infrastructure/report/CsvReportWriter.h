@@ -41,6 +41,20 @@ public:
     }
 
     void onFile(const FileResult& result) override {
+        if (failure_) {
+            return;
+        }
+        // The question every writer asks before a record, so this report refuses exactly
+        // the findings the JSON and text reports refuse - see ReportWriter.h. A cell in
+        // no encoding is not quoted into safety by RFC 4180, and a loader reading the
+        // file as UTF-8 rejects it or, worse, reads a different name. Stopping leaves the
+        // rows already written and marks the stream, as the JSON writer does.
+        if (const auto why = unwritableFinding(result)) {
+            failure_ = unwritableRecord(result, "CSV", *why);
+            out_.setstate(std::ios::badbit);
+            return;
+        }
+
         // A file with no matches can still be worth a row: it was skipped, or it is a
         // container whose quarantine outcome belongs to it rather than to any match of
         // its own. The loop below never runs for one, and CSV listed none of them at
@@ -102,11 +116,17 @@ public:
                              : std::string{});
     }
 
-    void end(const ScanResult&, bool) override { out_.flush(); }
+    void end(const ScanResult&, bool) override {
+        if (!failure_) {
+            out_.flush();
+        }
+    }
 
-    // RFC 4180 quoting. Rule names and categories are tame, but a path may
-    // legitimately contain a comma or a quote, which the previous
-    // implementation wrote raw and so produced a broken row.
+    std::optional<std::string> failure() const override { return failure_; }
+
+    // RFC 4180 quoting. A path may legitimately contain a comma, a quote or a line
+    // break, and so may a rule name or category - an operator is free to call a rule
+    // "eval, obfuscated" - and every one of those is written quoted rather than raw.
     static void writeField(std::ostream& os, std::string_view s) {
         if (s.find_first_of(",\"\r\n") == std::string_view::npos) {
             os << s;
@@ -125,6 +145,7 @@ public:
 
 private:
     std::ostream& out_;
+    std::optional<std::string> failure_;
 };
 
 }  // namespace lyxbosa
