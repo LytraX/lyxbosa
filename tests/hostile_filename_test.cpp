@@ -34,6 +34,8 @@
 #include "rules/filename.h"
 #include "utils/SafeText.h"
 
+#include "PlatformSkips.h"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -305,34 +307,6 @@ void writeFile(const fs::path& path, const std::string& bytes) {
 
 // A webshell the content rules answer for.
 const char* kWebshell = "<?php eval(base64_decode($_POST['x'])); ?>";
-
-// Why the bytes just written are not the bytes now on disk, as a sentence, or nullopt.
-//
-// A fixture in this file is a real webshell, and on a host with resident antivirus it is
-// a real webshell to that too: Microsoft Defender takes one out of `%TEMP%` between the
-// write and the scan, and the case then fails with `hasHostileContent` false - which
-// reads as "the rules stopped matching a signature they have always matched" and is an
-// hour of looking in the wrong place. It is an environmental fact, not a defect in the
-// scanner, so the case says which and skips.
-std::optional<std::string> whyTheFixtureIsNotOnDisk(const fs::path& path,
-                                                    const std::string& expected) {
-    std::error_code ec;
-    if (!fs::exists(path, ec)) {
-        return "another program removed the webshell fixture at " +
-               pathForDisplay(path) + " between writing it and scanning it - resident "
-               "antivirus does this to a real signature - so nothing here can be "
-               "observed about what the rules would have said";
-    }
-    std::ifstream in(path, std::ios::binary);
-    const std::string actual((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
-    if (actual != expected) {
-        return "the webshell fixture at " + pathForDisplay(path) + " is not the bytes "
-               "that were written to it - something on this host rewrote or emptied it - "
-               "so this case cannot observe what the rules would have said";
-    }
-    return std::nullopt;
-}
 
 AppConfig scanConfig(const fs::path& root) {
     AppConfig config = Config::loadFromString(Config::generateDefault());
@@ -622,8 +596,8 @@ TEST(HostileFilenameTest, AHostileNameOnAWebshellStillQuarantinesIt) {
         GTEST_SKIP() << *why;
     }
     writeFile(root.path() / fs::path(hostile), kWebshell);
-    if (const auto why = whyTheFixtureIsNotOnDisk(root.path() / fs::path(hostile),
-                                                  kWebshell)) {
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(root.path() / fs::path(hostile),
+                                                        kWebshell)) {
         GTEST_SKIP() << *why;
     }
 

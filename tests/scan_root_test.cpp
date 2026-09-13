@@ -265,6 +265,10 @@ TEST(ScanExitTest, AnOrdinaryCleanScanStillExitsZero) {
 TEST(ScanExitTest, AScanThatFindsSomethingStillExitsTwo) {
     TempDir dir;
     writeFile(dir.path() / "tree" / "page.php", kFinding);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(dir.path() / "tree" / "page.php",
+                                                        kFinding)) {
+        GTEST_SKIP() << *why;
+    }
     EXPECT_EQ(scanExitCode({(dir.path() / "tree").string()}, dir.file("report.txt")), 2);
 }
 

@@ -304,6 +304,9 @@ TEST(CheckCoverageTest, ATruncatedArchiveIsNotReportedAsClean) {
 // The companion that makes the case above mean something: a `check` that refused every
 // archive would pass it and fail this.
 TEST(CheckCoverageTest, TheSameArchiveIntactStillReportsTheShellAndExitsTwo) {
+    if (const auto why = test::whyTheTemporaryDirectoryWillNotHold(kShell)) {
+        GTEST_SKIP() << *why;
+    }
     TempDir dir;
     writeFile(dir.file("shell.php.gz"), gzipCompress(kShell));
 
@@ -374,6 +377,9 @@ TEST(CheckCoverageTest, MembersThePolicyDidNotSelectAreNamedAndStillExitZero) {
 // would be a worse defect than the one being fixed - and the exit code still says the
 // answer is partial, which is what `scan` already does for a root that was gone.
 TEST(CheckCoverageTest, AnIncompleteAnswerTakesTheExitCodeAndStillPrintsWhatWasFound) {
+    if (const auto why = test::whyTheTemporaryDirectoryWillNotHold(kShell)) {
+        GTEST_SKIP() << *why;
+    }
     TempDir dir;
     // A cap the shell member fits under and the other does not, so exactly one member
     // goes unread and the finding in the other is still there to be printed.
@@ -522,6 +528,10 @@ TEST(ReportDeliveryTest, AReportThatWritesStillExitsAsTheFindingsSay) {
     TempDir dir;
     writeFile(dir.path() / "clean" / "page.php", "<?php echo 1;\n");
     writeFile(dir.path() / "dirty" / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(dir.path() / "dirty" / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
 
     const fs::path cleanReport = dir.file("clean.txt");
     EXPECT_EQ(scanExitCode({dir.path() / "clean"}, cleanReport.string()), 0);
@@ -735,6 +745,10 @@ TEST(RuleTextTest, AScanWithARuleThatIsNotPlainTextNeverStartsInAnyFormat) {
 TEST(RuleTextTest, TheSameRuleWithPlainTextIsDeliveredInEveryFormatAndExitsTwo) {
     TempDir dir;
     writeFile(dir.path() / "tree" / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(dir.path() / "tree" / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
     const std::string name = "Probe \xce\xb1 name";
     writeRuleConfig(dir.file("lyxbosa.yaml"), dir.path() / "tree", name, "eval, \\\"quoted\\\"");
 
@@ -1123,6 +1137,10 @@ TEST(QuarantineFailureTest, AQuarantineThatCannotCompleteIsCountedAndTheFileIsNa
     const fs::path root = dir.path() / "site";
     const fs::path shell = root / "wp" / "shell.php";
     writeFile(shell, kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
     writeFile(dir.file("blocker"), "a regular file, so nothing can be made under it");
 
     const ScanResult result =
@@ -1151,6 +1169,10 @@ TEST(QuarantineFailureTest, AQuarantineThatSucceedsIsCountedOnceAndNotAsAFailure
     const fs::path root = dir.path() / "site";
     const fs::path shell = root / "wp" / "shell.php";
     writeFile(shell, kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
 
     const ScanResult result = runScan(quarantineConfig(root, quarantine.path()));
 
@@ -1197,7 +1219,11 @@ TEST(QuarantineFailureTest, TheDiagnosticSurvivesQuietAndCapsItsList) {
     TempDir dir;
     const fs::path root = dir.path() / "site";
     for (int i = 1; i <= 12; ++i) {
-        writeFile(root / ("shell" + std::to_string(i) + ".php"), kShell);
+        const fs::path shell = root / ("shell" + std::to_string(i) + ".php");
+        writeFile(shell, kShell);
+        if (const auto why = test::whyTheFixtureIsNotOnDisk(shell, kShell)) {
+            GTEST_SKIP() << *why;
+        }
     }
     writeFile(dir.file("blocker"), "a regular file");
     writeQuarantineConfig(dir.file("scan.yaml"), root, dir.file("blocker") / "quarantine");
@@ -1217,6 +1243,10 @@ TEST(QuarantineFailureTest, TheDiagnosticIsAbsentWhenEveryMoveSucceeded) {
     TempDir quarantine;
     const fs::path root = dir.path() / "site";
     writeFile(root / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(root / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
     writeQuarantineConfig(dir.file("scan.yaml"), root, quarantine.path());
 
     const ScanRun run = scanQuietly(dir.file("scan.yaml"), dir.file("report.txt"));
@@ -2067,6 +2097,10 @@ TEST(LoopCoverageTest, ALoopDoesNotMoveTheExitCode) {
 
     const fs::path hostile = dir.path() / "hostile";
     writeFile(hostile / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(hostile / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
     ASSERT_TRUE(makeSelfLinkedTree(hostile));
 
     writeFile(dir.file("clean.yaml"),
@@ -2119,6 +2153,10 @@ TEST(InterruptedScanTest, AnInterruptOutranksTheFinding) {
     TempDir dir;
     const fs::path root = dir.path() / "site";
     writeFile(root / "shell.php", kShell);
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(root / "shell.php",
+                                                        kShell)) {
+        GTEST_SKIP() << *why;
+    }
 
     InterruptGuard guard;
     EXPECT_EQ(scanExitCode({root}, dir.file("found.txt").string()), 2)

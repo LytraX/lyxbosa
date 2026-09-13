@@ -15,10 +15,14 @@
 // anything. Written once here so that no case can quietly ask a weaker question than
 // its neighbours, and so that adding the Windows arm was one edit rather than four.
 
+#include "infrastructure/PathUtils.h"
+
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -140,6 +144,69 @@ inline std::optional<std::string> whyCannotCreateSymlinks() {
                "), so the walk's symlink handling cannot be observed";
     }
     fs::remove(probe, ec);
+    return std::nullopt;
+}
+
+// Nullopt when the bytes just written to `path` are the bytes on disk now.
+//
+// A fixture that is a real webshell is a real webshell to resident antivirus as well:
+// Microsoft Defender takes one out of `%TEMP%` between the write and the scan. The case
+// then fails with the file missing, or a quarantine that moved nothing, or an exit code
+// of 0 where a finding should have made it 2 - each of which reads as a defect in the
+// scanner, and costs an hour of looking in the wrong place. It is an environmental fact,
+// so a case asks this after writing each such fixture and before the scan that reads it,
+// and skips with the sentence. A fixture that survives changes nothing: the case goes on
+// to assert exactly what it always asserted.
+inline std::optional<std::string> whyTheFixtureIsNotOnDisk(const std::filesystem::path& path,
+                                                           std::string_view expected) {
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) {
+        return "another program removed the webshell fixture at " + pathForDisplay(path) +
+               " between writing it and scanning it - resident antivirus does this to a "
+               "real signature - so this case cannot observe what the scanner does with it";
+    }
+    std::ifstream in(path, std::ios::binary);
+    const std::string actual((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+    if (!in.good() && !in.eof()) {
+        return "the webshell fixture at " + pathForDisplay(path) + " could not be read back "
+               "- another program holds it or has blocked it - so this case cannot observe "
+               "what the scanner does with it";
+    }
+    if (actual != expected) {
+        return "the webshell fixture at " + pathForDisplay(path) + " is not the bytes that "
+               "were written to it - something on this host rewrote or emptied it - so this "
+               "case cannot observe what the scanner does with it";
+    }
+    return std::nullopt;
+}
+
+// Nullopt when a file holding `text` survives in the temporary directory.
+//
+// For a case that captures a command's output, when that output quotes a webshell: gtest
+// captures into a file in the temporary directory, and on a host whose resident antivirus
+// takes that file the capture cannot be read back and gtest aborts the whole test binary -
+// every case after this one goes with it, reported as nothing. The fixture itself may be
+// a compressed container that no scanner of the host's reads, so asking about the fixture
+// would say nothing; asked here instead, of a probe holding the same text, before the
+// capture begins.
+inline std::optional<std::string> whyTheTemporaryDirectoryWillNotHold(std::string_view text) {
+    const std::filesystem::path probe =
+        std::filesystem::temp_directory_path() /
+        ("lyxbosa-capture-probe-" + std::to_string(getpid_portable()) + ".txt");
+    {
+        std::ofstream out(probe, std::ios::binary | std::ios::trunc);
+        out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    }
+    const bool held = !whyTheFixtureIsNotOnDisk(probe, text).has_value();
+    std::error_code ec;
+    std::filesystem::remove(probe, ec);
+    if (!held) {
+        return "a file holding the webshell text this case prints did not survive in " +
+               pathForDisplay(std::filesystem::temp_directory_path()) + " - resident "
+               "antivirus takes it - and gtest captures the output into a file there, so "
+               "the capture would abort the test binary rather than fail this case";
+    }
     return std::nullopt;
 }
 

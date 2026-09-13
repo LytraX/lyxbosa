@@ -164,6 +164,14 @@ TEST(QuarantineTest, TwoRootsWithTheSameRelativePathBothSurvive) {
     const fs::path rootB = tree.path() / "rootB";
     writeFile(rootA / "wp" / "shell.php", shellCarrying("SAMPLE-ALPHA"));
     writeFile(rootB / "wp" / "shell.php", shellCarrying("SAMPLE-BRAVO"));
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(rootA / "wp" / "shell.php",
+                                                        shellCarrying("SAMPLE-ALPHA"))) {
+        GTEST_SKIP() << *why;
+    }
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(rootB / "wp" / "shell.php",
+                                                        shellCarrying("SAMPLE-BRAVO"))) {
+        GTEST_SKIP() << *why;
+    }
 
     const ScanResult result = runScan(quarantineConfig({rootA, rootB}, quarantine.path()));
 
@@ -190,9 +198,17 @@ TEST(QuarantineTest, ASecondRunDoesNotOverwriteTheFirstRunsEvidence) {
     const AppConfig config = quarantineConfig({root}, quarantine.path());
 
     writeFile(shell, shellCarrying("FIRST-INFECTION"));
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        shellCarrying("FIRST-INFECTION"))) {
+        GTEST_SKIP() << *why;
+    }
     EXPECT_EQ(runScan(config).filesQuarantined, 1u);
 
     writeFile(shell, shellCarrying("SECOND-INFECTION"));
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        shellCarrying("SECOND-INFECTION"))) {
+        GTEST_SKIP() << *why;
+    }
     EXPECT_EQ(runScan(config).filesQuarantined, 1u);
 
     const std::vector<std::string> expected{"FIRST-INFECTION", "SECOND-INFECTION"};
@@ -211,6 +227,10 @@ TEST(QuarantineTest, TheDestinationNamesTheOriginalPath) {
     const fs::path root = tree.path() / "srv";
     const fs::path shell = root / "www" / "wp-content" / "shell.php";
     writeFile(shell, shellCarrying("TRACEABLE"));
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        shellCarrying("TRACEABLE"))) {
+        GTEST_SKIP() << *why;
+    }
 
     const ScanResult result = runScan(quarantineConfig({root}, quarantine.path()));
     ASSERT_EQ(result.filesQuarantined, 1u);
@@ -277,6 +297,14 @@ TEST(QuarantineTest, TheFlatLayoutKeepsBothSamples) {
     const fs::path root = tree.path() / "site";
     writeFile(root / "one" / "shell.php", shellCarrying("FLAT-ALPHA"));
     writeFile(root / "two" / "shell.php", shellCarrying("FLAT-BRAVO"));
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(root / "one" / "shell.php",
+                                                        shellCarrying("FLAT-ALPHA"))) {
+        GTEST_SKIP() << *why;
+    }
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(root / "two" / "shell.php",
+                                                        shellCarrying("FLAT-BRAVO"))) {
+        GTEST_SKIP() << *why;
+    }
 
     const ScanResult result =
         runScan(quarantineConfig({root}, quarantine.path(), /*preserveStructure=*/false));
@@ -371,14 +399,58 @@ TEST(QuarantineTest, ASecondRunAcrossAFilesystemBoundaryKeepsBothSamples) {
     const AppConfig config = quarantineConfig({root}, quarantine.path());
 
     writeFile(shell, shellCarrying("XDEV-FIRST"));
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        shellCarrying("XDEV-FIRST"))) {
+        GTEST_SKIP() << *why;
+    }
     EXPECT_EQ(runScan(config).filesQuarantined, 1u);
 
     writeFile(shell, shellCarrying("XDEV-SECOND"));
+    if (const auto why = test::whyTheFixtureIsNotOnDisk(shell,
+                                                        shellCarrying("XDEV-SECOND"))) {
+        GTEST_SKIP() << *why;
+    }
     EXPECT_EQ(runScan(config).filesQuarantined, 1u);
 
     const std::vector<std::string> expected{"XDEV-FIRST", "XDEV-SECOND"};
     EXPECT_EQ(markersUnder(quarantine.path(), expected), expected);
     EXPECT_EQ(regularFilesUnder(quarantine.path()), 2u);
+}
+
+// ============================================================================
+// The fixture check the webshell cases skip on
+// ============================================================================
+
+// Both directions of the question the cases above ask before scanning, on harmless bytes so
+// that no antivirus has an opinion: a file that is there with its bytes says nothing, and one
+// that is gone or holds different bytes says which. Without the first half the cases above
+// could skip everywhere and pass nowhere; without the second they would fail on a host that
+// removed their fixture, which is the failure the check exists to name.
+TEST(FixtureCheckTest, ItSaysNothingForAnIntactFileAndWhichWhenItIsNot) {
+    TempDir dir;
+    const fs::path fixture = dir.path() / "fixture.txt";
+    writeFile(fixture, "INTACT-BYTES");
+
+    EXPECT_FALSE(test::whyTheFixtureIsNotOnDisk(fixture, "INTACT-BYTES").has_value());
+
+    const auto changed = test::whyTheFixtureIsNotOnDisk(fixture, "OTHER-BYTES");
+    ASSERT_TRUE(changed.has_value());
+    EXPECT_NE(changed->find("is not the bytes that were written"), std::string::npos) << *changed;
+
+    writeFile(fixture, "");
+    EXPECT_TRUE(test::whyTheFixtureIsNotOnDisk(fixture, "INTACT-BYTES").has_value())
+        << "an emptied fixture is not the fixture";
+
+    fs::remove(fixture);
+    const auto removed = test::whyTheFixtureIsNotOnDisk(fixture, "INTACT-BYTES");
+    ASSERT_TRUE(removed.has_value());
+    EXPECT_NE(removed->find("removed the webshell fixture"), std::string::npos) << *removed;
+    EXPECT_NE(removed->find("fixture.txt"), std::string::npos) << "the sentence names the file";
+
+    // The capture probe, on text no scanner has an opinion about, holds - or the two cases
+    // that ask it would skip on every host. Its other answer needs a host whose antivirus
+    // takes the probe, and was observed on one.
+    EXPECT_FALSE(test::whyTheTemporaryDirectoryWillNotHold("INTACT-BYTES").has_value());
 }
 
 // ============================================================================
