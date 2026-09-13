@@ -37,6 +37,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -63,6 +64,40 @@ std::set<std::string> codesFor(std::string_view name) {
 
 bool fires(std::string_view name) { return !fn::examine(name).empty(); }
 
+// The name a parameterised case over a file name is listed and failed under.
+//
+// Left to itself gtest names each case by its index and prints the parameter as the bytes of
+// the struct, so a failure read `RaisesTheRuleItIsTheControlFor/3` beside "24-byte object"
+// and a hex dump of three pointers - the name under test, the only thing the reader needed,
+// was nowhere. It cannot be used as it is either: gtest accepts only letters, digits and
+// underscores in a case name, and these names are made of everything else. So the case is
+// called by its rule, its position, and the name's ASCII letters and digits with each run of
+// anything else as one underscore - `FN001_00_x_sleep_20_y_6a9fe85b_f3_mdb`. The position is
+// what keeps it unique: two names differing only in punctuation collapse to the same
+// letters, and gtest refuses a duplicate at registration rather than running either.
+std::string caseName(std::string_view code, size_t index, std::string_view name) {
+    constexpr size_t kLetters = 48;
+    std::string out(code);
+    out += index < 10 ? "_0" : "_";
+    out += std::to_string(index);
+    out += '_';
+    std::string letters;
+    for (const char c : name) {
+        const auto u = static_cast<unsigned char>(c);
+        const bool keep = u < 0x80 && std::isalnum(u);
+        if (keep) {
+            letters += c;
+        } else if (!letters.empty() && letters.back() != '_') {
+            letters += '_';
+        }
+        if (letters.size() >= kLetters) break;
+    }
+    while (!letters.empty() && letters.back() == '_') {
+        letters.pop_back();
+    }
+    return out + (letters.empty() ? "no_letters" : letters);
+}
+
 // ---------------------------------------------------------------------------
 // The observed names, one per rule, exactly as they were on the server.
 //
@@ -77,6 +112,13 @@ struct Observed {
     const char* name;     // as it was on disk
     const char* what;     // what makes it that rule's case, for a failure message
 };
+
+// What gtest prints for `GetParam()` in the listing and beside a failure. Escaped, because
+// the names carry the newlines and control bytes they are the cases for.
+void PrintTo(const Observed& observed, std::ostream* os) {
+    *os << observed.code << " \"" << safe_text::sanitize(observed.name) << "\" ("
+        << observed.what << ")";
+}
 
 const Observed kObserved[] = {
     {"FN001", "x$(sleep 20)y-6a9fe85b-f3.mdb",      "a command substitution"},
@@ -331,7 +373,10 @@ TEST_P(ObservedNameTest, RaisesTheRuleItIsTheControlFor) {
         << observed.what;
 }
 
-INSTANTIATE_TEST_SUITE_P(Observed, ObservedNameTest, ::testing::ValuesIn(kObserved));
+INSTANTIATE_TEST_SUITE_P(Observed, ObservedNameTest, ::testing::ValuesIn(kObserved),
+                         [](const ::testing::TestParamInfo<Observed>& info) {
+                             return caseName(info.param.code, info.index, info.param.name);
+                         });
 
 TEST(HostileFilenameTest, EveryRuleHasAnObservedControl) {
     // The parameterised case above proves each name raises its rule. This one proves
@@ -434,6 +479,10 @@ struct SilentCase {
     const char* name;   // a benign name that is near-miss for it
 };
 
+void PrintTo(const SilentCase& silent, std::ostream* os) {
+    *os << silent.code << " \"" << safe_text::sanitize(silent.name) << "\"";
+}
+
 const SilentCase kSilent[] = {
     {"FN001", "~$O'Brien & Sons - Invoice.docx"},
     {"FN001", "price$.csv"},
@@ -457,7 +506,38 @@ TEST_P(SilentNameTest, StaysQuietOnAnOrdinaryName) {
         << silent.code << " fired on an ordinary business file name";
 }
 
-INSTANTIATE_TEST_SUITE_P(Silent, SilentNameTest, ::testing::ValuesIn(kSilent));
+INSTANTIATE_TEST_SUITE_P(Silent, SilentNameTest, ::testing::ValuesIn(kSilent),
+                         [](const ::testing::TestParamInfo<SilentCase>& info) {
+                             return caseName(info.param.code, info.index, info.param.name);
+                         });
+
+// The names the two suites above are listed under. gtest refuses an invalid or duplicated
+// name when the binary starts, so a generator that broke either rule would stop every case
+// rather than fail one; this says what the names are for, where a reader looks.
+TEST(HostileFilenameTest, EveryParameterisedCaseIsNamedForItsFileName) {
+    EXPECT_EQ(caseName("FN001", 0, "x$(sleep 20)y-6a9fe85b-f3.mdb"),
+              "FN001_00_x_sleep_20_y_6a9fe85b_f3_mdb");
+    EXPECT_EQ(caseName("FN003", 6, "zz.php\n-6a9ff590-7f.mdb"), "FN003_06_zz_php_6a9ff590_7f_mdb");
+    EXPECT_EQ(caseName("FN004", 12, "--"), "FN004_12_no_letters");
+
+    // Two names that differ only in what is not a letter collapse to the same letters, and
+    // the position is what still tells them apart.
+    EXPECT_NE(caseName("FN002", 2, "a;b.mdb"), caseName("FN002", 3, "a|b.mdb"));
+
+    std::set<std::string> seen;
+    const auto check = [&seen](const std::string& name) {
+        EXPECT_TRUE(seen.insert(name).second) << "duplicate case name " << name;
+        EXPECT_TRUE(std::all_of(name.begin(), name.end(), [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+        })) << name;
+    };
+    for (size_t i = 0; i < std::size(kObserved); ++i) {
+        check(caseName(kObserved[i].code, i, kObserved[i].name));
+    }
+    for (size_t i = 0; i < std::size(kSilent); ++i) {
+        check(caseName(kSilent[i].code, i, kSilent[i].name));
+    }
+}
 
 TEST(HostileFilenameTest, EveryRuleHasASilentControl) {
     std::set<std::string> covered;
