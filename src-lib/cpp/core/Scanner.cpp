@@ -14,7 +14,7 @@ namespace lyxbosa {
 
 Scanner::Scanner(const AppConfig& config)
     : config_(config), archives_(config_.archives, config_.scan, engine_) {
-    // Load built-in CTRE rules first
+    // Load built-in rules first
     if (config_.builtinRules.enabled) {
         // First, disable any specified rules
         for (const auto& code : config_.builtinRules.disable) {

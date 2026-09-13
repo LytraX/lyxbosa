@@ -580,7 +580,7 @@ archives:
                           # then markup, then everything else - on a real site the
                           # first two are 54% of the files and 5.6% of the bytes.
 
-# Built-in detection rules (CTRE compile-time regex - extremely fast)
+# Built-in detection rules (compiled into the binary; patterns are matched with RE2)
 # Categories: WS (Webshell), BD (Backdoor), OBF (Obfuscation), PHI (Phishing),
 #             EXP (Exploit), DRP (Dropper), RCE (CodeExec), CRED (CredTheft),
 #             SEO (SeoSpam), DEFC (Defacement), PL (Perl), ARC (Archive),

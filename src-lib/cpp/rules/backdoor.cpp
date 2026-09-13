@@ -4,7 +4,8 @@
 namespace lyxbosa::rules::backdoor {
 
 // BD001: Hidden admin creation
-// Note: Patterns use possessive [^...]*+ to avoid CTRE stack overflow on large files
+// Note: RE2 guarantees time linear in the input and does not recurse on it, so the
+// negated classes below cannot overflow a stack or go exponential on a large file.
 namespace detail_BD001 {
     static constexpr Pattern patterns[] = {
         { R"((?i:wp_insert_user)\s*\([^)]*user_login[^)]*administrator)",
