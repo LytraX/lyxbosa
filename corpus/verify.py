@@ -144,9 +144,11 @@ def unscanned_failure(sample, chk, what="sample"):
 #                          not say whether it was a file or a directory and read neither.
 #                          Behind one there may be a single file or a whole tree, so the
 #                          shortfall is unsized exactly as an unlistable directory's is, and
-#                          it is the host's refusal and not the scanner's choice: on Linux a
-#                          link into a directory this user may not search or one that leads
-#                          back to itself, on Windows an app execution alias.
+#                          it is the host's refusal and not the scanner's choice: on Windows
+#                          an app execution alias, and on either platform, once
+#                          scan.follow_symlinks is on, a link into a directory this user may
+#                          not search. With the setting off that link is one of the links not
+#                          followed below, and a link that leads back to itself is in neither.
 #   filesSkipped.unreadable
 #                          a KNOWN number of files the host would not let the scanner open.
 #                          Known is not enough. Which files a host withholds is the host's
@@ -260,10 +262,16 @@ def files_read(report):
          - skipped.get("size", 0) - skipped.get("unreadable", 0))
     return max(n, 0)
 
-def benign_sweep(scan_targets, report_path):
-    """One scan of `scan_targets` to `report_path`. Returns (report or None, CompletedProcess)."""
+def benign_sweep(scan_targets, report_path, config=None):
+    """One scan of `scan_targets` to `report_path`. Returns (report or None, CompletedProcess).
+
+    `config` is a configuration file for the scanner, and only the --inject controls pass one:
+    every sweep the suite records runs with the scanner's built-in configuration."""
     cmd = [SCANNER, "scan", "--recursive", "--force", "--dry-run", "--no-ansi",
-           "-o", "json", "-O", report_path] + list(scan_targets)
+           "-o", "json", "-O", report_path]
+    if config:
+        cmd += ["-c", config]
+    cmd += list(scan_targets)
     r = subprocess.run(cmd, capture_output=True)
     if not os.path.exists(report_path):
         return None, r
@@ -1093,10 +1101,14 @@ def inject():
             case("the same tree with access restored is reported again",
                  fig["refused"] is None and fig["files_read"] == 3)
 
-            # Links, both kinds of fact. A link out of the tree is policy and is disclosed; a
-            # link that leads back to itself is an entry the host will not give the type of,
-            # which is the one shape of that channel root cannot read past, so both are
-            # observable whoever runs this.
+            # Links, both kinds of fact. A link out of the tree is policy and is disclosed. A
+            # link that leads back to itself leads nowhere: the scanner counts it in neither
+            # channel, so it neither refuses nor is disclosed, and a benign tree holding one
+            # still has a figure. A link into a directory this user may not search is policy
+            # too while links are not followed - it is one of the links not followed, which is
+            # how every sweep here runs - and it is an entry the host would not give the type
+            # of once they are, which is the one way left to observe that channel end to end
+            # on this platform.
             outside = os.path.join(tmp, "outside")
             os.makedirs(outside)
             with open(os.path.join(outside, "behind.php"), "w") as fh:
@@ -1104,6 +1116,7 @@ def inject():
             made = [os.path.join(tree, "to-file.php"), os.path.join(tree, "to-dir")]
             os.symlink(os.path.join(outside, "behind.php"), made[0])
             os.symlink(outside, made[1])
+            closed = os.path.join(tmp, "closed")
             try:
                 rep = os.path.join(tmp, "links.json")
                 report, r = benign_sweep([tree], rep)
@@ -1119,13 +1132,50 @@ def inject():
                 rep = os.path.join(tmp, "loop.json")
                 report, r = benign_sweep([tree], rep)
                 fig = benign_figures(report, r.returncode, r.stderr)
-                case("a link that leads back to itself refuses the figure",
-                     report is not None and bool(fig["refused"]))
-                case("  ...for that reason and no other, the links beside it notwithstanding",
-                     len(fig["refused"] or []) == 1 and "1 entr" in (fig["refused"] or [""])[0])
-                case("  ...and the readable files are not counted around it",
-                     fig["files_read"] == 0 and fig["clean"] == 0)
+                case("a link that leads back to itself does not refuse the figure",
+                     report is not None and fig["refused"] is None)
+                case("  ...and is neither disclosed nor read: 2 links not followed, 3 files",
+                     fig["coverage"].get("linksNotFollowed") == 2
+                     and fig["coverage"].get("entriesUnreadable") == 0
+                     and fig["files_read"] == 3)
+
+                os.makedirs(closed)
+                with open(os.path.join(closed, "hidden.php"), "w") as fh:
+                    fh.write("<?php echo 'hidden';\n")
+                into = os.path.join(tree, "into-closed.php")
+                os.symlink(os.path.join(closed, "hidden.php"), into)
+                made.append(into)
+                os.chmod(closed, 0)
+                if root_why:
+                    not_observed("a link into a directory this user may not search is a link "
+                                 "not followed", root_why)
+                    not_observed("  ...and refuses the figure once links are followed", root_why)
+                else:
+                    rep = os.path.join(tmp, "closed.json")
+                    report, r = benign_sweep([tree], rep)
+                    fig = benign_figures(report, r.returncode, r.stderr)
+                    case("a link into a directory this user may not search is a link not "
+                         "followed",
+                         report is not None and fig["refused"] is None
+                         and fig["coverage"].get("linksNotFollowed") == 3
+                         and fig["coverage"].get("entriesUnreadable") == 0)
+
+                    following = os.path.join(tmp, "following.yaml")
+                    text = subprocess.run([SCANNER, "init-config"], capture_output=True,
+                                          text=True).stdout
+                    with open(following, "w") as fh:
+                        fh.write(text.replace("follow_symlinks: false", "follow_symlinks: true", 1))
+                    rep = os.path.join(tmp, "closed-following.json")
+                    report, r = benign_sweep([tree], rep, config=following)
+                    fig = benign_figures(report, r.returncode, r.stderr)
+                    case("  ...and refuses the figure once links are followed, for that alone",
+                         report is not None and len(fig["refused"] or []) == 1
+                         and "1 entr" in (fig["refused"] or [""])[0])
+                    case("  ...and the readable files are not counted around it",
+                         fig["files_read"] == 0 and fig["clean"] == 0)
             finally:
+                if os.path.isdir(closed):
+                    os.chmod(closed, 0o755)
                 for p in made:
                     if os.path.lexists(p):
                         os.remove(p)
