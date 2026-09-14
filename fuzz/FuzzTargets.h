@@ -120,7 +120,9 @@ inline Observation runArchiveTarget(const uint8_t* data, size_t size) {
     size_t findings = 0;
     volatile size_t sink = 0;
     scanner.setFindingCallback([&](const std::filesystem::path& display, uint64_t bytesLen,
-                                   std::vector<FileMatch>&& matches) {
+                                   std::vector<FileMatch>&& matches,
+                                   std::optional<SkipReason> notOpened) {
+        sink += notOpened ? static_cast<size_t>(*notOpened) : 0;
         findings += matches.size();
         sink += display.native().size() + static_cast<size_t>(bytesLen & 0xff);
         for (const auto& match : matches) {

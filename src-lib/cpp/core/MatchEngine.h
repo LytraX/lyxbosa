@@ -83,6 +83,13 @@ public:
     // selects, through exactly the same loaded-rule list every other rule goes through.
     std::vector<FileMatch> matchName(std::string_view pathUtf8) const;
 
+    // The same findings about a member of an archive, from the name the archive stores for
+    // it. Only the final component is examined, split by rules::filename::
+    // memberFinalComponent() - on `/` alone, on every platform, because the separator inside
+    // an archive is the format's rather than the host's. Which rules run, and the findings
+    // they raise, are exactly matchName()'s.
+    std::vector<FileMatch> matchMemberName(std::string_view storedName) const;
+
     // How many FN rules are live. Lets a caller skip the call - and a test assert that
     // disabling one took effect.
     size_t nameRuleCount() const { return nameRules_.size(); }
@@ -150,6 +157,10 @@ public:
     static std::span<const std::string_view> annotationMarkers();
 
 private:
+    // The findings matchName() and matchMemberName() raise, about a final component each of
+    // them has already split off.
+    std::vector<FileMatch> matchFinalName(std::string_view name) const;
+
     // Lower `match` to Low with the original severity kept beside it, if a marker is in
     // reach AND the operator trusts the files. The decision is written at the definition.
     void applyAnnotation(FileMatch& match, std::string_view content) const;

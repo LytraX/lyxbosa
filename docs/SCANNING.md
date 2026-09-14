@@ -223,7 +223,7 @@ it or rename it, and which of those it is depends on whether anybody needs the f
 costs no open — so a file no include pattern covers is still reported when its name is a
 finding, with its row saying plainly that the bytes were never read. `scan.exclude` is the
 other intention and is obeyed: a pattern the operator wrote to keep a tree out of the scan
-keeps it out of this too.
+keeps it out of this too, whether or not the include list covers the file.
 
 **Volume.** One automated vulnerability scanner left 83 such names in a single upload
 directory, and a worse host gives thousands. The summary rolls them up on one line rather
@@ -235,6 +235,44 @@ Files with a hostile name: 4102 (the name is the finding; the bytes may be ordin
 ```
 
 JSON carries the same count as `filesWithHostileNames`, always present.
+
+### Names inside archives
+
+A member of an uploaded zip named `x$(sleep 20)y.mdb` is the same evidence as a file on
+disk named that way, so the same six rules read member names, in zip, tar and tar.gz, at
+every depth the scan opens. A member whose name raises a finding gets a row addressed
+`upload.zip!docs/x$(sleep 20)y.mdb`, like any other member row.
+
+**Which names are read.** A member's name is in the archive's index or header, so it is
+known without opening the member, and the file-level rule applies unchanged. What decides
+whether a member is *opened* — the selection that leaves non-code members shut,
+`scan.include`, the sidecar entries a Mac writes, `archives.max_member_size` and the
+expansion, ratio and time budgets — does not hide its name. Such a row carries the reason
+its bytes were not read, in the same field a loose file's does: `skipReason` in JSON, the
+`skip_reason` column in CSV, and `(not scanned: policy)` in the text report, where
+`policy`, `size`, `budget`, `ratio` and `corrupt` are the reasons the archive summary
+already counts. `scan.exclude` is obeyed for a member's name as for a file's. A member the
+scan never reaches has no name to read: one inside an archive nested past
+`archives.max_depth`, one after a guard stopped a tar stream, and one after an interrupt.
+A single `.gz` stores no member name the scanner reads — its member is named from the
+container's own file name, which is read as the file it is.
+
+**Separators.** Only the final component is read, as for a file. Inside an archive the
+separator is `/` on every platform, Windows included: a zip's names use `/` by
+specification and a tar's are POSIX, so a backslash in a stored name is a character of it,
+and it raises FN002. That is also what extraction does on Linux: PHP's `ZipArchive`,
+7-Zip and Python's `zipfile` write the backslash into the name of the file they create,
+and only Info-ZIP's `unzip` makes a directory of it, for an archive marked as written on
+MS-DOS. Windows PowerShell 5.1's `Compress-Archive` and .NET Framework's
+`ZipFile.CreateFromDirectory` do store backslashes as separators, so every member below the
+top level of an archive they wrote raises FN002. A row's address normalises backslashes to
+`/` for display, as it always has, so such a row reads `upload.zip!a/zz.php` with FN002
+naming the backslash.
+
+**Quarantine and exit code.** A name finding on a member never moves its container, just
+as it never moves a file; only hostile content inside does. A member row with a name
+finding moves the exit code to `2`, and counts in `Files with matches` and
+`Files with a hostile name` like a loose file's.
 
 ### How a name is printed, and how a program gets back to the file
 
@@ -280,9 +318,9 @@ what a loader wants anyway.
 
 ### What this does not read
 
-Only the final component of the path. A hostile directory name is a fact about that
-directory, and putting it on every file underneath would be thousands of rows for one
-thing. Archive member names are not read either — these rules are about files on disk.
+Only the final component of the path, on disk and inside an archive. A hostile directory
+name is a fact about that directory, and putting it on every file underneath would be
+thousands of rows for one thing.
 
 On Windows, NTFS refuses several of these shapes outright, so a file created there cannot
 carry them: a double quote, a pipe and every byte below `0x20` are rejected, and a trailing

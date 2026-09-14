@@ -212,6 +212,11 @@ std::string_view finalComponent(std::string_view pathUtf8) {
     return cut == std::string_view::npos ? pathUtf8 : pathUtf8.substr(cut + 1);
 }
 
+std::string_view memberFinalComponent(std::string_view storedName) {
+    const size_t cut = storedName.find_last_of('/');
+    return cut == std::string_view::npos ? storedName : storedName.substr(cut + 1);
+}
+
 std::vector<NameFinding> examine(std::string_view name) {
     std::vector<NameFinding> found;
     if (name.empty()) {

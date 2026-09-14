@@ -85,4 +85,22 @@ std::vector<NameFinding> examine(std::string_view name);
 // and hand FN002 a clean file.
 std::string_view finalComponent(std::string_view pathUtf8);
 
+// The final component of a member name as an archive stores it. Splits on `/` and nothing
+// else, on every platform, including Windows.
+//
+// Inside an archive the separator is the format's and not the host's: a zip's names use `/`
+// by specification and a tar's are POSIX, so a backslash in a stored name is a character of
+// it wherever the scan runs. Extracting on Linux agrees: PHP's ZipArchive, 7-Zip and Python's
+// zipfile all write the backslash into the name of the file they create, whichever system
+// the archive says wrote it, and only Info-ZIP's unzip makes a directory of it, and only for
+// an archive marked as written on MS-DOS. finalComponent() splits on it
+// under _WIN32 because NTFS cannot hold one in a name, which is a fact about the disk the scan
+// is reading and says nothing about bytes in an archive. Using it here would answer the same
+// member two ways by platform, and on Windows would take `a\zz-<id>.php` to `zz-<id>.php`.
+//
+// Some writers do mean a backslash as a separator. Windows PowerShell 5.1's Compress-Archive
+// and .NET Framework's ZipFile.CreateFromDirectory store `site\wp-content\index.php`, and so
+// every member below the top of such an archive carries FN002. That is what the name is.
+std::string_view memberFinalComponent(std::string_view storedName);
+
 }  // namespace lyxbosa::rules::filename

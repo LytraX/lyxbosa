@@ -292,21 +292,29 @@ ScanResult Scanner::scan() {
     // full-screen view, so the file on disk and the screen would both keep the value
     // from before the move, while only an in-process caller holding the whole
     // ScanResult ever saw the corrected one.
+    //
+    // A member whose name raised a finding is a row whether or not its bytes were read, and
+    // one that was not read says why, in the same field an excluded loose file's row does -
+    // see ArchiveScanner::nameFindings() for which names are read. Its bytes are not a
+    // container's either way: the reason is not a file-level skip and is counted only where
+    // the archive layer already counts it.
     archives_.setFindingCallback([&](const std::filesystem::path& display,
                                      uint64_t size,
-                                     std::vector<FileMatch>&& matches) {
+                                     std::vector<FileMatch>&& matches,
+                                     std::optional<SkipReason> notOpened) {
         FileResult member;
         member.path = display;
         member.fileSize = size;
         member.matches = std::move(matches);
+        member.skipReason = notOpened;
 
-        ++result.filesWithMatches;
-        result.totalMatches += member.matches.size();
-        countSeverities(member.matches);
+        accountFindings(member);
 
         // The same rule the container is held to: an exposure finding says a file is
         // in the wrong place, not that it is hostile, so a nested backup inside a zip
-        // is no more a reason to move the zip than a loose one is to move itself.
+        // is no more a reason to move the zip than a loose one is to move itself. A name
+        // finding is the other finding that never moves a file, so a member whose only
+        // finding is its name leaves its container where it is.
         if (hasHostileContent(member)) {
             archiveMemberHostile = true;
         }
@@ -697,7 +705,8 @@ FileResult Scanner::scanFile(const std::filesystem::path& path) {
 
     archives_.setFindingCallback([this](const std::filesystem::path& display,
                                         uint64_t size,
-                                        std::vector<FileMatch>&& matches) {
+                                        std::vector<FileMatch>&& matches,
+                                        std::optional<SkipReason> notOpened) {
         if (!fileResultCallback_) {
             return;
         }
@@ -705,6 +714,7 @@ FileResult Scanner::scanFile(const std::filesystem::path& path) {
         member.path = display;
         member.fileSize = size;
         member.matches = std::move(matches);
+        member.skipReason = notOpened;
         fileResultCallback_(member);
     });
     archives_.setProgressCallback({});

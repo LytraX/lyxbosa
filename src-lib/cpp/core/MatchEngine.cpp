@@ -1686,12 +1686,21 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
 }
 
 std::vector<FileMatch> MatchEngine::matchName(std::string_view pathUtf8) const {
-    std::vector<FileMatch> out;
     if (nameRules_.empty() || pathUtf8.empty()) {
-        return out;
+        return {};
     }
+    return matchFinalName(rules::filename::finalComponent(pathUtf8));
+}
 
-    const std::string_view name = rules::filename::finalComponent(pathUtf8);
+std::vector<FileMatch> MatchEngine::matchMemberName(std::string_view storedName) const {
+    if (nameRules_.empty() || storedName.empty()) {
+        return {};
+    }
+    return matchFinalName(rules::filename::memberFinalComponent(storedName));
+}
+
+std::vector<FileMatch> MatchEngine::matchFinalName(std::string_view name) const {
+    std::vector<FileMatch> out;
     for (const auto& finding : rules::filename::examine(name)) {
         // A finding whose rule the operator turned off is not raised. The lookup is
         // over the live list rather than over disabledRules_, so `builtin_rules.use`
