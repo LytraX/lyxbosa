@@ -322,6 +322,37 @@ bool isLink(const std::filesystem::directory_entry& entry) {
 #endif
 }
 
+// Whether the host's answer to "what does this link lead to" is that it leads nowhere.
+//
+// Two answers say so, and they are one fact reached two ways. A dangling link is not found:
+// the library calls it file_type::not_found on both platforms. A link that leads back through
+// itself - to itself, or around a ring of links - is one the host gives up resolving: ELOOP
+// on POSIX, which is also what forty links in a row earn whether or not they close a ring.
+// Nothing is behind either, for this scan or for any other reader of that name, so neither
+// is content a scan left unread, whatever followSymlinks says.
+//
+// Windows gives up with ERROR_CANT_RESOLVE_FILENAME, and Microsoft's library does not map that
+// to too_many_symbolic_link_levels, so it is asked for by number. Measured with the MSVC
+// build: a junction to itself, a ring of three junctions, a directory symbolic link to itself,
+// a file symbolic link to itself and a ring of three of those each answered 1921, and a
+// dangling junction and a dangling symbolic link answered not found.
+//
+// Every other refusal is not this. EACCES, from a link into a directory this user may not
+// search, and ERROR_ACCESS_DENIED from one into a directory an ACL closes to this user, say the
+// target may well be there and this user may not see it: that is a gap, and walkDirectory()
+// decides which count holds it by whether the scan meant to follow the link.
+bool leadsNowhere(std::filesystem::file_type type, const std::error_code& ec) {
+    if (type == std::filesystem::file_type::not_found) {
+        return true;
+    }
+#ifdef _WIN32
+    if (ec.category() == std::system_category() && ec.value() == ERROR_CANT_RESOLVE_FILENAME) {
+        return true;
+    }
+#endif
+    return ec == std::errc::too_many_symbolic_link_levels;
+}
+
 }  // namespace
 
 FileWalker::FileWalker(const ScanConfig& config)
@@ -477,11 +508,11 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
 
     // An entry whose type the host would not give.
     //
-    // The walk asks every entry two questions - is it a directory, is it a regular file - and
-    // a refusal answers neither. Measured: an app execution alias on Windows refuses both with
-    // ERROR_CANT_ACCESS_FILE, and on Linux a link refuses them with EACCES when what it leads
-    // to sits behind a directory this user may not search, and with ELOOP when it leads back
-    // to itself. Each of those was passed by as though it were not in the listing.
+    // The walk asks an entry two questions - is it a directory, is it a regular file - and a
+    // refusal answers neither. Measured: an app execution alias on Windows refuses both with
+    // ERROR_CANT_ACCESS_FILE under either setting, and with followSymlinks on, a link on Linux
+    // refuses them with EACCES when what it leads to sits behind a directory this user may not
+    // search. Each of those was once passed by as though it were not in the listing.
     //
     // Counted on its own rather than in either tally beside it, because each of those is a
     // claim about what the entry was. SkipReason::Unreadable is a file handed to the scanner:
@@ -493,13 +524,60 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
     //
     // A refusal that says the path leads nowhere is not one of these. A dangling link and an
     // entry removed since the listing are answered - nothing is there - and the library calls
-    // that file_type::not_found on both platforms. The status is asked again to learn which it
-    // was, so that the library's own definition of not found decides it rather than a list of
-    // error numbers per host; and only here, so an entry whose type was read never pays for it.
+    // that file_type::not_found on both platforms. A link that loops is answered the same way;
+    // see leadsNowhere(). The status is asked again to learn which it was, so that the
+    // library's own definition of not found decides it rather than a list of error numbers per
+    // host; and only here, so an entry whose type was read never pays for it.
+    //
+    // A link reaches this only when the walk follows links. With followSymlinks off every link
+    // was recognised before its type was asked, and passUnfollowedLink() below had it - so
+    // whether the entry is a link is asked here only under the setting where it can be one,
+    // and only after a refusal, which is the one time the answer changes anything.
     auto noteTypeRefused = [&](const fs::directory_entry& entry) {
         std::error_code again;
-        if (entry.status(again).type() != fs::file_type::not_found && unreadableEntries) {
+        const fs::file_type type = entry.status(again).type();
+        if (type == fs::file_type::not_found) {
+            return;
+        }
+        if (config_.followSymlinks && leadsNowhere(type, again) && isLink(entry)) {
+            return;
+        }
+        if (unreadableEntries) {
             ++*unreadableEntries;
+        }
+    };
+
+    // A link the walk will not go through, because followSymlinks is off, and what that cost.
+    //
+    // Counted in linksNotFollowed wherever content may be behind it: a directory, in a walk that
+    // enters subdirectories; a file; and a target the host would not describe, which is what a
+    // link into a directory this user may not search is. That last may be a file or a tree, and
+    // it is not an entry of unknown type: the entry's type was read - it is a link - and the
+    // operator asked for links not to be followed, so what is behind it was never going to be
+    // read. Counted in a walk that enters no subdirectory too, because it may be a file.
+    //
+    // Passed by without a count when nothing is behind it: a link that leads nowhere, a link to
+    // a FIFO, a socket or a device, and a link to a directory in a walk that enters no
+    // subdirectory, which refused nothing by not entering it.
+    //
+    // One status query, which follows the link. It is what is_directory() already cost for a
+    // link, and one fewer than a link to a file cost when is_regular_file() asked a second time.
+    auto passUnfollowedLink = [&](const fs::directory_entry& entry) {
+        std::error_code targetEc;
+        const fs::file_type target = entry.status(targetEc).type();
+        if (leadsNowhere(target, targetEc)) {
+            return;
+        }
+        if (!targetEc) {
+            if (target == fs::file_type::directory && !config_.recursive) {
+                return;
+            }
+            if (target != fs::file_type::directory && target != fs::file_type::regular) {
+                return;
+            }
+        }
+        if (linksNotFollowed) {
+            ++*linksNotFollowed;
         }
     };
 
@@ -522,6 +600,34 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
             return false;
         }
 
+        // What the entry is, before what it leads to. They are two questions, and with
+        // followSymlinks off the order decides the answer.
+        //
+        // Whether an entry is a link is a question about the entry, and the listing has
+        // answered it already: libstdc++ keeps the type readdir() reported, and Microsoft's
+        // library the attributes and reparse tag the directory search returned, so on a file
+        // system whose listing names types it costs no system call. What a link leads to is a
+        // question about somewhere else, and asking it follows the link. is_directory() is that
+        // second question, and the walk once asked it first and counted its refusal as an
+        // entry whose type could not be read before anything had asked whether the entry was a
+        // link. So with followSymlinks off a link to itself, which the scan would never have
+        // read through and behind which nothing exists, was counted as content the scan could
+        // not read; and a link into a directory this user may not search was counted there too,
+        // rather than as the link not followed that it is.
+        //
+        // With followSymlinks on, what an entry leads to is what the walk acts on for every
+        // entry, so that is asked first, and whether the entry is a link only when the answer is
+        // refused or the entry is a file - the two places it changes anything. Asking it first
+        // there as well gives the same answers and costs an lstat() for every directory on a
+        // file system whose listing names no types.
+        //
+        // A link is what isLink() says, which on Windows includes a junction and does not include
+        // a volume mount point.
+        if (!config_.followSymlinks && isLink(entry)) {
+            passUnfollowedLink(entry);
+            return true;
+        }
+
         // Its own error_code, and never the iterator's. The iterator's says whether this
         // directory could be listed; this one says whether one entry in it could be asked
         // about. Shared, the last entry's answer was what the walk read as the directory's,
@@ -534,22 +640,12 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
         }
 
         if (directory) {
-            // A linked directory is queued only when the operator asked for it - and a
-            // link is what isLink() says, which on Windows includes a junction and does not
-            // include a volume mount point. Whether queueing it would close a loop is not
-            // decided here: the answer needs the directory's identity and the identities
-            // of everything above it, and the loop below is where both are known.
-            //
-            // A link refused here is counted, because nothing else about the scan moves
-            // when it happens: the tree behind it is simply absent from every total. Only
-            // in a recursive walk, where the link would otherwise have been entered - a
-            // walk that enters no subdirectory has refused nothing by not entering this one.
+            // Queued in a recursive walk, and a linked directory reaches this only when the
+            // operator asked for links to be followed. Whether queueing it would close a loop is
+            // not decided here: the answer needs the directory's identity and the identities of
+            // everything above it, and the loop below is where both are known.
             if (config_.recursive) {
-                if (config_.followSymlinks || !isLink(entry)) {
-                    children.push_back(entry.path());
-                } else if (linksNotFollowed) {
-                    ++*linksNotFollowed;
-                }
+                children.push_back(entry.path());
             }
             return true;
         }
@@ -580,20 +676,12 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
             return true;
         }
 
-        // A linked file under the same rule and into the same count. A link that leads
-        // nowhere never gets this far - the library answers not found for it above - and is
-        // not a link to content this scan declined to read.
-        const bool link = isLink(entry);
-        if (link && !config_.followSymlinks) {
-            if (linksNotFollowed) {
-                ++*linksNotFollowed;
-            }
-            return true;
-        }
-
+        // A linked file reaches this only when links are followed, and is read as the file it
+        // leads to. Asked only then, so a walk that does not follow links asks it of no file
+        // twice.
         FileInfo info;
         info.path = entry.path();
-        info.isSymlink = link;
+        info.isSymlink = config_.followSymlinks && isLink(entry);
 
         // Filters first. An excluded file is excluded whatever its size - deciding
         // that a 6 GB file the operator told us to ignore was "skipped for size"

@@ -89,15 +89,21 @@ public:
     // contents are covered at the path they lead back to, so this is not a coverage
     // gap - but it is not nothing either, and no other count moves when it happens.
     //
-    // `linksNotFollowed` counts the links, to a directory or to a file, that the walk did
-    // not go through because followSymlinks is off. That one can be a gap: whatever is
-    // reachable only through such a link was not read. A root the operator named is
-    // walked even when it is a link, and is not counted.
+    // `linksNotFollowed` counts the links that the walk did not go through because
+    // followSymlinks is off, wherever something may be behind one: a file, a directory in a
+    // recursive walk, or a target the host would not describe, which is what a link into a
+    // directory this user may not search has. That one can be a gap: whatever is reachable
+    // only through such a link was not read. A root the operator named is walked even when
+    // it is a link, and is not counted.
     //
     // `unreadableEntries` counts the entries whose type the host would not give - an app
-    // execution alias on Windows, a link to something this user may not reach - so the walk
-    // cannot say whether each was a file or a directory, and read neither. A link that leads
-    // nowhere is not counted, and the directory such an entry sat in is not unreadable.
+    // execution alias on Windows and, when links are followed, a link to something this user
+    // may not reach - so the walk cannot say whether each was a file or a directory, and read
+    // neither. Whether an entry is a link is asked before what it leads to, so with
+    // followSymlinks off no link is counted here: it is one of the links above.
+    //
+    // Neither counts a link that leads nowhere, dangling or looping back through itself, and
+    // the directory an entry sat in is not unreadable because of it.
     size_t walk(FileCallback callback, size_t* unreadableDirs = nullptr,
                 std::vector<std::filesystem::path>* missingRoots = nullptr,
                 size_t* cycleSkippedDirs = nullptr,

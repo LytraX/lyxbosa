@@ -47,6 +47,7 @@
 #include <fstream>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef _WIN32
@@ -610,12 +611,17 @@ TEST(FileWalkerTest, ASubdirectoryThatVanishesMidWalkIsQuiet) {
 // on ext4. The only entry in a directory is the last one on every file system, so that is
 // the fixture, rather than a name chosen to sort last on one of them.
 
-TEST(FileWalkerUnknownTypeTest, AnEntryWhoseTypeCannotBeReadIsCountedUnderEitherSetting) {
+// Counted wherever the walk asks the entry its type and is refused. That is under either
+// setting for an entry that is not a link - the app execution alias the Windows fixture is -
+// and only with followSymlinks on for a link, which a walk that does not follow links asks
+// nothing but whether it is one. There, the same entry is a link not followed.
+TEST(FileWalkerUnknownTypeTest, AnEntryWhoseTypeCannotBeReadIsCountedWhereItsTypeIsAsked) {
     TempTree tree;
     const fs::path root = tree.path() / "tree";
     tree.write(root / "own.php", kHarmless);
-    if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(root / "unknown")) {
-        GTEST_SKIP() << *why;
+    const test::EntryOfUnknownType unknown(root / "unknown", tree.path() / "elsewhere");
+    if (unknown.whyNot()) {
+        GTEST_SKIP() << *unknown.whyNot();
     }
 
     for (const bool follow : {false, true}) {
@@ -623,13 +629,15 @@ TEST(FileWalkerUnknownTypeTest, AnEntryWhoseTypeCannotBeReadIsCountedUnderEither
         scan.followSymlinks = follow;
         const Walked seen = walkOf(scan, root);
 
-        EXPECT_EQ(seen.unreadableEntries, 1u)
-            << "the entry was passed by as though it were not in the listing, followSymlinks "
-            << follow;
+        const bool asked = follow || !unknown.isLink();
+        EXPECT_EQ(seen.unreadableEntries, asked ? 1u : 0u)
+            << (asked ? "the entry was passed by as though it were not in the listing"
+                      : "a link the walk does not follow was followed to ask its type")
+            << ", followSymlinks " << follow;
+        EXPECT_EQ(seen.linksNotFollowed, asked ? 0u : 1u)
+            << "followSymlinks " << follow;
         EXPECT_EQ(seen.files.size(), 1u) << "own.php, and the entry was not handed over as a file";
         EXPECT_EQ(seen.unreadable, 0u) << "the directory it sits in was read";
-        EXPECT_EQ(seen.linksNotFollowed, 0u)
-            << "whatever it is, following links would not have read it";
         EXPECT_EQ(seen.directories, 1u);
         EXPECT_EQ(FileWalker(scan).countFiles().files, 1u)
             << "the pre-count is the same walk, and counts the entry as no file of work";
@@ -662,10 +670,73 @@ TEST(FileWalkerUnknownTypeTest, ALinkThatLeadsNowhereIsNotAnEntryOfUnknownType) 
     }
 }
 
-// Not only a loop. A link to a file and a link to a directory, both behind a directory this
-// user may not search: neither can say what it leads to, so a repair that had learned to
-// count ELOOP and nothing else fails here.
-TEST(FileWalkerUnknownTypeTest, ALinkToWhatThisUserMayNotReachIsAnEntryOfUnknownType) {
+// A link that leads back through itself leads nowhere too, and says so in a different word:
+// ELOOP on POSIX and ERROR_CANT_RESOLVE_FILENAME on Windows, where not found is what a
+// dangling link says. One link to itself, and one into a ring of three that lies outside the
+// tree, so a walk that knew only a link naming itself would fail on the second.
+//
+// Against a walk that asks is_directory() before it asks whether an entry is a link, both are
+// counted as entries whose type could not be read with followSymlinks off - the setting under
+// which the scan would never have read through either. Measured on v3.2.0: one of each in a
+// tree, and entriesUnreadable was 2 under both settings. The companions are
+// EveryLinkNotFollowedIsCountedAndNothingElseIs, where the same two links sit beside links
+// that do lead somewhere and those are still counted, and
+// ALinkIntoADirectoryThisUserMayNotSearchIsCountedByWhetherTheWalkWouldFollowIt, where a
+// refusal that is not a loop is still counted under each setting.
+TEST(FileWalkerUnknownTypeTest, ALinkThatLoopsIsPassedByUnderEitherSetting) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    const fs::path ring = tree.path() / "ring";
+    tree.write(root / "own.php", kHarmless);
+    fs::create_directories(ring);
+    std::error_code ec;
+    fs::create_symlink("self.php", root / "self.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(ring / "b", ring / "a", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(ring / "c", ring / "b", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(ring / "a", ring / "c", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(ring / "a", root / "ring", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    for (const bool follow : {false, true}) {
+        ScanConfig scan = configFor(root);
+        scan.followSymlinks = follow;
+        const Walked seen = walkOf(scan, root);
+
+        EXPECT_EQ(seen.unreadableEntries, 0u)
+            << "a link that loops was counted as content the scan could not read, "
+               "followSymlinks " << follow;
+        EXPECT_EQ(seen.linksNotFollowed, 0u)
+            << "a link that loops leads to nothing a scan could have read, followSymlinks "
+            << follow;
+        EXPECT_EQ(seen.unreadable, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(seen.directories, 1u) << "followSymlinks " << follow;
+        EXPECT_EQ(seen.files.size(), 1u) << "own.php alone, followSymlinks " << follow;
+        EXPECT_EQ(FileWalker(scan).countFiles().files, 1u)
+            << "the pre-count, followSymlinks " << follow;
+    }
+}
+
+// A link to a file and a link to a directory, both inside a directory this user may not
+// search, and a link to that directory itself. The first two cannot say what they lead to;
+// the third can - it is a directory - and it is the directory that cannot be listed.
+//
+// Which count holds the first two is decided by whether the walk would have gone through
+// them. With followSymlinks off it would not, so they are links not followed: the operator
+// asked for exactly that, and what is behind them was never going to be read. With it on the
+// walk meant to read what they lead to and could not ask what that is, so they are entries of
+// unknown type. Against a walk that asked is_directory() first they were entries of unknown
+// type under both settings; against one that had learned to pass every refused link by as
+// though it looped, they are counted nowhere under either, and so this case fails both.
+TEST(FileWalkerUnknownTypeTest,
+     ALinkIntoADirectoryThisUserMayNotSearchIsCountedByWhetherTheWalkWouldFollowIt) {
     if (const auto why = test::whyCannotDenyOwnAccess()) {
         GTEST_SKIP() << *why << " - a link into a mode-000 directory would still be followed";
     }
@@ -683,33 +754,58 @@ TEST(FileWalkerUnknownTypeTest, ALinkToWhatThisUserMayNotReachIsAnEntryOfUnknown
     ASSERT_FALSE(ec) << ec.message();
     fs::create_directory_symlink(tree.path() / "locked" / "dir", root / "linkdir", ec);
     ASSERT_FALSE(ec) << ec.message();
+    fs::create_directory_symlink(tree.path() / "locked", root / "lockeddir", ec);
+    ASSERT_FALSE(ec) << ec.message();
     tree.lock(tree.path() / "locked");
 
-    for (const bool follow : {false, true}) {
-        ScanConfig scan = configFor(root);
-        scan.followSymlinks = follow;
-        const Walked seen = walkOf(scan, root);
+    const ScanConfig byDefault = configFor(root);
+    const Walked notFollowed = walkOf(byDefault, root);
+    EXPECT_EQ(notFollowed.linksNotFollowed, 3u) << "all three are links the walk did not follow";
+    EXPECT_EQ(notFollowed.unreadableEntries, 0u)
+        << "a link the walk was told not to follow was followed to ask its type";
+    EXPECT_EQ(notFollowed.unreadable, 0u) << "nothing was entered, so nothing failed to list";
+    EXPECT_EQ(notFollowed.directories, 1u);
+    EXPECT_EQ(notFollowed.files.size(), 1u);
+    EXPECT_EQ(FileWalker(byDefault).countFiles().files, 1u) << "the pre-count, by default";
 
-        EXPECT_EQ(seen.unreadableEntries, 2u) << "followSymlinks " << follow;
-        EXPECT_EQ(seen.files.size(), 1u);
-        EXPECT_EQ(seen.unreadable, 0u);
-        EXPECT_EQ(seen.directories, 1u);
-    }
+    ScanConfig following = configFor(root);
+    following.followSymlinks = true;
+    const Walked followed = walkOf(following, root);
+    EXPECT_EQ(followed.unreadableEntries, 2u) << "link.php and linkdir";
+    EXPECT_EQ(followed.linksNotFollowed, 0u) << "every link was followed";
+    EXPECT_EQ(followed.unreadable, 1u) << "lockeddir, which was entered and could not be listed";
+    EXPECT_EQ(followed.directories, 2u) << "the root and lockeddir";
+    EXPECT_EQ(followed.files.size(), 1u);
+    EXPECT_EQ(FileWalker(following).countFiles().files, 1u) << "the pre-count, following";
+
+    // A walk that enters no subdirectory refused nothing by not entering lockeddir, which says
+    // it is a directory. The other two do not say what they are, and either may be a file.
+    ScanConfig flat = configFor(root);
+    flat.recursive = false;
+    const Walked notRecursive = walkOf(flat, root);
+    EXPECT_EQ(notRecursive.linksNotFollowed, 2u) << "link.php and linkdir, and not lockeddir";
+    EXPECT_EQ(notRecursive.unreadableEntries, 0u);
 }
 
 // The directory it sat in was read. Against the walk that shared the iterator's error_code
 // this directory was counted unreadable. The other direction - a directory that really
 // cannot be listed is still counted - is AnUnreadableSubdirectoryIsCountedAndTheWalkContinues.
+//
+// With followSymlinks on, which is the setting under which the entry has no readable type on
+// every platform: see AnEntryWhoseTypeCannotBeReadIsCountedWhereItsTypeIsAsked.
 TEST(FileWalkerUnknownTypeTest, ADirectoryWhoseLastEntryHasNoReadableTypeWasStillRead) {
     TempTree tree;
     const fs::path root = tree.path() / "tree";
     tree.write(root / "own.php", kHarmless);
     fs::create_directories(root / "sub");
-    if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(root / "sub" / "unknown")) {
-        GTEST_SKIP() << *why;
+    const test::EntryOfUnknownType unknown(root / "sub" / "unknown", tree.path() / "elsewhere");
+    if (unknown.whyNot()) {
+        GTEST_SKIP() << *unknown.whyNot();
     }
 
-    const Walked seen = walkOf(configFor(root), root);
+    ScanConfig scan = configFor(root);
+    scan.followSymlinks = true;
+    const Walked seen = walkOf(scan, root);
 
     EXPECT_EQ(seen.directories, 2u) << "the root and sub";
     EXPECT_EQ(seen.unreadable, 0u)
@@ -882,10 +978,10 @@ TEST(FileWalkerSymlinkTest, ALinkedFileIsReportedOnlyWhenFollowSymlinksIsSet) {
 }
 
 // What a link the walk did not go through costs, counted. Every one that leads to content:
-// the directory link and the file link, and not the link that leads nowhere, which is not
-// content this scan declined to read. The companions are in the same case - following
-// counts nothing, and a walk that enters no subdirectory has refused no directory link by
-// not entering it - because each is the other half of one number.
+// the directory link and the file link, and not the links that lead nowhere - one dangling,
+// one to itself - which are not content this scan declined to read. The companions are in the
+// same case - following counts nothing, and a walk that enters no subdirectory has refused no
+// directory link by not entering it - because each is the other half of one number.
 TEST(FileWalkerSymlinkTest, EveryLinkNotFollowedIsCountedAndNothingElseIs) {
     if (const auto why = test::whyCannotCreateSymlinks()) {
         GTEST_SKIP() << *why;
@@ -903,16 +999,23 @@ TEST(FileWalkerSymlinkTest, EveryLinkNotFollowedIsCountedAndNothingElseIs) {
     ASSERT_FALSE(ec) << ec.message();
     fs::create_symlink(tree.path() / "nowhere.php", root / "dangling.php", ec);
     ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink("self.php", root / "self.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
 
-    const Walked byDefault = walkOf(configFor(root), root);
+    const ScanConfig defaults = configFor(root);
+    const Walked byDefault = walkOf(defaults, root);
     EXPECT_EQ(byDefault.linksNotFollowed, 2u) << "the directory link and the file link";
+    EXPECT_EQ(byDefault.unreadableEntries, 0u) << "neither link that leads nowhere is unreadable";
     EXPECT_EQ(byDefault.files.size(), 1u) << "own.php, and nothing reached through a link";
+    EXPECT_EQ(FileWalker(defaults).countFiles().files, 1u) << "the pre-count, by default";
 
     ScanConfig following = configFor(root);
     following.followSymlinks = true;
     const Walked followed = walkOf(following, root);
     EXPECT_EQ(followed.linksNotFollowed, 0u) << "every link was followed";
+    EXPECT_EQ(followed.unreadableEntries, 0u);
     EXPECT_EQ(followed.files.size(), 3u) << "own.php, target.php and filelink.php";
+    EXPECT_EQ(FileWalker(following).countFiles().files, 3u) << "the pre-count, following";
 
     ScanConfig flat = configFor(root);
     flat.recursive = false;
@@ -1110,6 +1213,46 @@ TEST(FileWalkerJunctionTest, TheCountingTraversalGoesThroughAJunctionOnlyWhenAsk
     const BoundedCount followed = boundedCount(scan, /*bound=*/1000);
     EXPECT_EQ(followed.result.files, 2u);
     EXPECT_EQ(followed.entered, 2u);
+}
+
+// A junction that leads back through itself leads nowhere, exactly as a symbolic link that
+// does: see ALinkThatLoopsIsPassedByUnderEitherSetting. It is its own case because Windows
+// says so in its own word - ERROR_CANT_RESOLVE_FILENAME, which Microsoft's library does not
+// equate with too_many_symbolic_link_levels - and because a junction needs no privilege, so
+// this runs on a host where the symbolic link case skips. One junction to itself, and one into
+// a ring of three outside the tree. Against a walk that asked is_directory() first, both were
+// entries of unknown type under both settings.
+TEST(FileWalkerJunctionTest, AJunctionThatLoopsIsPassedByUnderEitherSetting) {
+    TempTree tree;
+    const fs::path root = tree.path() / "tree";
+    const fs::path ring = tree.path() / "ring";
+    tree.write(root / "own.php", kHarmless);
+    fs::create_directories(ring);
+    const std::pair<fs::path, fs::path> junctions[] = {
+        {root / "self", root / "self"}, {ring / "a", ring / "b"}, {ring / "b", ring / "c"},
+        {ring / "c", ring / "a"},       {root / "ring", ring / "a"},
+    };
+    for (const auto& [link, target] : junctions) {
+        if (const auto why = test::whyCannotCreateJunction(link, target)) {
+            GTEST_SKIP() << *why;
+        }
+    }
+
+    for (const bool follow : {false, true}) {
+        ScanConfig scan = configFor(root);
+        scan.followSymlinks = follow;
+        const Walked seen = walkOf(scan, root);
+
+        EXPECT_EQ(seen.unreadableEntries, 0u)
+            << "a junction that loops was counted as content the scan could not read, "
+               "followSymlinks " << follow;
+        EXPECT_EQ(seen.linksNotFollowed, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(seen.unreadable, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(seen.directories, 1u) << "followSymlinks " << follow;
+        EXPECT_EQ(seen.files.size(), 1u) << "followSymlinks " << follow;
+        EXPECT_EQ(FileWalker(scan).countFiles().files, 1u)
+            << "the pre-count, followSymlinks " << follow;
+    }
 }
 
 // ===========================================================================
