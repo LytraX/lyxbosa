@@ -11,6 +11,7 @@
 // exits 1 rather than 0 on purpose: a script that asked for an update and did not get
 // one has to be able to tell.
 
+#include "infrastructure/Delivery.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "system/CliArgs.h"
@@ -21,7 +22,9 @@
 #include "update/VersionSource.h"
 
 #include <fmt/base.h>
+#include <filesystem>
 #include <iostream>
+#include <optional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -30,11 +33,20 @@ namespace lyxbosa {
 
 class UpdateUseCase {
 public:
-    // Both seams are injected so the command is testable without a socket; the
+    // What a test puts in place of this process's own facts, so that the command can be
+    // driven without a release build, without the user's state file and without the binary
+    // that is running it. Empty is the real thing, and the CLI passes nothing.
+    struct Seams {
+        std::optional<Version> running;     // runningVersion()
+        std::filesystem::path statePath;    // defaultUpdateStatePath()
+        std::filesystem::path target;       // the file this process is running from
+    };
+
+    // Both sources are injected so the command is testable without a socket; the
     // defaults are the real ones.
     UpdateUseCase(const Terminal& terminal, const TerminalCaps& caps,
                   std::shared_ptr<VersionSource> source = nullptr,
-                  std::shared_ptr<AssetSource> assets = nullptr)
+                  std::shared_ptr<AssetSource> assets = nullptr, Seams seams = {})
         : terminal_(terminal),
           caps_(caps),
           source_(source ? std::move(source)
@@ -42,7 +54,8 @@ public:
                                std::make_shared<HttpVersionSource>())),
           assets_(assets ? std::move(assets)
                          : std::static_pointer_cast<AssetSource>(
-                               std::make_shared<HttpAssetSource>())) {}
+                               std::make_shared<HttpAssetSource>())),
+          seams_(std::move(seams)) {}
 
     int execute(const CliArgs& args) {
         if (usingTestOrigin()) {
@@ -55,12 +68,19 @@ public:
                 "It is a local demonstration build and must not be installed anywhere.\n\n");
         }
 
-        return args.updateCheckOnly ? runCheck() : runApply(args);
+        // What each run prints to standard output is its answer, and the exit code is what a
+        // monitoring script reads as saying the answer arrived. So it is written through one
+        // CheckedOutput and asked after the last line - see Delivery.h. An answer that did
+        // not arrive exits 1, including a replaced binary's: the replacement stands, and the
+        // next `update` says so, but the run that did it could not say it.
+        CheckedOutput out(stdout);
+        const int code = args.updateCheckOnly ? runCheck(out) : runApply(args, out);
+        return finishAnswerOnStandardOutput(terminal_, out, "the update result", code);
     }
 
 private:
-    int runCheck() {
-        const Version running = runningVersion();
+    int runCheck(CheckedOutput& out) {
+        const Version running = seams_.running.value_or(runningVersion());
 
         // 0.0.0 is what a build that did not come from a tag reports, and
         // docs/RELEASING.md says so. Every published release is numerically newer
@@ -85,31 +105,35 @@ private:
         // it just does not spare the next scan a request. It keeps the rest of the file,
         // which a typed `update --check` has even less business resetting than a scan's
         // own check does - see recordLatestVersion().
-        recordLatestVersion(defaultUpdateStatePath(), currentEpochSeconds(),
-                            toString(*result.latest));
+        recordLatestVersion(seams_.statePath.empty() ? defaultUpdateStatePath()
+                                                     : seams_.statePath,
+                            currentEpochSeconds(), toString(*result.latest));
 
         if (result.newerAvailable) {
-            terminal_.print(Terminal::warning(),
+            terminal_.printTo(out, Terminal::warning(),
                 "A newer release is available: {} (this is {}).\n",
                 toString(*result.latest), toString(running));
-            fmt::print("Run 'lyxbosa update' to install it, or fetch it from\n"
-                       "https://github.com/LytraX/lyxbosa/releases\n");
+            out.print("Run 'lyxbosa update' to install it, or fetch it from\n"
+                      "https://github.com/LytraX/lyxbosa/releases\n");
             return 2;
         }
 
-        terminal_.print(Terminal::success(), "Up to date ({}).\n", toString(running));
+        terminal_.printTo(out, Terminal::success(), "Up to date ({}).\n", toString(running));
         // A published release older than the running one is not an error and not an
         // update; it happens on a build made between a tag and its release.
         if (*result.latest < running) {
-            fmt::print("The newest published release is {}.\n", toString(*result.latest));
+            out.print("The newest published release is {}.\n", toString(*result.latest));
         }
         return 0;
     }
 
-    int runApply(const CliArgs& args) {
+    int runApply(const CliArgs& args, CheckedOutput& out) {
         ApplyOptions options;
         options.assumeYes = args.assumeYes;
         options.now = currentEpochSeconds;
+        options.running = seams_.running;
+        options.statePath = seams_.statePath;
+        options.target = seams_.target;
 
         options.onStep = [this](std::string_view what) {
             terminal_.printErr(Terminal::muted(), "  {}...\n", what);
@@ -121,19 +145,20 @@ private:
 
         switch (result.outcome) {
             case ApplyOutcome::Replaced:
-                terminal_.print(Terminal::success(), "Updated {} -> {}.\n",
-                                toString(result.plan->from), toString(result.plan->to));
-                fmt::print("{}\n", result.detail);
+                terminal_.printTo(out, Terminal::success(), "Updated {} -> {}.\n",
+                                  toString(result.plan->from), toString(result.plan->to));
+                out.print("{}\n", result.detail);
                 // The trusted comment is printed only because it verified, and it is
                 // worth printing because it is the line that names the release the
                 // checksums belong to.
                 if (!result.trustedComment.empty()) {
-                    fmt::print("Signed: {}\n", result.trustedComment);
+                    out.print("Signed: {}\n", result.trustedComment);
                 }
                 return 0;
 
             case ApplyOutcome::AlreadyCurrent:
-                terminal_.print(Terminal::success(), "Up to date ({}).\n", result.detail);
+                terminal_.printTo(out, Terminal::success(), "Up to date ({}).\n",
+                                  result.detail);
                 return 0;
 
             case ApplyOutcome::Declined:
@@ -224,6 +249,7 @@ private:
     const TerminalCaps& caps_;
     std::shared_ptr<VersionSource> source_;
     std::shared_ptr<AssetSource> assets_;
+    Seams seams_;
 };
 
 }  // namespace lyxbosa

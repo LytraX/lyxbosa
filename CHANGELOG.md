@@ -36,8 +36,24 @@ commit list that CI generates per tag.
   `Entries unreadable` with it on, because then the scan meant to read what it leads to and
   could not.
 
+- **`lyxbosa --version`, every command's `--help`, `validate-config` and `update` no longer
+  exit as if their answer arrived when standard output refused it.** The version and each
+  command's help were printed by the argument parser, which exited 0 from inside the parse
+  before anything could ask whether the text had been written, and `validate-config` and
+  `update` printed without asking. Each now asks after its last byte, as `scan`, `check`,
+  `init-config` and `lyxbosa --help` already did. The text each prints is unchanged.
+
 ### Compatibility
 
+- **`lyxbosa --version`, `lyxbosa -v`, every command's `--help` and `-h`, `validate-config`
+  and `update` exit 1 where they exited 0 or 2** when standard output refuses what they write.
+  stderr says `Error: the version could not be written to standard output` (`the help text`,
+  `the validation result`, `the update result`), then
+  `what reached it, if anything, is incomplete`, then the system's reason. `update` exits 1 in
+  that case even when it replaced the binary: the replacement stands, and the next `update`
+  says so. With SIGPIPE ignored, and on Windows, a pipe whose reader has gone makes them exit
+  141 and print nothing, where they exited 0 or 2. A successful `--help` or `--version` still
+  exits 0.
 - **`Entries unreadable` and `entriesUnreadable` fall by one for each link that leads back to
   itself**, directly or around a ring of links, under either `scan.follow_symlinks` setting: a
   symbolic link on every platform, and a directory junction on Windows. No other count rises

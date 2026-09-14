@@ -42,8 +42,11 @@
 #include "infrastructure/Delivery.h"
 #include "system/CliArgs.h"
 #include "use-cases/CheckUseCase.h"
+#include "use-cases/HelpUseCase.h"
 #include "use-cases/InitConfigUseCase.h"
 #include "use-cases/ScanUseCase.h"
+#include "use-cases/UpdateUseCase.h"
+#include "use-cases/ValidateConfigUseCase.h"
 
 #include "PlatformSkips.h"
 
@@ -54,12 +57,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #include <fcntl.h>
 
@@ -749,6 +754,296 @@ TEST_F(StdoutDeliveryTest, InitConfigWhoseReaderHasGoneIsNotAFailure) {
     const CommandRun gone = withStdoutAt(pipe.fd(), [] { return initConfig(); });
     EXPECT_EQ(gone.code, kExitReaderGone);
     EXPECT_EQ(gone.err, "");
+}
+
+// ===========================================================================
+// --help, --version, validate-config and update
+// ===========================================================================
+
+namespace {
+
+// Set for the length of a parse. A parser that calls exit() from inside it ends this process
+// with whatever status it chose - argparse's was 0 - and a runner that reads only the exit code
+// calls that a pass, whatever failed before it. The handler below turns such an exit into a
+// failure with a sentence, in this process and in a death test's child alike.
+bool g_parsing = false;
+
+// `lyxbosa ARGS...` as the parser reads it.
+CliArgs parseCommandLine(std::vector<std::string> words) {
+    static const bool registered = [] {
+        std::atexit([] {
+            if (g_parsing) {
+                std::fputs("\nthe argument parser called exit() in the middle of a parse\n",
+                           stderr);
+                std::fflush(stderr);
+                std::_Exit(1);
+            }
+        });
+        return true;
+    }();
+    (void)registered;
+
+    words.insert(words.begin(), "lyxbosa");
+    std::vector<char*> argv;
+    for (std::string& word : words) {
+        argv.push_back(word.data());
+    }
+    argv.push_back(nullptr);
+    g_parsing = true;
+    CliArgs args = CliArgs::parse(static_cast<int>(words.size()), argv.data());
+    g_parsing = false;
+    return args;
+}
+
+// Every text answer the parser gives, one per shape: the program's own help, its version from
+// both spellings, and each command's help from both of its spellings.
+const std::vector<std::vector<std::string>>& parserAnswers() {
+    static const std::vector<std::vector<std::string>> answers = {
+        {"--help"}, {"-h"}, {"--version"}, {"-v"},
+        {"scan", "--help"}, {"scan", "-h"}, {"check", "--help"},
+        {"validate-config", "--help"}, {"init-config", "--help"}, {"update", "--help"},
+        {"update", "-h"},
+    };
+    return answers;
+}
+
+std::string joined(const std::vector<std::string>& words) {
+    std::string out;
+    for (const auto& word : words) {
+        out += (out.empty() ? "" : " ") + word;
+    }
+    return out;
+}
+
+int answer(const std::vector<std::string>& words) {
+    const Terminal terminal(/*useAnsi=*/false);
+    return HelpUseCase(terminal).execute(parseCommandLine(words));
+}
+
+std::string_view whatItIs(const std::vector<std::string>& words) {
+    return words.back() == "--version" || words.back() == "-v" ? "the version"
+                                                               : "the help text";
+}
+
+class FixedVersionSource : public VersionSource {
+public:
+    explicit FixedVersionSource(std::string tag) : tag_(std::move(tag)) {}
+    FetchOutcome fetchLatest(std::chrono::milliseconds, const std::atomic<bool>&) override {
+        FetchOutcome out;
+        out.status = FetchOutcome::Status::Ok;
+        out.version = tag_;
+        return out;
+    }
+
+private:
+    std::string tag_;
+};
+
+// A source that must not be asked: `update` that reaches it has gone past the answer.
+class NoAssets : public AssetSource {
+public:
+    http::Outcome fetch(std::string_view, std::string_view, const fs::path&, uint64_t) override {
+        ADD_FAILURE() << "an update that is already current fetched an asset";
+        http::Outcome outcome;
+        outcome.status = http::Outcome::Status::HttpError;
+        return outcome;
+    }
+};
+
+}  // namespace
+
+// The library's own --help and --version used to print to std::cout and call std::exit(0) from
+// inside the parse, so nothing that asks whether an answer arrived could run. The parse returns
+// now: a child that parses and then exits 99 exits 99, where it exited 0 before.
+TEST(ParserAnswerTest, TheParserNeitherPrintsNorExits) {
+    for (const auto& words : parserAnswers()) {
+        SCOPED_TRACE(joined(words));
+        EXPECT_EXIT(
+            {
+                const CliArgs args = parseCommandLine(words);
+                std::_Exit(args.command == Command::Help || args.command == Command::Version
+                               ? 99 : 98);
+            },
+            testing::ExitedWithCode(99), "^$");
+    }
+    ASSERT_FALSE(HasFailure()) << "the parser still exits; not parsing in this process";
+
+    testing::internal::CaptureStdout();
+    const CliArgs version = parseCommandLine({"--version"});
+    const CliArgs scanHelp = parseCommandLine({"scan", "--help"});
+    EXPECT_EQ(testing::internal::GetCapturedStdout(), "") << "the parser printed an answer";
+
+    EXPECT_TRUE(version.success);
+    EXPECT_EQ(version.command, Command::Version);
+    EXPECT_EQ(version.answerText, versionBanner() + "\n");
+    EXPECT_EQ(scanHelp.command, Command::Help);
+    EXPECT_EQ(scanHelp.answerText.rfind("Usage: lyxbosa scan ", 0), 0u) << scanHelp.answerText;
+    EXPECT_NE(scanHelp.answerText.find("Scan directories for malicious files"), std::string::npos);
+    EXPECT_EQ(parseCommandLine({"--help"}).answerText, CliArgs::getHelpText());
+}
+
+// The parse stops at the flag, where the exit used to stop it: what follows is never read, and
+// what came before is refused as it always was.
+TEST(ParserAnswerTest, TheParseStopsWhereTheExitStoppedIt) {
+    const CliArgs after = parseCommandLine({"scan", "--help", "--no-such-flag"});
+    EXPECT_TRUE(after.success) << after.errorMessage;
+    EXPECT_EQ(after.command, Command::Help);
+
+    const CliArgs before = parseCommandLine({"scan", "--no-such-flag", "--help"});
+    EXPECT_FALSE(before.success);
+    EXPECT_EQ(before.errorMessage, "Unknown argument: --no-such-flag");
+
+    const CliArgs version = parseCommandLine({"--version", "no-such-command"});
+    EXPECT_TRUE(version.success) << version.errorMessage;
+    EXPECT_EQ(version.command, Command::Version);
+
+    // --no-ansi before the flag still reaches the colour of an error about the answer.
+    EXPECT_EQ(parseCommandLine({"--no-ansi", "scan", "--help"}).color, ColorWhen::Never);
+    EXPECT_EQ(parseCommandLine({"check", "--color", "never", "--help"}).color, ColorWhen::Never);
+    EXPECT_EQ(parseCommandLine({"scan", "--help"}).color, ColorWhen::Auto);
+}
+
+// `lyxbosa scan --help > /dev/full` exited 0, and so did every other text the parser gave. The
+// refusal is a descriptor opened for reading on every platform, and /dev/full as well where
+// there is one, so that Windows observes it too.
+TEST_F(StdoutDeliveryTest, AHelpTextOrAVersionThatIsRefusedExitsOne) {
+    const fs::path readable = dirty().parent_path() / "read-only-for-help";
+    writeFile(readable, "");
+    Descriptor readOnly(sys::openForReadingOnly(readable));
+    ASSERT_GE(readOnly.fd(), 0);
+    std::string why;
+    auto sink = full(why);
+
+    for (const auto& words : parserAnswers()) {
+        SCOPED_TRACE(joined(words));
+        const CommandRun arrived = delivered([&] { return answer(words); });
+        EXPECT_EQ(arrived.code, 0);
+        EXPECT_EQ(arrived.err, "");
+        EXPECT_EQ(arrived.out, parseCommandLine(words).answerText);
+        EXPECT_FALSE(arrived.out.empty());
+
+        const CommandRun refused = withStdoutAt(readOnly.fd(), [&] { return answer(words); });
+        EXPECT_EQ(refused.code, 1);
+        EXPECT_EQ(refused.err.rfind("\nError: " + std::string(whatItIs(words)) +
+                                        " could not be written to standard output\n"
+                                        "       what reached it, if anything, is incomplete\n"
+                                        "       the write failed: ",
+                                    0),
+                  0u)
+            << refused.err;
+
+        if (sink) {
+            const CommandRun onFull = withStdoutAt(sink->fd(), [&] { return answer(words); });
+            EXPECT_EQ(onFull.code, 1);
+            EXPECT_EQ(onFull.err, toStandardOutput(whatItIs(words), noSpace()));
+        }
+    }
+    EXPECT_EQ(fs::file_size(readable), 0u) << why;
+}
+
+TEST_F(StdoutDeliveryTest, AHelpTextOrAVersionWhoseReaderHasGoneIsNotAFailure) {
+    [[maybe_unused]] const SigpipeIgnored ignored;
+    for (const auto& words : parserAnswers()) {
+        SCOPED_TRACE(joined(words));
+        const ClosedPipe pipe;
+        ASSERT_GE(pipe.fd(), 0);
+        const CommandRun gone = withStdoutAt(pipe.fd(), [&] { return answer(words); });
+        EXPECT_EQ(gone.code, kExitReaderGone);
+        EXPECT_EQ(gone.err, "");
+    }
+}
+
+// validate-config and update: every answer each of them writes to standard output, through a
+// destination that refuses it, a pipe with no reader, and one that takes it. The refusal uses a
+// descriptor opened for reading, so Windows observes it too.
+TEST_F(StdoutDeliveryTest, ValidateConfigAndUpdateAnswerLikeEveryOtherCommand) {
+    const fs::path configFile = dirty().parent_path() / "validate.yaml";
+    writeFile(configFile, Config::generateDefault());
+    const fs::path target = dirty().parent_path() / "installed-binary";
+    writeFile(target, "not a real binary");
+    const fs::path state = dirty().parent_path() / "update-state";
+
+    const auto validate = [&] {
+        CliArgs args;
+        args.validateConfigFile = configFile.string();
+        const Terminal terminal(/*useAnsi=*/false);
+        return ValidateConfigUseCase(terminal).execute(args);
+    };
+    const auto update = [&](std::string tag, bool checkOnly) {
+        return [&, tag, checkOnly] {
+            CliArgs args;
+            args.updateCheckOnly = checkOnly;
+            args.assumeYes = true;
+            UpdateUseCase::Seams seams;
+            seams.running = parseVersion("3.2.0");
+            seams.statePath = state;
+            seams.target = target;
+            const Terminal terminal(/*useAnsi=*/false);
+            const TerminalCaps caps = TerminalCaps::detect();
+            return UpdateUseCase(terminal, caps, std::make_shared<FixedVersionSource>(tag),
+                                 std::make_shared<NoAssets>(), seams)
+                .execute(args);
+        };
+    };
+
+    struct Case {
+        std::string name;
+        std::function<int()> run;
+        int code;
+        std::string_view what;
+        std::string_view out;
+    };
+    const std::vector<Case> cases = {
+        {"validate-config", validate, 0, "the validation result", "Configuration is valid.\n"},
+        {"update --check, newer", update("v3.3.0", true), 2, "the update result",
+         "A newer release is available: 3.3.0 (this is 3.2.0).\n"},
+        {"update --check, current", update("v3.2.0", true), 0, "the update result",
+         "Up to date (3.2.0).\n"},
+        {"update --check, older published", update("v3.1.0", true), 0, "the update result",
+         "Up to date (3.2.0).\nThe newest published release is 3.1.0.\n"},
+        {"update, current", update("v3.2.0", false), 0, "the update result", "Up to date ("},
+    };
+
+    const fs::path readable = dirty().parent_path() / "read-only-for-update";
+    writeFile(readable, "");
+    Descriptor readOnly(sys::openForReadingOnly(readable));
+    ASSERT_GE(readOnly.fd(), 0);
+    std::string why;
+    auto sink = full(why);
+
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.name);
+        const CommandRun arrived = delivered(c.run);
+        EXPECT_EQ(arrived.code, c.code) << arrived.err;
+        EXPECT_EQ(arrived.out.rfind(std::string(c.out), 0), 0u) << arrived.out;
+        EXPECT_EQ(arrived.err.find("Error:"), std::string::npos) << arrived.err;
+
+        const CommandRun refused = withStdoutAt(readOnly.fd(), c.run);
+        EXPECT_EQ(refused.code, 1);
+        const std::string sentence = "\nError: " + std::string(c.what) +
+                                     " could not be written to standard output\n"
+                                     "       what reached it, if anything, is incomplete\n"
+                                     "       the write failed: ";
+        EXPECT_NE(refused.err.find(sentence), std::string::npos) << refused.err;
+        EXPECT_EQ(occurrences(refused.err, "Error:"), 1u) << refused.err;
+
+        if (sink) {
+            const CommandRun onFull = withStdoutAt(sink->fd(), c.run);
+            EXPECT_EQ(onFull.code, 1);
+            EXPECT_NE(onFull.err.find(toStandardOutput(c.what, noSpace())), std::string::npos)
+                << onFull.err;
+        }
+
+        [[maybe_unused]] const SigpipeIgnored ignored;
+        const ClosedPipe pipe;
+        ASSERT_GE(pipe.fd(), 0);
+        const CommandRun gone = withStdoutAt(pipe.fd(), c.run);
+        EXPECT_EQ(gone.code, kExitReaderGone);
+        EXPECT_EQ(gone.err.find("Error:"), std::string::npos) << gone.err;
+    }
+    // Where there is no /dev/full the read-only descriptor above is the refusal, as it is for
+    // every other command on Windows; `why` says which this host is.
+    EXPECT_EQ(fs::file_size(readable), 0u) << why;
 }
 
 // ===========================================================================

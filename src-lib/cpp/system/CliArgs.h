@@ -2,6 +2,7 @@
 
 #include <string>
 #include <optional>
+#include <sstream>
 #include <vector>
 #include <filesystem>
 #include <argparse/argparse.hpp>
@@ -12,7 +13,8 @@ namespace lyxbosa {
 
 enum class Command {
     None,
-    Help,
+    Help,       // `lyxbosa --help` and every command's --help; the text is in answerText
+    Version,    // `lyxbosa --version`; the text is in answerText
     Scan,
     Check,
     ValidateConfig,
@@ -24,6 +26,10 @@ struct CliArgs {
     Command command = Command::None;
     bool success = true;
     std::string errorMessage;
+
+    // What Help and Version answer, byte for byte, for main() to write to standard output
+    // and ask whether it arrived. The parser never prints it; see parse() for why.
+    std::string answerText;
 
     // Scan command options
     std::vector<std::string> directories;
@@ -247,11 +253,36 @@ inline std::string CliArgs::getHelpText() {
 inline CliArgs CliArgs::parse(int argc, char* argv[]) {
     CliArgs result;
 
-    // Help is handled by us (getHelpText covers every command), version by argparse,
-    // which prints whatever string it was constructed with. versionBanner() appends
-    // which build this is - see below for why the version stays the first token.
+    // The program's own --help is ours (getHelpText covers every command). Its --version and
+    // each command's --help are argparse's text, printed with whatever string it was
+    // constructed with; versionBanner() appends which build this is - see above for why the
+    // version stays the first token.
+    //
+    // THE LIBRARY PRINTS NOTHING AND EXITS NOTHING. By default argparse writes a command's
+    // --help and the program's --version to std::cout from inside parse_args() and calls
+    // std::exit(0) there, so the answer never reached anything that asks whether it arrived:
+    // `lyxbosa scan --help > /dev/full` exited 0. Every parser is built with the two
+    // constructor arguments argparse 3.2 offers for this - exit_on_default_arguments false,
+    // and a stream of our own in place of std::cout - so the text lands in `answered`.
+    //
+    // Turning the exit off is not enough by itself, because parsing then carries on past the
+    // flag: `scan --help --no-such-flag` would be refused for the second word where it used
+    // to print help for the first. So each of those arguments gets a second action, which
+    // the library runs after its own, and which stops the parse by throwing. The parse stops
+    // at the word the exit used to stop it at, having consumed exactly what it had consumed
+    // then, and nothing a command line did before this change is answered differently.
+    std::ostringstream answered;
+    struct AnsweredByTheParser {
+        Command command;
+    };
+    const auto stopsTheParse = [](Command command) {
+        return [command](const std::string&) { throw AnsweredByTheParser{command}; };
+    };
+
     argparse::ArgumentParser program("lyxbosa", versionBanner(),
-                                     argparse::default_arguments::version);
+                                     argparse::default_arguments::version,
+                                     /*exit_on_default_arguments=*/false, answered);
+    program["--version"].action(stopsTheParse(Command::Version));
     program.add_description("Modern malware/bot signature scanner");
 
     // Global options
@@ -275,7 +306,9 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
     constexpr auto subcommandArgs = argparse::default_arguments::help;
 
     // Scan subcommand
-    argparse::ArgumentParser scanCmd("scan", LYXBOSA_VERSION, subcommandArgs);
+    argparse::ArgumentParser scanCmd("scan", LYXBOSA_VERSION, subcommandArgs,
+                                     /*exit_on_default_arguments=*/false, answered);
+    scanCmd["--help"].action(stopsTheParse(Command::Help));
     scanCmd.add_description("Scan directories for malicious files");
     scanCmd.add_epilog(
         "Directories given here override scan.directories from the configuration.\n"
@@ -394,7 +427,9 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .implicit_value(true);
 
     // Check subcommand
-    argparse::ArgumentParser checkCmd("check", LYXBOSA_VERSION, subcommandArgs);
+    argparse::ArgumentParser checkCmd("check", LYXBOSA_VERSION, subcommandArgs,
+                                      /*exit_on_default_arguments=*/false, answered);
+    checkCmd["--help"].action(stopsTheParse(Command::Help));
     checkCmd.add_description("Check a single file for malicious content");
     checkCmd.add_epilog(
         "Quarantine is always disabled for a single file check.\n"
@@ -422,7 +457,9 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .implicit_value(true);
 
     // Validate-config subcommand
-    argparse::ArgumentParser validateCmd("validate-config", LYXBOSA_VERSION, subcommandArgs);
+    argparse::ArgumentParser validateCmd("validate-config", LYXBOSA_VERSION, subcommandArgs,
+                                         /*exit_on_default_arguments=*/false, answered);
+    validateCmd["--help"].action(stopsTheParse(Command::Help));
     validateCmd.add_description("Validate a configuration file");
     validateCmd.add_epilog(
         "Exit codes: 0 = valid, 1 = invalid or unreadable.\n"
@@ -445,7 +482,9 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .implicit_value(true);
 
     // Init-config subcommand
-    argparse::ArgumentParser initCmd("init-config", LYXBOSA_VERSION, subcommandArgs);
+    argparse::ArgumentParser initCmd("init-config", LYXBOSA_VERSION, subcommandArgs,
+                                     /*exit_on_default_arguments=*/false, answered);
+    initCmd["--help"].action(stopsTheParse(Command::Help));
     initCmd.add_description("Generate default configuration to stdout");
     initCmd.add_epilog(
         "Example:\n"
@@ -462,7 +501,9 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
         .implicit_value(true);
 
     // Update subcommand
-    argparse::ArgumentParser updateCmd("update", LYXBOSA_VERSION, subcommandArgs);
+    argparse::ArgumentParser updateCmd("update", LYXBOSA_VERSION, subcommandArgs,
+                                       /*exit_on_default_arguments=*/false, answered);
+    updateCmd["--help"].action(stopsTheParse(Command::Help));
     updateCmd.add_description("Download, verify and install a newer release");
     updateCmd.add_epilog(
         "Exit codes: 0 = up to date or updated, 1 = error, refusal, or not a release\n"
@@ -510,8 +551,44 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
     program.add_subparser(initCmd);
     program.add_subparser(updateCmd);
 
+    // The last --color given, whichever parser it was given to. A parse stopped by --help has
+    // not finished, and argparse will not hand back a value until it has, so the value is kept
+    // as it is read. The action returns the value, which is exactly what the library's own
+    // default action does, so the finished parse below reads --color as it always did. The
+    // command's spelling comes after the program's on any command line, so the last one seen
+    // is the one applyColor() below would choose.
+    std::optional<std::string> lastColor;
+    const std::vector<argparse::ArgumentParser*> parsers = {&program,     &scanCmd, &checkCmd,
+                                                           &validateCmd, &initCmd, &updateCmd};
+    for (argparse::ArgumentParser* parser : parsers) {
+        (*parser)["--color"].action([&lastColor](const std::string& value) {
+            lastColor = value;
+            return value;
+        });
+    }
+
     try {
         program.parse_args(argc, argv);
+    } catch (const AnsweredByTheParser& stopped) {
+        result.command = stopped.command;
+        result.answerText = answered.str();
+        // Whatever was given before the flag has been consumed, and --no-ansi or a --color
+        // there still decides how an error about this answer is coloured on stderr. A
+        // --color value that is not one of the three is ignored rather than refused here:
+        // the answer was given before any value was validated, as it always was.
+        for (const argparse::ArgumentParser* parser : parsers) {
+            if (parser->is_used("--no-ansi")) {
+                result.noAnsi = true;
+            }
+        }
+        ColorWhen color = ColorWhen::Auto;
+        if (lastColor && colorWhenFromString(*lastColor, color)) {
+            result.color = color;
+        }
+        if (result.noAnsi) {
+            result.color = ColorWhen::Never;
+        }
+        return result;
     } catch (const std::exception& err) {
         result.success = false;
         result.errorMessage = err.what();
@@ -545,6 +622,7 @@ inline CliArgs CliArgs::parse(int argc, char* argv[]) {
 
     if (program.get<bool>("--help")) {
         result.command = Command::Help;
+        result.answerText = getHelpText();
         return result;
     }
 

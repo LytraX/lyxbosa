@@ -156,6 +156,13 @@ the findings are still printed and still written to whatever report survived. Th
 code answers "did this do what I asked", and with `-O` the report *is* the answer, so
 `2` would send an unattended caller to read a file that is truncated or empty.
 
+The same holds for every answer that is text on standard output: a report, what `check`
+prints, `init-config`, `validate-config`, `update`, `--help` and `--version`. When standard
+output refuses it — a full disk, an I/O error, a descriptor not open for writing — the
+command exits `1` and stderr says which answer did not arrive. A reader that went away is not
+an error: with SIGPIPE at its default the signal ends the run, as it ends any Unix tool, and
+with SIGPIPE ignored, or on Windows, the command prints nothing and exits `141`.
+
 A quarantine that could not complete is the exception, and for the same reason: the
 answer is complete and delivered, and the files that are still in place are named in it,
 on stderr, and in the summary. Ranking it above the findings would turn every such run
