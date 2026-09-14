@@ -1081,6 +1081,7 @@ namespace {
 using lyxbosa::test::fixtures::appendTarMember;
 using lyxbosa::test::fixtures::endOfTar;
 using lyxbosa::test::fixtures::gzipCompress;
+using lyxbosa::test::fixtures::hostBytesOf;
 using lyxbosa::test::fixtures::readBytes;
 using lyxbosa::test::fixtures::writeZip;
 
@@ -1337,38 +1338,210 @@ TEST(MemberNameTest, AnExcludePatternKeepsANameOutLooseOrInsideAnArchive) {
     EXPECT_EQ(result.filesWithHostileNames, 1u) << listRows(result);
 }
 
-// Inside an archive the separator is the format's, so a backslash in a stored name is a
-// character of it on every platform - including Windows, where a backslash on disk is always a
-// separator and finalComponent() splits on it. The observed `a\zz-<id>.php` split there would
-// be `zz-<id>.php`, which raises nothing.
-TEST(MemberNameTest, OnEveryPlatformABackslashInAStoredNameIsPartOfTheName) {
-    EXPECT_EQ(fn::memberFinalComponent("uploads/a\\zz-1.php"), "a\\zz-1.php");
-    EXPECT_EQ(fn::memberFinalComponent("a\\b\\c.php"), "a\\b\\c.php");
-    EXPECT_EQ(fn::memberFinalComponent("site/wp-content\\"), "wp-content\\");
-    EXPECT_EQ(fn::memberFinalComponent("plain.php"), "plain.php");
-    EXPECT_EQ(fn::memberFinalComponent("dir/"), "");
+// Inside an archive a backslash is judged by the writer of the entry, never by the platform the
+// scan runs on - see rules::filename::memberFinalComponent(). The split itself, both ways.
+TEST(MemberNameTest, WhatSeparatesAMemberNameIsTheWritersChoice) {
+    using fn::MemberSeparators;
+    EXPECT_EQ(fn::memberFinalComponent("uploads/a\\zz-1.php", MemberSeparators::Slash),
+              "a\\zz-1.php");
+    EXPECT_EQ(fn::memberFinalComponent("a\\b\\c.php", MemberSeparators::Slash), "a\\b\\c.php");
+    EXPECT_EQ(fn::memberFinalComponent("site/wp-content\\", MemberSeparators::Slash),
+              "wp-content\\");
+    EXPECT_EQ(fn::memberFinalComponent("uploads/a\\zz-1.php", MemberSeparators::SlashAndBackslash),
+              "zz-1.php");
+    EXPECT_EQ(fn::memberFinalComponent("a\\b/c\\d.php", MemberSeparators::SlashAndBackslash),
+              "d.php");
+    EXPECT_EQ(fn::memberFinalComponent("site\\wp-content\\", MemberSeparators::SlashAndBackslash),
+              "");
+    for (const auto separators : {MemberSeparators::Slash, MemberSeparators::SlashAndBackslash}) {
+        EXPECT_EQ(fn::memberFinalComponent("plain.php", separators), "plain.php");
+        EXPECT_EQ(fn::memberFinalComponent("dir/", separators), "");
+    }
 #ifdef _WIN32
     EXPECT_EQ(fn::finalComponent("uploads/a\\zz-1.php"), "zz-1.php")
         << "the disk split is not the member split here, which is why there are two";
 #endif
+}
+
+// The same zip bytes marked as written by each host. From MS-DOS, Windows NTFS or VFAT the
+// backslashes are directories, so they raise no FN002 while a hostile final component beneath
+// them still raises its rule; from Unix, macOS or anything else, the backslash is a character
+// of the name and FN002 reads it. A tar header has no writer to ask, and keeps it as a character.
+TEST(MemberNameTest, ABackslashInAZipEntryIsASeparatorOnlyWhenADosOrWindowsHostWroteIt) {
+    const std::vector<std::pair<std::string, std::string>> members = {
+        {"site\\wp-content\\index.php", "<?php echo 1;\n"},
+        {"site\\wp-content\\uploads\\x$(id).mdb", "db\n"},
+        {"uploads/a\\zz-1.php", "<?php echo 2;\n"},
+    };
+    struct Host {
+        uint8_t byte;
+        const char* name;
+        bool separates;
+    };
+    const Host hosts[] = {
+        {ZIP_OPSYS_DOS, "MS-DOS", true},  {ZIP_OPSYS_WINDOWS_NTFS, "NTFS", true},
+        {ZIP_OPSYS_VFAT, "VFAT", true},   {ZIP_OPSYS_UNIX, "Unix", false},
+        {ZIP_OPSYS_OS_X, "macOS", false}, {ZIP_OPSYS_AMIGA, "Amiga", false},
+    };
 
     TempDir root;
-    const fs::path zip = root.path() / "upload.zip";
+    for (const Host& host : hosts) {
+        writeZip(root.path() / (std::string("from-") + host.name + ".zip"), members, host.byte);
+    }
     const fs::path tgz = root.path() / "upload.tar.gz";
-    writeZip(zip, {{"uploads/a\\zz-1.php", "<?php echo 1;\n"}});
-    writeTarGz(tgz, {{"uploads/a\\zz-1.php", "<?php echo 1;\n"}});
+    writeTarGz(tgz, members);
     const ScanResult result = runScan(scanConfig(root.path()));
 
-    for (const fs::path& container : {zip, tgz}) {
-        SCOPED_TRACE(container.filename().string());
-        // The address is the one every member row has always had, which normalises a
-        // backslash to a slash for display; the rule reads the name as stored.
-        const FileResult* row = findMember(result, container, "uploads/a/zz-1.php");
-        ASSERT_NE(row, nullptr) << listRows(result);
-        EXPECT_EQ(codesOf(*row), (std::set<std::string>{"FN002"}));
-        ASSERT_FALSE(row->matches.empty());
-        EXPECT_EQ(row->matches.front().matchedText, "\\");
-        EXPECT_FALSE(row->skipReason.has_value()) << "a .php member is opened";
+    for (const Host& host : hosts) {
+        SCOPED_TRACE(host.name);
+        const fs::path zip = root.path() / (std::string("from-") + host.name + ".zip");
+        const auto written = hostBytesOf(zip);
+        ASSERT_EQ(written.size(), members.size());
+        for (const auto& [name, byte] : written) {
+            ASSERT_EQ(byte, host.byte) << "the fixture does not carry the host byte it claims";
+        }
+
+        // Every row keeps the address member rows have always had, backslashes shown as `/`.
+        const FileResult* index = findMember(result, zip, "site\\wp-content\\index.php");
+        const FileResult* db = findMember(result, zip, "site\\wp-content\\uploads\\x$(id).mdb");
+        const FileResult* zz = findMember(result, zip, "uploads/a\\zz-1.php");
+        if (host.separates) {
+            EXPECT_EQ(index, nullptr) << "a directory separator was read as part of a name\n"
+                                      << listRows(result);
+            ASSERT_NE(db, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*db), (std::set<std::string>{"FN001"}));
+            EXPECT_EQ(zz, nullptr) << listRows(result);
+        } else {
+            ASSERT_NE(index, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*index), (std::set<std::string>{"FN002"}));
+            ASSERT_NE(db, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*db), (std::set<std::string>{"FN001", "FN002"}));
+            ASSERT_NE(zz, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*zz), (std::set<std::string>{"FN002"}));
+            EXPECT_EQ(zz->matches.front().matchedText, "\\");
+        }
+    }
+
+    SCOPED_TRACE("tar.gz");
+    for (const auto& [name, body] : members) {
+        const FileResult* row = findMember(result, tgz, name);
+        ASSERT_NE(row, nullptr) << name << "\n" << listRows(result);
+        EXPECT_EQ(codesOf(*row).count("FN002"), 1u) << name;
+    }
+}
+
+// The writer is asked per entry, not per archive: one zip holding an entry a Windows archiver
+// added beside one a Unix archiver added answers each by its own host byte. And a zip inside a
+// zip is asked about its own entries, whatever wrote the one around it.
+TEST(MemberNameTest, EachEntryAndEachNestedZipIsJudgedByItsOwnWriter) {
+    TempDir root;
+    TempDir build;
+
+    // One archive, two writers. libzip writes the host byte per entry, so the second pass
+    // re-marks only the entry it names.
+    const fs::path mixed = root.path() / "mixed.zip";
+    writeZip(mixed, {{"win\\dir\\ok.php", "<?php echo 1;\n"}, {"unix\\dir\\ok.php", "<?php echo 2;\n"}},
+             ZIP_OPSYS_DOS);
+    {
+        int err = 0;
+        zip_t* za = zip_open(mixed.string().c_str(), 0, &err);
+        ASSERT_NE(za, nullptr);
+        const zip_int64_t unixEntry = zip_name_locate(za, "unix\\dir\\ok.php", 0);
+        ASSERT_GE(unixEntry, 0);
+        ASSERT_EQ(zip_file_set_external_attributes(za, static_cast<zip_uint64_t>(unixEntry), 0,
+                                                   ZIP_OPSYS_UNIX, 0),
+                  0);
+        ASSERT_EQ(zip_close(za), 0);
+    }
+    const auto written = hostBytesOf(mixed);
+    ASSERT_EQ(written.size(), 2u);
+    for (const auto& [name, byte] : written) {
+        ASSERT_EQ(byte, name.starts_with("win") ? ZIP_OPSYS_DOS : ZIP_OPSYS_UNIX) << name;
+    }
+
+    // A Windows-made zip inside a Unix-made one, and the other way round.
+    const fs::path fromWindows = build.path() / "from-windows.zip";
+    const fs::path fromUnix = build.path() / "from-unix.zip";
+    writeZip(fromWindows, {{"site\\inner.php", "<?php echo 3;\n"}}, ZIP_OPSYS_DOS);
+    writeZip(fromUnix, {{"site\\inner.php", "<?php echo 4;\n"}}, ZIP_OPSYS_UNIX);
+    const fs::path unixOuter = root.path() / "unix-outer.zip";
+    const fs::path windowsOuter = root.path() / "windows-outer.zip";
+    writeZip(unixOuter, {{"nested/from-windows.zip", readBytes(fromWindows)}}, ZIP_OPSYS_UNIX);
+    writeZip(windowsOuter, {{"nested\\from-unix.zip", readBytes(fromUnix)}}, ZIP_OPSYS_DOS);
+
+    AppConfig config = scanConfig(root.path());
+    config.archives.exhaustive = true;   // a nested archive is not code and is otherwise shut
+    const ScanResult result = runScan(config);
+
+    EXPECT_EQ(findMember(result, mixed, "win\\dir\\ok.php"), nullptr) << listRows(result);
+    const FileResult* unixRow = findMember(result, mixed, "unix\\dir\\ok.php");
+    ASSERT_NE(unixRow, nullptr) << listRows(result);
+    EXPECT_EQ(codesOf(*unixRow), (std::set<std::string>{"FN002"}));
+
+    const fs::path insideUnix(pathToUtf8(unixOuter) + "!nested/from-windows.zip");
+    const fs::path insideWindows(pathToUtf8(windowsOuter) + "!nested/from-unix.zip");
+    EXPECT_EQ(findMember(result, insideUnix, "site\\inner.php"), nullptr)
+        << "a Windows-made zip was judged by the Unix-made zip around it\n" << listRows(result);
+    const FileResult* innerUnix = findMember(result, insideWindows, "site\\inner.php");
+    ASSERT_NE(innerUnix, nullptr)
+        << "a Unix-made zip was judged by the Windows-made zip around it\n" << listRows(result);
+    EXPECT_EQ(codesOf(*innerUnix), (std::set<std::string>{"FN002"}));
+    EXPECT_EQ(result.archives.archivesOpened, 5u) << "a nested zip was never opened";
+    EXPECT_EQ(result.filesWithHostileNames, 2u) << listRows(result);
+}
+
+// A site backup made on Windows by Windows PowerShell 5.1's Compress-Archive: host byte 0 and
+// backslash paths on every entry. tests/data/make-compress-archive-backup.ps1 made it, on
+// Windows, from a synthetic tree with five hostile final components that carry no character
+// FN002 reads. Read with backslashes as characters it raised FN002 on 19 of its 20 entries and
+// missed the leading dash; read as its writer meant it, it raises exactly the five.
+TEST(MemberNameTest, ABackupMadeByCompressArchiveRaisesOnlyItsPlantedNames) {
+    const fs::path source = fs::path(LYXBOSA_TEST_DATA_DIR) / "compress-archive-backup.zip";
+    ASSERT_TRUE(fs::exists(source)) << source.string();
+
+    const auto written = hostBytesOf(source);
+    ASSERT_EQ(written.size(), 20u) << "the fixture is not the archive this case describes";
+    for (const auto& [name, byte] : written) {
+        ASSERT_EQ(byte, ZIP_OPSYS_DOS) << safe_text::sanitize(name);
+        ASSERT_NE(name.find('\\'), std::string::npos)
+            << "an entry without a backslash separator: " << safe_text::sanitize(name);
+        ASSERT_EQ(name.find('/'), std::string::npos) << safe_text::sanitize(name);
+    }
+
+    TempDir root;
+    const fs::path zip = root.path() / "compress-archive-backup.zip";
+    fs::copy_file(source, zip);
+
+    const std::string planted = "site\\wp-content\\uploads\\";
+    const std::vector<std::pair<std::string, std::string>> expected = {
+        {planted + "2024\\05\\x$(id)-a.mdb", "FN001"},
+        {planted + "2024\\06\\y`id`-b.mdb", "FN001"},
+        {planted + "-rf-c.htaccess", "FN004"},
+        {planted + "f..\xEF\xBC\x8Fg.php", "FN005"},
+        {planted + "d.php%00-e.mdb", "FN006"},
+    };
+
+    for (const bool exhaustive : {false, true}) {
+        SCOPED_TRACE(exhaustive ? "exhaustive" : "default selection");
+        AppConfig config = scanConfig(root.path());
+        config.archives.exhaustive = exhaustive;
+        const ScanResult result = runScan(config);
+
+        size_t fn002 = 0;
+        for (const auto& file : result.files) {
+            for (const auto& match : file.matches) {
+                fn002 += match.category == "FN002";
+            }
+        }
+        EXPECT_EQ(fn002, 0u) << listRows(result);
+
+        for (const auto& [member, code] : expected) {
+            const FileResult* row = findMember(result, zip, member);
+            ASSERT_NE(row, nullptr) << safe_text::sanitize(member) << "\n" << listRows(result);
+            EXPECT_EQ(codesOf(*row), (std::set<std::string>{code})) << safe_text::sanitize(member);
+        }
+        EXPECT_EQ(result.files.size(), expected.size()) << listRows(result);
+        EXPECT_EQ(result.filesWithHostileNames, expected.size());
     }
 }
 

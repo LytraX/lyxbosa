@@ -541,6 +541,11 @@ if(BUILD_TESTS)
   target_compile_definitions(lyxbosa_tests PRIVATE
     LYXBOSA_FUZZ_DIR="${CMAKE_SOURCE_DIR}/fuzz")
 
+  # Archives a case needs to have been written by a real tool on another platform, which a
+  # test cannot build for itself - tests/data/ says how each one was made.
+  target_compile_definitions(lyxbosa_tests PRIVATE
+    LYXBOSA_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
   target_link_libraries(lyxbosa_tests PRIVATE ${LYXBOSA_CORE_LIBRARIES} GTest::gtest)
   lyxbosa_configure_update(lyxbosa_tests)
   lyxbosa_configure_allocator(lyxbosa_tests)

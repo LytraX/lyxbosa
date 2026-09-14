@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -100,8 +101,13 @@ inline std::string gzipCompress(const std::string& input) {
 
 // Members are added from buffers this vector keeps alive: libzip does not copy
 // them until the archive is written out.
+//
+// `host` is the host byte of each entry's "version made by" - ZIP_OPSYS_DOS for what a Windows
+// archiver writes. Left empty, libzip writes its default, which is ZIP_OPSYS_UNIX on every
+// platform. hostBytesOf() below reads it back from the file, without libzip.
 inline void writeZip(const fs::path& path,
-                     const std::vector<std::pair<std::string, std::string>>& members) {
+                     const std::vector<std::pair<std::string, std::string>>& members,
+                     std::optional<uint8_t> host = std::nullopt) {
     int err = 0;
     zip_t* za = zip_open(path.string().c_str(), ZIP_CREATE | ZIP_TRUNCATE, &err);
     ASSERT_NE(za, nullptr);
@@ -109,10 +115,47 @@ inline void writeZip(const fs::path& path,
     for (const auto& [name, body] : members) {
         zip_source_t* source = zip_source_buffer(za, body.data(), body.size(), 0);
         ASSERT_NE(source, nullptr);
-        ASSERT_GE(zip_file_add(za, name.c_str(), source, ZIP_FL_OVERWRITE), 0);
+        const zip_int64_t index = zip_file_add(za, name.c_str(), source, ZIP_FL_OVERWRITE);
+        ASSERT_GE(index, 0);
+        if (host) {
+            ASSERT_EQ(zip_file_set_external_attributes(za, static_cast<zip_uint64_t>(index), 0,
+                                                       *host, 0),
+                      0);
+        }
     }
 
     ASSERT_EQ(zip_close(za), 0);
+}
+
+// Each central-directory entry's name and host byte, read from the file's own bytes rather than
+// through libzip, so that a case can see its archive holds what it says before trusting what a
+// scan of it says. Empty when the file is not a zip this simple reader understands.
+inline std::vector<std::pair<std::string, uint8_t>> hostBytesOf(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto u16 = [&](size_t at) {
+        return static_cast<uint32_t>(static_cast<unsigned char>(data[at]) |
+                                     (static_cast<unsigned char>(data[at + 1]) << 8));
+    };
+    const auto u32 = [&](size_t at) { return u16(at) | (u16(at + 2) << 16); };
+
+    std::vector<std::pair<std::string, uint8_t>> out;
+    const size_t end = data.rfind(std::string("PK\x05\x06", 4));
+    if (end == std::string::npos || end + 22 > data.size()) {
+        return out;
+    }
+    size_t at = u32(end + 16);
+    for (uint32_t i = 0, count = u16(end + 10); i < count; ++i) {
+        if (at + 46 > data.size() || data.compare(at, 4, std::string("PK\x01\x02", 4)) != 0) {
+            return {};
+        }
+        const uint32_t nameLength = u16(at + 28);
+        const uint32_t extraLength = u16(at + 30);
+        const uint32_t commentLength = u16(at + 32);
+        out.emplace_back(data.substr(at + 46, nameLength), static_cast<uint8_t>(u16(at + 4) >> 8));
+        at += 46 + nameLength + extraLength + commentLength;
+    }
+    return out;
 }
 
 // The bytes of a file, for an archive built on disk and then carried inside another one.

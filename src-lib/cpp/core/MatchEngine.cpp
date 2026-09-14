@@ -1692,11 +1692,12 @@ std::vector<FileMatch> MatchEngine::matchName(std::string_view pathUtf8) const {
     return matchFinalName(rules::filename::finalComponent(pathUtf8));
 }
 
-std::vector<FileMatch> MatchEngine::matchMemberName(std::string_view storedName) const {
+std::vector<FileMatch> MatchEngine::matchMemberName(
+    std::string_view storedName, rules::filename::MemberSeparators separators) const {
     if (nameRules_.empty() || storedName.empty()) {
         return {};
     }
-    return matchFinalName(rules::filename::memberFinalComponent(storedName));
+    return matchFinalName(rules::filename::memberFinalComponent(storedName, separators));
 }
 
 std::vector<FileMatch> MatchEngine::matchFinalName(std::string_view name) const {

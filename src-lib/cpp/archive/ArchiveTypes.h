@@ -49,6 +49,12 @@ struct Entry {
     uint64_t size = 0;             // uncompressed, as claimed by the index
     uint64_t compressedSize = 0;   // 0 when the format does not say (tar)
     bool directory = false;
+
+    // A backslash in `name` separates path components, which is true only of a zip entry the
+    // central directory says was written by MS-DOS, Windows NTFS or VFAT. Every other zip
+    // host and every tar header leave it false, and there a backslash is a character of the
+    // name. See rules::filename::memberFinalComponent() for why the writer decides it.
+    bool backslashIsSeparator = false;
 };
 
 // Why a member was not scanned. Every skip carries one: silent skips are how the

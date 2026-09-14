@@ -257,17 +257,34 @@ scan never reaches has no name to read: one inside an archive nested past
 A single `.gz` stores no member name the scanner reads — its member is named from the
 container's own file name, which is read as the file it is.
 
-**Separators.** Only the final component is read, as for a file. Inside an archive the
-separator is `/` on every platform, Windows included: a zip's names use `/` by
-specification and a tar's are POSIX, so a backslash in a stored name is a character of it,
-and it raises FN002. That is also what extraction does on Linux: PHP's `ZipArchive`,
-7-Zip and Python's `zipfile` write the backslash into the name of the file they create,
-and only Info-ZIP's `unzip` makes a directory of it, for an archive marked as written on
-MS-DOS. Windows PowerShell 5.1's `Compress-Archive` and .NET Framework's
-`ZipFile.CreateFromDirectory` do store backslashes as separators, so every member below the
-top level of an archive they wrote raises FN002. A row's address normalises backslashes to
-`/` for display, as it always has, so such a row reads `upload.zip!a/zz.php` with FN002
-naming the backslash.
+**Separators.** Only the final component is read, as for a file. What separates the
+components is decided by whoever wrote the entry, never by the platform the scan runs on:
+
+| entry | separators |
+|---|---|
+| a zip entry written by MS-DOS, Windows NTFS or VFAT (host byte 0, 10 or 14) | `/` and `\` |
+| a zip entry written by Unix, macOS or any other host | `/` only |
+| a tar member | `/` only |
+
+A zip records its writer per entry, in the host byte of "version made by", and it is asked
+per entry — one archive can hold entries two tools added — and for a zip inside a zip, of
+the inner zip's own entries. Windows PowerShell 5.1's `Compress-Archive` and .NET
+Framework's `ZipFile.CreateFromDirectory` store `site\wp-content\index.php` under host byte
+0, meaning directories, so a site backup made with either raises nothing for its
+separators and is still read for a hostile final component. Where the writer was not DOS
+or Windows the backslash is a character of the name and raises FN002: PHP's `ZipArchive`,
+7-Zip and Python's `zipfile` on Linux extract a Unix-made `a\zz.php` as one file with a
+backslash in its name. This is how Info-ZIP's `unzip` decides it too.
+
+The host byte follows the tool, not the machine. PHP's `ZipArchive` writes host byte 3
+(Unix) on Windows as well, so a PHP backup script on Windows that stores paths as the
+directory iterator spells them — `site\index.php` — raises FN002 on every member below its
+top level. Windows' own `tar.exe`, 7-Zip, pwsh 7's `Compress-Archive` and .NET 10's
+`ZipFile` store `/`, whichever host byte they record.
+
+A row's address normalises backslashes to `/` for display, as it always has, whichever
+writer the entry had, so a Unix-made member reads `upload.zip!a/zz.php` with FN002 naming
+the backslash.
 
 **Quarantine and exit code.** A name finding on a member never moves its container, just
 as it never moves a file; only hostile content inside does. A member row with a name

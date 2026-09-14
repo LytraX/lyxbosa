@@ -207,9 +207,12 @@ void ArchiveScanner::reportMember(const Context& ctx, std::string_view member,
 //
 // Only a name the container stores is read. A single gzip has none: its member is named here
 // from the container's own file name, which has already been read as the file it is.
-std::vector<FileMatch> ArchiveScanner::nameFindings(std::string_view storedName,
+std::vector<FileMatch> ArchiveScanner::nameFindings(const Entry& entry,
                                                     const std::string& normalized) const {
-    auto named = engine_.matchMemberName(storedName);
+    auto named = engine_.matchMemberName(
+        entry.name, entry.backslashIsSeparator
+                        ? rules::filename::MemberSeparators::SlashAndBackslash
+                        : rules::filename::MemberSeparators::Slash);
     // The pattern is asked only of a name that raised something. The examination allocates
     // nothing for an ordinary name, and a glob list over every member of a 28,000-member
     // backup would be the cost of this whole feature spent on names that say nothing.
@@ -329,7 +332,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
         }
 
         const std::string name = normalizeMemberName(entries[i].name);
-        std::vector<FileMatch> named = nameFindings(entries[i].name, name);
+        std::vector<FileMatch> named = nameFindings(entries[i], name);
         if (const auto skip = selectionSkip(name, entries[i].size, entries[i].directory,
                                             config_, memberLimit_, filters_)) {
             ctx.stats->skip(*skip);
@@ -426,7 +429,7 @@ void ArchiveScanner::scanTar(ByteSource& stream, Context& ctx, ByteSource& raw) 
 
         reportMember(ctx, name, delta, index, 0, false);
 
-        std::vector<FileMatch> named = nameFindings(entry.name, name);
+        std::vector<FileMatch> named = nameFindings(entry, name);
         if (const auto skip = selectionSkip(name, entry.size, entry.directory,
                                             config_, memberLimit_, filters_)) {
             ctx.stats->skip(*skip);

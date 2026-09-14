@@ -30,8 +30,10 @@ commit list that CI generates per tag.
   named that way. The name comes from the archive's index or header, so a member the scan does
   not open — not code, over `archives.max_member_size`, past a budget — still has it read, and
   its row says why its bytes were not. `scan.exclude` keeps a member's name out as it keeps a
-  file's. A backslash in a stored name is part of the name on every platform. A name finding
-  never moves the container. See *Names inside archives* in [docs/SCANNING.md](docs/SCANNING.md).
+  file's. A backslash in a zip entry's name separates directories when the entry records that
+  MS-DOS or Windows wrote it, and is a character of the name for any other writer and in a tar.
+  A name finding never moves the container. See *Names inside archives* in
+  [docs/SCANNING.md](docs/SCANNING.md).
 
 ### Fixed
 
@@ -100,9 +102,15 @@ commit list that CI generates per tag.
 - **A scan of an archive holding a member whose name raises FN001 to FN006 exits 2 where it
   exited 0**, with a row for that member addressed `archive!member`, and the member counts in
   `filesWithMatches` and `filesWithHostileNames`. `check` on such an archive exits 2 and prints
-  the member. An archive written by Windows PowerShell 5.1's `Compress-Archive` or by .NET
-  Framework's `ZipFile.CreateFromDirectory`, which store backslashes as separators, raises
-  FN002 on every member below its top level. No container is quarantined for a member's name.
+  the member. No container is quarantined for a member's name.
+- **A backslash in a member name is read the way the entry's writer meant it.** A zip entry whose
+  host byte records MS-DOS, Windows NTFS or VFAT is split on backslashes as well as slashes, and
+  raises no FN002 for them: a site backup made by Windows PowerShell 5.1's `Compress-Archive` or
+  .NET Framework's `ZipFile.CreateFromDirectory`, which store `site\wp-content\index.php` under
+  host byte 0, raises only what its final components raise. A zip entry from any other host, and
+  every tar member, raises FN002 on a backslash in its name. PHP's `ZipArchive` records the Unix
+  host byte on Windows too, so a backup a PHP script made there with backslash paths raises
+  FN002 on every member below its top level.
 - **A member row can carry a skip reason**: `"skipped": true` and `"skipReason"` in JSON, the
   `skipped` and `skip_reason` CSV columns, and `(not scanned: …)` in the text report, with the
   values `policy`, `size`, `budget`, `ratio` and `corrupt` that `archives.membersSkipped`

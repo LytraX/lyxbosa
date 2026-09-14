@@ -129,11 +129,10 @@ private:
                          Context& ctx, std::vector<FileMatch> named);
 
     // What a member's stored name raises under the FN rules, unless the operator's exclude
-    // patterns name the member. `storedName` is the name as the archive holds it and
-    // `normalized` is normalizeMemberName() of it, which is what the patterns are asked
-    // about everywhere else in this class.
-    std::vector<FileMatch> nameFindings(std::string_view storedName,
-                                        const std::string& normalized) const;
+    // patterns name the member. `entry` carries the name as the archive holds it and whether
+    // its writer used a backslash as a separator; `normalized` is normalizeMemberName() of the
+    // name, which is what the patterns are asked about everywhere else in this class.
+    std::vector<FileMatch> nameFindings(const Entry& entry, const std::string& normalized) const;
 
     // The row for a member whose bytes were not read and whose name raised something.
     void reportUnopened(const Context& ctx, std::string_view member, uint64_t size,

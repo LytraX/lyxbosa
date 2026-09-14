@@ -85,10 +85,11 @@ public:
 
     // The same findings about a member of an archive, from the name the archive stores for
     // it. Only the final component is examined, split by rules::filename::
-    // memberFinalComponent() - on `/` alone, on every platform, because the separator inside
-    // an archive is the format's rather than the host's. Which rules run, and the findings
-    // they raise, are exactly matchName()'s.
-    std::vector<FileMatch> matchMemberName(std::string_view storedName) const;
+    // memberFinalComponent() on what the entry's writer used as a separator - never on the
+    // platform the scan runs on. Which rules run, and the findings they raise, are exactly
+    // matchName()'s.
+    std::vector<FileMatch> matchMemberName(std::string_view storedName,
+                                           rules::filename::MemberSeparators separators) const;
 
     // How many FN rules are live. Lets a caller skip the call - and a test assert that
     // disabling one took effect.
