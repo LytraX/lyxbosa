@@ -43,8 +43,27 @@ commit list that CI generates per tag.
   `update` printed without asking. Each now asks after its last byte, as `scan`, `check`,
   `init-config` and `lyxbosa --help` already did. The text each prints is unchanged.
 
+- **A C1 control character no longer reaches a terminal or a report raw.** U+0080 to U+009F
+  are valid UTF-8, so a file name, a quoted excerpt or a custom rule's name holding one was
+  written through unescaped. They are the 8-bit forms of the escape controls: U+009B is a
+  control sequence introducer by itself, and GNU screen acts on it exactly as on `ESC [` —
+  colouring text, moving the cursor and hiding it — while tmux passes it to the terminal it is
+  attached from and the Windows console host draws nothing for it. Each is now escaped as
+  its two bytes, `\xc2\x9b`, wherever C0 controls and DEL already were, and refused wherever
+  they already were.
+
 ### Compatibility
 
+- **A configuration whose custom rule has a C1 control in its `name`, `category` or
+  `description` is refused** where it loaded before, by `scan`, `check` and
+  `validate-config`, with exit 1 and a sentence naming the character, such as
+  `its name carries a control character (U+009B, 0xc2 0x9b at offset 6)`. U+0085 (NEL) is
+  refused in a `description` too; tab, line feed and carriage return still load there.
+- **A path holding a C1 control is rendered with `\xc2\x80` to `\xc2\x9f` in its place** in
+  the text, JSON and CSV reports and on the terminal, and JSON gains `pathBytesHex` (and
+  `quarantinePathBytesHex`) and CSV fills `file_bytes_hex` (and `quarantine_path_bytes_hex`)
+  for it, because its rendering is no longer the name. A quoted match excerpt or finding
+  context holding one is escaped the same way. No exit code changes.
 - **`lyxbosa --version`, `lyxbosa -v`, every command's `--help` and `-h`, `validate-config`
   and `update` exit 1 where they exited 0 or 2** when standard output refuses what they write.
   stderr says `Error: the version could not be written to standard output` (`the help text`,

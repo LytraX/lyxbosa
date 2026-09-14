@@ -244,8 +244,10 @@ program, and a report owes both.
 **The rendering.** Every path in every output goes through one escape before it is written.
 Control bytes and DEL become a visible `\x0a`, `\x09`, `\x1b` and so on, and so does any
 byte that is not part of well-formed UTF-8 — including overlong forms such as `c0 af`,
-surrogates and anything past U+10FFFF. Well-formed UTF-8 is left exactly alone, so a name
-in Greek, Japanese or French prints as it is. Two things depend on this. A terminal is the
+surrogates and anything past U+10FFFF. The C1 controls, U+0080 to U+009F, are well-formed
+UTF-8 and are escaped all the same, one escape per byte: U+009B, which some terminals take
+for `ESC [`, prints as `\xc2\x9b`. Every other well-formed character is left exactly alone,
+so a name in Greek, Japanese or French prints as it is. Two things depend on this. A terminal is the
 one consumer that cannot be handed the bytes, because a name carrying `ESC ] 52 ; c ;` is
 not text there but an instruction that writes the reader's clipboard. And a JSON document
 has to stay valid UTF-8 or no parser will accept it, and a file name on a Linux host may be

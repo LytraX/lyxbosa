@@ -30,6 +30,7 @@
 #include "core/Scanner.h"
 #include "infrastructure/report/CsvReportWriter.h"
 #include "infrastructure/report/JsonReportWriter.h"
+#include "infrastructure/ResultPrinter.h"
 #include "rules/Registry.hpp"
 #include "rules/filename.h"
 #include "utils/SafeText.h"
@@ -774,6 +775,9 @@ TEST(SafeTextUtf8Test, NeedsSanitizingAgreesWithSanitizeExactly) {
         "plain.php", "a\nb", "a\xC0\xAF" "b", "\xCE\x95\xCE\xBB\xCE\xBB",
         "\x80", "\xE2\x82\xAC", "\xE2\x82", "\xF0\x9F\x94\x92", "\xF0\x9F\x94",
         "\x7f", "O'Brien & Sons.pdf", "\xED\xA0\x80", "\xC1\xBF",
+        // C1 controls, their neighbours in the Latin-1 block, and a C1 lead that is cut off.
+        "\xC2\x80", "a\xC2\x9B" "31mb", "\xC2\x9F", "\xC2\x85", "\xC2\xA0", "\xC2\xBF",
+        "caf\xC3\xA9", "\xC2", "\xC2\x9B\xC2",
     };
     for (const auto& value : cases) {
         EXPECT_EQ(safe_text::needsSanitizing(value), safe_text::sanitize(value) != value)
@@ -791,6 +795,8 @@ TEST(SafeTextUtf8Test, WhyNotPlainTextAgreesWithNeedsSanitizingExactly) {
         "\xCE\x95\xCE\xBB\xCE\xBB", "\x80", "\xE2\x82\xAC", "\xE2\x82", "\xF0\x9F\x94\x92",
         "\xF0\x9F\x94", "\x7f", "O'Brien, \"Sons\".pdf", "\xED\xA0\x80", "\xC1\xBF",
         std::string("a\0b", 3), "",
+        "\xC2\x80", "a\xC2\x9B" "31mb", "\xC2\x9F", "\xC2\x85", "\xC2\xA0", "\xC2\xBF",
+        "caf\xC3\xA9", "\xC2", "\xC2\x9B\xC2", "a\n\xC2\x85" "b",
     };
     for (const auto& value : cases) {
         EXPECT_EQ(safe_text::whyNotPlainText(value).has_value(),
@@ -815,6 +821,49 @@ TEST(SafeTextUtf8Test, WhyNotPlainTextAgreesWithNeedsSanitizingExactly) {
     EXPECT_EQ(safe_text::whyNotPlainText("\xCE\x95" "\xC0\xAF"),
               "is not valid UTF-8 (byte 0xc0 at offset 2)");
     EXPECT_FALSE(safe_text::whyNotPlainText("\xCE\x95\xCE\xBB\xCE\xBB"));
+    EXPECT_EQ(safe_text::whyNotPlainText("ab\xC2\x9B" "31m"),
+              "carries a control character (U+009B, 0xc2 0x9b at offset 2)");
+    EXPECT_EQ(safe_text::whyNotPlainText("\xC2\x85", /*lineBreaks=*/true),
+              "carries a control character (U+0085, 0xc2 0x85 at offset 0)");
+}
+
+// U+0080 to U+009F are well-formed UTF-8 and are controls: U+009B introduces a control
+// sequence exactly as ESC [ does, and GNU screen acts on it. Every one of the 32 is escaped
+// byte by byte and every neighbour in the Latin-1 block is left alone, and what comes out is
+// still UTF-8 - a JSON document that carries it has to stay parseable.
+TEST(SafeTextUtf8Test, EveryC1ControlIsEscapedAndNothingBesideItIs) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    for (int second = 0x80; second <= 0xBF; ++second) {
+        const std::string character = {'\xC2', static_cast<char>(second)};
+        const std::string value = "a" + character + "[2Jb";
+        SCOPED_TRACE(second);
+        if (second <= 0x9F) {
+            const std::string escaped =
+                std::string("a\\xc2\\x") + kHex[second >> 4] + kHex[second & 0xf] + "[2Jb";
+            EXPECT_EQ(safe_text::sanitize(value), escaped);
+            EXPECT_TRUE(safe_text::needsSanitizing(value));
+            EXPECT_TRUE(safe_text::whyNotPlainText(value, /*lineBreaks=*/true));
+        } else {
+            EXPECT_EQ(safe_text::sanitize(value), value);
+            EXPECT_FALSE(safe_text::needsSanitizing(value));
+            EXPECT_FALSE(safe_text::whyNotPlainText(value));
+        }
+        EXPECT_TRUE(safe_text::isValidUtf8(safe_text::sanitize(value)));
+        EXPECT_EQ(safe_text::sanitize(value).find("\xC2\x80"), std::string::npos);
+    }
+
+    // A cut never lands inside the escape it produced, and never leaves the lead byte behind.
+    const std::string long_name = std::string(40, 'x') + "\xC2\x9B" "2J" + std::string(40, 'y');
+    for (size_t limit = 38; limit < 52; ++limit) {
+        SCOPED_TRACE(limit);
+        const std::string cut = safe_text::sanitizeAndTruncate(long_name, limit);
+        EXPECT_TRUE(safe_text::isValidUtf8(cut));
+        EXPECT_EQ(cut.find('\xC2'), std::string::npos);
+        const size_t backslash = cut.rfind('\\');
+        if (backslash != std::string::npos) {
+            EXPECT_GE(cut.size() - backslash, 4u) << cut;
+        }
+    }
 }
 
 TEST(SafeTextUtf8Test, AReportOfANameThatIsNotUtf8IsStillUtf8) {
@@ -899,6 +948,12 @@ TEST(HostileFilenameTest, AnEscapeSequenceInANameNeverReachesAStreamRaw) {
     if (const auto why = whyCannotCreate(root.path(), hostile)) {
         GTEST_SKIP() << *why;
     }
+    // The same OSC spelled with the 8-bit introducer, U+009D, and a CSI with U+009B. Both are
+    // valid UTF-8, which is why the escape once let them through.
+    const std::string c1 = std::string("p\xC2\x9D" "52;c;aGk=\xC2\x9C;\xC2\x9B" "2Jq.php");
+    if (const auto why = whyCannotCreate(root.path(), c1)) {
+        GTEST_SKIP() << *why;
+    }
 
     const ScanResult result = runScan(scanConfig(root.path()));
     ASSERT_FALSE(result.files.empty());
@@ -918,13 +973,34 @@ TEST(HostileFilenameTest, AnEscapeSequenceInANameNeverReachesAStreamRaw) {
         writer.end(result, false);
     }
 
-    for (const auto* document : {&json, &csv}) {
-        const std::string text = document->str();
-        EXPECT_EQ(text.find('\x1B'), std::string::npos) << "a raw ESC reached a report";
-        EXPECT_EQ(text.find('\x07'), std::string::npos) << "a raw BEL reached a report";
+    // The readable report a terminal is handed, both of its views.
+    std::ostringstream text;
+    {
+        ResultPrinter printer(text, /*color=*/false, /*width=*/200);
+        for (const auto& file : result.files) {
+            printer.printFileResult(file);
+            printer.printFileResultCompact(file);
+        }
+    }
+
+    for (const auto* document : {&json, &csv, &text}) {
+        const std::string written = document->str();
+        EXPECT_EQ(written.find('\x1B'), std::string::npos) << "a raw ESC reached a report";
+        EXPECT_EQ(written.find('\x07'), std::string::npos) << "a raw BEL reached a report";
+        for (const char* control : {"\xC2\x9B", "\xC2\x9C", "\xC2\x9D"}) {
+            EXPECT_EQ(written.find(control), std::string::npos)
+                << "a raw C1 control reached a report:\n" << safe_text::sanitize(written);
+        }
+        EXPECT_TRUE(safe_text::isValidUtf8(written));
     }
     EXPECT_NE(json.str().find("\\\\x1b"), std::string::npos)
         << "the escape is not in the report in any form";
+    EXPECT_NE(json.str().find("p\\\\xc2\\\\x9d52;c;aGk=\\\\xc2\\\\x9c;\\\\xc2\\\\x9b2Jq.php"),
+              std::string::npos)
+        << json.str();
+    EXPECT_NE(text.str().find("p\\xc2\\x9d52;c;aGk=\\xc2\\x9c;\\xc2\\x9b2Jq.php"),
+              std::string::npos)
+        << text.str();
 }
 
 TEST(HostileFilenameTest, EveryReportedFileCanBeReopenedFromTheReportAlone) {
@@ -937,6 +1013,7 @@ TEST(HostileFilenameTest, EveryReportedFileCanBeReopenedFromTheReportAlone) {
         std::string("a;b\xC0\xAF" "c.mdb"),          // not valid UTF-8
         std::string("g\nh;i.mdb"),                   // a control byte
         std::string("plain-O'Brien & Sons;x.mdb"),   // ordinary bytes, still a finding
+        std::string("k\xC2\x9B" "2Jl;m.mdb"),        // a C1 control: valid UTF-8, and escaped
     };
     size_t created = 0;
     for (const auto& name : names) {
