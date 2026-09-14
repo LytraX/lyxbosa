@@ -18,9 +18,10 @@
 // A READER THAT WENT AWAY IS NOT A FAILURE. `lyxbosa scan -o json | head` is ordinary use, and
 // with SIGPIPE at its default disposition it ends in the kernel: the first write after `head`
 // exits kills the process, which exits 141 and prints nothing. That is what Unix tools do and
-// it is not changed here. This process never ignores SIGPIPE itself - libcurl would, around
-// each call, but HttpTransport.cpp sets CURLOPT_NOSIGNAL, and nothing else linked in touches
-// it - but a parent can hand it over ignored: systemd does by default (IgnoreSIGPIPE=), and so
+// it is not changed here. This process ignores SIGPIPE itself in one place only - while
+// `update` reports an action it has already taken, for the reason at SigpipeIgnoredForAReport
+// below. libcurl would, around each call, but HttpTransport.cpp sets CURLOPT_NOSIGNAL, and
+// nothing else linked in touches it. A parent can hand it over ignored: systemd does by default (IgnoreSIGPIPE=), and so
 // does any shell started with it ignored. Then the same write returns EPIPE instead, and it is
 // answered the way the signal would have answered it: no message, and exit 141 in place of the
 // exit code that would have said the answer arrived. Windows has no SIGPIPE at all, and a
@@ -50,6 +51,8 @@
 #include <share.h>
 #include <stdlib.h>
 #include <windows.h>
+#else
+#include <csignal>
 #endif
 
 namespace lyxbosa {
@@ -345,5 +348,67 @@ inline int finishAnswerOnStandardOutput(const Terminal& terminal, CheckedOutput&
     }
     return exitCodeAfterDelivery(code, delivery);
 }
+
+// The ending of a command whose answer is an ACTION it took, with text on standard output that
+// reports the action: `update` without --check. The text was written through `out` and asked with
+// deliver(), inside a SigpipeIgnoredForAReport.
+//
+// THE ACTION OUTRANKS ITS REPORT. This is exitCodeAfterDelivery() turned the other way, and the
+// difference is what the caller asked for. Where the text is the answer - a scan's report,
+// `check`, `update --check` - text that did not arrive is an answer that did not arrive, and it
+// takes the exit code. Where the caller asked for something to be done, the answer is whether it
+// was done: `update` replaced the binary, or found it already current, or did neither, and the
+// exit code says which whatever became of the sentence saying so. Exiting 1 after a replacement
+// because the sentence was refused is the same lie as a lost report exiting 0, pointed the other
+// way: a script reads it as a failed update and runs it again. So `code` is returned as it is.
+// That the report did not arrive is still said, on stderr, in the one message every destination
+// shares; a reader that went away is not said, as everywhere, and changes nothing.
+inline int finishReportOfAnAction(const Terminal& terminal, const Delivery& delivery,
+                                  std::string_view what, int code) {
+    if (delivery.failed()) {
+        sayUndelivered(terminal, delivery, what, kStandardOutput, kWhatReachedIt);
+    }
+    return code;
+}
+
+// SIGPIPE ignored while this lives, on POSIX; nothing on Windows, which has no SIGPIPE.
+//
+// For the report of an action that has already happened, and nothing else. With SIGPIPE at its
+// default, `lyxbosa update --yes | head -0` replaces the binary and is then killed by the kernel
+// at the first byte of the sentence saying so - exit 141 for an update that succeeded, decided
+// before this process can rank anything. Ignored, the same write fails with EPIPE, CheckedOutput
+// records it, and finishReportOfAnAction() keeps the action's code.
+//
+// Held around the report's writes and deliver() only. Not around the action: whatever the action
+// writes to stderr on its way is not written through a CheckedOutput, and on the musl build and on
+// Windows a refused write there throws where the signal would have ended the run - the same abort
+// Delivery.h exists to stop. Released before anything is said about the report, for the same
+// reason.
+class SigpipeIgnoredForAReport {
+public:
+#ifdef _WIN32
+    SigpipeIgnoredForAReport() = default;
+#else
+    SigpipeIgnoredForAReport() {
+        struct sigaction ignore = {};
+        ignore.sa_handler = SIG_IGN;
+        sigemptyset(&ignore.sa_mask);
+        saved_ = sigaction(SIGPIPE, &ignore, &previous_) == 0;
+    }
+    ~SigpipeIgnoredForAReport() {
+        if (saved_) {
+            sigaction(SIGPIPE, &previous_, nullptr);
+        }
+    }
+
+private:
+    struct sigaction previous_ = {};
+    bool saved_ = false;
+#endif
+
+public:
+    SigpipeIgnoredForAReport(const SigpipeIgnoredForAReport&) = delete;
+    SigpipeIgnoredForAReport& operator=(const SigpipeIgnoredForAReport&) = delete;
+};
 
 }  // namespace lyxbosa

@@ -6,6 +6,11 @@
 //   2  `--check` only: a newer release is available
 //   1  anything else - a failed request, a development build, and every refusal
 //
+// Which of those a run exits with does not depend on whether its message arrived, except under
+// `--check`. Without it the caller asked for an action, and the code says what the action did;
+// with it the printed text is the answer, and a refused one exits 1 and a reader that went away
+// 141, as every other answer on standard output does. execute() says why, beside the code.
+//
 // The exit code is the interface, so that a monitoring script can use this without
 // reading the text - the same discipline the scan exit codes already follow. A refusal
 // exits 1 rather than 0 on purpose: a script that asked for an update and did not get
@@ -31,16 +36,21 @@
 
 namespace lyxbosa {
 
+// What a test puts in place of this process's own facts, so that the command can be driven
+// without a release build, without the user's state file, without the binary that is running
+// it and without the private half of the keys compiled into it. Empty is the real thing, and the
+// CLI passes nothing. At namespace scope rather than inside the class, because a default
+// argument of the class's own constructor cannot use a nested type's member initializers.
+struct UpdateSeams {
+    std::optional<Version> running;                // runningVersion()
+    std::filesystem::path statePath;               // defaultUpdateStatePath()
+    std::filesystem::path target;                  // the file this process is running from
+    const minisign::Keyring* keyring = nullptr;    // the keys compiled into this binary
+};
+
 class UpdateUseCase {
 public:
-    // What a test puts in place of this process's own facts, so that the command can be
-    // driven without a release build, without the user's state file and without the binary
-    // that is running it. Empty is the real thing, and the CLI passes nothing.
-    struct Seams {
-        std::optional<Version> running;     // runningVersion()
-        std::filesystem::path statePath;    // defaultUpdateStatePath()
-        std::filesystem::path target;       // the file this process is running from
-    };
+    using Seams = UpdateSeams;
 
     // Both sources are injected so the command is testable without a socket; the
     // defaults are the real ones.
@@ -68,14 +78,24 @@ public:
                 "It is a local demonstration build and must not be installed anywhere.\n\n");
         }
 
-        // What each run prints to standard output is its answer, and the exit code is what a
-        // monitoring script reads as saying the answer arrived. So it is written through one
-        // CheckedOutput and asked after the last line - see Delivery.h. An answer that did
-        // not arrive exits 1, including a replaced binary's: the replacement stands, and the
-        // next `update` says so, but the run that did it could not say it.
+        // Everything either run prints to standard output goes through one CheckedOutput and is
+        // asked whether it arrived after the last line - see Delivery.h. What the answer is
+        // decides what that changes.
         CheckedOutput out(stdout);
-        const int code = args.updateCheckOnly ? runCheck(out) : runApply(args, out);
-        return finishAnswerOnStandardOutput(terminal_, out, "the update result", code);
+
+        // `update --check` asked a question, and the text is the answer: an answer that did
+        // not arrive outranks what it would have said, so it exits 1, or 141 for a reader that
+        // went away, in place of the 0 or 2 that would say it arrived.
+        if (args.updateCheckOnly) {
+            const int code = runCheck(out);
+            return finishAnswerOnStandardOutput(terminal_, out, "the update result", code);
+        }
+
+        // `update` asked for an action, and the action is the answer. runApply() exits by what
+        // it did - 0 replaced, 0 already current, 1 not done - and a refused or unread report of
+        // it is said on stderr and changes none of the three. Delivery.h,
+        // finishReportOfAnAction(), has the ranking.
+        return runApply(args, out);
     }
 
 private:
@@ -134,6 +154,7 @@ private:
         options.running = seams_.running;
         options.statePath = seams_.statePath;
         options.target = seams_.target;
+        options.keyring = seams_.keyring;
 
         options.onStep = [this](std::string_view what) {
             terminal_.printErr(Terminal::muted(), "  {}...\n", what);
@@ -143,24 +164,21 @@ private:
 
         const ApplyResult result = applyUpdate(*source_, *assets_, options);
 
+        // Done, one way or the other: the binary was replaced or was already current. From here
+        // on nothing can change that, so the exit code is 0 and the report of it can only arrive
+        // or not - and SIGPIPE is ignored while it is written, so that a reader that went away
+        // cannot turn the update into a signal. See Delivery.h.
+        if (result.ok()) {
+            Delivery delivery;
+            {
+                const SigpipeIgnoredForAReport reporting;
+                reportDone(result, out);
+                delivery = deliver(out);
+            }
+            return finishReportOfAnAction(terminal_, delivery, "the update result", 0);
+        }
+
         switch (result.outcome) {
-            case ApplyOutcome::Replaced:
-                terminal_.printTo(out, Terminal::success(), "Updated {} -> {}.\n",
-                                  toString(result.plan->from), toString(result.plan->to));
-                out.print("{}\n", result.detail);
-                // The trusted comment is printed only because it verified, and it is
-                // worth printing because it is the line that names the release the
-                // checksums belong to.
-                if (!result.trustedComment.empty()) {
-                    out.print("Signed: {}\n", result.trustedComment);
-                }
-                return 0;
-
-            case ApplyOutcome::AlreadyCurrent:
-                terminal_.printTo(out, Terminal::success(), "Up to date ({}).\n",
-                                  result.detail);
-                return 0;
-
             case ApplyOutcome::Declined:
                 fmt::print(stderr, "Cancelled. {}\n", result.detail);
                 return 1;
@@ -209,6 +227,22 @@ private:
                    "from an older release verifies perfectly well and describes different\n"
                    "binaries. docs/RELEASING.md, \"After the release\", is the long form.\n");
         return 1;
+    }
+
+    // What a run that did its job prints. Nothing else goes to `out` from runApply().
+    void reportDone(const ApplyResult& result, CheckedOutput& out) const {
+        if (result.outcome == ApplyOutcome::Replaced) {
+            terminal_.printTo(out, Terminal::success(), "Updated {} -> {}.\n",
+                              toString(result.plan->from), toString(result.plan->to));
+            out.print("{}\n", result.detail);
+            // The trusted comment is printed only because it verified, and it is worth printing
+            // because it is the line that names the release the checksums belong to.
+            if (!result.trustedComment.empty()) {
+                out.print("Signed: {}\n", result.trustedComment);
+            }
+            return;
+        }
+        terminal_.printTo(out, Terminal::success(), "Up to date ({}).\n", result.detail);
     }
 
     bool confirm(const ApplyPlan& plan) {

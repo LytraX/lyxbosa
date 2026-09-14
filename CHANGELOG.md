@@ -48,12 +48,17 @@ commit list that CI generates per tag.
   `Links not followed` with the setting off, because it was never going to be followed, and in
   `Entries unreadable` with it on, because then the scan meant to read what it leads to and
   could not.
-- **`lyxbosa --version`, every command's `--help`, `validate-config` and `update` no longer
-  exit as if their answer arrived when standard output refused it.** The version and each
-  command's help were printed by the argument parser, which exited 0 from inside the parse
-  before anything could ask whether the text had been written, and `validate-config` and
-  `update` printed without asking. Each now asks after its last byte, as `scan`, `check`,
-  `init-config` and `lyxbosa --help` already did. The text each prints is unchanged.
+- **`lyxbosa --version`, every command's `--help`, `validate-config` and `update --check` no
+  longer exit as if their answer arrived when standard output refused it.** The version and
+  each command's help were printed by the argument parser, which exited 0 from inside the
+  parse before anything could ask whether the text had been written, and `validate-config` and
+  `update --check` printed without asking. Each now asks after its last byte, as `scan`,
+  `check`, `init-config` and `lyxbosa --help` already did. The text each prints is unchanged.
+- **`update` says when the line reporting a finished update did not arrive, and is no longer
+  killed for it.** It printed without asking, so a refused report went unmentioned, and with
+  SIGPIPE at its default a pipe whose reader had gone ended the run with the signal after the
+  binary had already been replaced. The report is now asked about after its last byte and
+  written with SIGPIPE ignored; its exit code still says what the update did.
 - **A C1 control character no longer reaches a terminal or a report raw.** U+0080 to U+009F
   are valid UTF-8, so a file name, a quoted excerpt or a custom rule's name holding one was
   written through unescaped. They are the 8-bit forms of the escape controls: U+009B is a
@@ -81,14 +86,19 @@ commit list that CI generates per tag.
 - **Neither link change moves an exit code or a finding.** None of these links was read before
   and none is read now, and neither count moves the exit code.
 - **`lyxbosa --version`, `lyxbosa -v`, every command's `--help` and `-h`, `validate-config`
-  and `update` exit 1 where they exited 0 or 2** when standard output refuses what they write.
-  stderr says `Error: the version could not be written to standard output` (`the help text`,
-  `the validation result`, `the update result`), then
-  `what reached it, if anything, is incomplete`, then the system's reason. `update` exits 1 in
-  that case even when it replaced the binary: the replacement stands, and the next `update`
-  says so. With SIGPIPE ignored, and on Windows, a pipe whose reader has gone makes them exit
-  141 and print nothing, where they exited 0 or 2. A successful `--help` or `--version` still
-  exits 0.
+  and `update --check` exit 1 where they exited 0 or 2** when standard output refuses what they
+  write. stderr says `Error: the version could not be written to standard output`
+  (`the help text`, `the validation result`, `the update result`), then
+  `what reached it, if anything, is incomplete`, then the system's reason. With SIGPIPE
+  ignored, and on Windows, a pipe whose reader has gone makes them exit 141 and print nothing,
+  where they exited 0 or 2. A successful `--help` or `--version` still exits 0.
+- **`update` without `--check` exits by what it did, whatever became of the line reporting
+  it**: 0 when it replaced the binary or it was already current, 1 when it did neither, as
+  before. When standard output refuses that line, stderr now says
+  `Error: the update result could not be written to standard output` and the two lines after
+  it, and the exit code does not change. With SIGPIPE at its default, a pipe whose reader has
+  gone no longer ends a finished update with exit 141: the run prints nothing more and exits
+  0. A failed update exits 1 whatever became of its output.
 - **A configuration whose custom rule has a C1 control in its `name`, `category` or
   `description` is refused** where it loaded before, by `scan`, `check` and
   `validate-config`, with exit 1 and a sentence naming the character, such as

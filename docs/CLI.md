@@ -137,7 +137,8 @@ lyxbosa update --check    # reports only; downloads nothing
 ```
 
 `--check` exits 0 when up to date and 2 when a newer release exists. `update` itself exits
-0 when it updated or had nothing to do, and 1 on any error or refusal. What it verifies,
+0 when it updated or had nothing to do, and 1 on any error or refusal — whatever became of
+the line reporting it, because there the action is the answer (see *Exit codes* below). What it verifies,
 and what it refuses to do, are in [docs/UPDATING.md](UPDATING.md); the rules for when a
 scan checks on its own, and the privacy consequence, are there too.
 
@@ -157,11 +158,17 @@ code answers "did this do what I asked", and with `-O` the report *is* the answe
 `2` would send an unattended caller to read a file that is truncated or empty.
 
 The same holds for every answer that is text on standard output: a report, what `check`
-prints, `init-config`, `validate-config`, `update`, `--help` and `--version`. When standard
-output refuses it — a full disk, an I/O error, a descriptor not open for writing — the
-command exits `1` and stderr says which answer did not arrive. A reader that went away is not
-an error: with SIGPIPE at its default the signal ends the run, as it ends any Unix tool, and
-with SIGPIPE ignored, or on Windows, the command prints nothing and exits `141`.
+prints, `init-config`, `validate-config`, `update --check`, `--help` and `--version`. When
+standard output refuses it — a full disk, an I/O error, a descriptor not open for writing —
+the command exits `1` and stderr says which answer did not arrive. A reader that went away is
+not an error: with SIGPIPE at its default the signal ends the run, as it ends any Unix tool,
+and with SIGPIPE ignored, or on Windows, the command prints nothing and exits `141`.
+
+`update` without `--check` is ranked the other way, because the caller asked for an action and
+the action is the answer. It exits `0` when it replaced the binary or found it current and `1`
+when it did not, whether or not the line reporting that arrived. A refused line is still said
+on stderr; a reader that went away is not, and the line is written with SIGPIPE ignored so that
+the signal cannot end a run that has already replaced the binary.
 
 A quarantine that could not complete is the exception, and for the same reason: the
 answer is complete and delivered, and the files that are still in place are named in it,

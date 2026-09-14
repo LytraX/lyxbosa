@@ -45,10 +45,10 @@
 #include "use-cases/HelpUseCase.h"
 #include "use-cases/InitConfigUseCase.h"
 #include "use-cases/ScanUseCase.h"
-#include "use-cases/UpdateUseCase.h"
 #include "use-cases/ValidateConfigUseCase.h"
 
 #include "PlatformSkips.h"
+#include "StdoutRedirect.h"
 
 #include <cerrno>
 #include <chrono>
@@ -77,6 +77,7 @@
 #endif
 
 using namespace lyxbosa;
+using namespace lyxbosa::test::stdout_redirect;
 
 namespace {
 
@@ -93,28 +94,6 @@ constexpr size_t kInsideEveryBuffer = 1024;
 constexpr ReportFormat kEveryFormat[] = {ReportFormat::Text, ReportFormat::Csv,
                                          ReportFormat::Json};
 
-// The descriptor calls, spelled once for both platforms.
-namespace sys {
-#ifdef _WIN32
-constexpr int kStdout = 1;
-inline int dup(int fd) { return ::_dup(fd); }
-inline int dup2(int from, int to) { return ::_dup2(from, to); }
-inline int close(int fd) { return ::_close(fd); }
-inline int openForWriting(const fs::path& path) { return ::_wopen(path.c_str(), _O_WRONLY); }
-inline int openForReadingOnly(const fs::path& path) {
-    return ::_wopen(path.c_str(), _O_RDONLY | _O_TEXT);
-}
-inline bool pipe(int fds[2]) { return ::_pipe(fds, 4096, _O_TEXT) == 0; }
-#else
-constexpr int kStdout = STDOUT_FILENO;
-inline int dup(int fd) { return ::dup(fd); }
-inline int dup2(int from, int to) { return ::dup2(from, to); }
-inline int close(int fd) { return ::close(fd); }
-inline int openForWriting(const fs::path& path) { return ::open(path.c_str(), O_WRONLY); }
-inline int openForReadingOnly(const fs::path& path) { return ::open(path.c_str(), O_RDONLY); }
-inline bool pipe(int fds[2]) { return ::pipe(fds) == 0; }
-#endif
-}  // namespace sys
 
 class TempDir {
 public:
@@ -140,128 +119,6 @@ void writeFile(const fs::path& path, const std::string& bytes) {
     fs::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-}
-
-// Standard output on `destination` while this lives. What the refused destination did not
-// take is flushed at it and dropped before the real standard output comes back, and the
-// stream's error indicator with it, so the next case starts clean.
-class StdoutAt {
-public:
-    explicit StdoutAt(int destination) {
-        std::cout.flush();
-        std::fflush(stdout);
-        saved_ = sys::dup(sys::kStdout);
-        sys::dup2(destination, sys::kStdout);
-    }
-    ~StdoutAt() {
-        std::fflush(stdout);
-        std::clearerr(stdout);
-        sys::dup2(saved_, sys::kStdout);
-        sys::close(saved_);
-        std::cout.clear();
-    }
-    StdoutAt(const StdoutAt&) = delete;
-    StdoutAt& operator=(const StdoutAt&) = delete;
-
-private:
-    int saved_ = -1;
-};
-
-// The write end of a pipe whose read end is already closed.
-class ClosedPipe {
-public:
-    ClosedPipe() {
-        int fds[2] = {-1, -1};
-        if (sys::pipe(fds)) {
-            sys::close(fds[0]);
-            writeEnd_ = fds[1];
-        }
-    }
-    ~ClosedPipe() {
-        if (writeEnd_ >= 0) sys::close(writeEnd_);
-    }
-    ClosedPipe(const ClosedPipe&) = delete;
-    ClosedPipe& operator=(const ClosedPipe&) = delete;
-
-    int fd() const { return writeEnd_; }
-
-private:
-    int writeEnd_ = -1;
-};
-
-// SIGPIPE ignored while this lives, the way a parent that ignores it hands it to a child.
-// Windows has no SIGPIPE, and a write to a pipe with no reader fails there without it.
-class SigpipeIgnored {
-public:
-#ifdef _WIN32
-    SigpipeIgnored() = default;
-#else
-    SigpipeIgnored() {
-        struct sigaction ignore = {};
-        ignore.sa_handler = SIG_IGN;
-        sigemptyset(&ignore.sa_mask);
-        sigaction(SIGPIPE, &ignore, &previous_);
-    }
-    ~SigpipeIgnored() { sigaction(SIGPIPE, &previous_, nullptr); }
-
-private:
-    struct sigaction previous_ = {};
-#endif
-};
-
-// A descriptor that owns itself.
-class Descriptor {
-public:
-    explicit Descriptor(int fd) : fd_(fd) {}
-    ~Descriptor() {
-        if (fd_ >= 0) sys::close(fd_);
-    }
-    Descriptor(const Descriptor&) = delete;
-    Descriptor& operator=(const Descriptor&) = delete;
-    int fd() const { return fd_; }
-
-private:
-    int fd_;
-};
-
-struct CommandRun {
-    int code = 0;
-    std::string out;
-    std::string err;
-};
-
-// `command` with standard output on `destination` and standard error captured.
-template <typename Command>
-CommandRun withStdoutAt(int destination, Command&& command) {
-    CommandRun run;
-    testing::internal::CaptureStderr();
-    try {
-        StdoutAt redirected(destination);
-        run.code = command();
-    } catch (...) {
-        run.err = testing::internal::GetCapturedStderr();
-        throw;
-    }
-    run.err = testing::internal::GetCapturedStderr();
-    return run;
-}
-
-// `command` with both streams captured: a destination that takes every byte.
-template <typename Command>
-CommandRun delivered(Command&& command) {
-    CommandRun run;
-    testing::internal::CaptureStdout();
-    testing::internal::CaptureStderr();
-    try {
-        run.code = command();
-    } catch (...) {
-        run.err = testing::internal::GetCapturedStderr();
-        run.out = testing::internal::GetCapturedStdout();
-        throw;
-    }
-    run.err = testing::internal::GetCapturedStderr();
-    run.out = testing::internal::GetCapturedStdout();
-    return run;
 }
 
 // `lyxbosa scan ROOT -o FORMAT --force --no-quarantine --no-precount [--quiet]`.
@@ -825,31 +682,6 @@ std::string_view whatItIs(const std::vector<std::string>& words) {
                                                                : "the help text";
 }
 
-class FixedVersionSource : public VersionSource {
-public:
-    explicit FixedVersionSource(std::string tag) : tag_(std::move(tag)) {}
-    FetchOutcome fetchLatest(std::chrono::milliseconds, const std::atomic<bool>&) override {
-        FetchOutcome out;
-        out.status = FetchOutcome::Status::Ok;
-        out.version = tag_;
-        return out;
-    }
-
-private:
-    std::string tag_;
-};
-
-// A source that must not be asked: `update` that reaches it has gone past the answer.
-class NoAssets : public AssetSource {
-public:
-    http::Outcome fetch(std::string_view, std::string_view, const fs::path&, uint64_t) override {
-        ADD_FAILURE() << "an update that is already current fetched an asset";
-        http::Outcome outcome;
-        outcome.status = http::Outcome::Status::HttpError;
-        return outcome;
-    }
-};
-
 }  // namespace
 
 // The library's own --help and --version used to print to std::cout and call std::exit(0) from
@@ -953,37 +785,19 @@ TEST_F(StdoutDeliveryTest, AHelpTextOrAVersionWhoseReaderHasGoneIsNotAFailure) {
     }
 }
 
-// validate-config and update: every answer each of them writes to standard output, through a
-// destination that refuses it, a pipe with no reader, and one that takes it. The refusal uses a
-// descriptor opened for reading, so Windows observes it too.
-TEST_F(StdoutDeliveryTest, ValidateConfigAndUpdateAnswerLikeEveryOtherCommand) {
+// validate-config: the answer it writes to standard output, through a destination that refuses
+// it, a pipe with no reader, and one that takes it. The refusal uses a descriptor opened for
+// reading, so Windows observes it too. `update` answers by a different ranking, and its cases are
+// UpdateExitTest in update_apply_test.cpp.
+TEST_F(StdoutDeliveryTest, ValidateConfigAnswersLikeEveryOtherCommand) {
     const fs::path configFile = dirty().parent_path() / "validate.yaml";
     writeFile(configFile, Config::generateDefault());
-    const fs::path target = dirty().parent_path() / "installed-binary";
-    writeFile(target, "not a real binary");
-    const fs::path state = dirty().parent_path() / "update-state";
 
     const auto validate = [&] {
         CliArgs args;
         args.validateConfigFile = configFile.string();
         const Terminal terminal(/*useAnsi=*/false);
         return ValidateConfigUseCase(terminal).execute(args);
-    };
-    const auto update = [&](std::string tag, bool checkOnly) {
-        return [&, tag, checkOnly] {
-            CliArgs args;
-            args.updateCheckOnly = checkOnly;
-            args.assumeYes = true;
-            UpdateUseCase::Seams seams;
-            seams.running = parseVersion("3.2.0");
-            seams.statePath = state;
-            seams.target = target;
-            const Terminal terminal(/*useAnsi=*/false);
-            const TerminalCaps caps = TerminalCaps::detect();
-            return UpdateUseCase(terminal, caps, std::make_shared<FixedVersionSource>(tag),
-                                 std::make_shared<NoAssets>(), seams)
-                .execute(args);
-        };
     };
 
     struct Case {
@@ -995,13 +809,6 @@ TEST_F(StdoutDeliveryTest, ValidateConfigAndUpdateAnswerLikeEveryOtherCommand) {
     };
     const std::vector<Case> cases = {
         {"validate-config", validate, 0, "the validation result", "Configuration is valid.\n"},
-        {"update --check, newer", update("v3.3.0", true), 2, "the update result",
-         "A newer release is available: 3.3.0 (this is 3.2.0).\n"},
-        {"update --check, current", update("v3.2.0", true), 0, "the update result",
-         "Up to date (3.2.0).\n"},
-        {"update --check, older published", update("v3.1.0", true), 0, "the update result",
-         "Up to date (3.2.0).\nThe newest published release is 3.1.0.\n"},
-        {"update, current", update("v3.2.0", false), 0, "the update result", "Up to date ("},
     };
 
     const fs::path readable = dirty().parent_path() / "read-only-for-update";

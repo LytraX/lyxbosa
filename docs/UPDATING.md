@@ -95,6 +95,18 @@ which turns the signature from the only evidence into one of two.
 also where the limits are - what a rebuild does and does not pin, and why the two Windows
 assets are outside it.
 
+## What `update` exits with
+
+**0** when it replaced the binary or the binary was already the newest release, and **1** when
+it did neither — every refusal in the table above, a failed request, a declined prompt, a
+development build. The exit code says what the update did and nothing else. If standard output
+refuses the line reporting it — a full disk, a descriptor not open for writing — stderr says
+`Error: the update result could not be written to standard output` and the code is still 0 or
+1: a script that read 1 after a replacement would run the update again. A reader that went away
+is not reported and changes nothing either; the report of a finished update is written with
+SIGPIPE ignored, so `lyxbosa update --yes | head -0` exits 0 rather than being killed by the
+signal after the binary has already been replaced.
+
 ## `update --check` — ask without downloading
 
 ```bash
@@ -105,6 +117,10 @@ Exits **0** when up to date and **2** when a newer release exists, so a monitori
 can use it without reading the text — the same discipline as the scan exit codes. Anything
 else is **1**: the request failed, or the binary is a development build, which reports
 version `0.0.0` and has no released version to compare against.
+
+Here the text is the answer, so it is held to what every answer on standard output is held to:
+refused, the check exits **1** and stderr says so; with a reader that went away it prints
+nothing more and exits **141**, as a shell reports for a run the signal ended.
 
 ## Checking during a scan
 
