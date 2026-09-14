@@ -674,7 +674,7 @@ constexpr ReportFormat kEveryFormat[] = {ReportFormat::Text, ReportFormat::Csv,
 
 // The bytes the refusals below may never print, whatever else they say.
 bool carriesRawByte(const std::string& text) {
-    return contains(text, "\xff") || contains(text, "\x1b");
+    return contains(text, "\xff") || contains(text, "\x1b") || contains(text, "\xc2\x9b");
 }
 
 struct HostileText {
@@ -696,6 +696,15 @@ std::vector<HostileText> hostileRuleText() {
         {"a category carrying ESC", "Probe name", "pro\x1b]0;x\x07" "be",
          "Rule 1 (\"Probe name\"): its category carries a control character "
          "(0x1b at offset 3)."},
+        // The same control sequence introducer spelled as one UTF-8 character, U+009B, which
+        // is well-formed and was loaded. GNU screen acts on it as it acts on ESC [.
+        {"a name carrying the C1 control sequence introducer", "Probe \xc2\x9b" "31m name",
+         "probe",
+         "Rule 1 (\"Probe \\xc2\\x9b31m name\"): its name carries a control character "
+         "(U+009B, 0xc2 0x9b at offset 6)."},
+        {"a category carrying a C1 control", "Probe name", "pro\xc2\x90" "be",
+         "Rule 1 (\"Probe name\"): its category carries a control character "
+         "(U+0090, 0xc2 0x90 at offset 3)."},
     };
 }
 
@@ -820,6 +829,12 @@ TEST(RuleTextTest, TheLoaderRefusesOnlyTheTextAReportCarries) {
     EXPECT_TRUE(contains(refusal(rule("    description: \"one\xfftwo\"\n")),
                          "its description is not valid UTF-8 (byte 0xff at offset 3)"));
     EXPECT_EQ(refusal(rule("    description: |\n      one\n      \ttwo\n")), "");
+    // NEL, U+0085, breaks a line for some readers and is a control to the rest; a description
+    // is held to tab, LF and CR. The character beside it in the Latin-1 block is text.
+    EXPECT_TRUE(contains(refusal(rule("    description: \"one\xc2\x85two\"\n")),
+                         "its description carries a control character "
+                         "(U+0085, 0xc2 0x85 at offset 3)"));
+    EXPECT_EQ(refusal(rule("    description: \"caf\xc3\xa9 \xc2\xa0 \xc2\xbf\"\n")), "");
 
     // A name or category may not break lines at all: one finding is one line of the text
     // report, and a name is what a person types into a search.

@@ -805,31 +805,29 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
 
 FileWalker::FilterVerdict FileWalker::filterVerdict(
     const std::filesystem::path& path) const {
-    // If no include filters, include everything
-    // If include filters exist, file must match at least one
-    bool included = config_.include.empty();
-
-    if (!included) {
-        for (const auto& pattern : config_.include) {
-            if (matchesGlob(pattern, path)) {
-                included = true;
-                break;
-            }
-        }
-    }
-
-    if (!included) {
-        return FilterVerdict::NotIncluded;
-    }
-
-    // Check exclude patterns
+    // An exclude pattern is asked first, because the two answers are not equal. Both keep the
+    // file shut, and a skip tally cannot tell them apart; but NotIncluded lets the scanner read
+    // the file's name and Excluded does not. Asked the other way round, a `.mdb` under a tree
+    // the operator excluded came back NotIncluded - the include list has no pattern for it -
+    // and its name was reported from inside the tree the operator had written down as not to
+    // be looked at.
     for (const auto& pattern : config_.exclude) {
         if (matchesGlob(pattern, path)) {
             return FilterVerdict::Excluded;
         }
     }
 
-    return FilterVerdict::Accepted;
+    // If no include filters, include everything
+    // If include filters exist, file must match at least one
+    if (config_.include.empty()) {
+        return FilterVerdict::Accepted;
+    }
+    for (const auto& pattern : config_.include) {
+        if (matchesGlob(pattern, path)) {
+            return FilterVerdict::Accepted;
+        }
+    }
+    return FilterVerdict::NotIncluded;
 }
 
 CountResult FileWalker::countFiles(const CountProgressCallback& onProgress,

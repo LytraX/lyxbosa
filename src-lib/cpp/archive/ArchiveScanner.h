@@ -27,6 +27,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -55,10 +56,16 @@ public:
     ArchiveScanner(const ArchiveConfig& config, const ScanConfig& scan,
                    const MatchEngine& engine);
 
+    // One member row. `matches` holds the findings about the member's name, if any, ahead
+    // of the findings about its bytes. `notOpened` is set when its bytes were not read, with
+    // the reason they were not - the one it is also counted under in Stats - and then every
+    // match is about its name: a name is in the archive's index or header whether or not the
+    // member is opened, so a member nobody reads can still be a row.
     using FindingCallback =
         std::function<void(const std::filesystem::path& displayPath,
                            uint64_t size,
-                           std::vector<FileMatch>&& matches)>;
+                           std::vector<FileMatch>&& matches,
+                           std::optional<SkipReason> notOpened)>;
     using ProgressCallback = std::function<void(const MemberProgress&)>;
 
     void setFindingCallback(FindingCallback callback) { onFinding_ = std::move(callback); }
@@ -116,9 +123,20 @@ private:
                         const std::string& memberName);
 
     // Run the rules over one member's bytes, recursing when the member is itself
-    // an archive and the depth allows it.
+    // an archive and the depth allows it. `named` is what its name raised, which leads
+    // the row.
     void scanMemberBytes(const std::string& memberDisplay, std::string& bytes,
-                         Context& ctx);
+                         Context& ctx, std::vector<FileMatch> named);
+
+    // What a member's stored name raises under the FN rules, unless the operator's exclude
+    // patterns name the member. `entry` carries the name as the archive holds it and whether
+    // its writer used a backslash as a separator; `normalized` is normalizeMemberName() of the
+    // name, which is what the patterns are asked about everywhere else in this class.
+    std::vector<FileMatch> nameFindings(const Entry& entry, const std::string& normalized) const;
+
+    // The row for a member whose bytes were not read and whose name raised something.
+    void reportUnopened(const Context& ctx, std::string_view member, uint64_t size,
+                        std::vector<FileMatch>&& named, SkipReason why) const;
 
     void reportMember(const Context& ctx, std::string_view member, uint64_t bytes,
                       size_t index, size_t total, bool preCounted);

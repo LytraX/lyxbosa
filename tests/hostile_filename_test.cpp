@@ -25,15 +25,18 @@
 
 #include <gtest/gtest.h>
 
+#include "archive/ArchiveIndex.h"
 #include "config/Config.h"
 #include "core/ScanResult.h"
 #include "core/Scanner.h"
 #include "infrastructure/report/CsvReportWriter.h"
 #include "infrastructure/report/JsonReportWriter.h"
+#include "infrastructure/ResultPrinter.h"
 #include "rules/Registry.hpp"
 #include "rules/filename.h"
 #include "utils/SafeText.h"
 
+#include "ArchiveFixtures.h"
 #include "PlatformSkips.h"
 
 #include <nlohmann/json.hpp>
@@ -669,9 +672,8 @@ TEST(HostileFilenameTest, AnExcludePatternIsStillObeyed) {
     // something they do not want looked at, and answering anyway - even about
     // something as cheap as a name - is the tool overruling them.
     //
-    // The name is a `.php`, so it passes the include list and reaches the exclude
-    // list; that ordering is the point, since a name the include list never covered
-    // would prove nothing about excludes.
+    // The name is a `.php`, which the include list covers. A name it does not cover is
+    // held to the same exclude, and MemberNameTest below asks that of a `.mdb`.
     TempDir root;
     const std::string hostile = "a$(id)-6a9fcbae-e3.php";
     if (const auto why = whyCannotCreate(root.path(), hostile)) {
@@ -774,6 +776,9 @@ TEST(SafeTextUtf8Test, NeedsSanitizingAgreesWithSanitizeExactly) {
         "plain.php", "a\nb", "a\xC0\xAF" "b", "\xCE\x95\xCE\xBB\xCE\xBB",
         "\x80", "\xE2\x82\xAC", "\xE2\x82", "\xF0\x9F\x94\x92", "\xF0\x9F\x94",
         "\x7f", "O'Brien & Sons.pdf", "\xED\xA0\x80", "\xC1\xBF",
+        // C1 controls, their neighbours in the Latin-1 block, and a C1 lead that is cut off.
+        "\xC2\x80", "a\xC2\x9B" "31mb", "\xC2\x9F", "\xC2\x85", "\xC2\xA0", "\xC2\xBF",
+        "caf\xC3\xA9", "\xC2", "\xC2\x9B\xC2",
     };
     for (const auto& value : cases) {
         EXPECT_EQ(safe_text::needsSanitizing(value), safe_text::sanitize(value) != value)
@@ -791,6 +796,8 @@ TEST(SafeTextUtf8Test, WhyNotPlainTextAgreesWithNeedsSanitizingExactly) {
         "\xCE\x95\xCE\xBB\xCE\xBB", "\x80", "\xE2\x82\xAC", "\xE2\x82", "\xF0\x9F\x94\x92",
         "\xF0\x9F\x94", "\x7f", "O'Brien, \"Sons\".pdf", "\xED\xA0\x80", "\xC1\xBF",
         std::string("a\0b", 3), "",
+        "\xC2\x80", "a\xC2\x9B" "31mb", "\xC2\x9F", "\xC2\x85", "\xC2\xA0", "\xC2\xBF",
+        "caf\xC3\xA9", "\xC2", "\xC2\x9B\xC2", "a\n\xC2\x85" "b",
     };
     for (const auto& value : cases) {
         EXPECT_EQ(safe_text::whyNotPlainText(value).has_value(),
@@ -815,6 +822,49 @@ TEST(SafeTextUtf8Test, WhyNotPlainTextAgreesWithNeedsSanitizingExactly) {
     EXPECT_EQ(safe_text::whyNotPlainText("\xCE\x95" "\xC0\xAF"),
               "is not valid UTF-8 (byte 0xc0 at offset 2)");
     EXPECT_FALSE(safe_text::whyNotPlainText("\xCE\x95\xCE\xBB\xCE\xBB"));
+    EXPECT_EQ(safe_text::whyNotPlainText("ab\xC2\x9B" "31m"),
+              "carries a control character (U+009B, 0xc2 0x9b at offset 2)");
+    EXPECT_EQ(safe_text::whyNotPlainText("\xC2\x85", /*lineBreaks=*/true),
+              "carries a control character (U+0085, 0xc2 0x85 at offset 0)");
+}
+
+// U+0080 to U+009F are well-formed UTF-8 and are controls: U+009B introduces a control
+// sequence exactly as ESC [ does, and GNU screen acts on it. Every one of the 32 is escaped
+// byte by byte and every neighbour in the Latin-1 block is left alone, and what comes out is
+// still UTF-8 - a JSON document that carries it has to stay parseable.
+TEST(SafeTextUtf8Test, EveryC1ControlIsEscapedAndNothingBesideItIs) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    for (int second = 0x80; second <= 0xBF; ++second) {
+        const std::string character = {'\xC2', static_cast<char>(second)};
+        const std::string value = "a" + character + "[2Jb";
+        SCOPED_TRACE(second);
+        if (second <= 0x9F) {
+            const std::string escaped =
+                std::string("a\\xc2\\x") + kHex[second >> 4] + kHex[second & 0xf] + "[2Jb";
+            EXPECT_EQ(safe_text::sanitize(value), escaped);
+            EXPECT_TRUE(safe_text::needsSanitizing(value));
+            EXPECT_TRUE(safe_text::whyNotPlainText(value, /*lineBreaks=*/true));
+        } else {
+            EXPECT_EQ(safe_text::sanitize(value), value);
+            EXPECT_FALSE(safe_text::needsSanitizing(value));
+            EXPECT_FALSE(safe_text::whyNotPlainText(value));
+        }
+        EXPECT_TRUE(safe_text::isValidUtf8(safe_text::sanitize(value)));
+        EXPECT_EQ(safe_text::sanitize(value).find("\xC2\x80"), std::string::npos);
+    }
+
+    // A cut never lands inside the escape it produced, and never leaves the lead byte behind.
+    const std::string long_name = std::string(40, 'x') + "\xC2\x9B" "2J" + std::string(40, 'y');
+    for (size_t limit = 38; limit < 52; ++limit) {
+        SCOPED_TRACE(limit);
+        const std::string cut = safe_text::sanitizeAndTruncate(long_name, limit);
+        EXPECT_TRUE(safe_text::isValidUtf8(cut));
+        EXPECT_EQ(cut.find('\xC2'), std::string::npos);
+        const size_t backslash = cut.rfind('\\');
+        if (backslash != std::string::npos) {
+            EXPECT_GE(cut.size() - backslash, 4u) << cut;
+        }
+    }
 }
 
 TEST(SafeTextUtf8Test, AReportOfANameThatIsNotUtf8IsStillUtf8) {
@@ -899,6 +949,12 @@ TEST(HostileFilenameTest, AnEscapeSequenceInANameNeverReachesAStreamRaw) {
     if (const auto why = whyCannotCreate(root.path(), hostile)) {
         GTEST_SKIP() << *why;
     }
+    // The same OSC spelled with the 8-bit introducer, U+009D, and a CSI with U+009B. Both are
+    // valid UTF-8, which is why the escape once let them through.
+    const std::string c1 = std::string("p\xC2\x9D" "52;c;aGk=\xC2\x9C;\xC2\x9B" "2Jq.php");
+    if (const auto why = whyCannotCreate(root.path(), c1)) {
+        GTEST_SKIP() << *why;
+    }
 
     const ScanResult result = runScan(scanConfig(root.path()));
     ASSERT_FALSE(result.files.empty());
@@ -918,13 +974,34 @@ TEST(HostileFilenameTest, AnEscapeSequenceInANameNeverReachesAStreamRaw) {
         writer.end(result, false);
     }
 
-    for (const auto* document : {&json, &csv}) {
-        const std::string text = document->str();
-        EXPECT_EQ(text.find('\x1B'), std::string::npos) << "a raw ESC reached a report";
-        EXPECT_EQ(text.find('\x07'), std::string::npos) << "a raw BEL reached a report";
+    // The readable report a terminal is handed, both of its views.
+    std::ostringstream text;
+    {
+        ResultPrinter printer(text, /*color=*/false, /*width=*/200);
+        for (const auto& file : result.files) {
+            printer.printFileResult(file);
+            printer.printFileResultCompact(file);
+        }
+    }
+
+    for (const auto* document : {&json, &csv, &text}) {
+        const std::string written = document->str();
+        EXPECT_EQ(written.find('\x1B'), std::string::npos) << "a raw ESC reached a report";
+        EXPECT_EQ(written.find('\x07'), std::string::npos) << "a raw BEL reached a report";
+        for (const char* control : {"\xC2\x9B", "\xC2\x9C", "\xC2\x9D"}) {
+            EXPECT_EQ(written.find(control), std::string::npos)
+                << "a raw C1 control reached a report:\n" << safe_text::sanitize(written);
+        }
+        EXPECT_TRUE(safe_text::isValidUtf8(written));
     }
     EXPECT_NE(json.str().find("\\\\x1b"), std::string::npos)
         << "the escape is not in the report in any form";
+    EXPECT_NE(json.str().find("p\\\\xc2\\\\x9d52;c;aGk=\\\\xc2\\\\x9c;\\\\xc2\\\\x9b2Jq.php"),
+              std::string::npos)
+        << json.str();
+    EXPECT_NE(text.str().find("p\\xc2\\x9d52;c;aGk=\\xc2\\x9c;\\xc2\\x9b2Jq.php"),
+              std::string::npos)
+        << text.str();
 }
 
 TEST(HostileFilenameTest, EveryReportedFileCanBeReopenedFromTheReportAlone) {
@@ -937,6 +1014,7 @@ TEST(HostileFilenameTest, EveryReportedFileCanBeReopenedFromTheReportAlone) {
         std::string("a;b\xC0\xAF" "c.mdb"),          // not valid UTF-8
         std::string("g\nh;i.mdb"),                   // a control byte
         std::string("plain-O'Brien & Sons;x.mdb"),   // ordinary bytes, still a finding
+        std::string("k\xC2\x9B" "2Jl;m.mdb"),        // a C1 control: valid UTF-8, and escaped
     };
     size_t created = 0;
     for (const auto& name : names) {
@@ -990,4 +1068,559 @@ TEST(SafeTextUtf8Test, TheEscapeIsOneWayAndIsNotDocumentedOtherwise) {
     // listing of the named directory settles in one command.
     EXPECT_EQ(safe_text::sanitize(std::string("a\nb")),
               safe_text::sanitize(std::string("a\\x0ab")));
+}
+
+// ---------------------------------------------------------------------------
+// Member names. A member of an uploaded zip named with a command substitution is the same
+// evidence as a file on disk named that way, and the same rules read it - from the name the
+// archive stores, which is known from its index or header without opening the member.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using lyxbosa::test::fixtures::appendTarMember;
+using lyxbosa::test::fixtures::endOfTar;
+using lyxbosa::test::fixtures::gzipCompress;
+using lyxbosa::test::fixtures::hostBytesOf;
+using lyxbosa::test::fixtures::readBytes;
+using lyxbosa::test::fixtures::writeZip;
+
+// The row for the member stored as `stored` inside `container`. Its address is built the way
+// the archive scanner builds it - the container's UTF-8 path, `!`, and the normalised name -
+// so that the comparison is of one construction with itself on every platform.
+const FileResult* findMember(const ScanResult& result, const fs::path& container,
+                             const std::string& stored) {
+    const fs::path address(pathToUtf8(container) + "!" + archive::normalizeMemberName(stored));
+    for (const auto& file : result.files) {
+        if (file.path == address) {
+            return &file;
+        }
+    }
+    return nullptr;
+}
+
+std::set<std::string> codesOf(const FileResult& file) {
+    std::set<std::string> out;
+    for (const auto& match : file.matches) {
+        out.insert(match.category);
+    }
+    return out;
+}
+
+// A tar.gz holding `members` in order, written to `path`.
+void writeTarGz(const fs::path& path,
+                const std::vector<std::pair<std::string, std::string>>& members) {
+    std::string tar;
+    for (const auto& [name, body] : members) {
+        appendTarMember(tar, name, body);
+    }
+    tar += endOfTar();
+    writeFile(path, gzipCompress(tar));
+}
+
+// Every row a scan produced, spelled for a failure message.
+std::string listRows(const ScanResult& result) {
+    std::string out;
+    for (const auto& file : result.files) {
+        out += "  " + pathForDisplay(file.path) + " [";
+        for (const auto& match : file.matches) {
+            out += match.category + " ";
+        }
+        out += "]\n";
+    }
+    return out;
+}
+
+}  // namespace
+
+// Every observed name, as a member of a zip and of a tar.gz, raises exactly the rules it raises
+// as a name on disk. This runs on Windows too, where most of these names cannot be created on
+// disk at all: an archive can hold a quote, a pipe and a newline wherever it is scanned.
+TEST(MemberNameTest, EveryObservedNameRaisesItsRulesAsAMember) {
+    TempDir root;
+    std::vector<std::pair<std::string, std::string>> members;
+    for (const auto& observed : kObserved) {
+        members.emplace_back(std::string("uploads/") + observed.name, "ordinary bytes\n");
+    }
+    const fs::path zip = root.path() / "upload.zip";
+    const fs::path tgz = root.path() / "upload.tar.gz";
+    writeZip(zip, members);
+    writeTarGz(tgz, members);
+
+    const ScanResult result = runScan(scanConfig(root.path()));
+
+    for (const fs::path& container : {zip, tgz}) {
+        for (const auto& observed : kObserved) {
+            SCOPED_TRACE(container.filename().string() + " " + safe_text::sanitize(observed.name));
+            const std::string member = std::string("uploads/") + observed.name;
+            const FileResult* row = findMember(result, container, member);
+            ASSERT_NE(row, nullptr) << "no row for the member\n" << listRows(result);
+            EXPECT_EQ(codesOf(*row), codesFor(observed.name));
+            EXPECT_EQ(codesOf(*row).count(observed.code), 1u);
+            EXPECT_TRUE(hasHostileName(*row));
+            EXPECT_FALSE(hasHostileContent(*row));
+            // A `.mdb` or a `.htaccess` is not code, so the policy never opened it, and the
+            // row says so rather than reading as a member that was examined. A `.php` was
+            // opened, and its row carries no reason.
+            const bool opened = archive::classifyMember(archive::normalizeMemberName(member)) !=
+                                archive::Bucket::Other;
+            EXPECT_EQ(row->skipReason.has_value(), !opened);
+            if (!opened && row->skipReason) {
+                EXPECT_EQ(*row->skipReason, SkipReason::Policy);
+            }
+        }
+    }
+
+    const size_t rows = 2 * std::size(kObserved);
+    EXPECT_EQ(result.files.size(), rows) << listRows(result);
+    EXPECT_EQ(result.filesWithMatches, rows);
+    EXPECT_EQ(result.filesWithHostileNames, rows);
+    // Every member is still counted where it was counted before, once: read, or left shut.
+    EXPECT_EQ(result.archives.membersScanned + result.archives.skippedPolicy(), rows);
+    EXPECT_GT(result.archives.skippedPolicy(), 0u);
+    EXPECT_GT(result.archives.membersScanned, 0u);
+    EXPECT_EQ(result.filesQuarantined, 0u);
+}
+
+// The measured line, inside an archive: 2,400 ordinary business names, every one carrying an
+// apostrophe or an ampersand, filed in folders, in a zip and in a tar.gz - read by name, and
+// read in full under --exhaustive-archives so that silence is not a member left shut.
+TEST(MemberNameTest, OrdinaryBusinessNamesInAnArchiveRaiseNothing) {
+    // The documents only. The corpus also carries the ordinary web-root names a loose tree
+    // has - `wp-config.php`, `index.php` - and an archive holding those beside thousands of
+    // entries is, correctly, a site backup with an exposure finding of its own, which is not
+    // what this case is about.
+    std::vector<std::string> names;
+    for (const auto& name : benignNames()) {
+        if (archive::classifyMember(name) == archive::Bucket::Other && name != ".htaccess") {
+            names.push_back(name);
+        }
+    }
+    ASSERT_GT(names.size(), 1000u);
+    size_t apostrophes = 0;
+    size_t ampersands = 0;
+    for (const auto& name : names) {
+        apostrophes += name.find('\'') != std::string::npos;
+        ampersands += name.find('&') != std::string::npos;
+    }
+    ASSERT_GT(apostrophes, 500u);
+    ASSERT_GT(ampersands, 500u);
+
+    TempDir root;
+    std::vector<std::pair<std::string, std::string>> members;
+    const std::vector<std::string> folders = {"Invoices/", "Board & Committees/2024/",
+                                              "Dave's Deli/", ""};
+    for (size_t i = 0; i < names.size(); ++i) {
+        members.emplace_back(folders[i % folders.size()] + names[i],
+                             "Quarterly figures, nothing executable.\n");
+    }
+    const fs::path zip = root.path() / "Clients & Partners' Documents.zip";
+    const fs::path tgz = root.path() / "O'Brien & Sons archive.tar.gz";
+    writeZip(zip, members);
+    writeTarGz(tgz, members);
+
+    for (const bool exhaustive : {false, true}) {
+        SCOPED_TRACE(exhaustive ? "exhaustive" : "default selection");
+        AppConfig config = scanConfig(root.path());
+        config.archives.exhaustive = exhaustive;
+        // Thousands of near-identical small documents compress far past 100:1 in a tar.gz,
+        // and the ratio guard would stop the stream part-way. Every member is to be read here.
+        config.archives.maxRatio = 0;
+        const ScanResult result = runScan(config);
+
+        EXPECT_EQ(result.files.size(), 0u) << listRows(result);
+        EXPECT_EQ(result.filesWithMatches, 0u);
+        EXPECT_EQ(result.filesWithHostileNames, 0u);
+        // Every member is accounted for, read or left shut by selection alone - so every name
+        // was read and nothing stopped part-way. Exhaustive mode opens every member the
+        // include list covers; the `.docx`, `.xlsx` and `.pptx` it does not cover stay shut
+        // there too, and their names are read all the same.
+        EXPECT_EQ(result.archives.membersScanned + result.archives.skippedPolicy(),
+                  2 * names.size());
+        EXPECT_EQ(result.archives.totalSkipped(), result.archives.skippedPolicy())
+            << archive::membersNotScannedLine(result.archives);
+        EXPECT_EQ(result.archives.archivesTruncated, 0u);
+        if (exhaustive) {
+            EXPECT_GT(result.archives.membersScanned, names.size())
+                << "exhaustive mode read too few members for its silence to mean anything";
+        }
+        RecordProperty(exhaustive ? "members_read_exhaustive" : "members_read_default",
+                       static_cast<int>(result.archives.membersScanned));
+    }
+    RecordProperty("benign_member_names_checked", static_cast<int>(2 * names.size()));
+}
+
+// Which members have their names read is the file level's answer. What decides what is opened -
+// the priority policy, a sidecar, the member size cap, the budget - does not decide what a name
+// may say, and each such member's row carries the reason its bytes were not read.
+TEST(MemberNameTest, AMemberThatIsNotOpenedStillHasItsNameReadAndSaysWhy) {
+    TempDir root;
+    const fs::path zip = root.path() / "upload.zip";
+    writeZip(zip, {
+        {"a.php", "<?php echo 1;\n"},                          // read first, spends the budget
+        {"x$(id).mdb", "db\n"},                                // policy: not code
+        {"__MACOSX/._y$(id).php", "sidecar\n"},                // policy: container metadata
+        {"big;id.php", std::string(64 * 1024, 'a')},           // size
+        {"late`id`.php", "<?php echo 2;\n"},                   // budget
+    });
+
+    AppConfig config = scanConfig(root.path());
+    config.archives.maxMemberSize = 32 * 1024;
+    config.archives.maxExpansion = 1;   // spent by the first member read
+    const ScanResult result = runScan(config);
+
+    const auto expect = [&](const std::string& member, SkipReason why, const char* code) {
+        SCOPED_TRACE(member);
+        const FileResult* row = findMember(result, zip, member);
+        ASSERT_NE(row, nullptr) << listRows(result);
+        ASSERT_TRUE(row->skipReason.has_value());
+        EXPECT_EQ(*row->skipReason, why);
+        EXPECT_EQ(codesOf(*row), (std::set<std::string>{code}));
+    };
+    expect("x$(id).mdb", SkipReason::Policy, "FN001");
+    expect("__MACOSX/._y$(id).php", SkipReason::Policy, "FN001");
+    expect("big;id.php", SkipReason::Size, "FN002");
+    expect("late`id`.php", SkipReason::Budget, "FN001");
+
+    EXPECT_EQ(findMember(result, zip, "a.php"), nullptr) << "a clean name is not a row";
+    EXPECT_EQ(result.files.size(), 4u) << listRows(result);
+    // Counted once each where the archive layer counts them, and nowhere else.
+    EXPECT_EQ(result.archives.skippedPolicy(), 2u);
+    EXPECT_EQ(result.archives.skippedSize(), 1u);
+    EXPECT_EQ(result.archives.skippedBudget(), 1u);
+    EXPECT_EQ(result.skips.total(), 0u) << "a member's reason became a file-level skip";
+}
+
+// An opened member's name finding leads its row, ahead of what its bytes raised - one row per
+// member, as one row per loose file.
+TEST(MemberNameTest, AnOpenedMemberCarriesItsNameAheadOfItsContent) {
+    TempDir root;
+    const fs::path zip = root.path() / "upload.zip";
+    writeZip(zip, {{"wp/x$(id).php", kWebshell}});
+
+    const ScanResult result = runScan(scanConfig(root.path()));
+    const FileResult* row = findMember(result, zip, "wp/x$(id).php");
+    ASSERT_NE(row, nullptr) << listRows(result);
+    ASSERT_GE(row->matches.size(), 2u);
+    EXPECT_EQ(row->matches.front().category, "FN001");
+    EXPECT_TRUE(hasHostileContent(*row));
+    EXPECT_FALSE(row->skipReason.has_value());
+    EXPECT_EQ(result.filesWithHostileNames, 1u);
+}
+
+// An `exclude` pattern is the operator writing down what not to look at, and it is obeyed for a
+// member exactly as for a loose file - including a file the include list does not cover, whose
+// name the loose-file walk used to read from inside the excluded tree anyway.
+TEST(MemberNameTest, AnExcludePatternKeepsANameOutLooseOrInsideAnArchive) {
+    TempDir root;
+    const std::string loose = "x$(id)-loose.mdb";
+    if (const auto why = whyCannotCreate(root.path(), loose)) {
+        GTEST_SKIP() << *why;
+    }
+    const fs::path zip = root.path() / "upload.zip";
+    writeZip(zip, {{"docs/x$(id).mdb", "db\n"}, {"site/a;b.php", "<?php echo 1;\n"}});
+
+    AppConfig config = scanConfig(root.path());
+    {
+        const ScanResult result = runScan(config);
+        ASSERT_NE(findByName(result, loose), nullptr) << "the control direction";
+        ASSERT_NE(findMember(result, zip, "docs/x$(id).mdb"), nullptr) << "the control direction";
+    }
+
+    config.scan.exclude.push_back("*.mdb");
+    const ScanResult result = runScan(config);
+    EXPECT_EQ(findByName(result, loose), nullptr)
+        << "an excluded file the include list does not cover had its name reported";
+    EXPECT_EQ(findMember(result, zip, "docs/x$(id).mdb"), nullptr)
+        << "an excluded member had its name reported";
+    EXPECT_NE(findMember(result, zip, "site/a;b.php"), nullptr)
+        << "the exclude reached a member it does not name";
+    EXPECT_EQ(result.filesWithHostileNames, 1u) << listRows(result);
+}
+
+// Inside an archive a backslash is judged by the writer of the entry, never by the platform the
+// scan runs on - see rules::filename::memberFinalComponent(). The split itself, both ways.
+TEST(MemberNameTest, WhatSeparatesAMemberNameIsTheWritersChoice) {
+    using fn::MemberSeparators;
+    EXPECT_EQ(fn::memberFinalComponent("uploads/a\\zz-1.php", MemberSeparators::Slash),
+              "a\\zz-1.php");
+    EXPECT_EQ(fn::memberFinalComponent("a\\b\\c.php", MemberSeparators::Slash), "a\\b\\c.php");
+    EXPECT_EQ(fn::memberFinalComponent("site/wp-content\\", MemberSeparators::Slash),
+              "wp-content\\");
+    EXPECT_EQ(fn::memberFinalComponent("uploads/a\\zz-1.php", MemberSeparators::SlashAndBackslash),
+              "zz-1.php");
+    EXPECT_EQ(fn::memberFinalComponent("a\\b/c\\d.php", MemberSeparators::SlashAndBackslash),
+              "d.php");
+    EXPECT_EQ(fn::memberFinalComponent("site\\wp-content\\", MemberSeparators::SlashAndBackslash),
+              "");
+    for (const auto separators : {MemberSeparators::Slash, MemberSeparators::SlashAndBackslash}) {
+        EXPECT_EQ(fn::memberFinalComponent("plain.php", separators), "plain.php");
+        EXPECT_EQ(fn::memberFinalComponent("dir/", separators), "");
+    }
+#ifdef _WIN32
+    EXPECT_EQ(fn::finalComponent("uploads/a\\zz-1.php"), "zz-1.php")
+        << "the disk split is not the member split here, which is why there are two";
+#endif
+}
+
+// The same zip bytes marked as written by each host. From MS-DOS, Windows NTFS or VFAT the
+// backslashes are directories, so they raise no FN002 while a hostile final component beneath
+// them still raises its rule; from Unix, macOS or anything else, the backslash is a character
+// of the name and FN002 reads it. A tar header has no writer to ask, and keeps it as a character.
+TEST(MemberNameTest, ABackslashInAZipEntryIsASeparatorOnlyWhenADosOrWindowsHostWroteIt) {
+    const std::vector<std::pair<std::string, std::string>> members = {
+        {"site\\wp-content\\index.php", "<?php echo 1;\n"},
+        {"site\\wp-content\\uploads\\x$(id).mdb", "db\n"},
+        {"uploads/a\\zz-1.php", "<?php echo 2;\n"},
+    };
+    struct Host {
+        uint8_t byte;
+        const char* name;
+        bool separates;
+    };
+    const Host hosts[] = {
+        {ZIP_OPSYS_DOS, "MS-DOS", true},  {ZIP_OPSYS_WINDOWS_NTFS, "NTFS", true},
+        {ZIP_OPSYS_VFAT, "VFAT", true},   {ZIP_OPSYS_UNIX, "Unix", false},
+        {ZIP_OPSYS_OS_X, "macOS", false}, {ZIP_OPSYS_AMIGA, "Amiga", false},
+    };
+
+    TempDir root;
+    for (const Host& host : hosts) {
+        writeZip(root.path() / (std::string("from-") + host.name + ".zip"), members, host.byte);
+    }
+    const fs::path tgz = root.path() / "upload.tar.gz";
+    writeTarGz(tgz, members);
+    const ScanResult result = runScan(scanConfig(root.path()));
+
+    for (const Host& host : hosts) {
+        SCOPED_TRACE(host.name);
+        const fs::path zip = root.path() / (std::string("from-") + host.name + ".zip");
+        const auto written = hostBytesOf(zip);
+        ASSERT_EQ(written.size(), members.size());
+        for (const auto& [name, byte] : written) {
+            ASSERT_EQ(byte, host.byte) << "the fixture does not carry the host byte it claims";
+        }
+
+        // Every row keeps the address member rows have always had, backslashes shown as `/`.
+        const FileResult* index = findMember(result, zip, "site\\wp-content\\index.php");
+        const FileResult* db = findMember(result, zip, "site\\wp-content\\uploads\\x$(id).mdb");
+        const FileResult* zz = findMember(result, zip, "uploads/a\\zz-1.php");
+        if (host.separates) {
+            EXPECT_EQ(index, nullptr) << "a directory separator was read as part of a name\n"
+                                      << listRows(result);
+            ASSERT_NE(db, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*db), (std::set<std::string>{"FN001"}));
+            EXPECT_EQ(zz, nullptr) << listRows(result);
+        } else {
+            ASSERT_NE(index, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*index), (std::set<std::string>{"FN002"}));
+            ASSERT_NE(db, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*db), (std::set<std::string>{"FN001", "FN002"}));
+            ASSERT_NE(zz, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*zz), (std::set<std::string>{"FN002"}));
+            EXPECT_EQ(zz->matches.front().matchedText, "\\");
+        }
+    }
+
+    SCOPED_TRACE("tar.gz");
+    for (const auto& [name, body] : members) {
+        const FileResult* row = findMember(result, tgz, name);
+        ASSERT_NE(row, nullptr) << name << "\n" << listRows(result);
+        EXPECT_EQ(codesOf(*row).count("FN002"), 1u) << name;
+    }
+}
+
+// The writer is asked per entry, not per archive: one zip holding an entry a Windows archiver
+// added beside one a Unix archiver added answers each by its own host byte. And a zip inside a
+// zip is asked about its own entries, whatever wrote the one around it.
+TEST(MemberNameTest, EachEntryAndEachNestedZipIsJudgedByItsOwnWriter) {
+    TempDir root;
+    TempDir build;
+
+    // One archive, two writers. libzip writes the host byte per entry, so the second pass
+    // re-marks only the entry it names.
+    const fs::path mixed = root.path() / "mixed.zip";
+    writeZip(mixed, {{"win\\dir\\ok.php", "<?php echo 1;\n"}, {"unix\\dir\\ok.php", "<?php echo 2;\n"}},
+             ZIP_OPSYS_DOS);
+    {
+        int err = 0;
+        zip_t* za = zip_open(mixed.string().c_str(), 0, &err);
+        ASSERT_NE(za, nullptr);
+        const zip_int64_t unixEntry = zip_name_locate(za, "unix\\dir\\ok.php", 0);
+        ASSERT_GE(unixEntry, 0);
+        ASSERT_EQ(zip_file_set_external_attributes(za, static_cast<zip_uint64_t>(unixEntry), 0,
+                                                   ZIP_OPSYS_UNIX, 0),
+                  0);
+        ASSERT_EQ(zip_close(za), 0);
+    }
+    const auto written = hostBytesOf(mixed);
+    ASSERT_EQ(written.size(), 2u);
+    for (const auto& [name, byte] : written) {
+        ASSERT_EQ(byte, name.starts_with("win") ? ZIP_OPSYS_DOS : ZIP_OPSYS_UNIX) << name;
+    }
+
+    // A Windows-made zip inside a Unix-made one, and the other way round.
+    const fs::path fromWindows = build.path() / "from-windows.zip";
+    const fs::path fromUnix = build.path() / "from-unix.zip";
+    writeZip(fromWindows, {{"site\\inner.php", "<?php echo 3;\n"}}, ZIP_OPSYS_DOS);
+    writeZip(fromUnix, {{"site\\inner.php", "<?php echo 4;\n"}}, ZIP_OPSYS_UNIX);
+    const fs::path unixOuter = root.path() / "unix-outer.zip";
+    const fs::path windowsOuter = root.path() / "windows-outer.zip";
+    writeZip(unixOuter, {{"nested/from-windows.zip", readBytes(fromWindows)}}, ZIP_OPSYS_UNIX);
+    writeZip(windowsOuter, {{"nested\\from-unix.zip", readBytes(fromUnix)}}, ZIP_OPSYS_DOS);
+
+    AppConfig config = scanConfig(root.path());
+    config.archives.exhaustive = true;   // a nested archive is not code and is otherwise shut
+    const ScanResult result = runScan(config);
+
+    EXPECT_EQ(findMember(result, mixed, "win\\dir\\ok.php"), nullptr) << listRows(result);
+    const FileResult* unixRow = findMember(result, mixed, "unix\\dir\\ok.php");
+    ASSERT_NE(unixRow, nullptr) << listRows(result);
+    EXPECT_EQ(codesOf(*unixRow), (std::set<std::string>{"FN002"}));
+
+    const fs::path insideUnix(pathToUtf8(unixOuter) + "!nested/from-windows.zip");
+    const fs::path insideWindows(pathToUtf8(windowsOuter) + "!nested/from-unix.zip");
+    EXPECT_EQ(findMember(result, insideUnix, "site\\inner.php"), nullptr)
+        << "a Windows-made zip was judged by the Unix-made zip around it\n" << listRows(result);
+    const FileResult* innerUnix = findMember(result, insideWindows, "site\\inner.php");
+    ASSERT_NE(innerUnix, nullptr)
+        << "a Unix-made zip was judged by the Windows-made zip around it\n" << listRows(result);
+    EXPECT_EQ(codesOf(*innerUnix), (std::set<std::string>{"FN002"}));
+    EXPECT_EQ(result.archives.archivesOpened, 5u) << "a nested zip was never opened";
+    EXPECT_EQ(result.filesWithHostileNames, 2u) << listRows(result);
+}
+
+// A site backup made on Windows by Windows PowerShell 5.1's Compress-Archive: host byte 0 and
+// backslash paths on every entry. tests/data/make-compress-archive-backup.ps1 made it, on
+// Windows, from a synthetic tree with five hostile final components that carry no character
+// FN002 reads. Read with backslashes as characters it raised FN002 on 19 of its 20 entries and
+// missed the leading dash; read as its writer meant it, it raises exactly the five.
+TEST(MemberNameTest, ABackupMadeByCompressArchiveRaisesOnlyItsPlantedNames) {
+    const fs::path source = fs::path(LYXBOSA_TEST_DATA_DIR) / "compress-archive-backup.zip";
+    ASSERT_TRUE(fs::exists(source)) << source.string();
+
+    const auto written = hostBytesOf(source);
+    ASSERT_EQ(written.size(), 20u) << "the fixture is not the archive this case describes";
+    for (const auto& [name, byte] : written) {
+        ASSERT_EQ(byte, ZIP_OPSYS_DOS) << safe_text::sanitize(name);
+        ASSERT_NE(name.find('\\'), std::string::npos)
+            << "an entry without a backslash separator: " << safe_text::sanitize(name);
+        ASSERT_EQ(name.find('/'), std::string::npos) << safe_text::sanitize(name);
+    }
+
+    TempDir root;
+    const fs::path zip = root.path() / "compress-archive-backup.zip";
+    fs::copy_file(source, zip);
+
+    const std::string planted = "site\\wp-content\\uploads\\";
+    const std::vector<std::pair<std::string, std::string>> expected = {
+        {planted + "2024\\05\\x$(id)-a.mdb", "FN001"},
+        {planted + "2024\\06\\y`id`-b.mdb", "FN001"},
+        {planted + "-rf-c.htaccess", "FN004"},
+        {planted + "f..\xEF\xBC\x8Fg.php", "FN005"},
+        {planted + "d.php%00-e.mdb", "FN006"},
+    };
+
+    for (const bool exhaustive : {false, true}) {
+        SCOPED_TRACE(exhaustive ? "exhaustive" : "default selection");
+        AppConfig config = scanConfig(root.path());
+        config.archives.exhaustive = exhaustive;
+        const ScanResult result = runScan(config);
+
+        size_t fn002 = 0;
+        for (const auto& file : result.files) {
+            for (const auto& match : file.matches) {
+                fn002 += match.category == "FN002";
+            }
+        }
+        EXPECT_EQ(fn002, 0u) << listRows(result);
+
+        for (const auto& [member, code] : expected) {
+            const FileResult* row = findMember(result, zip, member);
+            ASSERT_NE(row, nullptr) << safe_text::sanitize(member) << "\n" << listRows(result);
+            EXPECT_EQ(codesOf(*row), (std::set<std::string>{code})) << safe_text::sanitize(member);
+        }
+        EXPECT_EQ(result.files.size(), expected.size()) << listRows(result);
+        EXPECT_EQ(result.filesWithHostileNames, expected.size());
+    }
+}
+
+// A name finding never moves a file, so a container whose members raise nothing but name
+// findings stays where it is - with a member that was opened and one that was not. The
+// companion: a webshell under an ordinary name beside them still moves the container, and the
+// name rows then say their bytes left with it.
+TEST(MemberNameTest, ANameFindingNeverMovesItsContainerAndContentStillDoes) {
+    TempDir root;
+    TempDir quarantine;
+    const fs::path names = root.path() / "names.zip";
+    writeZip(names, {{"x$(id).mdb", "db\n"}, {"a;b.php", "<?php echo 1;\n"}});
+
+    const fs::path mixed = root.path() / "sub" / "mixed.zip";
+    fs::create_directories(mixed.parent_path());
+    std::string shell = kWebshell;
+    shell += "\n";
+    for (int i = 0; i < 400; ++i) {
+        shell += "// padding padding padding padding padding padding\n";
+    }
+    writeZip(mixed, {{"wp/shell.php", shell}, {"wp/x`id`.mdb", "db\n"}});
+    ASSERT_EQ(readBytes(mixed).find("base64_decode"), std::string::npos)
+        << "the payload is readable in the container's own bytes, so the move would not be "
+           "the member's doing";
+
+    AppConfig config = scanConfig(root.path());
+    config.actions.quarantine.enabled = true;
+    config.actions.quarantine.directory = quarantine.path().string();
+    config.actions.quarantine.preserveStructure = false;
+    const ScanResult result = runScan(config);
+
+    EXPECT_TRUE(fs::exists(names)) << "a container was moved for its members' names";
+    for (const std::string member : {"x$(id).mdb", "a;b.php"}) {
+        const FileResult* row = findMember(result, names, member);
+        ASSERT_NE(row, nullptr) << listRows(result);
+        EXPECT_FALSE(row->containerQuarantine.has_value())
+            << member << " says a decision was taken about a container nothing selected";
+    }
+
+    EXPECT_FALSE(fs::exists(mixed)) << "the webshell's container was not moved";
+    EXPECT_EQ(result.filesQuarantined, 1u);
+    const FileResult* named = findMember(result, mixed, "wp/x`id`.mdb");
+    ASSERT_NE(named, nullptr) << listRows(result);
+    ASSERT_TRUE(named->containerQuarantine.has_value());
+    EXPECT_EQ(*named->containerQuarantine, ContainerQuarantine::Moved);
+}
+
+// Nesting: a name is read at every depth the scan reaches, and a member of an archive nested
+// past max_depth is never reached, so it says nothing and the depth skip is what is counted.
+TEST(MemberNameTest, ANameIsReadAtEveryDepthTheScanReaches) {
+    TempDir root;
+    TempDir build;
+    const fs::path inner = build.path() / "inner.zip";
+    writeZip(inner, {{"$(sleep 5).txt", "hello\n"}});
+    const fs::path middle = build.path() / "middle.tar.gz";
+    writeTarGz(middle, {{"inner.zip", readBytes(inner)}, {"-rf.txt", "x\n"}});
+    const fs::path outer = root.path() / "outer.zip";
+    writeZip(outer, {{"nested/middle.tar.gz", readBytes(middle)}});
+
+    AppConfig config = scanConfig(root.path());
+    // Exhaustive, because a nested archive is not code to the priority policy and is never
+    // opened by default - which would make this case silent for a reason it is not about.
+    config.archives.exhaustive = true;
+    config.archives.maxDepth = 3;
+    {
+        const ScanResult result = runScan(config);
+        const fs::path twoDown(pathToUtf8(outer) + "!nested/middle.tar.gz");
+        const fs::path threeDown(pathToUtf8(twoDown) + "!inner.zip");
+        const FileResult* dash = findMember(result, twoDown, "-rf.txt");
+        const FileResult* sleep = findMember(result, threeDown, "$(sleep 5).txt");
+        ASSERT_NE(dash, nullptr) << listRows(result);
+        ASSERT_NE(sleep, nullptr) << listRows(result);
+        EXPECT_EQ(codesOf(*dash), (std::set<std::string>{"FN004"}));
+        EXPECT_EQ(codesOf(*sleep), (std::set<std::string>{"FN001"}));
+        EXPECT_EQ(result.filesWithHostileNames, 2u) << listRows(result);
+    }
+
+    config.archives.maxDepth = 2;
+    const ScanResult shallow = runScan(config);
+    EXPECT_EQ(shallow.filesWithHostileNames, 1u) << listRows(shallow);
+    EXPECT_EQ(shallow.archives.skippedDepth(), 1u);
 }

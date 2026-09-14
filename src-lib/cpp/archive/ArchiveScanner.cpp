@@ -11,6 +11,7 @@
 #include "utils/SafeText.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <fmt/format.h>
 
@@ -191,15 +192,59 @@ void ArchiveScanner::reportMember(const Context& ctx, std::string_view member,
     onProgress_(progress);
 }
 
+// WHICH MEMBER NAMES ARE READ, AND WHY THE ANSWER IS THE FILE LEVEL'S. A member's name is in
+// the zip's central directory, or in the tar header in front of its bytes, so it is known
+// without opening the member - exactly as a loose file's name is known to the walk without
+// opening the file. So the rule is the one Scanner applies to files on disk. What decides
+// what gets OPENED - the priority policy that leaves non-code members shut, the include list
+// behind it, the sidecar filter, the member size cap and the budget - does not decide what a
+// name may say: 73 of the 83 hostile names measured on a production upload directory were
+// `.mdb`, which the policy never opens. An `exclude` pattern is the other intention, a tree
+// the operator has written down that they do not want looked at, and it is obeyed here as it
+// is on disk. A member that is never reached - past a guard in a tar stream, inside a nested
+// archive deeper than max_depth, after an interrupt - has no name this scan learned, and
+// says nothing.
+//
+// Only a name the container stores is read. A single gzip has none: its member is named here
+// from the container's own file name, which has already been read as the file it is.
+std::vector<FileMatch> ArchiveScanner::nameFindings(const Entry& entry,
+                                                    const std::string& normalized) const {
+    auto named = engine_.matchMemberName(
+        entry.name, entry.backslashIsSeparator
+                        ? rules::filename::MemberSeparators::SlashAndBackslash
+                        : rules::filename::MemberSeparators::Slash);
+    // The pattern is asked only of a name that raised something. The examination allocates
+    // nothing for an ordinary name, and a glob list over every member of a 28,000-member
+    // backup would be the cost of this whole feature spent on names that say nothing.
+    if (!named.empty() && filters_.filterVerdict(std::filesystem::path(normalized)) ==
+                              FileWalker::FilterVerdict::Excluded) {
+        named.clear();
+    }
+    return named;
+}
+
+void ArchiveScanner::reportUnopened(const Context& ctx, std::string_view member, uint64_t size,
+                                    std::vector<FileMatch>&& named, SkipReason why) const {
+    if (named.empty() || !onFinding_) {
+        return;
+    }
+    const std::filesystem::path display(ctx.display + std::string(kMemberSeparator) +
+                                        std::string(member));
+    onFinding_(display, size, std::move(named), why);
+}
+
 void ArchiveScanner::scanMemberBytes(const std::string& memberDisplay, std::string& bytes,
-                                     Context& ctx) {
+                                     Context& ctx, std::vector<FileMatch> named) {
     ++ctx.stats->membersScanned;
     ctx.stats->bytesExpanded += bytes.size();
 
     const std::filesystem::path display(memberDisplay);
     auto matches = engine_.match(bytes, memberDisplay);
+    // In front of the content findings, as Scanner::addNameFindings() puts a loose file's.
+    matches.insert(matches.begin(), std::make_move_iterator(named.begin()),
+                   std::make_move_iterator(named.end()));
     if (!matches.empty() && onFinding_) {
-        onFinding_(display, bytes.size(), std::move(matches));
+        onFinding_(display, bytes.size(), std::move(matches), std::nullopt);
     }
 
     // A member that is itself an archive. Its entries are folded into the same
@@ -274,6 +319,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
         size_t index;
         Bucket bucket;
         uint64_t size;
+        std::vector<FileMatch> named;   // what the member's name raised; empty for almost all
     };
     std::vector<Item> work;
     work.reserve(entries.size());
@@ -286,9 +332,11 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
         }
 
         const std::string name = normalizeMemberName(entries[i].name);
+        std::vector<FileMatch> named = nameFindings(entries[i], name);
         if (const auto skip = selectionSkip(name, entries[i].size, entries[i].directory,
                                             config_, memberLimit_, filters_)) {
             ctx.stats->skip(*skip);
+            reportUnopened(ctx, name, entries[i].size, std::move(named), *skip);
             continue;
         }
 
@@ -296,7 +344,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
         if (bucket == Bucket::Script && isAssetDirectory(assets, name)) {
             bucket = Bucket::HotScript;
         }
-        work.push_back({i, bucket, entries[i].size});
+        work.push_back({i, bucket, entries[i].size, std::move(named)});
     }
 
     // Priority order, not archive order. On a real production site the PHP under
@@ -309,7 +357,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
     std::string bytes;
     size_t position = 0;
 
-    for (const auto& item : work) {
+    for (auto& item : work) {
         ++position;
         // An interrupted scan already says its results are partial, so the
         // remaining members are not attributed to a guard that did not fire.
@@ -323,8 +371,10 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
             // of 100% on every archive a guard ever stops.
             for (size_t rest = position - 1; rest < work.size(); ++rest) {
                 ctx.stats->skip(*spent);
-                reportMember(ctx, normalizeMemberName(entries[work[rest].index].name),
-                             0, rest + 1, work.size(), ctx.depth == 1);
+                const std::string restName = normalizeMemberName(entries[work[rest].index].name);
+                reportMember(ctx, restName, 0, rest + 1, work.size(), ctx.depth == 1);
+                reportUnopened(ctx, restName, work[rest].size, std::move(work[rest].named),
+                               *spent);
             }
             return;
         }
@@ -338,6 +388,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
 
         if (!reader.read(item.index, bytes, memberLimit_)) {
             ctx.stats->skip(SkipReason::Corrupt);
+            reportUnopened(ctx, name, item.size, std::move(item.named), SkipReason::Corrupt);
             continue;
         }
 
@@ -345,7 +396,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
         ctx.budget->addConsumed(entries[item.index].compressedSize);
 
         const std::string display = ctx.display + std::string(kMemberSeparator) + name;
-        scanMemberBytes(display, bytes, ctx);
+        scanMemberBytes(display, bytes, ctx, std::move(item.named));
     }
 }
 
@@ -378,14 +429,18 @@ void ArchiveScanner::scanTar(ByteSource& stream, Context& ctx, ByteSource& raw) 
 
         reportMember(ctx, name, delta, index, 0, false);
 
+        std::vector<FileMatch> named = nameFindings(entry, name);
         if (const auto skip = selectionSkip(name, entry.size, entry.directory,
                                             config_, memberLimit_, filters_)) {
             ctx.stats->skip(*skip);
+            reportUnopened(ctx, name, entry.size, std::move(named), *skip);
             continue;
         }
 
         if (!tar.readCurrent(bytes, memberLimit_)) {
-            ctx.stats->skip(tar.stopReason().value_or(SkipReason::Corrupt));
+            const SkipReason why = tar.stopReason().value_or(SkipReason::Corrupt);
+            ctx.stats->skip(why);
+            reportUnopened(ctx, name, entry.size, std::move(named), why);
             if (tar.stopped() || tar.corrupt()) {
                 break;
             }
@@ -393,7 +448,7 @@ void ArchiveScanner::scanTar(ByteSource& stream, Context& ctx, ByteSource& raw) 
         }
 
         const std::string display = ctx.display + std::string(kMemberSeparator) + name;
-        scanMemberBytes(display, bytes, ctx);
+        scanMemberBytes(display, bytes, ctx, std::move(named));
     }
 
     if (tar.corrupt()) {
@@ -456,7 +511,7 @@ void ArchiveScanner::scanSingleGzip(ByteSource& source, Context& ctx,
     reportMember(ctx, name, source.consumed(), 1, 1, false);
 
     const std::string display = ctx.display + std::string(kMemberSeparator) + name;
-    scanMemberBytes(display, bytes, ctx);
+    scanMemberBytes(display, bytes, ctx, {});
 }
 
 std::vector<FileMatch> ArchiveScanner::exposureFindings(const IndexSummary& summary,

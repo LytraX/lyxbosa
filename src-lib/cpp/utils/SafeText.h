@@ -21,16 +21,28 @@
 //
 // So every quoted byte is escaped before it reaches an output stream.
 //
-// WELL-FORMED UTF-8 IS LEFT ALONE AND NOTHING ELSE IS. That distinction is the whole
-// of this file. A file name or a match excerpt full of Greek, Japanese or Cyrillic
-// must come through untouched, so a valid multi-byte sequence is copied verbatim; a
-// terminal in a UTF-8 locale does not act on the bytes inside one. But a byte that is
-// not part of a well-formed sequence is not text in any encoding the report claims to
-// be in, and writing it through raw is what made a JSON document that a standard
-// parser refuses outright - the escaper answering the two halves of one question
-// differently. Linux accepts any byte but NUL and `/` in a name, so `0xC0 0xAF` - the
-// overlong UTF-8 slash, which is exactly what somebody aiming at a normaliser
-// downstream would choose - is one `touch` away on any host this tool runs on.
+// WELL-FORMED UTF-8 IS LEFT ALONE AND NOTHING ELSE IS, ITS CONTROLS APART. That distinction
+// is the whole of this file. A file name or a match excerpt full of Greek, Japanese or
+// Cyrillic must come through untouched, so a valid multi-byte sequence is copied verbatim; a
+// terminal in a UTF-8 locale does not act on the bytes inside one. But a byte that is not
+// part of a well-formed sequence is not text in any encoding the report claims to be in, and
+// writing it through raw is what made a JSON document that a standard parser refuses outright
+// - the escaper answering the two halves of one question differently. Linux accepts any byte
+// but NUL and `/` in a name, so `0xC0 0xAF` - the overlong UTF-8 slash, which is exactly what
+// somebody aiming at a normaliser downstream would choose - is one `touch` away on any host
+// this tool runs on.
+//
+// C1 CONTROLS ARE CONTROLS, WELL-FORMED OR NOT. U+0080 to U+009F are valid UTF-8 - C2 80 to
+// C2 9F - and they are the 8-bit spellings of the functions C0 carries: U+009B is a control
+// sequence introducer by itself, U+009D an OSC, U+0090 a DCS. Whether a terminal acts on one
+// is the terminal's choice, and it was measured rather than looked up. GNU screen 4.09 in
+// UTF-8 mode acts on U+009B exactly as on ESC [: it coloured text, moved the cursor and hid
+// it. tmux 3.6 does not act on it, but keeps it and writes it unchanged to the terminal a
+// client attaches from. The Windows console host does not act on it and does not draw it
+// either, so a name holding one prints as a name that does not. One of three acting on it is
+// the ESC problem again, and the other two pass it on or hide it. No rule name, path or quoted
+// excerpt needs one, and escaping one costs eight visible characters, so a C1 control is
+// escaped where C0 and DEL are escaped and refused where they are refused.
 //
 // Overlong forms, surrogates and anything past U+10FFFF are rejected along with
 // structural breakage, and rejecting the overlongs is not pedantry here: `C0 AF`
@@ -91,10 +103,20 @@ inline size_t sequenceLength(std::string_view in, size_t i) {
     return 0;
 }
 
+// True when the well-formed two-byte sequence at `in[i]` is a C1 control, U+0080 to U+009F.
+// Only asked once sequenceLength() has said there are two bytes there.
+inline bool isC1Control(std::string_view in, size_t i) {
+    return static_cast<unsigned char>(in[i]) == 0xc2 &&
+           static_cast<unsigned char>(in[i + 1]) <= 0x9f;
+}
+
 }  // namespace detail
 
-// Escape C0 controls, DEL and every byte that is not part of well-formed UTF-8 as
-// \xNN. Printable ASCII and valid UTF-8 pass through untouched.
+// Escape C0 controls, DEL, C1 controls and every byte that is not part of well-formed UTF-8 as
+// \xNN, one escape per byte: U+009B becomes \xc2\x9b. Every escape is a byte of the input,
+// so the vocabulary is the one a byte that is not UTF-8 already gets, and the output is ASCII
+// wherever it differs from the input. Printable ASCII and every other valid UTF-8 sequence pass
+// through untouched.
 inline std::string sanitize(std::string_view in) {
     static constexpr char kHex[] = "0123456789abcdef";
 
@@ -129,6 +151,12 @@ inline std::string sanitize(std::string_view in) {
             ++i;
             continue;
         }
+        if (len == 2 && detail::isC1Control(in, i)) {
+            escape(c);
+            escape(static_cast<unsigned char>(in[i + 1]));
+            i += 2;
+            continue;
+        }
         out.append(in, i, len);
         i += len;
     }
@@ -154,8 +182,8 @@ inline bool isValidUtf8(std::string_view in) {
     return true;
 }
 
-// True if the value carries anything that must not reach a terminal raw - a control
-// byte, DEL, or a byte outside well-formed UTF-8. Lets callers skip the copy on the
+// True if the value carries anything that must not reach a terminal raw - a C0 or C1
+// control, DEL, or a byte outside well-formed UTF-8. Lets callers skip the copy on the
 // overwhelmingly common clean path, and it has to agree with sanitize() exactly: a
 // cheaper test that only looked for control bytes is what let invalid UTF-8 past, and
 // the two answering the same question differently was the defect rather than a
@@ -172,7 +200,7 @@ inline bool needsSanitizing(std::string_view in) {
             continue;
         }
         const size_t len = detail::sequenceLength(in, i);
-        if (len == 0) {
+        if (len == 0 || (len == 2 && detail::isC1Control(in, i))) {
             return true;
         }
         i += len;
@@ -212,6 +240,19 @@ inline std::optional<std::string> whyNotPlainText(std::string_view in, bool line
         const size_t len = detail::sequenceLength(in, i);
         if (len == 0) {
             return "is not valid UTF-8 (byte " + byteAt(i) + ")";
+        }
+        if (len == 2 && detail::isC1Control(in, i)) {
+            // Named by its code point, then by its bytes and the offset of the first: a
+            // person reading "0xc2 0x9b" in a file that is otherwise text needs to be told
+            // it is one character and which one. U+0085, NEL, is a line break to some
+            // readers and is refused under `lineBreaks` all the same - no description needs
+            // one, and every reader that does not treat it as a break acts on it or hides it.
+            static constexpr char kUpperHex[] = "0123456789ABCDEF";
+            const auto second = static_cast<unsigned char>(in[i + 1]);
+            return std::string("carries a control character (U+00") +
+                   kUpperHex[(second >> 4) & 0xf] + kUpperHex[second & 0xf] + ", 0xc2 0x" +
+                   kHex[(second >> 4) & 0xf] + kHex[second & 0xf] + " at offset " +
+                   std::to_string(i) + ")";
         }
         i += len;
     }

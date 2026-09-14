@@ -85,4 +85,35 @@ std::vector<NameFinding> examine(std::string_view name);
 // and hand FN002 a clean file.
 std::string_view finalComponent(std::string_view pathUtf8);
 
+// What separates the components of a stored member name.
+enum class MemberSeparators {
+    Slash,              // a tar member, and a zip entry written by any host but the three below
+    SlashAndBackslash,  // a zip entry written by MS-DOS, Windows NTFS or VFAT
+};
+
+// The final component of a member name as an archive stores it, split by what the WRITER of
+// that entry meant - never by the platform the scan runs on.
+//
+// finalComponent() splits on a backslash under _WIN32 because NTFS cannot hold one in a name,
+// which is a fact about the disk the scan is reading and says nothing about bytes in an
+// archive. Asked of a member, it would answer the same entry two ways by platform.
+//
+// A zip records its writer per entry, in the host byte of "version made by", and that decides
+// it. Windows PowerShell 5.1's Compress-Archive and .NET Framework's
+// ZipFile.CreateFromDirectory store `site\wp-content\index.php` under host byte 0 (MS-DOS),
+// meaning a directory. Read as one name, every member below the top of a site backup made
+// that way raised FN002, and a planted `-rf.htaccess` under it was not seen to start with a
+// dash. So an entry from MS-DOS, NTFS or VFAT is split on both, as Info-ZIP's unzip splits it
+// when it extracts. Every other writer, and every tar header, gets `/` alone: a zip made on
+// Unix holding `a\zz-<id>.php` is extracted by PHP's ZipArchive, 7-Zip and Python's zipfile on
+// Linux as ONE file with a backslash in its name, which is the case FN002 exists for.
+//
+// The host byte is the writer's claim, as everything in an archive is. What it buys an
+// attacker is the reading every Windows extractor gives the same entry, and it cannot hide a
+// hostile final component: only what stands before the last backslash is set aside. Nor does
+// it follow the machine an archive was made on. PHP's ZipArchive writes host byte 3 (Unix) on
+// Windows too, so a PHP backup made there with backslash paths still raises FN002 on its
+// nested members.
+std::string_view memberFinalComponent(std::string_view storedName, MemberSeparators separators);
+
 }  // namespace lyxbosa::rules::filename

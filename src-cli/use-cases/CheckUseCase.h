@@ -122,7 +122,15 @@ private:
         for (const auto& member : members) {
             terminal_.printTo(out, Terminal::info(), "\nMember: {}\n",
                               pathForDisplay(member.path));
-            out.print("Matches: {}\n\n", member.matches.size());
+            out.print("Matches: {}\n", member.matches.size());
+            // A member whose bytes were not read is here for its name, and says so: the
+            // same fact the scan's row carries as its skip reason, in the words the
+            // coverage line below uses for the members it counts.
+            if (member.skipReason) {
+                terminal_.printTo(out, Terminal::muted(), "Not scanned ({}); the matches are "
+                                  "about its name\n", skipReasonLabel(*member.skipReason));
+            }
+            out.print("\n");
             printCompactMatches(out, member.matches);
         }
 

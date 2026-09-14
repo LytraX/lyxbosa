@@ -72,6 +72,8 @@
 #include "update/VersionSource.h"
 
 #include "PlatformSkips.h"
+#include "StdoutRedirect.h"
+#include "use-cases/UpdateUseCase.h"
 
 #ifdef LYXBOSA_UPDATE_VERIFY
 #include <openssl/evp.h>
@@ -1973,3 +1975,207 @@ TEST(ApplyTest, ThisPlatformKnowsWhichAssetItWouldInstall) {
         << "a build without OpenSSL refuses rather than degrading";
 #endif
 }
+
+#ifdef LYXBOSA_UPDATE_VERIFY
+
+// ===========================================================================
+// What `update` exits with when its message does not arrive.
+//
+// Two answers, ranked differently - see UpdateUseCase::execute(). Without --check the caller
+// asked for an action, so the exit code says what the action did whatever became of the text
+// reporting it: 0 replaced, 0 already current, 1 not done. With --check the text IS the answer,
+// so a refused one exits 1 and a reader that went away exits 141, as every other answer does.
+//
+// Every run below goes to four destinations: gtest's capture, which takes everything; a
+// descriptor opened for reading, which refuses every byte on every platform; /dev/full, where
+// there is one; and a pipe whose reader has gone, with SIGPIPE ignored. The fifth, SIGPIPE at
+// its default, is its own case, because there the kernel ends a run that is not careful.
+// ===========================================================================
+
+namespace {
+
+using test::stdout_redirect::ClosedPipe;
+using test::stdout_redirect::CommandRun;
+using test::stdout_redirect::Descriptor;
+using test::stdout_redirect::SigpipeIgnored;
+using test::stdout_redirect::StdoutAt;
+using test::stdout_redirect::delivered;
+using test::stdout_redirect::withStdoutAt;
+namespace redirect_sys = test::stdout_redirect::sys;
+
+constexpr std::string_view kUndelivered =
+    "\nError: the update result could not be written to standard output\n"
+    "       what reached it, if anything, is incomplete\n"
+    "       the write failed: ";
+
+// One `lyxbosa update [--check]`, through the use case the CLI runs, against a release the case
+// chose. A fresh stand-in binary each time, so a run that replaces it leaves the next one
+// something to replace.
+struct UpdateCase {
+    std::string label;
+    std::string latestTag;     // "" is a version request that fails
+    bool checkOnly = false;
+    bool serveRelease = false;
+    int code = 0;              // what the run exits with when its text arrives
+    std::string_view says;     // the start of what it prints on standard output
+    bool replaces = false;     // the stand-in binary is replaced by the release
+};
+
+struct UpdateOutcome {
+    CommandRun run;
+    bool replaced = false;
+};
+
+template <typename Where>
+UpdateOutcome runUpdate(const UpdateCase& c, Where&& where) {
+    TestKey key(1);
+    Fixture fixture;
+    const auto keyring = keyringOf(key);
+    auto versions = std::make_shared<FakeVersionSource>(c.latestTag);
+    auto assets = std::make_shared<FakeAssetSource>();
+    const Release release = goodRelease(key);
+    if (c.serveRelease) {
+        serve(*assets, release);
+    }
+
+    UpdateUseCase::Seams seams;
+    seams.running = Version{2, 2, 1};
+    seams.statePath = fixture.dir.file("state");
+    seams.target = fixture.target;
+    seams.keyring = &keyring;
+
+    CliArgs args;
+    args.updateCheckOnly = c.checkOnly;
+    args.assumeYes = true;
+
+    UpdateOutcome outcome;
+    outcome.run = where([&] {
+        const Terminal terminal(/*useAnsi=*/false);
+        const TerminalCaps caps = TerminalCaps::detect();
+        return UpdateUseCase(terminal, caps, versions, assets, seams).execute(args);
+    });
+    outcome.replaced = readFile(fixture.target) == release.assetBody;
+    return outcome;
+}
+
+const std::vector<UpdateCase>& updateCases() {
+    static const std::vector<UpdateCase> cases = {
+        {"update, replaced", "v2.3.0", false, true, 0, "Updated 2.2.1 -> 2.3.0.\n", true},
+        {"update, already current", "v2.2.1", false, false, 0, "Up to date (", false},
+        {"update, failed", "", false, false, 1, "", false},
+        {"update --check, newer", "v2.3.0", true, false, 2, "A newer release is available", false},
+        {"update --check, current", "v2.2.1", true, false, 0, "Up to date (2.2.1).\n", false},
+    };
+    return cases;
+}
+
+}  // namespace
+
+TEST(UpdateExitTest, AnUpdateExitsByWhatItDidAndACheckByWhetherItsAnswerArrived) {
+    std::string fullPath;
+    const bool haveFull = !test::whyCannotFailAWrite(fullPath).has_value();
+    TempDir scratch;
+    const fs::path readable = scratch.file("read-only-destination");
+    writeFile(readable, "");
+
+    for (const UpdateCase& c : updateCases()) {
+        SCOPED_TRACE(c.label);
+        const bool action = !c.checkOnly;
+
+        const UpdateOutcome arrived = runUpdate(c, [](auto&& command) { return delivered(command); });
+        EXPECT_EQ(arrived.run.code, c.code) << arrived.run.err;
+        EXPECT_EQ(arrived.run.out.rfind(std::string(c.says), 0), 0u) << arrived.run.out;
+        EXPECT_EQ(arrived.replaced, c.replaces) << arrived.run.err;
+        EXPECT_EQ(arrived.run.err.find("could not be written"), std::string::npos);
+
+        // A destination that refuses every byte. An action keeps its code and says the report
+        // did not arrive; a check's answer did not arrive, so it exits 1.
+        std::vector<std::pair<std::string, int>> refusing;
+        Descriptor readOnly(redirect_sys::openForReadingOnly(readable));
+        ASSERT_GE(readOnly.fd(), 0);
+        refusing.emplace_back("read-only descriptor", readOnly.fd());
+        std::optional<Descriptor> full;
+        if (haveFull) {
+            full.emplace(redirect_sys::openForWriting(fullPath));
+            refusing.emplace_back("/dev/full", full->fd());
+        }
+        for (const auto& [where, fd] : refusing) {
+            SCOPED_TRACE(where);
+            const UpdateOutcome refused = runUpdate(c, [fd = fd](auto&& command) {
+                return withStdoutAt(fd, command);
+            });
+            EXPECT_EQ(refused.replaced, c.replaces) << refused.run.err;
+            const bool printed = !c.says.empty();
+            if (action) {
+                EXPECT_EQ(refused.run.code, c.code)
+                    << "an update's exit code followed its message, not what it did\n"
+                    << refused.run.err;
+            } else {
+                EXPECT_EQ(refused.run.code, 1) << refused.run.err;
+            }
+            if (printed) {
+                EXPECT_NE(refused.run.err.find(kUndelivered), std::string::npos) << refused.run.err;
+            } else {
+                EXPECT_EQ(refused.run.err.find("could not be written"), std::string::npos)
+                    << "a run that printed nothing said its text did not arrive\n"
+                    << refused.run.err;
+            }
+        }
+
+        // A reader that went away is not a failure and is not said. An action keeps its code;
+        // a check exits 141, as a shell reports for a run the signal ended.
+        [[maybe_unused]] const SigpipeIgnored ignored;
+        const ClosedPipe pipe;
+        ASSERT_GE(pipe.fd(), 0);
+        const UpdateOutcome gone = runUpdate(c, [&](auto&& command) {
+            return withStdoutAt(pipe.fd(), command);
+        });
+        EXPECT_EQ(gone.replaced, c.replaces) << gone.run.err;
+        EXPECT_EQ(gone.run.err.find("could not be written"), std::string::npos) << gone.run.err;
+        if (action || c.says.empty()) {
+            EXPECT_EQ(gone.run.code, c.code) << gone.run.err;
+        } else {
+            EXPECT_EQ(gone.run.code, kExitReaderGone) << gone.run.err;
+        }
+    }
+    EXPECT_EQ(fs::file_size(readable), 0u);
+}
+
+// `lyxbosa update --yes | head -0` with SIGPIPE at its default, which is how an interactive
+// shell runs it. The binary is replaced before a word is printed, so the kernel ending the run at
+// its first write turned an update that happened into exit 141 - a script retries on that. An
+// update's report is written with SIGPIPE ignored for exactly that reason. A check's answer is
+// not, and the signal still ends it as it ends a scan's report; that direction is the death
+// test in stdout_delivery_test.cpp, and is not repeated here because a child the signal kills
+// leaves its stand-in binary's directory behind.
+TEST(UpdateExitTest, WithSigpipeAtItsDefaultAnUpdateStillExitsByWhatItDid) {
+#ifdef _WIN32
+    GTEST_SKIP() << "Windows has no SIGPIPE; the closed pipe in the case above is what happens "
+                    "there";
+#else
+    for (const UpdateCase& c : updateCases()) {
+        if (c.checkOnly) {
+            continue;
+        }
+        SCOPED_TRACE(c.label);
+        const auto run = [&c] {
+            struct sigaction dfl = {};
+            dfl.sa_handler = SIG_DFL;
+            sigemptyset(&dfl.sa_mask);
+            sigaction(SIGPIPE, &dfl, nullptr);
+            const ClosedPipe pipe;
+            const UpdateOutcome outcome = runUpdate(c, [&](auto&& command) {
+                const StdoutAt redirected(pipe.fd());
+                CommandRun r;
+                r.code = command();
+                return r;
+            });
+            // The replacement is part of what the exit code has to agree with.
+            std::_Exit(outcome.replaced == c.replaces ? outcome.run.code : 99);
+        };
+        EXPECT_EXIT(run(), testing::ExitedWithCode(c.code), "");
+    }
+#endif
+}
+
+#endif  // LYXBOSA_UPDATE_VERIFY

@@ -223,7 +223,7 @@ it or rename it, and which of those it is depends on whether anybody needs the f
 costs no open — so a file no include pattern covers is still reported when its name is a
 finding, with its row saying plainly that the bytes were never read. `scan.exclude` is the
 other intention and is obeyed: a pattern the operator wrote to keep a tree out of the scan
-keeps it out of this too.
+keeps it out of this too, whether or not the include list covers the file.
 
 **Volume.** One automated vulnerability scanner left 83 such names in a single upload
 directory, and a worse host gives thousands. The summary rolls them up on one line rather
@@ -236,6 +236,61 @@ Files with a hostile name: 4102 (the name is the finding; the bytes may be ordin
 
 JSON carries the same count as `filesWithHostileNames`, always present.
 
+### Names inside archives
+
+A member of an uploaded zip named `x$(sleep 20)y.mdb` is the same evidence as a file on
+disk named that way, so the same six rules read member names, in zip, tar and tar.gz, at
+every depth the scan opens. A member whose name raises a finding gets a row addressed
+`upload.zip!docs/x$(sleep 20)y.mdb`, like any other member row.
+
+**Which names are read.** A member's name is in the archive's index or header, so it is
+known without opening the member, and the file-level rule applies unchanged. What decides
+whether a member is *opened* — the selection that leaves non-code members shut,
+`scan.include`, the sidecar entries a Mac writes, `archives.max_member_size` and the
+expansion, ratio and time budgets — does not hide its name. Such a row carries the reason
+its bytes were not read, in the same field a loose file's does: `skipReason` in JSON, the
+`skip_reason` column in CSV, and `(not scanned: policy)` in the text report, where
+`policy`, `size`, `budget`, `ratio` and `corrupt` are the reasons the archive summary
+already counts. `scan.exclude` is obeyed for a member's name as for a file's. A member the
+scan never reaches has no name to read: one inside an archive nested past
+`archives.max_depth`, one after a guard stopped a tar stream, and one after an interrupt.
+A single `.gz` stores no member name the scanner reads — its member is named from the
+container's own file name, which is read as the file it is.
+
+**Separators.** Only the final component is read, as for a file. What separates the
+components is decided by whoever wrote the entry, never by the platform the scan runs on:
+
+| entry | separators |
+|---|---|
+| a zip entry written by MS-DOS, Windows NTFS or VFAT (host byte 0, 10 or 14) | `/` and `\` |
+| a zip entry written by Unix, macOS or any other host | `/` only |
+| a tar member | `/` only |
+
+A zip records its writer per entry, in the host byte of "version made by", and it is asked
+per entry — one archive can hold entries two tools added — and for a zip inside a zip, of
+the inner zip's own entries. Windows PowerShell 5.1's `Compress-Archive` and .NET
+Framework's `ZipFile.CreateFromDirectory` store `site\wp-content\index.php` under host byte
+0, meaning directories, so a site backup made with either raises nothing for its
+separators and is still read for a hostile final component. Where the writer was not DOS
+or Windows the backslash is a character of the name and raises FN002: PHP's `ZipArchive`,
+7-Zip and Python's `zipfile` on Linux extract a Unix-made `a\zz.php` as one file with a
+backslash in its name. This is how Info-ZIP's `unzip` decides it too.
+
+The host byte follows the tool, not the machine. PHP's `ZipArchive` writes host byte 3
+(Unix) on Windows as well, so a PHP backup script on Windows that stores paths as the
+directory iterator spells them — `site\index.php` — raises FN002 on every member below its
+top level. Windows' own `tar.exe`, 7-Zip, pwsh 7's `Compress-Archive` and .NET 10's
+`ZipFile` store `/`, whichever host byte they record.
+
+A row's address normalises backslashes to `/` for display, as it always has, whichever
+writer the entry had, so a Unix-made member reads `upload.zip!a/zz.php` with FN002 naming
+the backslash.
+
+**Quarantine and exit code.** A name finding on a member never moves its container, just
+as it never moves a file; only hostile content inside does. A member row with a name
+finding moves the exit code to `2`, and counts in `Files with matches` and
+`Files with a hostile name` like a loose file's.
+
 ### How a name is printed, and how a program gets back to the file
 
 A name is untrusted text on its way to a terminal and untrusted *bytes* on its way to a
@@ -244,8 +299,10 @@ program, and a report owes both.
 **The rendering.** Every path in every output goes through one escape before it is written.
 Control bytes and DEL become a visible `\x0a`, `\x09`, `\x1b` and so on, and so does any
 byte that is not part of well-formed UTF-8 — including overlong forms such as `c0 af`,
-surrogates and anything past U+10FFFF. Well-formed UTF-8 is left exactly alone, so a name
-in Greek, Japanese or French prints as it is. Two things depend on this. A terminal is the
+surrogates and anything past U+10FFFF. The C1 controls, U+0080 to U+009F, are well-formed
+UTF-8 and are escaped all the same, one escape per byte: U+009B, which some terminals take
+for `ESC [`, prints as `\xc2\x9b`. Every other well-formed character is left exactly alone,
+so a name in Greek, Japanese or French prints as it is. Two things depend on this. A terminal is the
 one consumer that cannot be handed the bytes, because a name carrying `ESC ] 52 ; c ;` is
 not text there but an instruction that writes the reader's clipboard. And a JSON document
 has to stay valid UTF-8 or no parser will accept it, and a file name on a Linux host may be
@@ -278,9 +335,9 @@ what a loader wants anyway.
 
 ### What this does not read
 
-Only the final component of the path. A hostile directory name is a fact about that
-directory, and putting it on every file underneath would be thousands of rows for one
-thing. Archive member names are not read either — these rules are about files on disk.
+Only the final component of the path, on disk and inside an archive. A hostile directory
+name is a fact about that directory, and putting it on every file underneath would be
+thousands of rows for one thing.
 
 On Windows, NTFS refuses several of these shapes outright, so a file created there cannot
 carry them: a double quote, a pipe and every byte below `0x20` are rejected, and a trailing

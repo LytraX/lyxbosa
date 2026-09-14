@@ -42,10 +42,13 @@
 #include "infrastructure/Delivery.h"
 #include "system/CliArgs.h"
 #include "use-cases/CheckUseCase.h"
+#include "use-cases/HelpUseCase.h"
 #include "use-cases/InitConfigUseCase.h"
 #include "use-cases/ScanUseCase.h"
+#include "use-cases/ValidateConfigUseCase.h"
 
 #include "PlatformSkips.h"
+#include "StdoutRedirect.h"
 
 #include <cerrno>
 #include <chrono>
@@ -54,12 +57,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #include <fcntl.h>
 
@@ -72,6 +77,7 @@
 #endif
 
 using namespace lyxbosa;
+using namespace lyxbosa::test::stdout_redirect;
 
 namespace {
 
@@ -88,28 +94,6 @@ constexpr size_t kInsideEveryBuffer = 1024;
 constexpr ReportFormat kEveryFormat[] = {ReportFormat::Text, ReportFormat::Csv,
                                          ReportFormat::Json};
 
-// The descriptor calls, spelled once for both platforms.
-namespace sys {
-#ifdef _WIN32
-constexpr int kStdout = 1;
-inline int dup(int fd) { return ::_dup(fd); }
-inline int dup2(int from, int to) { return ::_dup2(from, to); }
-inline int close(int fd) { return ::_close(fd); }
-inline int openForWriting(const fs::path& path) { return ::_wopen(path.c_str(), _O_WRONLY); }
-inline int openForReadingOnly(const fs::path& path) {
-    return ::_wopen(path.c_str(), _O_RDONLY | _O_TEXT);
-}
-inline bool pipe(int fds[2]) { return ::_pipe(fds, 4096, _O_TEXT) == 0; }
-#else
-constexpr int kStdout = STDOUT_FILENO;
-inline int dup(int fd) { return ::dup(fd); }
-inline int dup2(int from, int to) { return ::dup2(from, to); }
-inline int close(int fd) { return ::close(fd); }
-inline int openForWriting(const fs::path& path) { return ::open(path.c_str(), O_WRONLY); }
-inline int openForReadingOnly(const fs::path& path) { return ::open(path.c_str(), O_RDONLY); }
-inline bool pipe(int fds[2]) { return ::pipe(fds) == 0; }
-#endif
-}  // namespace sys
 
 class TempDir {
 public:
@@ -135,128 +119,6 @@ void writeFile(const fs::path& path, const std::string& bytes) {
     fs::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-}
-
-// Standard output on `destination` while this lives. What the refused destination did not
-// take is flushed at it and dropped before the real standard output comes back, and the
-// stream's error indicator with it, so the next case starts clean.
-class StdoutAt {
-public:
-    explicit StdoutAt(int destination) {
-        std::cout.flush();
-        std::fflush(stdout);
-        saved_ = sys::dup(sys::kStdout);
-        sys::dup2(destination, sys::kStdout);
-    }
-    ~StdoutAt() {
-        std::fflush(stdout);
-        std::clearerr(stdout);
-        sys::dup2(saved_, sys::kStdout);
-        sys::close(saved_);
-        std::cout.clear();
-    }
-    StdoutAt(const StdoutAt&) = delete;
-    StdoutAt& operator=(const StdoutAt&) = delete;
-
-private:
-    int saved_ = -1;
-};
-
-// The write end of a pipe whose read end is already closed.
-class ClosedPipe {
-public:
-    ClosedPipe() {
-        int fds[2] = {-1, -1};
-        if (sys::pipe(fds)) {
-            sys::close(fds[0]);
-            writeEnd_ = fds[1];
-        }
-    }
-    ~ClosedPipe() {
-        if (writeEnd_ >= 0) sys::close(writeEnd_);
-    }
-    ClosedPipe(const ClosedPipe&) = delete;
-    ClosedPipe& operator=(const ClosedPipe&) = delete;
-
-    int fd() const { return writeEnd_; }
-
-private:
-    int writeEnd_ = -1;
-};
-
-// SIGPIPE ignored while this lives, the way a parent that ignores it hands it to a child.
-// Windows has no SIGPIPE, and a write to a pipe with no reader fails there without it.
-class SigpipeIgnored {
-public:
-#ifdef _WIN32
-    SigpipeIgnored() = default;
-#else
-    SigpipeIgnored() {
-        struct sigaction ignore = {};
-        ignore.sa_handler = SIG_IGN;
-        sigemptyset(&ignore.sa_mask);
-        sigaction(SIGPIPE, &ignore, &previous_);
-    }
-    ~SigpipeIgnored() { sigaction(SIGPIPE, &previous_, nullptr); }
-
-private:
-    struct sigaction previous_ = {};
-#endif
-};
-
-// A descriptor that owns itself.
-class Descriptor {
-public:
-    explicit Descriptor(int fd) : fd_(fd) {}
-    ~Descriptor() {
-        if (fd_ >= 0) sys::close(fd_);
-    }
-    Descriptor(const Descriptor&) = delete;
-    Descriptor& operator=(const Descriptor&) = delete;
-    int fd() const { return fd_; }
-
-private:
-    int fd_;
-};
-
-struct CommandRun {
-    int code = 0;
-    std::string out;
-    std::string err;
-};
-
-// `command` with standard output on `destination` and standard error captured.
-template <typename Command>
-CommandRun withStdoutAt(int destination, Command&& command) {
-    CommandRun run;
-    testing::internal::CaptureStderr();
-    try {
-        StdoutAt redirected(destination);
-        run.code = command();
-    } catch (...) {
-        run.err = testing::internal::GetCapturedStderr();
-        throw;
-    }
-    run.err = testing::internal::GetCapturedStderr();
-    return run;
-}
-
-// `command` with both streams captured: a destination that takes every byte.
-template <typename Command>
-CommandRun delivered(Command&& command) {
-    CommandRun run;
-    testing::internal::CaptureStdout();
-    testing::internal::CaptureStderr();
-    try {
-        run.code = command();
-    } catch (...) {
-        run.err = testing::internal::GetCapturedStderr();
-        run.out = testing::internal::GetCapturedStdout();
-        throw;
-    }
-    run.err = testing::internal::GetCapturedStderr();
-    run.out = testing::internal::GetCapturedStdout();
-    return run;
 }
 
 // `lyxbosa scan ROOT -o FORMAT --force --no-quarantine --no-precount [--quiet]`.
@@ -749,6 +611,246 @@ TEST_F(StdoutDeliveryTest, InitConfigWhoseReaderHasGoneIsNotAFailure) {
     const CommandRun gone = withStdoutAt(pipe.fd(), [] { return initConfig(); });
     EXPECT_EQ(gone.code, kExitReaderGone);
     EXPECT_EQ(gone.err, "");
+}
+
+// ===========================================================================
+// --help, --version, validate-config and update
+// ===========================================================================
+
+namespace {
+
+// Set for the length of a parse. A parser that calls exit() from inside it ends this process
+// with whatever status it chose - argparse's was 0 - and a runner that reads only the exit code
+// calls that a pass, whatever failed before it. The handler below turns such an exit into a
+// failure with a sentence, in this process and in a death test's child alike.
+bool g_parsing = false;
+
+// `lyxbosa ARGS...` as the parser reads it.
+CliArgs parseCommandLine(std::vector<std::string> words) {
+    static const bool registered = [] {
+        std::atexit([] {
+            if (g_parsing) {
+                std::fputs("\nthe argument parser called exit() in the middle of a parse\n",
+                           stderr);
+                std::fflush(stderr);
+                std::_Exit(1);
+            }
+        });
+        return true;
+    }();
+    (void)registered;
+
+    words.insert(words.begin(), "lyxbosa");
+    std::vector<char*> argv;
+    for (std::string& word : words) {
+        argv.push_back(word.data());
+    }
+    argv.push_back(nullptr);
+    g_parsing = true;
+    CliArgs args = CliArgs::parse(static_cast<int>(words.size()), argv.data());
+    g_parsing = false;
+    return args;
+}
+
+// Every text answer the parser gives, one per shape: the program's own help, its version from
+// both spellings, and each command's help from both of its spellings.
+const std::vector<std::vector<std::string>>& parserAnswers() {
+    static const std::vector<std::vector<std::string>> answers = {
+        {"--help"}, {"-h"}, {"--version"}, {"-v"},
+        {"scan", "--help"}, {"scan", "-h"}, {"check", "--help"},
+        {"validate-config", "--help"}, {"init-config", "--help"}, {"update", "--help"},
+        {"update", "-h"},
+    };
+    return answers;
+}
+
+std::string joined(const std::vector<std::string>& words) {
+    std::string out;
+    for (const auto& word : words) {
+        out += (out.empty() ? "" : " ") + word;
+    }
+    return out;
+}
+
+int answer(const std::vector<std::string>& words) {
+    const Terminal terminal(/*useAnsi=*/false);
+    return HelpUseCase(terminal).execute(parseCommandLine(words));
+}
+
+std::string_view whatItIs(const std::vector<std::string>& words) {
+    return words.back() == "--version" || words.back() == "-v" ? "the version"
+                                                               : "the help text";
+}
+
+}  // namespace
+
+// The library's own --help and --version used to print to std::cout and call std::exit(0) from
+// inside the parse, so nothing that asks whether an answer arrived could run. The parse returns
+// now: a child that parses and then exits 99 exits 99, where it exited 0 before.
+TEST(ParserAnswerTest, TheParserNeitherPrintsNorExits) {
+    for (const auto& words : parserAnswers()) {
+        SCOPED_TRACE(joined(words));
+        EXPECT_EXIT(
+            {
+                const CliArgs args = parseCommandLine(words);
+                std::_Exit(args.command == Command::Help || args.command == Command::Version
+                               ? 99 : 98);
+            },
+            testing::ExitedWithCode(99), "^$");
+    }
+    ASSERT_FALSE(HasFailure()) << "the parser still exits; not parsing in this process";
+
+    testing::internal::CaptureStdout();
+    const CliArgs version = parseCommandLine({"--version"});
+    const CliArgs scanHelp = parseCommandLine({"scan", "--help"});
+    EXPECT_EQ(testing::internal::GetCapturedStdout(), "") << "the parser printed an answer";
+
+    EXPECT_TRUE(version.success);
+    EXPECT_EQ(version.command, Command::Version);
+    EXPECT_EQ(version.answerText, versionBanner() + "\n");
+    EXPECT_EQ(scanHelp.command, Command::Help);
+    EXPECT_EQ(scanHelp.answerText.rfind("Usage: lyxbosa scan ", 0), 0u) << scanHelp.answerText;
+    EXPECT_NE(scanHelp.answerText.find("Scan directories for malicious files"), std::string::npos);
+    EXPECT_EQ(parseCommandLine({"--help"}).answerText, CliArgs::getHelpText());
+}
+
+// The parse stops at the flag, where the exit used to stop it: what follows is never read, and
+// what came before is refused as it always was.
+TEST(ParserAnswerTest, TheParseStopsWhereTheExitStoppedIt) {
+    const CliArgs after = parseCommandLine({"scan", "--help", "--no-such-flag"});
+    EXPECT_TRUE(after.success) << after.errorMessage;
+    EXPECT_EQ(after.command, Command::Help);
+
+    const CliArgs before = parseCommandLine({"scan", "--no-such-flag", "--help"});
+    EXPECT_FALSE(before.success);
+    EXPECT_EQ(before.errorMessage, "Unknown argument: --no-such-flag");
+
+    const CliArgs version = parseCommandLine({"--version", "no-such-command"});
+    EXPECT_TRUE(version.success) << version.errorMessage;
+    EXPECT_EQ(version.command, Command::Version);
+
+    // --no-ansi before the flag still reaches the colour of an error about the answer.
+    EXPECT_EQ(parseCommandLine({"--no-ansi", "scan", "--help"}).color, ColorWhen::Never);
+    EXPECT_EQ(parseCommandLine({"check", "--color", "never", "--help"}).color, ColorWhen::Never);
+    EXPECT_EQ(parseCommandLine({"scan", "--help"}).color, ColorWhen::Auto);
+}
+
+// `lyxbosa scan --help > /dev/full` exited 0, and so did every other text the parser gave. The
+// refusal is a descriptor opened for reading on every platform, and /dev/full as well where
+// there is one, so that Windows observes it too.
+TEST_F(StdoutDeliveryTest, AHelpTextOrAVersionThatIsRefusedExitsOne) {
+    const fs::path readable = dirty().parent_path() / "read-only-for-help";
+    writeFile(readable, "");
+    Descriptor readOnly(sys::openForReadingOnly(readable));
+    ASSERT_GE(readOnly.fd(), 0);
+    std::string why;
+    auto sink = full(why);
+
+    for (const auto& words : parserAnswers()) {
+        SCOPED_TRACE(joined(words));
+        const CommandRun arrived = delivered([&] { return answer(words); });
+        EXPECT_EQ(arrived.code, 0);
+        EXPECT_EQ(arrived.err, "");
+        EXPECT_EQ(arrived.out, parseCommandLine(words).answerText);
+        EXPECT_FALSE(arrived.out.empty());
+
+        const CommandRun refused = withStdoutAt(readOnly.fd(), [&] { return answer(words); });
+        EXPECT_EQ(refused.code, 1);
+        EXPECT_EQ(refused.err.rfind("\nError: " + std::string(whatItIs(words)) +
+                                        " could not be written to standard output\n"
+                                        "       what reached it, if anything, is incomplete\n"
+                                        "       the write failed: ",
+                                    0),
+                  0u)
+            << refused.err;
+
+        if (sink) {
+            const CommandRun onFull = withStdoutAt(sink->fd(), [&] { return answer(words); });
+            EXPECT_EQ(onFull.code, 1);
+            EXPECT_EQ(onFull.err, toStandardOutput(whatItIs(words), noSpace()));
+        }
+    }
+    EXPECT_EQ(fs::file_size(readable), 0u) << why;
+}
+
+TEST_F(StdoutDeliveryTest, AHelpTextOrAVersionWhoseReaderHasGoneIsNotAFailure) {
+    [[maybe_unused]] const SigpipeIgnored ignored;
+    for (const auto& words : parserAnswers()) {
+        SCOPED_TRACE(joined(words));
+        const ClosedPipe pipe;
+        ASSERT_GE(pipe.fd(), 0);
+        const CommandRun gone = withStdoutAt(pipe.fd(), [&] { return answer(words); });
+        EXPECT_EQ(gone.code, kExitReaderGone);
+        EXPECT_EQ(gone.err, "");
+    }
+}
+
+// validate-config: the answer it writes to standard output, through a destination that refuses
+// it, a pipe with no reader, and one that takes it. The refusal uses a descriptor opened for
+// reading, so Windows observes it too. `update` answers by a different ranking, and its cases are
+// UpdateExitTest in update_apply_test.cpp.
+TEST_F(StdoutDeliveryTest, ValidateConfigAnswersLikeEveryOtherCommand) {
+    const fs::path configFile = dirty().parent_path() / "validate.yaml";
+    writeFile(configFile, Config::generateDefault());
+
+    const auto validate = [&] {
+        CliArgs args;
+        args.validateConfigFile = configFile.string();
+        const Terminal terminal(/*useAnsi=*/false);
+        return ValidateConfigUseCase(terminal).execute(args);
+    };
+
+    struct Case {
+        std::string name;
+        std::function<int()> run;
+        int code;
+        std::string_view what;
+        std::string_view out;
+    };
+    const std::vector<Case> cases = {
+        {"validate-config", validate, 0, "the validation result", "Configuration is valid.\n"},
+    };
+
+    const fs::path readable = dirty().parent_path() / "read-only-for-update";
+    writeFile(readable, "");
+    Descriptor readOnly(sys::openForReadingOnly(readable));
+    ASSERT_GE(readOnly.fd(), 0);
+    std::string why;
+    auto sink = full(why);
+
+    for (const Case& c : cases) {
+        SCOPED_TRACE(c.name);
+        const CommandRun arrived = delivered(c.run);
+        EXPECT_EQ(arrived.code, c.code) << arrived.err;
+        EXPECT_EQ(arrived.out.rfind(std::string(c.out), 0), 0u) << arrived.out;
+        EXPECT_EQ(arrived.err.find("Error:"), std::string::npos) << arrived.err;
+
+        const CommandRun refused = withStdoutAt(readOnly.fd(), c.run);
+        EXPECT_EQ(refused.code, 1);
+        const std::string sentence = "\nError: " + std::string(c.what) +
+                                     " could not be written to standard output\n"
+                                     "       what reached it, if anything, is incomplete\n"
+                                     "       the write failed: ";
+        EXPECT_NE(refused.err.find(sentence), std::string::npos) << refused.err;
+        EXPECT_EQ(occurrences(refused.err, "Error:"), 1u) << refused.err;
+
+        if (sink) {
+            const CommandRun onFull = withStdoutAt(sink->fd(), c.run);
+            EXPECT_EQ(onFull.code, 1);
+            EXPECT_NE(onFull.err.find(toStandardOutput(c.what, noSpace())), std::string::npos)
+                << onFull.err;
+        }
+
+        [[maybe_unused]] const SigpipeIgnored ignored;
+        const ClosedPipe pipe;
+        ASSERT_GE(pipe.fd(), 0);
+        const CommandRun gone = withStdoutAt(pipe.fd(), c.run);
+        EXPECT_EQ(gone.code, kExitReaderGone);
+        EXPECT_EQ(gone.err.find("Error:"), std::string::npos) << gone.err;
+    }
+    // Where there is no /dev/full the read-only descriptor above is the refusal, as it is for
+    // every other command on Windows; `why` says which this host is.
+    EXPECT_EQ(fs::file_size(readable), 0u) << why;
 }
 
 // ===========================================================================

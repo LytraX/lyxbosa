@@ -79,6 +79,18 @@ void ZipReader::loadIndex() {
         entry.compressedSize = (st.valid & ZIP_STAT_COMP_SIZE) ? st.comp_size : 0;
         entry.directory = !entry.name.empty() && entry.name.back() == '/';
 
+        // The host byte of "version made by", per entry: one archive can hold entries two
+        // writers added. An entry whose attributes cannot be read keeps the backslash as a
+        // character, which is the reading that raises FN002 rather than the one that hides it.
+        zip_uint8_t host = 0;
+        zip_uint32_t attributes = 0;
+        if (zip_file_get_external_attributes(archive_, static_cast<zip_uint64_t>(i), 0, &host,
+                                             &attributes) == 0) {
+            entry.backslashIsSeparator = host == ZIP_OPSYS_DOS ||
+                                         host == ZIP_OPSYS_WINDOWS_NTFS ||
+                                         host == ZIP_OPSYS_VFAT;
+        }
+
         entries_.push_back(std::move(entry));
         indices_.push_back(static_cast<uint64_t>(i));
     }

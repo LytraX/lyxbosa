@@ -22,6 +22,19 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Added
+
+- **A hostile name inside an archive is a finding.** FN001 to FN006 read the names of members
+  of a zip, tar or tar.gz, at every depth the scan opens, as they read file names on disk: a
+  member of an uploaded zip named with a command substitution is the same evidence as a file
+  named that way. The name comes from the archive's index or header, so a member the scan does
+  not open — not code, over `archives.max_member_size`, past a budget — still has it read, and
+  its row says why its bytes were not. `scan.exclude` keeps a member's name out as it keeps a
+  file's. A backslash in a zip entry's name separates directories when the entry records that
+  MS-DOS or Windows wrote it, and is a character of the name for any other writer and in a tar.
+  A name finding never moves the container. See *Names inside archives* in
+  [docs/SCANNING.md](docs/SCANNING.md).
+
 ### Fixed
 
 - **A link that leads back to itself is no longer counted as an entry the scan could not
@@ -35,6 +48,29 @@ commit list that CI generates per tag.
   `Links not followed` with the setting off, because it was never going to be followed, and in
   `Entries unreadable` with it on, because then the scan meant to read what it leads to and
   could not.
+- **`lyxbosa --version`, every command's `--help`, `validate-config` and `update --check` no
+  longer exit as if their answer arrived when standard output refused it.** The version and
+  each command's help were printed by the argument parser, which exited 0 from inside the
+  parse before anything could ask whether the text had been written, and `validate-config` and
+  `update --check` printed without asking. Each now asks after its last byte, as `scan`,
+  `check`, `init-config` and `lyxbosa --help` already did. The text each prints is unchanged.
+- **`update` says when the line reporting a finished update did not arrive, and is no longer
+  killed for it.** It printed without asking, so a refused report went unmentioned, and with
+  SIGPIPE at its default a pipe whose reader had gone ended the run with the signal after the
+  binary had already been replaced. The report is now asked about after its last byte and
+  written with SIGPIPE ignored; its exit code still says what the update did.
+- **A C1 control character no longer reaches a terminal or a report raw.** U+0080 to U+009F
+  are valid UTF-8, so a file name, a quoted excerpt or a custom rule's name holding one was
+  written through unescaped. They are the 8-bit forms of the escape controls: U+009B is a
+  control sequence introducer by itself, and GNU screen acts on it exactly as on `ESC [` —
+  colouring text, moving the cursor and hiding it — while tmux passes it to the terminal it is
+  attached from and the Windows console host draws nothing for it. Each is now escaped as
+  its two bytes, `\xc2\x9b`, wherever C0 controls and DEL already were, and refused wherever
+  they already were.
+- **`scan.exclude` keeps a file's name out of the report even when `scan.include` does not
+  cover the file.** The include list was asked first, so a `.mdb` inside a tree an exclude
+  pattern named came back as merely not included, and a hostile name on it was reported from
+  inside the tree the operator had excluded.
 
 ### Compatibility
 
@@ -47,8 +83,53 @@ commit list that CI generates per tag.
   falls by one for each such link and `linksNotFollowed` rises by one. On Windows the same holds
   for a link or junction into a directory an access control list closes to the scanning user.
   With the setting on, such a link is still counted in `Entries unreadable`.
-- **No exit code and no finding changes.** None of these links was read before and none is
-  read now, and neither count moves the exit code.
+- **Neither link change moves an exit code or a finding.** None of these links was read before
+  and none is read now, and neither count moves the exit code.
+- **`lyxbosa --version`, `lyxbosa -v`, every command's `--help` and `-h`, `validate-config`
+  and `update --check` exit 1 where they exited 0 or 2** when standard output refuses what they
+  write. stderr says `Error: the version could not be written to standard output`
+  (`the help text`, `the validation result`, `the update result`), then
+  `what reached it, if anything, is incomplete`, then the system's reason. With SIGPIPE
+  ignored, and on Windows, a pipe whose reader has gone makes them exit 141 and print nothing,
+  where they exited 0 or 2. A successful `--help` or `--version` still exits 0.
+- **`update` without `--check` exits by what it did, whatever became of the line reporting
+  it**: 0 when it replaced the binary or it was already current, 1 when it did neither, as
+  before. When standard output refuses that line, stderr now says
+  `Error: the update result could not be written to standard output` and the two lines after
+  it, and the exit code does not change. With SIGPIPE at its default, a pipe whose reader has
+  gone no longer ends a finished update with exit 141: the run prints nothing more and exits
+  0. A failed update exits 1 whatever became of its output.
+- **A configuration whose custom rule has a C1 control in its `name`, `category` or
+  `description` is refused** where it loaded before, by `scan`, `check` and
+  `validate-config`, with exit 1 and a sentence naming the character, such as
+  `its name carries a control character (U+009B, 0xc2 0x9b at offset 6)`. U+0085 (NEL) is
+  refused in a `description` too; tab, line feed and carriage return still load there.
+- **A path holding a C1 control is rendered with `\xc2\x80` to `\xc2\x9f` in its place** in
+  the text, JSON and CSV reports and on the terminal, and JSON gains `pathBytesHex` (and
+  `quarantinePathBytesHex`) and CSV fills `file_bytes_hex` (and `quarantine_path_bytes_hex`)
+  for it, because its rendering is no longer the name. A quoted match excerpt or finding
+  context holding one is escaped the same way. No exit code changes.
+- **A scan of an archive holding a member whose name raises FN001 to FN006 exits 2 where it
+  exited 0**, with a row for that member addressed `archive!member`, and the member counts in
+  `filesWithMatches` and `filesWithHostileNames`. `check` on such an archive exits 2 and prints
+  the member. No container is quarantined for a member's name.
+- **A backslash in a member name is read the way the entry's writer meant it.** A zip entry whose
+  host byte records MS-DOS, Windows NTFS or VFAT is split on backslashes as well as slashes, and
+  raises no FN002 for them: a site backup made by Windows PowerShell 5.1's `Compress-Archive` or
+  .NET Framework's `ZipFile.CreateFromDirectory`, which store `site\wp-content\index.php` under
+  host byte 0, raises only what its final components raise. A zip entry from any other host, and
+  every tar member, raises FN002 on a backslash in its name. PHP's `ZipArchive` records the Unix
+  host byte on Windows too, so a backup a PHP script made there with backslash paths raises
+  FN002 on every member below its top level.
+- **A member row can carry a skip reason**: `"skipped": true` and `"skipReason"` in JSON, the
+  `skipped` and `skip_reason` CSV columns, and `(not scanned: …)` in the text report, with the
+  values `policy`, `size`, `budget`, `ratio` and `corrupt` that `archives.membersSkipped`
+  already uses. It appears on a member reported for its name whose bytes were not read. Under
+  such a member, `check` prints `Not scanned (…); the matches are about its name`. No count of
+  skipped files or members changes.
+- **A file that `scan.include` does not cover and a `scan.exclude` pattern names no longer
+  raises FN findings**, where its name was reported before. It is still counted as
+  `excluded`, as it was; a scan whose only findings were such names exits 0 where it exited 2.
 
 ## [3.2.0] - 2026-09-14
 

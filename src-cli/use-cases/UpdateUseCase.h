@@ -6,11 +6,17 @@
 //   2  `--check` only: a newer release is available
 //   1  anything else - a failed request, a development build, and every refusal
 //
+// Which of those a run exits with does not depend on whether its message arrived, except under
+// `--check`. Without it the caller asked for an action, and the code says what the action did;
+// with it the printed text is the answer, and a refused one exits 1 and a reader that went away
+// 141, as every other answer on standard output does. execute() says why, beside the code.
+//
 // The exit code is the interface, so that a monitoring script can use this without
 // reading the text - the same discipline the scan exit codes already follow. A refusal
 // exits 1 rather than 0 on purpose: a script that asked for an update and did not get
 // one has to be able to tell.
 
+#include "infrastructure/Delivery.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "system/CliArgs.h"
@@ -21,20 +27,36 @@
 #include "update/VersionSource.h"
 
 #include <fmt/base.h>
+#include <filesystem>
 #include <iostream>
+#include <optional>
 #include <memory>
 #include <string>
 #include <utility>
 
 namespace lyxbosa {
 
+// What a test puts in place of this process's own facts, so that the command can be driven
+// without a release build, without the user's state file, without the binary that is running
+// it and without the private half of the keys compiled into it. Empty is the real thing, and the
+// CLI passes nothing. At namespace scope rather than inside the class, because a default
+// argument of the class's own constructor cannot use a nested type's member initializers.
+struct UpdateSeams {
+    std::optional<Version> running;                // runningVersion()
+    std::filesystem::path statePath;               // defaultUpdateStatePath()
+    std::filesystem::path target;                  // the file this process is running from
+    const minisign::Keyring* keyring = nullptr;    // the keys compiled into this binary
+};
+
 class UpdateUseCase {
 public:
-    // Both seams are injected so the command is testable without a socket; the
+    using Seams = UpdateSeams;
+
+    // Both sources are injected so the command is testable without a socket; the
     // defaults are the real ones.
     UpdateUseCase(const Terminal& terminal, const TerminalCaps& caps,
                   std::shared_ptr<VersionSource> source = nullptr,
-                  std::shared_ptr<AssetSource> assets = nullptr)
+                  std::shared_ptr<AssetSource> assets = nullptr, Seams seams = {})
         : terminal_(terminal),
           caps_(caps),
           source_(source ? std::move(source)
@@ -42,7 +64,8 @@ public:
                                std::make_shared<HttpVersionSource>())),
           assets_(assets ? std::move(assets)
                          : std::static_pointer_cast<AssetSource>(
-                               std::make_shared<HttpAssetSource>())) {}
+                               std::make_shared<HttpAssetSource>())),
+          seams_(std::move(seams)) {}
 
     int execute(const CliArgs& args) {
         if (usingTestOrigin()) {
@@ -55,12 +78,29 @@ public:
                 "It is a local demonstration build and must not be installed anywhere.\n\n");
         }
 
-        return args.updateCheckOnly ? runCheck() : runApply(args);
+        // Everything either run prints to standard output goes through one CheckedOutput and is
+        // asked whether it arrived after the last line - see Delivery.h. What the answer is
+        // decides what that changes.
+        CheckedOutput out(stdout);
+
+        // `update --check` asked a question, and the text is the answer: an answer that did
+        // not arrive outranks what it would have said, so it exits 1, or 141 for a reader that
+        // went away, in place of the 0 or 2 that would say it arrived.
+        if (args.updateCheckOnly) {
+            const int code = runCheck(out);
+            return finishAnswerOnStandardOutput(terminal_, out, "the update result", code);
+        }
+
+        // `update` asked for an action, and the action is the answer. runApply() exits by what
+        // it did - 0 replaced, 0 already current, 1 not done - and a refused or unread report of
+        // it is said on stderr and changes none of the three. Delivery.h,
+        // finishReportOfAnAction(), has the ranking.
+        return runApply(args, out);
     }
 
 private:
-    int runCheck() {
-        const Version running = runningVersion();
+    int runCheck(CheckedOutput& out) {
+        const Version running = seams_.running.value_or(runningVersion());
 
         // 0.0.0 is what a build that did not come from a tag reports, and
         // docs/RELEASING.md says so. Every published release is numerically newer
@@ -85,31 +125,36 @@ private:
         // it just does not spare the next scan a request. It keeps the rest of the file,
         // which a typed `update --check` has even less business resetting than a scan's
         // own check does - see recordLatestVersion().
-        recordLatestVersion(defaultUpdateStatePath(), currentEpochSeconds(),
-                            toString(*result.latest));
+        recordLatestVersion(seams_.statePath.empty() ? defaultUpdateStatePath()
+                                                     : seams_.statePath,
+                            currentEpochSeconds(), toString(*result.latest));
 
         if (result.newerAvailable) {
-            terminal_.print(Terminal::warning(),
+            terminal_.printTo(out, Terminal::warning(),
                 "A newer release is available: {} (this is {}).\n",
                 toString(*result.latest), toString(running));
-            fmt::print("Run 'lyxbosa update' to install it, or fetch it from\n"
-                       "https://github.com/LytraX/lyxbosa/releases\n");
+            out.print("Run 'lyxbosa update' to install it, or fetch it from\n"
+                      "https://github.com/LytraX/lyxbosa/releases\n");
             return 2;
         }
 
-        terminal_.print(Terminal::success(), "Up to date ({}).\n", toString(running));
+        terminal_.printTo(out, Terminal::success(), "Up to date ({}).\n", toString(running));
         // A published release older than the running one is not an error and not an
         // update; it happens on a build made between a tag and its release.
         if (*result.latest < running) {
-            fmt::print("The newest published release is {}.\n", toString(*result.latest));
+            out.print("The newest published release is {}.\n", toString(*result.latest));
         }
         return 0;
     }
 
-    int runApply(const CliArgs& args) {
+    int runApply(const CliArgs& args, CheckedOutput& out) {
         ApplyOptions options;
         options.assumeYes = args.assumeYes;
         options.now = currentEpochSeconds;
+        options.running = seams_.running;
+        options.statePath = seams_.statePath;
+        options.target = seams_.target;
+        options.keyring = seams_.keyring;
 
         options.onStep = [this](std::string_view what) {
             terminal_.printErr(Terminal::muted(), "  {}...\n", what);
@@ -119,23 +164,21 @@ private:
 
         const ApplyResult result = applyUpdate(*source_, *assets_, options);
 
+        // Done, one way or the other: the binary was replaced or was already current. From here
+        // on nothing can change that, so the exit code is 0 and the report of it can only arrive
+        // or not - and SIGPIPE is ignored while it is written, so that a reader that went away
+        // cannot turn the update into a signal. See Delivery.h.
+        if (result.ok()) {
+            Delivery delivery;
+            {
+                const SigpipeIgnoredForAReport reporting;
+                reportDone(result, out);
+                delivery = deliver(out);
+            }
+            return finishReportOfAnAction(terminal_, delivery, "the update result", 0);
+        }
+
         switch (result.outcome) {
-            case ApplyOutcome::Replaced:
-                terminal_.print(Terminal::success(), "Updated {} -> {}.\n",
-                                toString(result.plan->from), toString(result.plan->to));
-                fmt::print("{}\n", result.detail);
-                // The trusted comment is printed only because it verified, and it is
-                // worth printing because it is the line that names the release the
-                // checksums belong to.
-                if (!result.trustedComment.empty()) {
-                    fmt::print("Signed: {}\n", result.trustedComment);
-                }
-                return 0;
-
-            case ApplyOutcome::AlreadyCurrent:
-                terminal_.print(Terminal::success(), "Up to date ({}).\n", result.detail);
-                return 0;
-
             case ApplyOutcome::Declined:
                 fmt::print(stderr, "Cancelled. {}\n", result.detail);
                 return 1;
@@ -186,6 +229,22 @@ private:
         return 1;
     }
 
+    // What a run that did its job prints. Nothing else goes to `out` from runApply().
+    void reportDone(const ApplyResult& result, CheckedOutput& out) const {
+        if (result.outcome == ApplyOutcome::Replaced) {
+            terminal_.printTo(out, Terminal::success(), "Updated {} -> {}.\n",
+                              toString(result.plan->from), toString(result.plan->to));
+            out.print("{}\n", result.detail);
+            // The trusted comment is printed only because it verified, and it is worth printing
+            // because it is the line that names the release the checksums belong to.
+            if (!result.trustedComment.empty()) {
+                out.print("Signed: {}\n", result.trustedComment);
+            }
+            return;
+        }
+        terminal_.printTo(out, Terminal::success(), "Up to date ({}).\n", result.detail);
+    }
+
     bool confirm(const ApplyPlan& plan) {
         // Without a terminal there is nobody to answer, and treating that as consent
         // would let a cron job replace the binary it is running.
@@ -224,6 +283,7 @@ private:
     const TerminalCaps& caps_;
     std::shared_ptr<VersionSource> source_;
     std::shared_ptr<AssetSource> assets_;
+    Seams seams_;
 };
 
 }  // namespace lyxbosa
