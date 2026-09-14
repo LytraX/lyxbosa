@@ -2210,6 +2210,130 @@ TEST(LinkCoverageTest, AJunctionNotFollowedIsCountedOnTheResult) {
     EXPECT_EQ(followed.totalFilesScanned, 2u);
 }
 
+// A link that loops leads nowhere, so it is counted nowhere: not as a link not followed, and
+// not as an entry the scan could not read - which is what a walk that asked what a link leads
+// to before asking whether it is one made of it, under both settings. One link to itself and
+// one into a ring of three outside the site. tests/file_walker_test.cpp has the walk's side;
+// the companion, where a link that does lead somewhere is still counted, is
+// ALinkNotFollowedIsCountedOnTheResult above.
+TEST(LinkCoverageTest, ALinkThatLoopsIsCountedNowhere) {
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    const fs::path site = dir.path() / "site";
+    const fs::path ring = dir.path() / "ring";
+    writeFile(site / "index.php", "<?php echo 1; ?>\n");
+    fs::create_directories(ring);
+    std::error_code ec;
+    fs::create_symlink("self.php", site / "self.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(ring / "b", ring / "a", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(ring / "c", ring / "b", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(ring / "a", ring / "c", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_symlink(ring / "a", site / "ring", ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    for (const AppConfig& config : {defaultConfigFor(site), followingConfig(site)}) {
+        const bool follow = config.scan.followSymlinks;
+        const ScanResult result = runScan(config);
+
+        EXPECT_EQ(result.entriesUnreadable, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(result.linksNotFollowed, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(result.directoriesUnreadable, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(result.totalFilesScanned, 1u) << "index.php alone, followSymlinks " << follow;
+        EXPECT_EQ(result.skips.total(), 0u) << "followSymlinks " << follow;
+    }
+}
+
+// The same through the whole scanner for junctions, which need no privilege and which Windows
+// answers with its own word for a loop.
+TEST(LinkCoverageTest, AJunctionThatLoopsIsCountedNowhere) {
+    TempDir dir;
+    const fs::path site = dir.path() / "site";
+    const fs::path ring = dir.path() / "ring";
+    writeFile(site / "index.php", "<?php echo 1; ?>\n");
+    fs::create_directories(ring);
+    const std::pair<fs::path, fs::path> junctions[] = {
+        {site / "self", site / "self"}, {ring / "a", ring / "b"}, {ring / "b", ring / "c"},
+        {ring / "c", ring / "a"},       {site / "ring", ring / "a"},
+    };
+    // Each removed before the directory is, so no recursive delete is asked to resolve one.
+    struct RemoveJunctions {
+        std::vector<fs::path> paths;
+        ~RemoveJunctions() {
+            for (const auto& path : paths) test::removeReparsePoint(path);
+        }
+    } removeJunctions;
+    for (const auto& [link, target] : junctions) {
+        if (const auto why = test::whyCannotCreateJunction(link, target)) {
+            GTEST_SKIP() << *why;
+        }
+        removeJunctions.paths.push_back(link);
+    }
+
+    for (const AppConfig& config : {defaultConfigFor(site), followingConfig(site)}) {
+        const bool follow = config.scan.followSymlinks;
+        const ScanResult result = runScan(config);
+
+        EXPECT_EQ(result.entriesUnreadable, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(result.linksNotFollowed, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(result.directoriesUnreadable, 0u) << "followSymlinks " << follow;
+        EXPECT_EQ(result.totalFilesScanned, 1u) << "followSymlinks " << follow;
+    }
+}
+
+// A link into a directory the scanning user may not search says nothing about what it leads
+// to, and which count holds it is decided by whether the scan meant to go through it. By
+// default it did not, so it is a link not followed; with follow_symlinks on it did, and could
+// not, so it is an entry the scan could not read. A scanner that counted it as unreadable
+// under both settings fails the first half, and one that passed it by as though it looped
+// fails both.
+TEST(LinkCoverageTest, ALinkIntoADirectoryThisUserMayNotSearchIsCountedByTheSetting) {
+    if (const auto why = test::whyCannotDenyOwnAccess()) {
+        GTEST_SKIP() << *why << " - a link into a mode-000 directory would still be followed";
+    }
+    if (const auto why = test::whyCannotCreateSymlinks()) {
+        GTEST_SKIP() << *why;
+    }
+    TempDir dir;
+    const fs::path site = dir.path() / "site";
+    const fs::path locked = dir.path() / "locked";
+    writeFile(site / "index.php", "<?php echo 1; ?>\n");
+    writeFile(locked / "config.php", "<?php echo 2; ?>\n");
+    writeFile(locked / "shared" / "lib.php", "<?php echo 3; ?>\n");
+    std::error_code ec;
+    fs::create_symlink(locked / "config.php", site / "config.php", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::create_directory_symlink(locked / "shared", site / "shared", ec);
+    ASSERT_FALSE(ec) << ec.message();
+    fs::permissions(locked, fs::perms::none);
+    // Given back before TempDir deletes the tree, which it cannot do through a closed directory.
+    struct Unlock {
+        fs::path path;
+        ~Unlock() {
+            std::error_code ignored;
+            fs::permissions(path, fs::perms::owner_all, fs::perm_options::add, ignored);
+        }
+    } unlock{locked};
+
+    const ScanResult byDefault = runScan(defaultConfigFor(site));
+    EXPECT_EQ(byDefault.linksNotFollowed, 2u) << "the file link and the directory link";
+    EXPECT_EQ(byDefault.entriesUnreadable, 0u)
+        << "a link the scan was told not to follow was followed to ask its type";
+    EXPECT_EQ(byDefault.directoriesUnreadable, 0u);
+    EXPECT_EQ(byDefault.totalFilesScanned, 1u);
+
+    const ScanResult followed = runScan(followingConfig(site));
+    EXPECT_EQ(followed.entriesUnreadable, 2u) << "the file link and the directory link";
+    EXPECT_EQ(followed.linksNotFollowed, 0u);
+    EXPECT_EQ(followed.directoriesUnreadable, 0u);
+    EXPECT_EQ(followed.totalFilesScanned, 1u);
+}
+
 TEST(LinkCoverageTest, TheSummarySaysItAndSaysNothingWhenThereIsNone) {
     ScanResult withLinks;
     withLinks.totalDirectoriesScanned = 1;
@@ -2271,26 +2395,48 @@ TEST(LinkCoverageTest, ALinkNotFollowedDoesNotMoveTheExitCode) {
 // Entries whose type cannot be read
 // ===========================================================================
 //
-// An entry the host would not describe - an app execution alias on Windows, a link to itself
-// or to something this user may not reach on Linux - was passed by with every count at zero,
-// and when it was the last entry of a directory, that directory was counted unreadable
+// An entry the host would not describe - an app execution alias on Windows, or, when links are
+// followed, a link to something this user may not reach - was passed by with every count at
+// zero, and when it was the last entry of a directory, that directory was counted unreadable
 // although it had been read. tests/file_walker_test.cpp has the walk's side and says how each
 // was measured. These hold the count to the rule the loop and link counts above are held to:
 // on the result, in the summary only when it is not zero, in the JSON always, and moving no
 // exit code.
+//
+// The cases that need such an entry scan with follow_symlinks on, which is the setting under
+// which test::EntryOfUnknownType is one on every platform. With it off, the POSIX fixture is a
+// link not followed: LinkCoverageTest above has that half.
+
+namespace {
+
+// The configuration the scan command reads by default, with follow_symlinks on - as text, for
+// the cases that go through ScanUseCase and so take a file rather than an AppConfig.
+std::string followingConfigText() {
+    std::string text = Config::generateDefault();
+    const std::string off = "follow_symlinks: false";
+    const size_t at = text.find(off);
+    if (at != std::string::npos) {
+        text.replace(at, off.size(), "follow_symlinks: true");
+    }
+    return text;
+}
+
+}  // namespace
 
 TEST(EntryCoverageTest, AnEntryWhoseTypeCannotBeReadIsCountedOnTheResult) {
     TempDir dir;
     const fs::path site = dir.path() / "site";
     writeFile(site / "index.php", "<?php echo 1; ?>\n");
     fs::create_directories(site / "sub");
-    for (const fs::path& entry : {site / "unknown", site / "sub" / "unknown"}) {
-        if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(entry)) {
-            GTEST_SKIP() << *why;
+    const test::EntryOfUnknownType inRoot(site / "unknown", dir.path() / "elsewhere");
+    const test::EntryOfUnknownType inSub(site / "sub" / "unknown", dir.path() / "elsewhere");
+    for (const auto* unknown : {&inRoot, &inSub}) {
+        if (unknown->whyNot()) {
+            GTEST_SKIP() << *unknown->whyNot();
         }
     }
 
-    const ScanResult result = runScan(defaultConfigFor(site));
+    const ScanResult result = runScan(followingConfig(site));
 
     EXPECT_EQ(result.entriesUnreadable, 2u) << "one in the root and one alone in sub";
     EXPECT_EQ(result.directoriesUnreadable, 0u)
@@ -2365,8 +2511,9 @@ TEST(EntryCoverageTest, AnEntryWhoseTypeCannotBeReadDoesNotMoveTheExitCode) {
     TempDir dir;
     const fs::path clean = dir.path() / "clean";
     writeFile(clean / "index.php", "<?php echo 1; ?>\n");
-    if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(clean / "unknown")) {
-        GTEST_SKIP() << *why;
+    const test::EntryOfUnknownType inClean(clean / "unknown", dir.path() / "elsewhere");
+    if (inClean.whyNot()) {
+        GTEST_SKIP() << *inClean.whyNot();
     }
 
     const fs::path hostile = dir.path() / "hostile";
@@ -2374,13 +2521,26 @@ TEST(EntryCoverageTest, AnEntryWhoseTypeCannotBeReadDoesNotMoveTheExitCode) {
     if (const auto why = test::whyTheFixtureIsNotOnDisk(hostile / "shell.php", kShell)) {
         GTEST_SKIP() << *why;
     }
-    if (const auto why = test::whyCannotMakeAnEntryOfUnknownType(hostile / "unknown")) {
-        GTEST_SKIP() << *why;
+    const test::EntryOfUnknownType inHostile(hostile / "unknown", dir.path() / "elsewhere");
+    if (inHostile.whyNot()) {
+        GTEST_SKIP() << *inHostile.whyNot();
     }
 
-    EXPECT_EQ(scanExitCode({clean}, dir.file("clean.txt").string()), 0)
+    const fs::path config = dir.file("following.yaml");
+    writeFile(config, followingConfigText());
+
+    // The exit codes below say nothing unless the scan they come from counted the entry, and
+    // with the configuration's setting lost on the way it would be a link not followed instead.
+    // So the same text is asked first, through the scanner, whether it does.
+    AppConfig asRead = Config::loadFromString(followingConfigText());
+    asRead.scan.directories = {clean.string()};
+    ASSERT_EQ(runScan(asRead).entriesUnreadable, 1u)
+        << "the configuration these scans read does not make the fixture an entry of unknown "
+           "type, so the exit codes below would observe nothing";
+
+    EXPECT_EQ(scanExitCode({clean}, dir.file("clean.txt").string(), config), 0)
         << "an entry of unknown type is not an incomplete answer";
-    EXPECT_EQ(scanExitCode({hostile}, dir.file("hostile.txt").string()), 2)
+    EXPECT_EQ(scanExitCode({hostile}, dir.file("hostile.txt").string(), config), 2)
         << "and it does not displace the finding either";
 }
 

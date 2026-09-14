@@ -266,8 +266,10 @@ struct ScanResult {
     size_t directoriesUnreadable = 0;
 
     // Entries the walk found in a directory it read and could not ask the type of: an app
-    // execution alias on Windows, or a link to something behind a directory this user may
-    // not search. Nothing was read from any of them.
+    // execution alias on Windows, or, with scan.follow_symlinks on, a link to something behind
+    // a directory this user may not search. Nothing was read from any of them. With the
+    // setting off that link is in linksNotFollowed instead, because a link is recognised
+    // before anything asks what it leads to.
     //
     // Beside the unreadable directories and not inside them, and not in the file tally
     // either, because each of those says what the thing was and nobody can say that here -
@@ -275,8 +277,9 @@ struct ScanResult {
     // chose, like the two beside it, and like them it moves no exit code; see the ranking in
     // ScanUseCase. A count and not a list, as directoriesUnreadable is.
     //
-    // Not a link that leads nowhere, which is answered - there is nothing there - and not a
-    // FIFO, socket or device node, whose type was read and which has no content to scan.
+    // Not a link that leads nowhere, which is answered - there is nothing there, whether the
+    // link is dangling or loops back through itself - and not a FIFO, socket or device node,
+    // whose type was read and which has no content to scan.
     size_t entriesUnreadable = 0;
 
     // Directories the walk declined to enter because entering one would have re-entered
@@ -298,7 +301,9 @@ struct ScanResult {
     size_t directoriesCycleSkipped = 0;
 
     // Links the walk did not go through because scan.follow_symlinks is off: symbolic
-    // links to a directory or a file and, on Windows, directory junctions.
+    // links to a directory or a file and, on Windows, directory junctions - and a link whose
+    // target the host would not describe, such as one into a directory the scanning user may
+    // not search, which may lead to either. Not a link that leads nowhere, dangling or looping.
     //
     // Beside the loop count and unlike it, because this one can be a gap. Whatever is
     // reachable only through such a link was not read, and nothing else in the result says

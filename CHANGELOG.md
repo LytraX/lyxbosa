@@ -22,6 +22,34 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+### Fixed
+
+- **A link that leads back to itself is no longer counted as an entry the scan could not
+  read.** The scanner asked what a link led to before asking whether it was a link, and counted
+  a refusal as `Entries unreadable` — with `scan.follow_symlinks` off too, when the scan would
+  never have read through the link at all. A symbolic link to itself, a link into a ring of
+  links and, on Windows, a directory junction to itself were each counted, while a dangling
+  link beside them was not. Whether an entry is a link is now asked first. A link that leads
+  nowhere — dangling, or back to itself directly or around a ring — is counted nowhere under
+  either setting. A link into a directory the scanning user may not search is counted in
+  `Links not followed` with the setting off, because it was never going to be followed, and in
+  `Entries unreadable` with it on, because then the scan meant to read what it leads to and
+  could not.
+
+### Compatibility
+
+- **`Entries unreadable` and `entriesUnreadable` fall by one for each link that leads back to
+  itself**, directly or around a ring of links, under either `scan.follow_symlinks` setting: a
+  symbolic link on every platform, and a directory junction on Windows. No other count rises
+  in its place.
+- **With the default `scan.follow_symlinks: false`, a link into a directory the scanning user
+  may not search moves from `Entries unreadable` to `Links not followed`**: `entriesUnreadable`
+  falls by one for each such link and `linksNotFollowed` rises by one. On Windows the same holds
+  for a link or junction into a directory an access control list closes to the scanning user.
+  With the setting on, such a link is still counted in `Entries unreadable`.
+- **No exit code and no finding changes.** None of these links was read before and none is
+  read now, and neither count moves the exit code.
+
 ## [3.2.0] - 2026-09-14
 
 A default Windows scan no longer walks through a directory junction, and what a walk passed by is counted.

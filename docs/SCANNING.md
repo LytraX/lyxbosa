@@ -326,9 +326,9 @@ of a directory the scanning user may list but not search, which is entered and c
 listed.
 
 An entry the host will not describe is a third. When the scanner cannot ask whether an
-entry is a file or a directory — an app execution alias in a Windows profile, or a link to
-something behind a directory the scanning user may not search, or a link that leads back to
-itself — nothing behind it is read, and it is counted:
+entry is a file or a directory — an app execution alias in a Windows profile, or, with
+`scan.follow_symlinks` on, a link to something behind a directory the scanning user may not
+search — nothing behind it is read, and it is counted:
 
 ```
 Entries unreadable: 3 (the host would not say whether each is a file or a directory - none was scanned)
@@ -337,7 +337,11 @@ Entries unreadable: 3 (the host would not say whether each is a file or a direct
 The line appears only when the count is not zero, and in JSON the count is
 `entriesUnreadable`, always present. It is in neither `Files not scanned` nor `Directories
 unreadable`, because each of those says what the thing was, and the directory the entry was
-listed in is not reported unreadable: it was read. A link that leads nowhere is not counted.
+listed in is not reported unreadable: it was read. With `scan.follow_symlinks` off, a link is
+recognised as a link before anything asks what it leads to, so a link the scanner cannot see
+through is counted in `Links not followed` below and never here. A link that leads nowhere —
+one whose target is gone, or one that leads back to itself, directly or around a ring of
+links — is not counted under either setting.
 Like the unreadable directories beside it, **it does not change the exit code**.
 
 A FIFO, a socket or a device node is neither read nor counted. None of them has contents a
@@ -383,8 +387,12 @@ Links not followed: 3 (scan.follow_symlinks is off - anything reached only throu
 ```
 
 The line appears only when the count is not zero, and in JSON the count is
-`linksNotFollowed`, always present. A link that leads nowhere is not counted, and nothing
-is counted with the setting on. **It does not change the exit code**: the configuration
+`linksNotFollowed`, always present. It includes a link whose target the scanner may not look
+at — one into a directory the scanning user may not search — because it may lead to a file
+or a tree, and with the setting off neither was going to be read; with the setting on, the
+same link is counted in `Entries unreadable` instead. A link to a directory is not counted by
+a scan that does not recurse, which enters no directory either way. A link that leads nowhere,
+dangling or leading back to itself, is not counted, and nothing is counted with the setting on. **It does not change the exit code**: the configuration
 asked for links not to be followed, as an exclude pattern asks for files not to be read.
 
 A tree can lead back into itself — a link pointing at a directory the walk is already

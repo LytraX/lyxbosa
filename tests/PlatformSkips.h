@@ -370,12 +370,20 @@ inline void removeReparsePoint(const std::filesystem::path& link) {
 // passed by. Each platform makes it differently, and each way was measured before it was
 // written here:
 //
-//   POSIX    a symbolic link to itself. Asking its type fails with ELOOP, for every user
-//            including root, so it needs no permission bits and no skip.
+//   POSIX    a symbolic link to a file inside a directory this user may not search. Asking
+//            what it leads to fails with EACCES. It is a link, so it is an entry of unknown
+//            type only to a walk that follows links: a walk that does not asks a link nothing
+//            about its type but that it is one, and counts it as a link not followed. It needs
+//            the permission bits, so it cannot be made as root.
 //   Windows  an app execution alias - the reparse point `winget.exe` and its neighbours are
 //            in %LOCALAPPDATA%\Microsoft\WindowsApps - written with FSCTL_SET_REPARSE_POINT
 //            onto an empty file. Microsoft's library cannot open one to ask its type and
-//            fails with ERROR_CANT_ACCESS_FILE, exactly as it does for a real alias.
+//            fails with ERROR_CANT_ACCESS_FILE, exactly as it does for a real alias. It is not
+//            a link, so it is an entry of unknown type under either setting.
+//
+// A link to itself is not one on either platform. Asking what it leads to fails - ELOOP on
+// POSIX, ERROR_CANT_RESOLVE_FILENAME on Windows - and that failure is the host saying it
+// leads nowhere, which is an answer.
 //
 // Either way the answer is taken from the host after the entry is made: if asking its type
 // succeeds, or says the path leads nowhere, nothing can be observed and the sentence says so.
@@ -389,7 +397,8 @@ inline std::optional<std::string> whyTheTypeWasAnswered(const std::filesystem::p
         return std::string("this host answered the type of ") + what + ", so no entry whose "
                "type cannot be read can be made here to observe";
     }
-    if (type == std::filesystem::file_type::not_found) {
+    if (type == std::filesystem::file_type::not_found ||
+        ec == std::errc::too_many_symbolic_link_levels) {
         return std::string("this host says ") + what + " leads nowhere (" + ec.message() +
                "), which is an answer, so no entry whose type cannot be read can be made here "
                "to observe";
@@ -399,61 +408,122 @@ inline std::optional<std::string> whyTheTypeWasAnswered(const std::filesystem::p
 
 }  // namespace detail
 
-// Nullopt when an entry whose type cannot be read now stands at `entry`.
-inline std::optional<std::string> whyCannotMakeAnEntryOfUnknownType(
-    const std::filesystem::path& entry) {
+// An entry whose type cannot be read, made at a path a case names.
+//
+// An object rather than a function returning the sentence, because the POSIX entry leaves a
+// directory this user may not search, and nothing can delete that directory until the
+// permission is given back. The destructor gives it back, so declare the fixture after the
+// temporary tree it is made in and it is undone before the tree is deleted.
+class EntryOfUnknownType {
+public:
+    // `entry` is where it stands. `elsewhere` is a directory outside every tree the case walks,
+    // created if it is not there, which holds what the POSIX entry leads to.
+    EntryOfUnknownType(const std::filesystem::path& entry, const std::filesystem::path& elsewhere) {
+        why_ = make(entry, elsewhere);
+    }
+    ~EntryOfUnknownType() {
+        if (!locked_.empty()) {
+            std::error_code ec;
+            std::filesystem::permissions(locked_, std::filesystem::perms::owner_all,
+                                         std::filesystem::perm_options::add, ec);
+        }
+    }
+    EntryOfUnknownType(const EntryOfUnknownType&) = delete;
+    EntryOfUnknownType& operator=(const EntryOfUnknownType&) = delete;
+
+    // Nullopt when the entry now stands at `entry`; otherwise why it could not be made.
+    const std::optional<std::string>& whyNot() const { return why_; }
+
+    // Whether the entry is a link. A walk that does not follow links counts one as a link not
+    // followed and not as an entry of unknown type, so a case asserting under both settings
+    // asks this for which count the first setting's answer belongs in.
+    static bool isLink() {
 #ifdef _WIN32
-    const HANDLE handle =
-        ::CreateFileW(entry.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
-                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) {
-        return "the file for an app execution alias could not be created (" +
-               detail::windowsError(::GetLastError()) + "), so the walk's handling of an entry "
-               "whose type cannot be read cannot be observed";
-    }
-    // Version 3 of the alias: package family name, application user model id, target and
-    // application type, each NUL-terminated. Well-formed and never launched.
-    std::vector<wchar_t> strings;
-    for (const wchar_t* part : {L"LyxBoSa.Fixture_0000000000000",
-                                L"LyxBoSa.Fixture_0000000000000!App",
-                                L"C:\\Windows\\System32\\notepad.exe", L"0"}) {
-        strings.insert(strings.end(), part, part + std::wcslen(part) + 1);
-    }
-    const ULONG tag = 0x8000001BL;  // IO_REPARSE_TAG_APPEXECLINK
-    const ULONG version = 3;
-    const auto dataLength =
-        static_cast<USHORT>(sizeof(version) + strings.size() * sizeof(wchar_t));
-    std::vector<unsigned char> data(8 + dataLength, 0);
-    std::memcpy(data.data(), &tag, sizeof(tag));
-    std::memcpy(data.data() + 4, &dataLength, sizeof(dataLength));
-    std::memcpy(data.data() + 8, &version, sizeof(version));
-    std::memcpy(data.data() + 12, strings.data(), strings.size() * sizeof(wchar_t));
-    DWORD returned = 0;
-    const BOOL written = ::DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, data.data(),
-                                           static_cast<DWORD>(data.size()), nullptr, 0,
-                                           &returned, nullptr);
-    const DWORD error = ::GetLastError();
-    ::CloseHandle(handle);
-    if (!written) {
-        std::error_code ec;
-        std::filesystem::remove(entry, ec);
-        return "this host would not let this process make an app execution alias - "
-               "FSCTL_SET_REPARSE_POINT was refused (" + detail::windowsError(error) +
-               ") - so the walk's handling of an entry whose type cannot be read cannot be "
-               "observed";
-    }
-    return detail::whyTheTypeWasAnswered(entry, "an app execution alias");
+        return false;
 #else
-    std::error_code ec;
-    std::filesystem::create_symlink(entry.filename(), entry, ec);
-    if (ec) {
-        return "a symbolic link to itself could not be created (" + ec.message() +
-               "), so the walk's handling of an entry whose type cannot be read cannot be "
-               "observed";
-    }
-    return detail::whyTheTypeWasAnswered(entry, "a symbolic link to itself");
+        return true;
 #endif
-}
+    }
+
+private:
+    std::optional<std::string> make(const std::filesystem::path& entry,
+                                     const std::filesystem::path& elsewhere) {
+        std::error_code ec;
+#ifdef _WIN32
+        (void)elsewhere;
+        const HANDLE handle =
+            ::CreateFileW(entry.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                          FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            return "the file for an app execution alias could not be created (" +
+                   detail::windowsError(::GetLastError()) + "), so the walk's handling of an "
+                   "entry whose type cannot be read cannot be observed";
+        }
+        // Version 3 of the alias: package family name, application user model id, target and
+        // application type, each NUL-terminated. Well-formed and never launched.
+        std::vector<wchar_t> strings;
+        for (const wchar_t* part : {L"LyxBoSa.Fixture_0000000000000",
+                                    L"LyxBoSa.Fixture_0000000000000!App",
+                                    L"C:\\Windows\\System32\\notepad.exe", L"0"}) {
+            strings.insert(strings.end(), part, part + std::wcslen(part) + 1);
+        }
+        const ULONG tag = 0x8000001BL;  // IO_REPARSE_TAG_APPEXECLINK
+        const ULONG version = 3;
+        const auto dataLength =
+            static_cast<USHORT>(sizeof(version) + strings.size() * sizeof(wchar_t));
+        std::vector<unsigned char> data(8 + dataLength, 0);
+        std::memcpy(data.data(), &tag, sizeof(tag));
+        std::memcpy(data.data() + 4, &dataLength, sizeof(dataLength));
+        std::memcpy(data.data() + 8, &version, sizeof(version));
+        std::memcpy(data.data() + 12, strings.data(), strings.size() * sizeof(wchar_t));
+        DWORD returned = 0;
+        const BOOL written = ::DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, data.data(),
+                                               static_cast<DWORD>(data.size()), nullptr, 0,
+                                               &returned, nullptr);
+        const DWORD error = ::GetLastError();
+        ::CloseHandle(handle);
+        if (!written) {
+            std::filesystem::remove(entry, ec);
+            return "this host would not let this process make an app execution alias - "
+                   "FSCTL_SET_REPARSE_POINT was refused (" + detail::windowsError(error) +
+                   ") - so the walk's handling of an entry whose type cannot be read cannot be "
+                   "observed";
+        }
+        return detail::whyTheTypeWasAnswered(entry, "an app execution alias");
+#else
+        if (const auto why = whyCannotDenyOwnAccess()) {
+            return *why + " - a link into a directory this user may not search would still "
+                          "say what it leads to";
+        }
+        // One directory per entry, so two entries in one case never share a lock.
+        const std::filesystem::path locked =
+            elsewhere / ("unsearchable-" + std::to_string(serial_++));
+        std::filesystem::create_directories(locked, ec);
+        if (!ec) {
+            std::ofstream(locked / "target.php") << "<?php echo 1; ?>\n";
+            std::filesystem::create_symlink(locked / "target.php", entry, ec);
+        }
+        if (ec) {
+            return "a symbolic link into a directory could not be created (" + ec.message() +
+                   "), so the walk's handling of an entry whose type cannot be read cannot be "
+                   "observed";
+        }
+        std::filesystem::permissions(locked, std::filesystem::perms::none, ec);
+        if (ec) {
+            return "the directory the link leads into could not be closed to this user (" +
+                   ec.message() + "), so the walk's handling of an entry whose type cannot be "
+                   "read cannot be observed";
+        }
+        locked_ = locked;
+        return detail::whyTheTypeWasAnswered(entry, "a symbolic link into a directory this "
+                                                    "user may not search");
+#endif
+    }
+
+    std::optional<std::string> why_;
+    std::filesystem::path locked_;
+    static inline int serial_ = 0;
+};
 
 // Nullopt when `dir` now holds a FIFO named `fifo` and a socket named `socket`, both of
 // which answer their type, and neither of which is a file or a directory.
