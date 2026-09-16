@@ -1,5 +1,7 @@
 #include "update/Checksums.h"
 
+#include "infrastructure/PathUtils.h"
+
 #include <fmt/format.h>
 
 #include <array>
@@ -100,7 +102,7 @@ std::optional<std::string> sha256File(const std::filesystem::path& path) {
     (void)path;
     return std::nullopt;
 #else
-    std::FILE* file = std::fopen(path.string().c_str(), "rb");
+    std::FILE* file = openPathForStdio(path, "rb");
     if (file == nullptr) return std::nullopt;
 
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();

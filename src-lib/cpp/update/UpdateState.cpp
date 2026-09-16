@@ -8,6 +8,10 @@
 #include <string_view>
 #include <system_error>
 
+#ifdef _WIN32
+#include <cwchar>
+#endif
+
 namespace lyxbosa {
 
 namespace {
@@ -22,9 +26,21 @@ constexpr std::uintmax_t kMaxStateBytes = 4096;
 // corrupted file cannot turn into a large allocation or a long message.
 constexpr size_t kMaxVersionChars = 64;
 
-const char* env(const char* name) {
+// An environment variable naming a directory, as a path, or an empty path when it is unset or
+// empty.
+//
+// Read wide on Windows. getenv() hands the value over in the ANSI code page, where a user
+// profile directory holding a character the code page cannot hold arrives with a '?' in its
+// place, which is a name Windows refuses, so no state could be written under it.
+fs::path envPath(const char* name) {
+#ifdef _WIN32
+    const std::wstring wide(name, name + std::char_traits<char>::length(name));
+    const wchar_t* value = _wgetenv(wide.c_str());
+    return (value != nullptr && value[0] != L'\0') ? fs::path(value) : fs::path();
+#else
     const char* value = std::getenv(name);
-    return (value != nullptr && value[0] != '\0') ? value : nullptr;
+    return (value != nullptr && value[0] != '\0') ? fs::path(value) : fs::path();
+#endif
 }
 
 std::string_view trim(std::string_view s) {
@@ -54,31 +70,31 @@ std::optional<uint64_t> parseEpoch(std::string_view s) {
 }  // namespace
 
 std::filesystem::path defaultUpdateStatePath() {
-    if (const char* explicitPath = env("LYXBOSA_UPDATE_STATE")) {
-        return fs::path(explicitPath);
+    if (fs::path explicitPath = envPath("LYXBOSA_UPDATE_STATE"); !explicitPath.empty()) {
+        return explicitPath;
     }
 
 #ifdef _WIN32
-    if (const char* localAppData = env("LOCALAPPDATA")) {
-        return fs::path(localAppData) / "lyxbosa" / "update-check";
+    if (const fs::path localAppData = envPath("LOCALAPPDATA"); !localAppData.empty()) {
+        return localAppData / "lyxbosa" / "update-check";
     }
-    if (const char* profile = env("USERPROFILE")) {
-        return fs::path(profile) / "AppData" / "Local" / "lyxbosa" / "update-check";
+    if (const fs::path profile = envPath("USERPROFILE"); !profile.empty()) {
+        return profile / "AppData" / "Local" / "lyxbosa" / "update-check";
     }
     return {};
 #elif defined(__APPLE__)
-    if (const char* home = env("HOME")) {
-        return fs::path(home) / "Library" / "Caches" / "lyxbosa" / "update-check";
+    if (const fs::path home = envPath("HOME"); !home.empty()) {
+        return home / "Library" / "Caches" / "lyxbosa" / "update-check";
     }
     return {};
 #else
     // XDG: the cache directory rather than the config or data one. Deleting this
     // file must cost nothing, and it must not be something anybody backs up.
-    if (const char* xdgCache = env("XDG_CACHE_HOME")) {
-        return fs::path(xdgCache) / "lyxbosa" / "update-check";
+    if (const fs::path xdgCache = envPath("XDG_CACHE_HOME"); !xdgCache.empty()) {
+        return xdgCache / "lyxbosa" / "update-check";
     }
-    if (const char* home = env("HOME")) {
-        return fs::path(home) / ".cache" / "lyxbosa" / "update-check";
+    if (const fs::path home = envPath("HOME"); !home.empty()) {
+        return home / ".cache" / "lyxbosa" / "update-check";
     }
     return {};
 #endif
@@ -155,7 +171,10 @@ bool writeUpdateState(const std::filesystem::path& path, const UpdateState& stat
 
     // The temp file sits beside the target so the rename stays on one filesystem;
     // a rename across devices is not atomic and on most systems is not permitted.
-    const fs::path tmp = path.string() + ".tmp";
+    // Appended to the native name: path::string() throws on Windows for a directory the code
+    // page cannot spell, and a user profile is exactly such a directory for some users.
+    fs::path tmp = path;
+    tmp += ".tmp";
     {
         std::ofstream out(tmp, std::ios::out | std::ios::binary | std::ios::trunc);
         if (!out) return false;

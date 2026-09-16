@@ -6,6 +6,8 @@
 #include "update/InstallPath.h"
 #include "update/Minisign.h"
 
+#include "infrastructure/PathUtils.h"
+
 #include <fmt/format.h>
 
 #include <cstdio>
@@ -49,7 +51,7 @@ private:
 };
 
 std::optional<std::string> readFile(const std::filesystem::path& path, uint64_t maxBytes) {
-    std::FILE* file = std::fopen(path.string().c_str(), "rb");
+    std::FILE* file = openPathForStdio(path, "rb");
     if (file == nullptr) return std::nullopt;
 
     std::string out;
@@ -181,7 +183,7 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
                       fmt::format("{} is owned by {}; updating it behind the package "
                                   "manager's back leaves its database describing a file "
                                   "that is no longer there",
-                                  target.string(), owner));
+                                  pathForDisplay(target), owner));
     }
 
     // Asked before the download rather than after it, so a user who cannot install the
@@ -269,7 +271,7 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
         const bool agreed = options.confirm && options.confirm(plan);
         if (!agreed) {
             result.outcome = ApplyOutcome::Declined;
-            result.detail = fmt::format("{} is still in place", target.string());
+            result.detail = fmt::format("{} is still in place", pathForDisplay(target));
             return result;
         }
     }
@@ -283,8 +285,10 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
     const std::filesystem::path stagedAsset = stagingPathFor(target);
     // Derived from the same pid-unique name, so two updates running at once do not
     // write over each other's list while verifying it.
-    const std::filesystem::path stagedList = stagedAsset.string() + ".sums";
-    const std::filesystem::path stagedSignature = stagedAsset.string() + ".sums.minisig";
+    std::filesystem::path stagedList = stagedAsset;
+    stagedList += ".sums";
+    std::filesystem::path stagedSignature = stagedAsset;
+    stagedSignature += ".sums.minisig";
     staging.track(stagedAsset);
     staging.track(stagedList);
     staging.track(stagedSignature);
@@ -447,7 +451,7 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
         return result;
     }
 
-    step(options, fmt::format("Replacing {}", target.string()));
+    step(options, fmt::format("Replacing {}", pathForDisplay(target)));
     if (const std::string failure = replaceAtomically(stagedAsset, target); !failure.empty()) {
         result.outcome = ApplyOutcome::ReplaceFailed;
         result.detail = failure;
@@ -456,7 +460,7 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
     staging.forget(stagedAsset);  // renamed away; it is the installed binary now
 
     result.outcome = ApplyOutcome::Replaced;
-    result.detail = fmt::format("{} is now {}", target.string(), toString(plan.to));
+    result.detail = fmt::format("{} is now {}", pathForDisplay(target), toString(plan.to));
 #ifdef _WIN32
     // The process printing this is still the old image, moved aside under a name the
     // next start removes. Said here so that a directory listing taken in the meantime
@@ -464,7 +468,7 @@ ApplyResult applyUpdate(VersionSource& versions, AssetSource& assets,
     if (!reapMovedAsideBinary(target)) {
         result.detail += fmt::format("; the copy you are running was moved to {} and is "
                                      "removed the next time lyxbosa starts",
-                                     movedAsidePathFor(target).filename().string());
+                                     pathForDisplay(movedAsidePathFor(target).filename()));
     }
 #endif
     return result;

@@ -354,7 +354,9 @@ std::vector<std::string> namesIn(const fs::path& directory) {
     std::vector<std::string> names;
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(directory, ec)) {
-        names.push_back(entry.path().filename().string());
+        // UTF-8, not path::string(), which throws on Windows for a directory a case names
+        // outside the code page.
+        names.push_back(pathToUtf8(entry.path().filename()));
     }
     std::sort(names.begin(), names.end());
     return names;
@@ -1421,6 +1423,44 @@ TEST(ApplyTest, ReplacesTheBinaryWhenEverythingChecksOut) {
     EXPECT_EQ(assets.fetched[0], "v2.3.0/SHA256SUMS");
     EXPECT_EQ(assets.fetched[1], "v2.3.0/SHA256SUMS.minisig");
     EXPECT_EQ(assets.fetched[2], "v2.3.0/" + std::string(platformAssetName()));
+}
+
+// An install directory named outside the ANSI code page - which a user profile is, for some
+// users - reaches every step by its native name: the writability probe, the staging file, the
+// hash, the moves, and the sentence that says what happened. A CJK name, because no code page a
+// Windows host of this suite runs under holds one. Every one of those steps once spelled the
+// path with path::string(), and the first of them threw before anything was fetched.
+TEST(ApplyTest, ReplacesTheBinaryInADirectoryNamedOutsideTheCodePage) {
+    TestKey key(1);
+    Fixture fixture;
+#ifdef _WIN32
+    const fs::path directory =
+        fixture.dir.path() / std::wstring{wchar_t(0x8ACB), wchar_t(0x6C42), wchar_t(0x66F8)};
+#else
+    const fs::path directory = fixture.dir.path() / "\xE8\xAB\x8B\xE6\xB1\x82\xE6\x9B\xB8";
+#endif
+    fs::create_directories(directory);
+    fs::remove(fixture.target);
+    fixture.target = directory / kTargetName;
+    installBinary(fixture.target, fixture.oldBinary);
+
+    FakeVersionSource versions("v2.3.0");
+    FakeAssetSource assets;
+    const Release release = goodRelease(key);
+    serve(assets, release);
+
+    const auto keyring = keyringOf(key);
+    const auto result = applyUpdate(versions, assets, fixture.options(keyring));
+
+    ASSERT_EQ(result.outcome, ApplyOutcome::Replaced) << safe_text::sanitize(result.detail);
+    EXPECT_EQ(readFile(fixture.target), release.assetBody);
+    EXPECT_TRUE(stagedBinaryRuns(fixture.target));
+#ifdef _WIN32
+    EXPECT_TRUE(reapedWithin(fixture.target, std::chrono::seconds(5)));
+#endif
+    EXPECT_EQ(namesIn(directory), (std::vector<std::string>{kTargetName}));
+    EXPECT_NE(result.detail.find(pathForDisplay(fixture.target)), std::string::npos)
+        << safe_text::sanitize(result.detail);
 }
 
 TEST(ApplyTest, RefusesABadSignature) {

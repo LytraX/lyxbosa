@@ -71,6 +71,12 @@ commit list that CI generates per tag.
   cover the file.** The include list was asked first, so a `.mdb` inside a tree an exclude
   pattern named came back as merely not included, and a hostile name on it was reported from
   inside the tree the operator had excluded.
+- **On Windows, `update` no longer ends before it fetches anything when the binary is installed
+  in a directory whose name holds a character outside the host's ANSI code page** — a user
+  profile directory is one for some users. Each step spelled the install path in the code page,
+  which fails on such a character, and the first of them ended the process. The file that
+  records when updates were last checked for is also found under such a profile, where the
+  environment variable naming it was read in the code page as well.
 
 ### Compatibility
 
@@ -130,6 +136,8 @@ commit list that CI generates per tag.
 - **A file that `scan.include` does not cover and a `scan.exclude` pattern names no longer
   raises FN findings**, where its name was reported before. It is still counted as
   `excluded`, as it was; a scan whose only findings were such names exits 0 where it exited 2.
+- **On Windows, `update` for a binary installed under a directory outside the ANSI code page
+  exits by what it did**, 0 or 1, where it exited 3 without a word.
 
 ## [3.2.0] - 2026-09-14
 

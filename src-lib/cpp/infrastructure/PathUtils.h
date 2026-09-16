@@ -2,6 +2,7 @@
 
 #include "utils/SafeText.h"
 
+#include <cstdio>
 #include <string>
 #include <filesystem>
 
@@ -35,6 +36,19 @@ inline std::string pathToUtf8(const std::filesystem::path& p) {
     return utf8;
 #else
     return p.string();  // Already UTF-8 on Linux/macOS
+#endif
+}
+
+// A C stream on a path, opened by the path's native name. std::fopen() takes a narrow name,
+// which Windows reads in the ANSI code page, so a caller holding a path had to spell it with
+// path::string() - and that throws for a directory the code page cannot hold. `mode` is the
+// fopen() mode string, and is ASCII.
+inline std::FILE* openPathForStdio(const std::filesystem::path& p, const char* mode) {
+#ifdef _WIN32
+    const std::wstring wideMode(mode, mode + std::char_traits<char>::length(mode));
+    return _wfopen(p.c_str(), wideMode.c_str());
+#else
+    return std::fopen(p.c_str(), mode);
 #endif
 }
 

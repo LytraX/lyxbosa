@@ -1,5 +1,7 @@
 #include "update/InstallPath.h"
 
+#include "infrastructure/PathUtils.h"
+
 #include <fmt/format.h>
 
 #include <array>
@@ -195,8 +197,13 @@ std::filesystem::path stagingPathFor(const std::filesystem::path& target) {
 #else
     const auto pid = static_cast<long>(::getpid());
 #endif
-    auto name = target.filename().string() + fmt::format(".update-{}", pid);
-    return target.parent_path() / name;
+    //
+    // Appended to the native name rather than spelled through path::string(), which throws on
+    // Windows for an install directory the ANSI code page cannot hold - and a binary installed
+    // under a user profile is in exactly such a directory for some users.
+    std::filesystem::path staged = target;
+    staged += fmt::format(".update-{}", pid);
+    return staged;
 }
 
 ReplaceAccess canReplace(const std::filesystem::path& target) {
@@ -209,18 +216,19 @@ ReplaceAccess canReplace(const std::filesystem::path& target) {
 
     std::error_code ec;
     if (!std::filesystem::is_directory(directory, ec) || ec) {
-        out.reason = fmt::format("{} is not a directory", directory.string());
+        out.reason = fmt::format("{} is not a directory", pathForDisplay(directory));
         return out;
     }
 
     // Asked by writing. A stat cannot see a read-only mount, a full filesystem, an
     // immutable attribute or a container's restrictions, and every one of those decides
     // whether the replace below can happen.
-    const auto probe = stagingPathFor(target).string() + ".probe";
-    std::FILE* file = std::fopen(probe.c_str(), "wb");
+    std::filesystem::path probe = stagingPathFor(target);
+    probe += ".probe";
+    std::FILE* file = openPathForStdio(probe, "wb");
     if (file == nullptr) {
         const int error = errno;
-        out.reason = fmt::format("{} is not writable by this user ({})", directory.string(),
+        out.reason = fmt::format("{} is not writable by this user ({})", pathForDisplay(directory),
                                  std::strerror(error));
         return out;
     }
@@ -302,7 +310,7 @@ std::string replaceByMovingAside(const std::filesystem::path& staged,
                                  const std::filesystem::path& target,
                                  std::chrono::milliseconds retryFor) {
     const std::filesystem::path aside = movedAsidePathFor(target);
-    const std::string asideName = aside.filename().string();
+    const std::string asideName = pathForDisplay(aside.filename());
 
     // A .old that an earlier update left and no start since has managed to remove.
     // Best effort: if it is still somebody's running image, the move below reports
@@ -351,7 +359,7 @@ std::string replaceByMovingAside(const std::filesystem::path& staged,
                            "one could not be put back either ({}): it is intact at {} - "
                            "rename it to {} by hand",
                            describeWindowsError(failed), describeWindowsError(rollback),
-                           aside.string(), target.filename().string());
+                           pathForDisplay(aside), pathForDisplay(target.filename()));
     }
 
     // When the target was not this process's own image - a test, or a copy installed
