@@ -84,6 +84,11 @@ commit list that CI generates per tag.
 - **On Windows, an archive past `scan.max_file_size` whose name holds any character past
   ASCII is opened.** It was reported unreadable (ARC003) and nothing inside it was read — a
   Greek name on a Greek installation included, where nothing else about the name went wrong.
+- **On Windows, `check FILE`, `scan DIR`, `--config FILE` and `--output-file FILE` reach a
+  name outside the ANSI code page.** The command line was read in the code page, which turns
+  such a character into `?`, so `check` answered `File not found: ...\???.txt` and `scan`
+  refused the directory as missing, however the name was typed. It is read as UTF-16 and
+  split into arguments exactly as before.
 - **On Windows, a path written in the configuration file — a directory to scan,
   `actions.quarantine.directory`, `actions.report.file`, the file `--config` names — is the
   path it spells, and a `scan.include` or `scan.exclude` pattern holding a character past ASCII
@@ -155,6 +160,8 @@ commit list that CI generates per tag.
   `excluded`, as it was; a scan whose only findings were such names exits 0 where it exited 2.
 - **On Windows, a scan or `check` of a tree, a file or an archive named outside the ANSI code
   page exits 0, 1 or 2 by what it found**, with a complete report, where it exited 3.
+- **On Windows, `check` and `scan` given a name outside the ANSI code page on the command line
+  read that file or directory**, and exit by what they found where they exited 1.
 - **On Windows, a member row's `path` changes** in the JSON, CSV and text reports for a member
   whose name, or whose container's name, holds a character past ASCII: from the code page's
   spelling to the name. `pathBytesHex` and `file_bytes_hex` change with it, and disappear from
