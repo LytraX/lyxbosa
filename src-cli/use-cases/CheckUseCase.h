@@ -62,7 +62,10 @@ private:
         // echoed raw writes the analyst's clipboard on the way past. The member lines
         // further down already escaped theirs, so one screen was answering the same
         // question two ways: the container's name raw and its members' escaped.
-        std::filesystem::path filePath(*args.checkFile);
+        //
+        // UTF-8, as main() hands every argument over, and turned into a path by name: the
+        // narrow constructor decodes it in the ANSI code page on Windows. See PathUtils.h.
+        const std::filesystem::path filePath = pathFromUtf8(*args.checkFile);
         if (!std::filesystem::exists(filePath)) {
             terminal_.printErr(Terminal::error(), "Error: File not found: {}\n", pathForDisplay(filePath));
             return 1;
@@ -263,7 +266,7 @@ private:
     bool loadConfig(const CliArgs& args, AppConfig& config) {
         if (args.configFile) {
             try {
-                config = Config::loadFromFile(*args.configFile);
+                config = Config::loadFromFile(pathFromUtf8(*args.configFile));
             } catch (const ConfigError& e) {
                 terminal_.printErr(Terminal::error(), "Error: {}\n", e.what());
                 return false;

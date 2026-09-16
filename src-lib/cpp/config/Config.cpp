@@ -298,12 +298,12 @@ std::optional<std::string> ruleTextProblem(const RuleConfig& rule, size_t positi
 
 AppConfig Config::loadFromFile(const std::filesystem::path& path) {
     if (!std::filesystem::exists(path)) {
-        throw ConfigError(fmt::format("Configuration file not found: {}", path.string()));
+        throw ConfigError(fmt::format("Configuration file not found: {}", pathForDisplay(path)));
     }
 
     std::ifstream file(path);
     if (!file) {
-        throw ConfigError(fmt::format("Cannot open configuration file: {}", path.string()));
+        throw ConfigError(fmt::format("Cannot open configuration file: {}", pathForDisplay(path)));
     }
 
     std::stringstream buffer;
@@ -903,7 +903,7 @@ void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
     // and this block is printed before the operator has agreed to anything.
     fmt::print(stderr, "Directories ({})\n", config.scan.directories.size());
     for (const auto& dir : config.scan.directories) {
-        fmt::print(stderr, "    {}\n", pathForDisplay(std::filesystem::path(dir)));
+        fmt::print(stderr, "    {}\n", pathForDisplay(pathFromUtf8(dir)));
     }
     fmt::print(stderr, "\n");
 
@@ -961,7 +961,7 @@ void Config::printSummary(const AppConfig& config, size_t width, bool verbose) {
     // Actions - the other half of "what will be touched".
     std::string quarantine = config.actions.quarantine.enabled
         ? fmt::format("quarantine to {}",
-                      pathForDisplay(std::filesystem::path(config.actions.quarantine.directory)))
+                      pathForDisplay(pathFromUtf8(config.actions.quarantine.directory)))
         : std::string("quarantine disabled");
     printFactLine("Actions", {
         quarantine,

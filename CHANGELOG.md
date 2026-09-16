@@ -71,6 +71,23 @@ commit list that CI generates per tag.
   cover the file.** The include list was asked first, so a `.mdb` inside a tree an exclude
   pattern named came back as merely not included, and a hostile name on it was reported from
   inside the tree the operator had excluded.
+- **On Windows, a file, a directory or an archive named with a character outside the host's
+  ANSI code page no longer ends a scan.** Which names did depended on the host: a Japanese name
+  on a Western or a Greek installation, U+009B on either, an `é` on a Greek one. The scan
+  exited 3 with only the first ten bytes of its report written, whether or not the name raised
+  anything, and a name anywhere in the path above a file did the same. Names are converted
+  between UTF-16 and UTF-8 directly and the code page is never consulted.
+- **On Windows, an archive member is reported under its own name.** Its address was decoded
+  in the code page, so on a Greek installation a member named `α.php` was reported as
+  `Ξ±.php`, and a member of a Greek-named archive carried a `pathBytesHex` that spelled neither.
+  The findings were right; the address beside them was not.
+- **On Windows, an archive past `scan.max_file_size` whose name holds any character past
+  ASCII is opened.** It was reported unreadable (ARC003) and nothing inside it was read — a
+  Greek name on a Greek installation included, where nothing else about the name went wrong.
+- **On Windows, a path written in the configuration file — a directory to scan,
+  `actions.quarantine.directory`, `actions.report.file`, the file `--config` names — is the
+  path it spells, and a `scan.include` or `scan.exclude` pattern holding a character past ASCII
+  matches the names it spells.** Both were read in the code page.
 - **On Windows, `update` no longer ends before it fetches anything when the binary is installed
   in a directory whose name holds a character outside the host's ANSI code page** — a user
   profile directory is one for some users. Each step spelled the install path in the code page,
@@ -136,6 +153,18 @@ commit list that CI generates per tag.
 - **A file that `scan.include` does not cover and a `scan.exclude` pattern names no longer
   raises FN findings**, where its name was reported before. It is still counted as
   `excluded`, as it was; a scan whose only findings were such names exits 0 where it exited 2.
+- **On Windows, a scan or `check` of a tree, a file or an archive named outside the ANSI code
+  page exits 0, 1 or 2 by what it found**, with a complete report, where it exited 3.
+- **On Windows, a member row's `path` changes** in the JSON, CSV and text reports for a member
+  whose name, or whose container's name, holds a character past ASCII: from the code page's
+  spelling to the name. `pathBytesHex` and `file_bytes_hex` change with it, and disappear from
+  a row that carried them only because the misspelling held a control character.
+- **On Windows, an archive past `scan.max_file_size` with such a name reports its members and
+  no ARC003**, so `check` on one exits 0 or 2 where it exited 1.
+- **On Windows, a configuration file is read as UTF-8, as YAML is.** One saved in the ANSI code
+  page instead, whose paths hold characters past ASCII, no longer names them: a directory to
+  scan in it is refused as missing, exit 1, and a pattern no longer matches. Save it as UTF-8;
+  a configuration `init-config` wrote already is.
 - **On Windows, `update` for a binary installed under a directory outside the ANSI code page
   exits by what it did**, 0 or 1, where it exited 3 without a word.
 

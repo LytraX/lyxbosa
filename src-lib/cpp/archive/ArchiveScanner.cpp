@@ -132,7 +132,7 @@ std::optional<SkipReason> ArchiveScanner::selectionSkip(const std::string& name,
 
     // The same include/exclude the operator wrote for loose files. A tree
     // excluded on disk must not come back through a backup of itself.
-    if (!filters.matchesFilters(std::filesystem::path(name))) {
+    if (!filters.matchesFilters(pathFromUtf8(name))) {
         return SkipReason::Policy;
     }
 
@@ -216,7 +216,7 @@ std::vector<FileMatch> ArchiveScanner::nameFindings(const Entry& entry,
     // The pattern is asked only of a name that raised something. The examination allocates
     // nothing for an ordinary name, and a glob list over every member of a 28,000-member
     // backup would be the cost of this whole feature spent on names that say nothing.
-    if (!named.empty() && filters_.filterVerdict(std::filesystem::path(normalized)) ==
+    if (!named.empty() && filters_.filterVerdict(pathFromUtf8(normalized)) ==
                               FileWalker::FilterVerdict::Excluded) {
         named.clear();
     }
@@ -228,8 +228,8 @@ void ArchiveScanner::reportUnopened(const Context& ctx, std::string_view member,
     if (named.empty() || !onFinding_) {
         return;
     }
-    const std::filesystem::path display(ctx.display + std::string(kMemberSeparator) +
-                                        std::string(member));
+    const std::filesystem::path display =
+        pathFromUtf8(ctx.display + std::string(kMemberSeparator) + std::string(member));
     onFinding_(display, size, std::move(named), why);
 }
 
@@ -238,7 +238,11 @@ void ArchiveScanner::scanMemberBytes(const std::string& memberDisplay, std::stri
     ++ctx.stats->membersScanned;
     ctx.stats->bytesExpanded += bytes.size();
 
-    const std::filesystem::path display(memberDisplay);
+    // A member's address is UTF-8 - the container's name through pathToUtf8(), the member's
+    // as the archive stores it - and becomes a path here for the report. Built with the narrow
+    // constructor it was decoded in the ANSI code page on Windows, so a member named with a
+    // Greek alpha was reported under two characters of mojibake. See PathUtils.h.
+    const std::filesystem::path display = pathFromUtf8(memberDisplay);
     auto matches = engine_.match(bytes, memberDisplay);
     // In front of the content findings, as Scanner::addNameFindings() puts a loose file's.
     matches.insert(matches.begin(), std::make_move_iterator(named.begin()),
@@ -297,7 +301,7 @@ void ArchiveScanner::scanMemberBytes(const std::string& memberDisplay, std::stri
     if (nested == Kind::TarGz) {
         scanTar(gzip, inner, source);
     } else {
-        scanSingleGzip(gzip, inner, gzipMemberName(std::filesystem::path(memberDisplay)));
+        scanSingleGzip(gzip, inner, gzipMemberName(pathFromUtf8(memberDisplay)));
     }
 }
 
