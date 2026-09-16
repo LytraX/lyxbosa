@@ -44,22 +44,31 @@
 //     no such file can exist.
 //   The other direction on disk: a genuine directory named `tests` or `vendor` still
 //     suppresses, on every platform.
+//   Inside an archive, on every platform: a member is matched under its address, so a
+//     genuine directory inside a zip or a tar.gz suppresses as a directory on disk does,
+//     and the control beside it in the same archive fires.
 //
 // Every suppression has a control path that must still fire, because a normalisation
 // that suppressed everything would satisfy a one-sided case.
 
 #include <gtest/gtest.h>
 
+#include "archive/ArchiveIndex.h"
 #include "config/Config.h"
 #include "core/MatchEngine.h"
 #include "core/Scanner.h"
+#include "infrastructure/PathUtils.h"
+
+#include "ArchiveFixtures.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <random>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -462,6 +471,130 @@ INSTANTIATE_TEST_SUITE_P(Fragments, EveryPathFragmentTest, ::testing::ValuesIn(k
                              return std::string(info.param.rule);
                          });
 INSTANTIATE_TEST_SUITE_P(Fragments, EveryPathFragmentOnDiskTest,
+                         ::testing::ValuesIn(kFragmentCases),
+                         [](const ::testing::TestParamInfo<FragmentCase>& info) {
+                             return std::string(info.param.rule);
+                         });
+
+// ===========================================================================
+// Every fragment, inside an archive
+// ===========================================================================
+//
+// A member is matched under its address, `<archive>!<member>`, and that address is the path
+// the fragments are tested against: a vendored library inside a site backup is judged as the
+// loose copy of it is. Each row's content goes into one archive under every path the row
+// suppresses and under its control path, and the archive is scanned the way `scan` scans it.
+//
+// No suppressed path starts with its fragment. The address has no separator after `!`, so a
+// member's first component is spelled together with the archive's own name and is not a
+// directory the filters can see.
+
+namespace {
+
+using lyxbosa::test::fixtures::appendTarMember;
+using lyxbosa::test::fixtures::endOfTar;
+using lyxbosa::test::fixtures::gzipCompress;
+using lyxbosa::test::fixtures::hostBytesOf;
+using lyxbosa::test::fixtures::writeZip;
+
+// The three shapes a site backup arrives in: a zip written on Unix, a zip written on Windows,
+// and a tar.gz, whose headers name no writer.
+enum class Container { UnixZip, DosZip, TarGz };
+
+const char* containerName(Container container) {
+    switch (container) {
+        case Container::UnixZip: return "unix-host.zip";
+        case Container::DosZip:  return "dos-host.zip";
+        case Container::TarGz:   return "backup.tar.gz";
+    }
+    return "?";
+}
+
+class ArchiveMemberFixture : public OnDiskFixture {
+protected:
+    // `members` written as one archive of `container`, scanned, and the rules raised against
+    // each member, keyed by the name as stored. `opened` members must have been read, all of
+    // them unless the case says otherwise: a finding missing from a member nobody read would
+    // prove nothing about a suppression. `label` keeps two archives of one case apart.
+    std::map<std::string, std::set<std::string>> scanMembers(
+        Container container, const std::vector<std::pair<std::string, std::string>>& members,
+        std::optional<size_t> opened = std::nullopt, const std::string& label = "") {
+        const fs::path dir = root / (label + containerName(container));
+        fs::create_directories(dir);
+        const fs::path archive = dir / containerName(container);
+
+        if (container == Container::TarGz) {
+            std::string tar;
+            for (const auto& [name, body] : members) {
+                appendTarMember(tar, name, body);
+            }
+            tar += endOfTar();
+            const std::string bytes = gzipCompress(tar);
+            std::ofstream out(archive, std::ios::binary);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        } else {
+            const uint8_t host = container == Container::DosZip ? ZIP_OPSYS_DOS : ZIP_OPSYS_UNIX;
+            writeZip(archive, members, host);
+            for (const auto& [name, byte] : hostBytesOf(archive)) {
+                EXPECT_EQ(byte, host) << "the fixture does not carry the host byte it claims";
+            }
+        }
+
+        AppConfig config = Config::loadFromString(Config::generateDefault());
+        config.scan.directories = {pathToUtf8(dir)};
+        config.scan.recursive = true;
+        config.actions.quarantine.enabled = false;
+        Scanner scanner(config);
+        scanner.setPreCount(false);
+        const ScanResult result = scanner.scan();
+        EXPECT_EQ(result.archives.membersScanned, opened.value_or(members.size()))
+            << containerName(container) << ": not the members this case expects were opened";
+
+        std::map<std::string, std::set<std::string>> raised;
+        for (const auto& [name, body] : members) {
+            const fs::path address =
+                pathFromUtf8(pathToUtf8(archive) + "!" + archive::normalizeMemberName(name));
+            auto& codes = raised[name];
+            for (const auto& file : result.files) {
+                if (file.path != address) continue;
+                for (const auto& match : file.matches) {
+                    codes.insert(match.category);
+                }
+            }
+        }
+        return raised;
+    }
+};
+
+class EveryPathFragmentInAnArchiveTest : public ArchiveMemberFixture,
+                                         public ::testing::WithParamInterface<FragmentCase> {};
+
+}  // namespace
+
+// Any platform, any writer: a genuine directory inside an archive suppresses exactly as the
+// same directory on disk does, and the control path beside it in the same archive fires.
+TEST_P(EveryPathFragmentInAnArchiveTest, AGenuineDirectoryInsideAnArchiveStillSuppresses) {
+    const FragmentCase& c = GetParam();
+
+    std::vector<std::pair<std::string, std::string>> members;
+    for (const char* path : c.suppressed) {
+        members.emplace_back(path, c.content);
+    }
+    members.emplace_back(c.control, c.content);
+
+    for (const Container container : {Container::UnixZip, Container::DosZip, Container::TarGz}) {
+        SCOPED_TRACE(containerName(container));
+        auto raised = scanMembers(container, members);
+        for (const char* path : c.suppressed) {
+            EXPECT_EQ(raised[path].count(c.rule), 0u)
+                << c.rule << " should be suppressed for a member under " << path;
+        }
+        EXPECT_EQ(raised[c.control].count(c.rule), 1u)
+            << c.rule << " must still fire for a member at " << c.control;
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Fragments, EveryPathFragmentInAnArchiveTest,
                          ::testing::ValuesIn(kFragmentCases),
                          [](const ::testing::TestParamInfo<FragmentCase>& info) {
                              return std::string(info.param.rule);
