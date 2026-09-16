@@ -520,6 +520,7 @@ if(BUILD_TESTS)
     tests/update_apply_test.cpp
     tests/build_identity_test.cpp
     tests/hostile_filename_test.cpp
+    tests/path_encoding_test.cpp
     tests/json_report_test.cpp
     tests/stdout_delivery_test.cpp
     tests/fuzz_replay_test.cpp

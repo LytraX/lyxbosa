@@ -17,6 +17,7 @@
 // one has to be able to tell.
 
 #include "infrastructure/Delivery.h"
+#include "infrastructure/PathUtils.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 #include "system/CliArgs.h"
@@ -251,12 +252,12 @@ private:
         if (!caps_.stdinIsTty()) {
             terminal_.printErr(Terminal::error(),
                 "Refusing to replace {} unconfirmed because stdin is not a terminal.\n"
-                "Re-run with --yes to update non-interactively.\n", plan.target.string());
+                "Re-run with --yes to update non-interactively.\n", pathForDisplay(plan.target));
             return false;
         }
 
         fmt::print(stderr, "\n  {} -> {}\n  {}\n  from release {}, asset {}\n\n",
-                   toString(plan.from), toString(plan.to), plan.target.string(), plan.tag,
+                   toString(plan.from), toString(plan.to), pathForDisplay(plan.target), plan.tag,
                    plan.assetName);
         fmt::print(stderr, "Replace it? [y/N] ");
         std::fflush(stderr);

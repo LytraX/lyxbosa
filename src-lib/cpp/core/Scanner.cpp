@@ -244,8 +244,7 @@ ScanResult Scanner::scan() {
         const std::string prefix = pathToUtf8(containerSource);
         const std::string display = pathToUtf8(memberDisplay);
         if (display.size() > prefix.size() && display.starts_with(prefix)) {
-            return std::filesystem::path(pathToUtf8(containerDest) +
-                                         display.substr(prefix.size()));
+            return pathFromUtf8(pathToUtf8(containerDest) + display.substr(prefix.size()));
         }
         return containerDest;
     };
@@ -340,7 +339,7 @@ ScanResult Scanner::scan() {
 
         currentMember = member.index;
         currentMemberTotal = member.total;
-        publishProgress(std::filesystem::path(member.member), member.bytes);
+        publishProgress(pathFromUtf8(member.member), member.bytes);
     });
 
     auto fileCallback = [&](const FileInfo& info) -> bool {
@@ -785,7 +784,7 @@ bool Scanner::quarantineFile(const std::filesystem::path& source,
     }
 
     try {
-        const fs::path quarantineDir(config_.actions.quarantine.directory);
+        const fs::path quarantineDir = pathFromUtf8(config_.actions.quarantine.directory);
         fs::create_directories(quarantineDir);
 
         const fs::path dest = quarantine::destinationFor(

@@ -1,5 +1,7 @@
 #include "update/ReleaseAssets.h"
 
+#include "infrastructure/PathUtils.h"
+
 #include <fmt/format.h>
 
 #include <cstdio>
@@ -133,12 +135,12 @@ http::Outcome HttpAssetSource::fetch(std::string_view tag, std::string_view asse
 
     // "wb" and not std::ofstream, because the bytes have to reach the filesystem and
     // the fsync that follows in InstallPath needs a descriptor rather than a stream.
-    std::FILE* out = std::fopen(destination.string().c_str(), "wb");
+    std::FILE* out = openPathForStdio(destination, "wb");
     if (out == nullptr) {
         http::Outcome failed;
         failed.status = http::Outcome::Status::Failed;
         failed.detail = fmt::format("{} could not be opened for writing",
-                                    destination.string());
+                                    pathForDisplay(destination));
         return failed;
     }
 
@@ -173,7 +175,8 @@ http::Outcome HttpAssetSource::fetch(std::string_view tag, std::string_view asse
 
     if (outcome.ok() && (writeFailed || !flushed)) {
         outcome.status = http::Outcome::Status::Failed;
-        outcome.detail = fmt::format("{} could not be written in full", destination.string());
+        outcome.detail = fmt::format("{} could not be written in full",
+                                     pathForDisplay(destination));
     }
 
     // Nothing downstream is handed a partial file. This is the rule the round is built

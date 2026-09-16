@@ -1,6 +1,7 @@
 #pragma once
 
 #include "infrastructure/Delivery.h"
+#include "infrastructure/PathUtils.h"
 #include "infrastructure/Terminal.h"
 #include "config/Config.h"
 #include "system/CliArgs.h"
@@ -32,7 +33,7 @@ private:
         }
 
         try {
-            auto config = Config::loadFromFile(*args.validateConfigFile);
+            auto config = Config::loadFromFile(pathFromUtf8(*args.validateConfigFile));
             auto error = Config::validate(config);
 
             if (!error.empty()) {

@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include "infrastructure/PathUtils.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -109,7 +111,9 @@ inline void writeZip(const fs::path& path,
                      const std::vector<std::pair<std::string, std::string>>& members,
                      std::optional<uint8_t> host = std::nullopt) {
     int err = 0;
-    zip_t* za = zip_open(path.string().c_str(), ZIP_CREATE | ZIP_TRUNCATE, &err);
+    // UTF-8, which is what zip_open() reads its name as on Windows - path::string() would be
+    // the code page, and would throw for a name outside it.
+    zip_t* za = zip_open(pathToUtf8(path).c_str(), ZIP_CREATE | ZIP_TRUNCATE, &err);
     ASSERT_NE(za, nullptr);
 
     for (const auto& [name, body] : members) {

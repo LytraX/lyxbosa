@@ -2,6 +2,7 @@
 #include "ByteSource.h"
 #include "GzipSource.h"
 #include "TarReader.h"
+#include "infrastructure/PathUtils.h"
 
 #include <cctype>
 #include <cstdio>
@@ -95,7 +96,11 @@ Kind sniffFile(const std::filesystem::path& path) {
 }
 
 bool hasArchiveExtension(const std::filesystem::path& path) {
-    std::string name = path.filename().string();
+    // UTF-8 and not path::string(), which throws on Windows for a name outside the ANSI code
+    // page. This is asked on the counting thread, where the exception did not even reach the
+    // scan: it ended the process. Only the ASCII suffix is compared, so lowercasing bytes
+    // cannot touch a multibyte character.
+    std::string name = pathToUtf8(path.filename());
     for (char& c : name) {
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
@@ -113,7 +118,9 @@ bool hasArchiveExtension(const std::filesystem::path& path) {
 }
 
 std::string gzipMemberName(const std::filesystem::path& path) {
-    std::string name = path.filename().string();
+    // A member name is UTF-8 like every other, and becomes part of an address that is turned
+    // back into a path with pathFromUtf8().
+    std::string name = pathToUtf8(path.filename());
     if (name.size() > 3 && name.compare(name.size() - 3, 3, ".gz") == 0) {
         name.resize(name.size() - 3);
     } else if (name.size() > 4 && name.compare(name.size() - 4, 4, ".tgz") == 0) {

@@ -1,5 +1,6 @@
 #include "FileWalker.h"
 #include "Interrupt.h"
+#include "infrastructure/PathUtils.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -382,7 +383,13 @@ size_t FileWalker::walk(FileCallback callback, size_t* unreadableDirs,
     size_t dirCount = 0;
     bool stopped = false;
 
-    for (const auto& dir : config_.directories) {
+    for (const auto& configured : config_.directories) {
+        // UTF-8, like every path this program holds as a string - it came from the command
+        // line or the configuration file. Converted once and by name: handed to a path
+        // parameter as it is, Windows decodes it in the ANSI code page and the root it names
+        // is somewhere else. See PathUtils.h.
+        const std::filesystem::path dir = pathFromUtf8(configured);
+
         // A root the operator named and that is not there is recorded rather than
         // walked past. walkDirectory() returns 0 for the same shape and must keep
         // doing so - it is the recursion step as well, and a subdirectory that
@@ -873,8 +880,14 @@ bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::
         return !path.has_extension();
     }
 
+    // The name as UTF-8, because that is what a pattern is: it was written in the
+    // configuration file or on the command line. path::string() is not an option on Windows
+    // twice over - it spells the name in the ANSI code page, so a pattern with a Greek letter
+    // in it could never match, and it throws on a character that code page cannot hold, which
+    // turned every file named in Japanese on a Greek host into an aborted scan.
+    //
     // Try matching against filename only first
-    std::string filename = path.filename().string();
+    const std::string filename = pathToUtf8(path.filename());
 #ifdef _WIN32
     if (portable_fnmatch(pattern.c_str(), filename.c_str())) {
         return true;
@@ -882,7 +895,7 @@ bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::
 
     // For patterns with **, try matching against full path
     if (pattern.find("**") != std::string::npos) {
-        std::string fullPath = path.string();
+        const std::string fullPath = pathToUtf8(path);
         if (portable_fnmatch(pattern.c_str(), fullPath.c_str())) {
             return true;
         }
@@ -894,7 +907,7 @@ bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::
 
     // For patterns with **, try matching against full path
     if (pattern.find("**") != std::string::npos) {
-        std::string fullPath = path.string();
+        const std::string fullPath = pathToUtf8(path);
         if (fnmatch(pattern.c_str(), fullPath.c_str(), FNM_PATHNAME) == 0) {
             return true;
         }

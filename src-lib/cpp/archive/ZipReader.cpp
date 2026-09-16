@@ -12,11 +12,35 @@ ZipReader::~ZipReader() {
 }
 
 std::unique_ptr<ZipReader> ZipReader::openFile(const std::filesystem::path& path) {
+#ifdef _WIN32
+    // The wide path, handed to libzip as a wide path. zip_open() on Windows reads its narrow
+    // argument as UTF-8 - lib/zip_source_file_win32_utf8.c - and it was being given
+    // path::string(), which is the ANSI code page: so an archive whose own name held any
+    // character past ASCII could not be opened even when the conversion succeeded, and
+    // path::string() threw when it did not. A Greek-named backup on a Greek host was
+    // reported unreadable and nothing inside it was scanned. Converting to UTF-8 for libzip
+    // to convert back would also work, and would lose an unpaired surrogate on the way.
+    zip_error_t error;
+    zip_error_init(&error);
+    zip_source_t* source = zip_source_win32w_create(path.c_str(), 0, ZIP_LENGTH_TO_END, &error);
+    if (!source) {
+        zip_error_fini(&error);
+        return nullptr;
+    }
+    zip* za = zip_open_from_source(source, ZIP_RDONLY, &error);
+    if (!za) {
+        zip_source_free(source);
+        zip_error_fini(&error);
+        return nullptr;
+    }
+    zip_error_fini(&error);
+#else
     int err = 0;
-    zip* za = zip_open(path.string().c_str(), ZIP_RDONLY, &err);
+    zip* za = zip_open(path.c_str(), ZIP_RDONLY, &err);
     if (!za) {
         return nullptr;
     }
+#endif
 
     std::unique_ptr<ZipReader> reader(new ZipReader());
     reader->archive_ = za;

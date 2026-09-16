@@ -71,6 +71,34 @@ commit list that CI generates per tag.
   cover the file.** The include list was asked first, so a `.mdb` inside a tree an exclude
   pattern named came back as merely not included, and a hostile name on it was reported from
   inside the tree the operator had excluded.
+- **On Windows, a file, a directory or an archive named with a character outside the host's
+  ANSI code page no longer ends a scan.** Which names did depended on the host: a Japanese name
+  on a Western or a Greek installation, U+009B on either, an `é` on a Greek one. The scan
+  exited 3 with only the first ten bytes of its report written, whether or not the name raised
+  anything, and a name anywhere in the path above a file did the same. Names are converted
+  between UTF-16 and UTF-8 directly and the code page is never consulted.
+- **On Windows, an archive member is reported under its own name.** Its address was decoded
+  in the code page, so on a Greek installation a member named `α.php` was reported as
+  `Ξ±.php`, and a member of a Greek-named archive carried a `pathBytesHex` that spelled neither.
+  The findings were right; the address beside them was not.
+- **On Windows, an archive past `scan.max_file_size` whose name holds any character past
+  ASCII is opened.** It was reported unreadable (ARC003) and nothing inside it was read — a
+  Greek name on a Greek installation included, where nothing else about the name went wrong.
+- **On Windows, `check FILE`, `scan DIR`, `--config FILE` and `--output-file FILE` reach a
+  name outside the ANSI code page.** The command line was read in the code page, which turns
+  such a character into `?`, so `check` answered `File not found: ...\???.txt` and `scan`
+  refused the directory as missing, however the name was typed. It is read as UTF-16 and
+  split into arguments exactly as before.
+- **On Windows, a path written in the configuration file — a directory to scan,
+  `actions.quarantine.directory`, `actions.report.file`, the file `--config` names — is the
+  path it spells, and a `scan.include` or `scan.exclude` pattern holding a character past ASCII
+  matches the names it spells.** Both were read in the code page.
+- **On Windows, `update` no longer ends before it fetches anything when the binary is installed
+  in a directory whose name holds a character outside the host's ANSI code page** — a user
+  profile directory is one for some users. Each step spelled the install path in the code page,
+  which fails on such a character, and the first of them ended the process. The file that
+  records when updates were last checked for is also found under such a profile, where the
+  environment variable naming it was read in the code page as well.
 
 ### Compatibility
 
@@ -130,6 +158,30 @@ commit list that CI generates per tag.
 - **A file that `scan.include` does not cover and a `scan.exclude` pattern names no longer
   raises FN findings**, where its name was reported before. It is still counted as
   `excluded`, as it was; a scan whose only findings were such names exits 0 where it exited 2.
+- **On Windows, a scan or `check` of a tree, a file or an archive named outside the ANSI code
+  page exits 0, 1 or 2 by what it found**, with a complete report, where it exited 3.
+- **On Windows, `check` and `scan` given a name outside the ANSI code page on the command line
+  read that file or directory**, and exit by what they found where they exited 1.
+- **On Windows, a member row's `path` changes** in the JSON, CSV and text reports for a member
+  whose name, or whose container's name, holds a character past ASCII: from the code page's
+  spelling to the name. `pathBytesHex` and `file_bytes_hex` change with it, and disappear from
+  a row that carried them only because the misspelling held a control character.
+- **On Windows, an archive past `scan.max_file_size` with such a name reports its members and
+  no ARC003**, so `check` on one exits 0 or 2 where it exited 1.
+- **On Windows, a configuration file whose paths or path patterns are not valid UTF-8 is
+  refused when it loads**, with exit 1: `validate-config` refuses it where it exited 0, and
+  `scan` and `check` refuse it before reading anything where `scan` refused a directory it
+  could not find. Such a file is what an editor writes when it saves the configuration in the
+  system's ANSI code page with a character past ASCII in `scan.directories`, `scan.include`,
+  `scan.exclude`, `actions.quarantine.directory` or `actions.report.file`. All three commands
+  print one sentence naming the key, the entry of a list, the value with escapes and the
+  offending byte, and telling the operator to save the file as UTF-8, such as
+  `scan.directories entry 1 ("D:/sites/\xe1\xf1\xf7\xe5\xdf\xef") is not valid UTF-8 (byte
+  0xe1 at offset 9)`. A configuration `init-config` wrote is UTF-8 already. On Linux and macOS
+  the same bytes are accepted and name the directory they spell, and control characters in
+  these values are accepted on every platform.
+- **On Windows, `update` for a binary installed under a directory outside the ANSI code page
+  exits by what it did**, 0 or 1, where it exited 3 without a word.
 
 ## [3.2.0] - 2026-09-14
 

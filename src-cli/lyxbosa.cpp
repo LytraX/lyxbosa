@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <io.h>
@@ -13,6 +15,7 @@
 #endif
 
 #include "system/CliArgs.h"
+#include "infrastructure/PathUtils.h"
 #include "infrastructure/Terminal.h"
 #include "infrastructure/TerminalCaps.h"
 // drainReports() is called below. The declaration used to arrive only transitively
@@ -105,7 +108,8 @@ extern "C" void signalHandler(int signal) {
     // First interrupt: return, and let the scan loop notice the flag and unwind.
 }
 
-int main(int argc, char* argv[]) {
+// Every argument arrives here as UTF-8, on every platform; see wmain() below.
+static int run(int argc, char* argv[]) {
 #ifdef _WIN32
     // Set console output to UTF-8 so that fmt::print (which uses WriteConsoleW)
     // correctly handles non-ASCII characters in file paths (e.g., Greek, Cyrillic)
@@ -187,3 +191,38 @@ int main(int argc, char* argv[]) {
             return 1;
     }
 }
+
+#ifdef _WIN32
+// The command line, read wide.
+//
+// A narrow main() on Windows is handed its arguments in the ANSI code page, and a character
+// that code page cannot hold arrives as '?'. `lyxbosa check` on a file named in Japanese on a
+// Greek host was told about `???.txt` and reported it missing, and no way of typing the name
+// could reach the file. wmain() is handed the same command line as UTF-16, split by the same
+// CRT parser as the narrow one: measured on nine command lines, the two agreed on every
+// argument boundary and differed only in the characters. CommandLineToArgvW did not - it
+// splits `"a""b c"` into two arguments where both CRT parsers keep one - so it would have
+// changed what an existing command line means.
+//
+// Each argument is converted once, here, to the UTF-8 every other string in this program
+// holds, and becomes a path again only through pathFromUtf8(). POSIX hands main() bytes and
+// is unchanged.
+int wmain(int argc, wchar_t* wargv[]) {
+    std::vector<std::string> arguments;
+    arguments.reserve(static_cast<size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        arguments.push_back(utf8FromWide(wargv[i]));
+    }
+    std::vector<char*> argv;
+    argv.reserve(arguments.size() + 1);
+    for (auto& argument : arguments) {
+        argv.push_back(argument.data());
+    }
+    argv.push_back(nullptr);
+    return run(argc, argv.data());
+}
+#else
+int main(int argc, char* argv[]) {
+    return run(argc, argv);
+}
+#endif

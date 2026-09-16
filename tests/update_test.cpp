@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include "config/Config.h"
+#include "infrastructure/PathUtils.h"
 #include "update/UpdateCheck.h"
 #include "update/UpdatePolicy.h"
 #include "update/UpdateState.h"
@@ -17,6 +18,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -357,6 +359,56 @@ TEST(UpdateStateTest, WritesAndReadsBack) {
     ASSERT_TRUE(read);
     EXPECT_EQ(read->lastCheckEpoch, 1'757'000'000u);
     EXPECT_EQ(read->latestVersion, "2.3.0");
+}
+
+// A path given in the environment is the characters the environment holds. Windows keeps the
+// environment in UTF-16 and getenv() hands it over in the ANSI code page, where a character the
+// code page cannot hold arrives as '?' - and a user profile directory holds such a character for
+// some users, so the state file was asked for under a name Windows refuses. A CJK name, because
+// no code page a Windows host of this suite runs under holds one.
+TEST(UpdateStateTest, AStatePathInTheEnvironmentIsReadAsTheCharactersItHolds) {
+    TempDir dir;
+#ifdef _WIN32
+    const fs::path expected = dir.path() /
+                              std::wstring{wchar_t(0x8ACB), wchar_t(0x6C42), wchar_t(0x66F8)} /
+                              "update-check";
+    const wchar_t* const name = L"LYXBOSA_UPDATE_STATE";
+    const wchar_t* const was = _wgetenv(name);
+    const std::wstring previous = was != nullptr ? was : L"";
+    ASSERT_EQ(_wputenv_s(name, expected.c_str()), 0);
+#else
+    const fs::path expected =
+        dir.path() / "\xE8\xAB\x8B\xE6\xB1\x82\xE6\x9B\xB8" / "update-check";
+    const char* const name = "LYXBOSA_UPDATE_STATE";
+    const char* const was = std::getenv(name);
+    const std::optional<std::string> previous =
+        was != nullptr ? std::optional<std::string>(was) : std::nullopt;
+    ASSERT_EQ(::setenv(name, expected.c_str(), 1), 0);
+#endif
+
+    const fs::path resolved = defaultUpdateStatePath();
+
+    UpdateState state;
+    state.lastCheckEpoch = 7;
+    const bool written = writeUpdateState(resolved, state);
+
+#ifdef _WIN32
+    _wputenv_s(name, previous.c_str());
+#else
+    if (previous) {
+        ::setenv(name, previous->c_str(), 1);
+    } else {
+        ::unsetenv(name);
+    }
+#endif
+
+    // Compared as native strings: gtest prints a path through path::string(), which is the
+    // abort this case is about.
+    EXPECT_EQ(resolved.native(), expected.native());
+    ASSERT_TRUE(written);
+    const auto read = readUpdateState(expected);
+    ASSERT_TRUE(read);
+    EXPECT_EQ(read->lastCheckEpoch, 7u);
 }
 
 TEST(UpdateStateTest, CreatesTheParentDirectory) {

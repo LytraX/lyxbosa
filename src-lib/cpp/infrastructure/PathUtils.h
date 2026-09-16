@@ -2,7 +2,9 @@
 
 #include "utils/SafeText.h"
 
+#include <cstdio>
 #include <string>
+#include <string_view>
 #include <filesystem>
 
 #ifdef _WIN32
@@ -11,33 +13,122 @@
 
 namespace lyxbosa {
 
-// Convert a filesystem path to a UTF-8 encoded string safe for console output.
-// On Windows, path::string() uses the ANSI code page which can cause crashes
-// when fmt::print sends non-UTF-8 bytes to WriteConsoleW on the Windows Console.
+// A path and UTF-8 text, in both directions, and why neither goes through the code page.
+//
+// Every std::string in this program that holds a path holds UTF-8: a root from the command
+// line or the configuration file, an archive member's name, a report's address for a
+// member. On Windows a path is UTF-16, and std::filesystem converts between the two in the
+// host's ANSI code page - 1252 on a Western host, 1253 on a Greek one - which is wrong in
+// both directions and wrong differently:
+//
+//   path::string() THROWS std::system_error on a character the code page cannot hold. A
+//   name somebody else chose - a Japanese file name on a Greek host, U+009B anywhere -
+//   escaped the walk as an exception and the scan aborted after writing the first ten
+//   bytes of its report.
+//
+//   path(std::string) never throws and decodes the wrong encoding. A member named with
+//   a Greek alpha was reported as two characters of mojibake, and a root written in UTF-8
+//   in a YAML file named a directory that does not exist.
+//
+// So nothing here calls either one. pathToUtf8() and pathFromUtf8() convert through
+// WideCharToMultiByte and MultiByteToWideChar with CP_UTF8, and each is the other's
+// inverse: pathFromUtf8(pathToUtf8(p)) == p for a name that is valid UTF-16, and
+// pathToUtf8(pathFromUtf8(s)) == s for a string that is valid UTF-8.
+// tests/path_encoding_test.cpp asserts both, against native wide spellings rather than
+// against each other - two functions that both used the code page would round-trip
+// every name the code page holds.
+//
+// Elsewhere a path is bytes, both are the identity, and a name that is not UTF-8 goes
+// through unchanged for pathForDisplay() to escape.
+
+// Whether a path on this platform is UTF-16, so that a string names one only when it is valid
+// UTF-8. True on Windows. Elsewhere a path is bytes and every string names one - including a
+// string that is not UTF-8, which on Linux can be the real name of a real directory.
+//
+// A constant rather than a preprocessor test at each use, so that the question asked on one
+// platform is compiled, and tested, on all of them; see Config::validate().
+#ifdef _WIN32
+inline constexpr bool kPathsAreUtf16 = true;
+#else
+inline constexpr bool kPathsAreUtf16 = false;
+#endif
+
+#ifdef _WIN32
+// UTF-16 as UTF-8. An unpaired surrogate becomes U+FFFD. The conversion cannot otherwise fail
+// for a string a path or a command line can hold, and if it somehow did the answer is empty
+// rather than anything that goes through the code page.
+inline std::string utf8FromWide(std::wstring_view wide) {
+    if (wide.empty()) return "";
+
+    const int size = WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()),
+                                         nullptr, 0, nullptr, nullptr);
+    if (size <= 0) return "";
+
+    std::string utf8(static_cast<size_t>(size), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), utf8.data(),
+                        size, nullptr, nullptr);
+    return utf8;
+}
+#endif
+
+// The path as UTF-8, for every reader that is not a terminal: a rule matching on a name, a
+// glob from the configuration, a key a report is built from.
+//
+// On Windows an unpaired surrogate - which NTFS accepts in a name - becomes U+FFFD, so that
+// name is the one shape this cannot round-trip; see pathBytesHex().
+inline std::string pathToUtf8(const std::filesystem::path& p) {
+#ifdef _WIN32
+    return utf8FromWide(p.native());
+#else
+    return p.native();
+#endif
+}
+
+// The path a UTF-8 string names: the inverse of pathToUtf8().
+//
+// Use it wherever a std::string becomes a path, including the implicit conversions - a
+// std::string passed to a parameter of type `const std::filesystem::path&` is decoded in the
+// code page exactly as an explicit constructor is.
+//
+// On Windows an ill-formed sequence becomes U+FFFD, because UTF-16 has no way to carry the
+// bytes. The only strings that can be ill-formed here are a tar member's name, which is
+// whatever bytes its header holds, and a configuration value somebody wrote that way; the
+// name rules read a member's bytes before this is reached, so what is lost is the report's
+// spelling of the address and not a finding. Elsewhere the bytes are the path.
+inline std::filesystem::path pathFromUtf8(std::string_view utf8) {
+#ifdef _WIN32
+    if (utf8.empty()) return {};
+
+    const int size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()),
+                                         nullptr, 0);
+    if (size <= 0) return {};
+
+    std::wstring wide(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), wide.data(),
+                        size);
+    return std::filesystem::path(std::move(wide));
+#else
+    return std::filesystem::path(std::string(utf8));
+#endif
+}
+
+// A C stream on a path, opened by the path's native name. std::fopen() takes a narrow name,
+// which Windows reads in the ANSI code page, so a caller holding a path had to spell it with
+// path::string() - and that throws for a directory the code page cannot hold. `mode` is the
+// fopen() mode string, and is ASCII.
+inline std::FILE* openPathForStdio(const std::filesystem::path& p, const char* mode) {
+#ifdef _WIN32
+    const std::wstring wideMode(mode, mode + std::char_traits<char>::length(mode));
+    return _wfopen(p.c_str(), wideMode.c_str());
+#else
+    return std::fopen(p.c_str(), mode);
+#endif
+}
+
 // Path rendered for a human. A directory or file name is attacker-controlled on a
 // compromised host and can carry ESC just as file *content* can, so anything headed
 // for a terminal, a report or a progress line goes through here. Scanner keeps the
 // raw pathToUtf8 - the context filters match on real path text.
-inline std::string pathForDisplay(const std::filesystem::path& p);
-
-inline std::string pathToUtf8(const std::filesystem::path& p) {
-#ifdef _WIN32
-    const auto& ws = p.native();  // Returns const wstring& on Windows
-    if (ws.empty()) return "";
-
-    int size = WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()),
-                                   nullptr, 0, nullptr, nullptr);
-    if (size <= 0) return p.string();  // Fallback
-
-    std::string utf8(size, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, ws.data(), static_cast<int>(ws.size()),
-                        utf8.data(), size, nullptr, nullptr);
-    return utf8;
-#else
-    return p.string();  // Already UTF-8 on Linux/macOS
-#endif
-}
-
 inline std::string pathForDisplay(const std::filesystem::path& p) {
     std::string utf8 = pathToUtf8(p);
     return safe_text::needsSanitizing(utf8) ? safe_text::sanitize(utf8) : utf8;

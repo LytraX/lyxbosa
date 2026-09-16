@@ -7,7 +7,9 @@ in. The last decides whether a marker written inside a scanned file may lower th
 a finding, and by default it may not.
 
 The flags and configuration keys named here are described in full in
-[docs/CLI.md](CLI.md) and in the output of `lyxbosa init-config`.
+[docs/CLI.md](CLI.md) and in the output of `lyxbosa init-config`. The configuration file is
+read as UTF-8; what each platform does with a path or pattern in it that is not UTF-8 is under
+`validate-config` there.
 
 - [Archives](#archives) — zip, tar, tar.gz and gz, and the backup left in the web root
 - [File names](#file-names) — when the name is the attack, and what is done about it
@@ -286,6 +288,11 @@ A row's address normalises backslashes to `/` for display, as it always has, whi
 writer the entry had, so a Unix-made member reads `upload.zip!a/zz.php` with FN002 naming
 the backslash.
 
+A tar header stores a member's name as bytes, which need not be UTF-8. On Linux the address
+carries them as they are, escaped and with `pathBytesHex` beside it like a file name. On
+Windows a path cannot hold them, so the address shows U+FFFD for each byte that is not part of
+well-formed UTF-8. The rules read the bytes the header holds either way.
+
 **Quarantine and exit code.** A name finding on a member never moves its container, just
 as it never moves a file; only hostile content inside does. A member row with a name
 finding moves the exit code to `2`, and counts in `Files with matches` and
@@ -322,10 +329,17 @@ its bytes in hex:
 
 A consumer that needs the real name reads the hex field when it is there and the rendered
 path when it is not. Its presence *is* the statement that the path beside it is a rendering
-rather than a name. An ordinary tree produces none of them, and in practice a Windows tree
-produces none either: NTFS stores names as UTF-16 and the narrow API converts on the way in,
-so a name that is not valid UTF-8 cannot exist there — it becomes whatever characters the
-host's code page maps those bytes to, at the moment the file is created.
+rather than a name. An ordinary tree produces none of them.
+
+**The bytes are UTF-8, on every platform.** On Linux they are the name's own bytes, whatever
+those are. On Windows NTFS stores a name as UTF-16, and the scanner converts it to UTF-8 and
+back directly, never through the host's ANSI code page — so a program on Windows gets back to
+the file by decoding the hex as UTF-8, and decoding it in the code page names a different
+file. A name that is not valid UTF-8 cannot exist on NTFS, and NTFS refuses the C0 controls,
+so a Windows tree carries the field for a name holding DEL or a C1 control such as U+009B. One
+Windows name has no UTF-8 spelling at all: one holding an unpaired surrogate, which NTFS
+accepts. It is scanned and reported with U+FFFD in the surrogate's place, and neither the
+rendering nor the hex leads back to it.
 
 Hex rather than a reversible escape, deliberately. Doubling every backslash would make the
 rendering reversible and would also rewrite every path in every report produced on Windows,

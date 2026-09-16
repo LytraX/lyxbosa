@@ -115,8 +115,8 @@ public:
                     "       the next scan finds it again, and if that path is served the\n"
                     "       file is still reachable. Point quarantine.directory somewhere\n"
                     "       outside every scanned root.\n",
-                    pathForDisplay(std::filesystem::path(config.actions.quarantine.directory)),
-                    pathForDisplay(std::filesystem::path(*under)));
+                    pathForDisplay(pathFromUtf8(config.actions.quarantine.directory)),
+                    pathForDisplay(pathFromUtf8(*under)));
                 return 1;
             }
         }
@@ -133,7 +133,7 @@ public:
                     "       scan without moving anything, or --dry-run to report only.\n",
                     config.actions.quarantine.directory.empty()
                         ? std::string("the quarantine directory")
-                        : pathForDisplay(std::filesystem::path(config.actions.quarantine.directory)));
+                        : pathForDisplay(pathFromUtf8(config.actions.quarantine.directory)));
                 return 1;
             }
         }
@@ -206,7 +206,7 @@ private:
     bool loadConfig(const CliArgs& args, AppConfig& config) {
         if (args.configFile) {
             try {
-                config = Config::loadFromFile(*args.configFile);
+                config = Config::loadFromFile(pathFromUtf8(*args.configFile));
             } catch (const ConfigError& e) {
                 terminal_.printErr(Terminal::error(), "Error: {}\n", e.what());
                 return false;
@@ -227,9 +227,9 @@ private:
     static std::vector<std::string> unusableRoots(const AppConfig& config) {
         std::vector<std::string> lines;
         for (const auto& dir : config.scan.directories) {
-            if (const auto why = rootUnusableReason(dir)) {
-                lines.push_back(fmt::format(
-                    "{}: {}", pathForDisplay(std::filesystem::path(dir)), *why));
+            const std::filesystem::path root = pathFromUtf8(dir);
+            if (const auto why = rootUnusableReason(root)) {
+                lines.push_back(fmt::format("{}: {}", pathForDisplay(root), *why));
             }
         }
         return lines;
@@ -333,14 +333,14 @@ private:
 
         std::error_code ec;
         const auto dest = std::filesystem::weakly_canonical(
-            std::filesystem::path(config.actions.quarantine.directory), ec);
+            pathFromUtf8(config.actions.quarantine.directory), ec);
         if (ec) {
             return std::nullopt;
         }
 
         for (const auto& dir : config.scan.directories) {
             const auto root =
-                std::filesystem::weakly_canonical(std::filesystem::path(dir), ec);
+                std::filesystem::weakly_canonical(pathFromUtf8(dir), ec);
             if (ec) {
                 continue;
             }
@@ -357,12 +357,12 @@ private:
     // output on the next run, and can mean scanning it during this one.
     void warnIfOutputInsideScanTree(const std::string& file, const AppConfig& config) const {
         std::error_code ec;
-        const auto outPath = std::filesystem::weakly_canonical(std::filesystem::path(file), ec);
+        const auto outPath = std::filesystem::weakly_canonical(pathFromUtf8(file), ec);
         if (ec) {
             return;
         }
         for (const auto& dir : config.scan.directories) {
-            const auto scanPath = std::filesystem::weakly_canonical(std::filesystem::path(dir), ec);
+            const auto scanPath = std::filesystem::weakly_canonical(pathFromUtf8(dir), ec);
             if (ec) {
                 continue;
             }
@@ -372,7 +372,7 @@ private:
                 terminal_.printErr(Terminal::warning(),
                     "Warning: the report file is inside a scanned directory ({}).\n"
                     "         It will be picked up by later scans.\n",
-                    pathForDisplay(std::filesystem::path(dir)));
+                    pathForDisplay(pathFromUtf8(dir)));
                 return;
             }
         }
@@ -451,7 +451,7 @@ private:
         std::unique_ptr<std::ostream> fileStream;
         std::unique_ptr<ReportWriter> fileWriter;
         if (plan.file) {
-            const std::filesystem::path outPath(*plan.file);
+            const std::filesystem::path outPath = pathFromUtf8(*plan.file);
             if (outPath.has_parent_path()) {
                 std::error_code ec;
                 std::filesystem::create_directories(outPath.parent_path(), ec);
@@ -633,7 +633,7 @@ private:
             }
         }
         if (fileWriter) {
-            const std::string destination = pathForDisplay(std::filesystem::path(*plan.file));
+            const std::string destination = pathForDisplay(pathFromUtf8(*plan.file));
             const Delivery delivery = deliver(*fileOut, fileWriter->failure());
             settle(delivery, destination, kWhatIsOnDisk);
             if (delivery.delivered() && !quiet) {

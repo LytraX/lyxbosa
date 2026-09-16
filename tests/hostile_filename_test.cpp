@@ -256,7 +256,11 @@ private:
 // over examine() run on every platform and carry the rules' own coverage; what these
 // add is that the walk, the filters and the report agree with them.
 std::optional<std::string> whyCannotCreate(const fs::path& dir, const std::string& name) {
-    const fs::path target = dir / fs::path(name);
+    // Through pathFromUtf8(), because `name` is UTF-8 and the narrow path constructor reads it
+    // in the code page on Windows: a name holding U+009B was created there as two other
+    // characters, found not to match, and every case built on it skipped for a reason that was
+    // this helper's and not the filesystem's.
+    const fs::path target = dir / pathFromUtf8(name);
     std::error_code ec;
     {
         std::ofstream out(target, std::ios::binary);
@@ -272,11 +276,10 @@ std::optional<std::string> whyCannotCreate(const fs::path& dir, const std::strin
     // Created is not the same as created under the name that was asked for, and the
     // difference is a whole class of Windows behaviour a POSIX host cannot show you.
     // NTFS silently strips a trailing space and a trailing dot. And a name given as
-    // bytes is CONVERTED on the way in, because the filesystem stores UTF-16 and the
-    // narrow API reads those bytes in the host's code page - so a sequence that is not
-    // valid UTF-8 does not exist on Windows at all; what exists is whatever characters
-    // that code page maps the bytes to. A case that went on to scan the directory would
-    // be scanning a differently-named file and asserting about it, which is passing
+    // bytes is CONVERTED on the way in, because the filesystem stores UTF-16 - so a
+    // sequence that is not valid UTF-8 does not exist on Windows at all; what exists is
+    // U+FFFD where each ill-formed byte was. A case that went on to scan the directory
+    // would be scanning a differently-named file and asserting about it, which is passing
     // while blind.
     //
     // Asked of pathToUtf8(), which is the spelling every rule and every report sees,
@@ -314,7 +317,7 @@ const char* kWebshell = "<?php eval(base64_decode($_POST['x'])); ?>";
 AppConfig scanConfig(const fs::path& root) {
     AppConfig config = Config::loadFromString(Config::generateDefault());
     config.scan.directories.clear();
-    config.scan.directories.push_back(root.string());
+    config.scan.directories.push_back(pathToUtf8(root));
     config.scan.recursive = true;
     return config;
 }
@@ -327,7 +330,7 @@ ScanResult runScan(const AppConfig& config) {
 
 const FileResult* findByName(const ScanResult& result, const std::string& name) {
     for (const auto& file : result.files) {
-        if (file.path.filename().string() == name) {
+        if (pathToUtf8(file.path.filename()) == name) {
             return &file;
         }
     }
@@ -832,6 +835,33 @@ TEST(SafeTextUtf8Test, WhyNotPlainTextAgreesWithNeedsSanitizingExactly) {
 // sequence exactly as ESC [ does, and GNU screen acts on it. Every one of the 32 is escaped
 // byte by byte and every neighbour in the Latin-1 block is left alone, and what comes out is
 // still UTF-8 - a JSON document that carries it has to stay parseable.
+// The UTF-8 half of whyNotPlainText() alone, for a value whose control characters are
+// legitimate and whose encoding is not: a path in the configuration file. It has to describe an
+// ill-formed byte in exactly the words whyNotPlainText() does, and say nothing about a control.
+TEST(SafeTextUtf8Test, WhyNotUtf8NamesTheByteWhyNotPlainTextNamesAndNoControlCharacter) {
+    for (const std::string value : {std::string("\xC0\xAF"), std::string("ab\xE1\xF1"),
+                                    std::string("\xCE\x95" "\xC0\xAF"),
+                                    std::string("a\xED\xA0\x80")}) {
+        SCOPED_TRACE(safe_text::sanitize(value));
+        ASSERT_TRUE(safe_text::whyNotUtf8(value));
+        EXPECT_EQ(safe_text::whyNotUtf8(value), safe_text::whyNotPlainText(value));
+        EXPECT_FALSE(safe_text::isValidUtf8(value));
+    }
+    for (const std::string value :
+         {std::string("ab\x1b[31m"), std::string("\x7f"), std::string("k\xC2\x9B" "2J"),
+          std::string("a\nb"), std::string("\xCE\x95\xCE\xBB"), std::string()}) {
+        SCOPED_TRACE(safe_text::sanitize(value));
+        EXPECT_FALSE(safe_text::whyNotUtf8(value));
+        EXPECT_TRUE(safe_text::isValidUtf8(value));
+    }
+    // A control ahead of an ill-formed byte: whyNotPlainText() stops at the control, and this
+    // goes on to the byte.
+    EXPECT_EQ(safe_text::whyNotUtf8("\x1b" "a\xFF"),
+              std::optional<std::string>("is not valid UTF-8 (byte 0xff at offset 2)"));
+    EXPECT_EQ(safe_text::whyNotPlainText("\x1b" "a\xFF"),
+              std::optional<std::string>("carries a control character (0x1b at offset 0)"));
+}
+
 TEST(SafeTextUtf8Test, EveryC1ControlIsEscapedAndNothingBesideItIs) {
     static constexpr char kHex[] = "0123456789abcdef";
     for (int second = 0x80; second <= 0xBF; ++second) {
@@ -1053,9 +1083,11 @@ TEST(HostileFilenameTest, EveryReportedFileCanBeReopenedFromTheReportAlone) {
             << "the report carries the bytes when it does not need to, or not when it does";
 
         ASSERT_FALSE(reconstructed.empty());
-        EXPECT_TRUE(fs::exists(fs::path(reconstructed)))
+        // Turned back into a path the way the report's bytes are meant to be read, as UTF-8.
+        // The narrow constructor reads them in the code page on Windows and names another file.
+        EXPECT_TRUE(fs::exists(pathFromUtf8(reconstructed)))
             << "a program reading this report cannot get back to the file it names";
-        EXPECT_EQ(fs::path(reconstructed), file.path);
+        EXPECT_EQ(pathFromUtf8(reconstructed).native(), file.path.native());
     }
 }
 
@@ -1090,7 +1122,11 @@ using lyxbosa::test::fixtures::writeZip;
 // so that the comparison is of one construction with itself on every platform.
 const FileResult* findMember(const ScanResult& result, const fs::path& container,
                              const std::string& stored) {
-    const fs::path address(pathToUtf8(container) + "!" + archive::normalizeMemberName(stored));
+    // Through pathFromUtf8(), as the scanner builds it. Built with the narrow constructor, this
+    // helper decoded the address in the code page on Windows exactly as the scanner once did,
+    // and the two wrong spellings compared equal.
+    const fs::path address =
+        pathFromUtf8(pathToUtf8(container) + "!" + archive::normalizeMemberName(stored));
     for (const auto& file : result.files) {
         if (file.path == address) {
             return &file;

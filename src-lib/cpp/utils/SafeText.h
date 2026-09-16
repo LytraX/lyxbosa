@@ -103,6 +103,21 @@ inline size_t sequenceLength(std::string_view in, size_t i) {
     return 0;
 }
 
+// "0xe1 at offset 26": the byte at `at`, and where it is. Quotes nothing else of the value.
+inline std::string describeByte(std::string_view in, size_t at) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    const auto c = static_cast<unsigned char>(in[at]);
+    return std::string("0x") + kHex[(c >> 4) & 0xf] + kHex[c & 0xf] + " at offset " +
+           std::to_string(at);
+}
+
+// The sentence for a value whose byte at `at` begins no well-formed UTF-8 sequence. One
+// spelling, for whyNotPlainText() and whyNotUtf8() both, so that two refusals of the same
+// byte cannot describe it two ways.
+inline std::string notUtf8At(std::string_view in, size_t at) {
+    return "is not valid UTF-8 (byte " + describeByte(in, at) + ")";
+}
+
 // True when the well-formed two-byte sequence at `in[i]` is a C1 control, U+0080 to U+009F.
 // Only asked once sequenceLength() has said there are two bytes there.
 inline bool isC1Control(std::string_view in, size_t i) {
@@ -221,11 +236,6 @@ inline bool needsSanitizing(std::string_view in) {
 // offset 5)" - and quotes no byte of it, so it is safe to print whatever the value holds.
 inline std::optional<std::string> whyNotPlainText(std::string_view in, bool lineBreaks = false) {
     static constexpr char kHex[] = "0123456789abcdef";
-    const auto byteAt = [&in](size_t at) {
-        const auto c = static_cast<unsigned char>(in[at]);
-        return std::string("0x") + kHex[(c >> 4) & 0xf] + kHex[c & 0xf] + " at offset " +
-               std::to_string(at);
-    };
 
     size_t i = 0;
     while (i < in.size()) {
@@ -235,11 +245,11 @@ inline std::optional<std::string> whyNotPlainText(std::string_view in, bool line
                 ++i;
                 continue;
             }
-            return "carries a control character (" + byteAt(i) + ")";
+            return "carries a control character (" + detail::describeByte(in, i) + ")";
         }
         const size_t len = detail::sequenceLength(in, i);
         if (len == 0) {
-            return "is not valid UTF-8 (byte " + byteAt(i) + ")";
+            return detail::notUtf8At(in, i);
         }
         if (len == 2 && detail::isC1Control(in, i)) {
             // Named by its code point, then by its bytes and the offset of the first: a
@@ -253,6 +263,26 @@ inline std::optional<std::string> whyNotPlainText(std::string_view in, bool line
                    kUpperHex[(second >> 4) & 0xf] + kUpperHex[second & 0xf] + ", 0xc2 0x" +
                    kHex[(second >> 4) & 0xf] + kHex[second & 0xf] + " at offset " +
                    std::to_string(i) + ")";
+        }
+        i += len;
+    }
+    return std::nullopt;
+}
+
+// Why `in` is not UTF-8, in whyNotPlainText()'s words for the same byte, or empty when it is.
+//
+// The UTF-8 half of that question without the control-character half, for a value where a
+// control character is legitimate and only the encoding is at issue: a path in the
+// configuration file, whose real name may hold ESC and still has to be scannable, but which
+// cannot name anything on a platform whose paths are UTF-16 unless it is UTF-8. It finishes a
+// sentence about the value the same way - "scan.directories entry 1 " + "is not valid UTF-8
+// (byte 0xe1 at offset 26)".
+inline std::optional<std::string> whyNotUtf8(std::string_view in) {
+    size_t i = 0;
+    while (i < in.size()) {
+        const size_t len = detail::sequenceLength(in, i);
+        if (len == 0) {
+            return detail::notUtf8At(in, i);
         }
         i += len;
     }
