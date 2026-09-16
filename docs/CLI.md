@@ -122,6 +122,23 @@ anything, with the rule's position, its name with escapes, and the offending byt
 Error: Rule 1 ("Probe\xff name"): its name is not valid UTF-8 (byte 0xff at offset 5). ...
 ```
 
+The file is read as UTF-8. On Windows a path is UTF-16, so a value that becomes a path or is
+matched against one — an entry of `scan.directories`, `scan.include` or `scan.exclude`,
+`actions.quarantine.directory`, `actions.report.file` — can name no file unless it is valid
+UTF-8, and a file holding one that is not is refused here, and by `scan` and `check` before
+they read anything, with exit 1. The sentence names the key, the entry of a list, the value
+with escapes and the offending byte, and is the same from all three commands:
+
+```
+Error: scan.directories entry 1 ("D:/sites/\xe1\xf1\xf7\xe5\xdf\xef") is not valid UTF-8 (byte 0xe1 at offset 9). On Windows a configuration value that names a path, or is matched against one, is read as UTF-8, and no file name can hold these bytes; save the configuration file as UTF-8
+```
+
+Those bytes are what an editor writes when it saves the file in the system's ANSI code page
+with a character past ASCII in it; saving it as UTF-8 is the repair, and a file
+`init-config` wrote is UTF-8 already. On Linux and macOS a path is bytes, so the same value
+names the directory those bytes spell and is accepted. A control character in one of these
+values is accepted on every platform, because a real directory's name can hold one.
+
 ## `init-config` — print the default configuration
 
 ```

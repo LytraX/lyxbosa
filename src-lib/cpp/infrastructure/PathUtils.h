@@ -41,6 +41,18 @@ namespace lyxbosa {
 // Elsewhere a path is bytes, both are the identity, and a name that is not UTF-8 goes
 // through unchanged for pathForDisplay() to escape.
 
+// Whether a path on this platform is UTF-16, so that a string names one only when it is valid
+// UTF-8. True on Windows. Elsewhere a path is bytes and every string names one - including a
+// string that is not UTF-8, which on Linux can be the real name of a real directory.
+//
+// A constant rather than a preprocessor test at each use, so that the question asked on one
+// platform is compiled, and tested, on all of them; see Config::validate().
+#ifdef _WIN32
+inline constexpr bool kPathsAreUtf16 = true;
+#else
+inline constexpr bool kPathsAreUtf16 = false;
+#endif
+
 #ifdef _WIN32
 // UTF-16 as UTF-8. An unpaired surrogate becomes U+FFFD. The conversion cannot otherwise fail
 // for a string a path or a command line can hold, and if it somehow did the answer is empty

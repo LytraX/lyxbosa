@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Rules.h"
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -31,6 +32,15 @@ public:
 
     // Validate a configuration, returns error message or empty string if valid
     static std::string validate(const AppConfig& config);
+
+    // Why a value in this configuration that becomes a path, or is matched against one, is not
+    // valid UTF-8 - naming the key, the entry of a list, the byte and its offset, and telling
+    // the operator to save the file as UTF-8 - or nullopt when every such value is.
+    //
+    // A question about the text alone, answered the same on every platform. validate() asks it
+    // only where kPathsAreUtf16 says a path is UTF-16, because only there can such a value name
+    // nothing; on Linux and macOS the same bytes are a real name and are accepted.
+    static std::optional<std::string> pathValueNotUtf8(const AppConfig& config);
 
     // Settings that are legal but worth saying out loud - a guard turned off,
     // mostly. Returns one line per warning, empty when there is nothing to say.

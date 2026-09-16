@@ -7,7 +7,9 @@ in. The last decides whether a marker written inside a scanned file may lower th
 a finding, and by default it may not.
 
 The flags and configuration keys named here are described in full in
-[docs/CLI.md](CLI.md) and in the output of `lyxbosa init-config`.
+[docs/CLI.md](CLI.md) and in the output of `lyxbosa init-config`. The configuration file is
+read as UTF-8; what each platform does with a path or pattern in it that is not UTF-8 is under
+`validate-config` there.
 
 - [Archives](#archives) — zip, tar, tar.gz and gz, and the backup left in the web root
 - [File names](#file-names) — when the name is the attack, and what is done about it

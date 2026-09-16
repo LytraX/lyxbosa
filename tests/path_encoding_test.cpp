@@ -42,6 +42,7 @@
 #include "system/CliArgs.h"
 #include "use-cases/CheckUseCase.h"
 #include "use-cases/ScanUseCase.h"
+#include "use-cases/ValidateConfigUseCase.h"
 #include "utils/SafeText.h"
 
 #include "ArchiveFixtures.h"
@@ -49,6 +50,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -589,4 +591,203 @@ TEST(PathEncodingTest, AMemberNameThatIsNotUtf8IsReportedAsFarAsThePlatformCanSp
     EXPECT_TRUE(pathDisplayIsLossy(row->path));
     EXPECT_EQ(pathBytesHex(row->path), pathBytesHex(fs::path(address)));
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// The configuration file is read as UTF-8. Where a path is UTF-16, a value that becomes a path
+// and is not UTF-8 names nothing, and the file is refused; where a path is bytes, it is a name.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Greek as code page 1253 spells it - what an editor on a Greek Windows installation writes when
+// the file is saved in the system encoding. Not UTF-8: 0xe1 begins no sequence there.
+const std::string kGreekInCodePage1253 = "\xE1\xF1\xF7\xE5\xDF\xEF";
+
+std::string forwardSlashes(std::string text) {
+    std::replace(text.begin(), text.end(), '\\', '/');
+    return text;
+}
+
+// The shipped configuration, scanning one root spelled exactly as `root` is.
+std::string configScanning(const std::string& root) {
+    std::string yaml = Config::generateDefault();
+    const std::string placeholder = "    - /var/www\n";
+    const size_t at = yaml.find(placeholder);
+    EXPECT_NE(at, std::string::npos) << "the shipped configuration no longer has its placeholder";
+    if (at != std::string::npos) {
+        yaml.replace(at, placeholder.size(), "    - \"" + root + "\"\n");
+    }
+    return yaml;
+}
+
+struct CommandRun {
+    int code = 0;
+    std::string out;
+    std::string err;
+};
+
+CommandRun validateConfig(const fs::path& file) {
+    CliArgs args;
+    args.validateConfigFile = pathToUtf8(file);
+    const Terminal terminal(/*useAnsi=*/false);
+    CommandRun run;
+    testing::internal::CaptureStdout();
+    testing::internal::CaptureStderr();
+    run.code = ValidateConfigUseCase(terminal).execute(args);
+    run.out = testing::internal::GetCapturedStdout();
+    run.err = testing::internal::GetCapturedStderr();
+    return run;
+}
+
+CommandRun scanWithConfig(const fs::path& file) {
+    CliArgs args;
+    args.configFile = pathToUtf8(file);
+    args.force = true;
+    args.quarantine = false;
+    args.quiet = true;
+    args.noPreCount = true;
+    args.outputFormat = ReportFormat::Json;
+    args.outputFormatExplicit = true;
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+    CommandRun run;
+    testing::internal::CaptureStdout();
+    testing::internal::CaptureStderr();
+    run.code = ScanUseCase(terminal, caps).execute(args);
+    run.out = testing::internal::GetCapturedStdout();
+    run.err = testing::internal::GetCapturedStderr();
+    return run;
+}
+
+size_t filesScannedIn(const std::string& report) {
+    if (!nlohmann::json::accept(report)) {
+        ADD_FAILURE() << "the report is not a JSON document: " << safe_text::sanitize(report);
+        return 0;
+    }
+    return nlohmann::json::parse(report).value("totalFilesScanned", size_t{0});
+}
+
+}  // namespace
+
+TEST(ConfigurationEncodingTest, EveryValueThatBecomesAPathIsNamedWhenItIsNotUtf8) {
+    // The wording, once in full: the key and the entry, the value escaped, the byte and its
+    // offset in whyNotPlainText()'s words, and what to do.
+    AppConfig roots;
+    roots.scan.directories = {"/srv/site", "/srv/" + kGreekInCodePage1253};
+    const auto refusal = Config::pathValueNotUtf8(roots);
+    ASSERT_TRUE(refusal);
+    EXPECT_EQ(*refusal,
+              "scan.directories entry 2 (\"/srv/\\xe1\\xf1\\xf7\\xe5\\xdf\\xef\") is not valid "
+              "UTF-8 (byte 0xe1 at offset 5). On Windows a configuration value that names a "
+              "path, or is matched against one, is read as UTF-8, and no file name can hold "
+              "these bytes; save the configuration file as UTF-8");
+
+    // Every other key a path is read from, each named as itself.
+    const std::string bad = "x" + kGreekInCodePage1253;
+    struct Case {
+        const char* key;
+        void (*plant)(AppConfig&, const std::string&);
+    };
+    const Case cases[] = {
+        {"scan.include entry 1", [](AppConfig& c, const std::string& v) { c.scan.include = {v}; }},
+        {"scan.exclude entry 2",
+         [](AppConfig& c, const std::string& v) { c.scan.exclude = {"node_modules/**", v}; }},
+        {"actions.quarantine.directory",
+         [](AppConfig& c, const std::string& v) { c.actions.quarantine.directory = v; }},
+        {"actions.report.file",
+         [](AppConfig& c, const std::string& v) { c.actions.report.file = v; }},
+    };
+    for (const Case& planted : cases) {
+        SCOPED_TRACE(planted.key);
+        AppConfig config;
+        planted.plant(config, bad);
+        const auto problem = Config::pathValueNotUtf8(config);
+        ASSERT_TRUE(problem);
+        EXPECT_EQ(problem->rfind(std::string(planted.key) + " (\"x\\xe1", 0), 0u) << *problem;
+        EXPECT_NE(problem->find("is not valid UTF-8 (byte 0xe1 at offset 1)"), std::string::npos)
+            << *problem;
+        EXPECT_NE(problem->find("save the configuration file as UTF-8"), std::string::npos);
+    }
+}
+
+TEST(ConfigurationEncodingTest, OnlyTheEncodingOfAPathValueIsAskedAbout) {
+    // Well-formed UTF-8 in every value a path is read from: Greek, CJK, and control characters,
+    // which a real directory name may hold and which an operator may need to scan.
+    for (const std::string value :
+         {std::string("/srv/\xCE\xB1\xCF\x81\xCF\x87\xCE\xB5\xCE\xAF\xCE\xBF"),
+          std::string("/srv/\xE8\xAB\x8B\xE6\xB1\x82\xE6\x9B\xB8"), std::string("/srv/k\xC2\x9B" "2J"),
+          std::string("/srv/e\x1B]0;x\x07"), std::string("/srv/del\x7F"), std::string("C:\\www"),
+          std::string()}) {
+        AppConfig config;
+        config.scan.directories = {value};
+        config.scan.include = {"*" + value};
+        config.scan.exclude = {value + "/**"};
+        config.actions.quarantine.directory = value;
+        config.actions.report.file = value;
+        EXPECT_FALSE(Config::pathValueNotUtf8(config)) << safe_text::sanitize(value);
+    }
+
+    // A value that does not name a file is not this question's, however it is spelled.
+    AppConfig config;
+    config.actions.alert.to = kGreekInCodePage1253;
+    RuleConfig rule;
+    rule.name = "needle";
+    PatternConfig pattern;
+    pattern.value = kGreekInCodePage1253;
+    rule.patterns.push_back(pattern);
+    config.rules.push_back(rule);
+    EXPECT_FALSE(Config::pathValueNotUtf8(config));
+}
+
+TEST(ConfigurationEncodingTest, ScanAndValidateConfigGiveOneAnswerAboutACodePageGreekRoot) {
+    TempDir root;
+    const fs::path parent = root.path() / "roots";
+    fs::create_directories(parent);
+    const std::string rootText = forwardSlashes(pathToUtf8(parent)) + "/" + kGreekInCodePage1253;
+    if (!kPathsAreUtf16) {
+        // Where a path is bytes, those bytes are this directory's name.
+        writeFile(pathFromUtf8(rootText) / "index.php", kBenign);
+    }
+    const fs::path file = root.path() / "saved-in-1253.yaml";
+    writeFile(file, configScanning(rootText));
+
+    const CommandRun validate = validateConfig(file);
+    const CommandRun scan = scanWithConfig(file);
+
+    if (kPathsAreUtf16) {
+        AppConfig named;
+        named.scan.directories = {rootText};
+        const auto problem = Config::pathValueNotUtf8(named);
+        ASSERT_TRUE(problem);
+        const std::string refusal = "Error: " + *problem + "\n";
+        EXPECT_EQ(validate.code, 1);
+        EXPECT_EQ(scan.code, 1);
+        // One function, one sentence: the same bytes on standard error from both commands.
+        EXPECT_EQ(validate.err, refusal) << safe_text::sanitize(validate.err);
+        EXPECT_EQ(scan.err, refusal) << safe_text::sanitize(scan.err);
+        EXPECT_EQ(validate.err.find("\xEF\xBF\xBD"), std::string::npos)
+            << "the refusal spells the value with U+FFFD rather than naming its bytes";
+    } else {
+        EXPECT_EQ(validate.code, 0) << safe_text::sanitize(validate.err);
+        EXPECT_NE(validate.out.find("Configuration is valid."), std::string::npos);
+        EXPECT_EQ(scan.code, 0) << safe_text::sanitize(scan.err);
+        EXPECT_EQ(filesScannedIn(scan.out), 1u) << "the directory those bytes name was not read";
+    }
+}
+
+TEST(ConfigurationEncodingTest, AUtf8GreekRootLoadsAndIsScannedOnEveryPlatform) {
+    TempDir root;
+    const fs::path directory = root.path() / nativeName(names()[1]);   // Greek
+    writeFile(directory / "index.php", kBenign);
+    const fs::path file = root.path() / "saved-in-utf-8.yaml";
+    writeFile(file, configScanning(forwardSlashes(pathToUtf8(directory))));
+
+    const CommandRun validate = validateConfig(file);
+    EXPECT_EQ(validate.code, 0) << safe_text::sanitize(validate.err);
+    EXPECT_NE(validate.out.find("Configuration is valid."), std::string::npos);
+
+    const CommandRun scan = scanWithConfig(file);
+    EXPECT_EQ(scan.code, 0) << safe_text::sanitize(scan.err);
+    EXPECT_EQ(filesScannedIn(scan.out), 1u);
 }

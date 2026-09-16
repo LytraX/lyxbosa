@@ -835,6 +835,33 @@ TEST(SafeTextUtf8Test, WhyNotPlainTextAgreesWithNeedsSanitizingExactly) {
 // sequence exactly as ESC [ does, and GNU screen acts on it. Every one of the 32 is escaped
 // byte by byte and every neighbour in the Latin-1 block is left alone, and what comes out is
 // still UTF-8 - a JSON document that carries it has to stay parseable.
+// The UTF-8 half of whyNotPlainText() alone, for a value whose control characters are
+// legitimate and whose encoding is not: a path in the configuration file. It has to describe an
+// ill-formed byte in exactly the words whyNotPlainText() does, and say nothing about a control.
+TEST(SafeTextUtf8Test, WhyNotUtf8NamesTheByteWhyNotPlainTextNamesAndNoControlCharacter) {
+    for (const std::string value : {std::string("\xC0\xAF"), std::string("ab\xE1\xF1"),
+                                    std::string("\xCE\x95" "\xC0\xAF"),
+                                    std::string("a\xED\xA0\x80")}) {
+        SCOPED_TRACE(safe_text::sanitize(value));
+        ASSERT_TRUE(safe_text::whyNotUtf8(value));
+        EXPECT_EQ(safe_text::whyNotUtf8(value), safe_text::whyNotPlainText(value));
+        EXPECT_FALSE(safe_text::isValidUtf8(value));
+    }
+    for (const std::string value :
+         {std::string("ab\x1b[31m"), std::string("\x7f"), std::string("k\xC2\x9B" "2J"),
+          std::string("a\nb"), std::string("\xCE\x95\xCE\xBB"), std::string()}) {
+        SCOPED_TRACE(safe_text::sanitize(value));
+        EXPECT_FALSE(safe_text::whyNotUtf8(value));
+        EXPECT_TRUE(safe_text::isValidUtf8(value));
+    }
+    // A control ahead of an ill-formed byte: whyNotPlainText() stops at the control, and this
+    // goes on to the byte.
+    EXPECT_EQ(safe_text::whyNotUtf8("\x1b" "a\xFF"),
+              std::optional<std::string>("is not valid UTF-8 (byte 0xff at offset 2)"));
+    EXPECT_EQ(safe_text::whyNotPlainText("\x1b" "a\xFF"),
+              std::optional<std::string>("carries a control character (0x1b at offset 0)"));
+}
+
 TEST(SafeTextUtf8Test, EveryC1ControlIsEscapedAndNothingBesideItIs) {
     static constexpr char kHex[] = "0123456789abcdef";
     for (int second = 0x80; second <= 0xBF; ++second) {

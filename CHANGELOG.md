@@ -168,10 +168,18 @@ commit list that CI generates per tag.
   a row that carried them only because the misspelling held a control character.
 - **On Windows, an archive past `scan.max_file_size` with such a name reports its members and
   no ARC003**, so `check` on one exits 0 or 2 where it exited 1.
-- **On Windows, a configuration file is read as UTF-8, as YAML is.** One saved in the ANSI code
-  page instead, whose paths hold characters past ASCII, no longer names them: a directory to
-  scan in it is refused as missing, exit 1, and a pattern no longer matches. Save it as UTF-8;
-  a configuration `init-config` wrote already is.
+- **On Windows, a configuration file whose paths or path patterns are not valid UTF-8 is
+  refused when it loads**, with exit 1: `validate-config` refuses it where it exited 0, and
+  `scan` and `check` refuse it before reading anything where `scan` refused a directory it
+  could not find. Such a file is what an editor writes when it saves the configuration in the
+  system's ANSI code page with a character past ASCII in `scan.directories`, `scan.include`,
+  `scan.exclude`, `actions.quarantine.directory` or `actions.report.file`. All three commands
+  print one sentence naming the key, the entry of a list, the value with escapes and the
+  offending byte, and telling the operator to save the file as UTF-8, such as
+  `scan.directories entry 1 ("D:/sites/\xe1\xf1\xf7\xe5\xdf\xef") is not valid UTF-8 (byte
+  0xe1 at offset 9)`. A configuration `init-config` wrote is UTF-8 already. On Linux and macOS
+  the same bytes are accepted and name the directory they spell, and control characters in
+  these values are accepted on every platform.
 - **On Windows, `update` for a binary installed under a directory outside the ANSI code page
   exits by what it did**, 0 or 1, where it exited 3 without a word.
 

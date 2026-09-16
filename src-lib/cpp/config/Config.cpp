@@ -682,6 +682,54 @@ updates:
                     fmt::format("{}h", kDefaultUpdateInterval / 3600));
 }
 
+std::optional<std::string> Config::pathValueNotUtf8(const AppConfig& config) {
+    // WHICH VALUES. The ones read from this file that become a path through pathFromUtf8() or
+    // are matched against a path's UTF-8 spelling: the roots, the include and exclude
+    // patterns, the quarantine directory and the report file. Nothing else here names a file.
+    //
+    // UTF-8 ONLY, AND NOT CONTROL CHARACTERS. whyNotUtf8() rather than whyNotPlainText(): a
+    // root whose real name holds ESC is a directory an operator may need to scan, and it is
+    // escaped wherever it is printed. The encoding is the question, because a value that is
+    // not UTF-8 becomes U+FFFD in a UTF-16 path, which names a different file or none - and
+    // the operator was told only that a directory was missing.
+    const auto refuse = [](const std::string& key, std::string_view value,
+                           const std::string& why) {
+        return fmt::format("{} (\"{}\") {}. On Windows a configuration value that names a path, "
+                           "or is matched against one, is read as UTF-8, and no file name can "
+                           "hold these bytes; save the configuration file as UTF-8",
+                           key, safe_text::sanitize(value), why);
+    };
+    const auto list = [&refuse](const char* key, const std::vector<std::string>& values)
+        -> std::optional<std::string> {
+        for (size_t index = 0; index < values.size(); ++index) {
+            if (auto why = safe_text::whyNotUtf8(values[index])) {
+                return refuse(fmt::format("{} entry {}", key, index + 1), values[index], *why);
+            }
+        }
+        return std::nullopt;
+    };
+    const auto single = [&refuse](const char* key, const std::string& value)
+        -> std::optional<std::string> {
+        if (auto why = safe_text::whyNotUtf8(value)) {
+            return refuse(key, value, *why);
+        }
+        return std::nullopt;
+    };
+
+    if (auto problem = list("scan.directories", config.scan.directories)) return problem;
+    if (auto problem = list("scan.include", config.scan.include)) return problem;
+    if (auto problem = list("scan.exclude", config.scan.exclude)) return problem;
+    // Asked whether or not quarantine is enabled: --quarantine turns it on for one run.
+    if (auto problem = single("actions.quarantine.directory",
+                              config.actions.quarantine.directory)) {
+        return problem;
+    }
+    if (auto problem = single("actions.report.file", config.actions.report.file)) {
+        return problem;
+    }
+    return std::nullopt;
+}
+
 std::string Config::validate(const AppConfig& config) {
     // Check for at least one rule (either built-in or custom)
     if (config.rules.empty() && !config.builtinRules.enabled) {
@@ -709,6 +757,14 @@ std::string Config::validate(const AppConfig& config) {
                 return fmt::format("Pattern in rule '{}' must have a value",
                                    safe_text::sanitize(rule.name));
             }
+        }
+    }
+
+    // Where a path is UTF-16. Every command that loads a configuration file refuses it here, so
+    // `scan -c` and `validate-config` answer about one file in the same words.
+    if (kPathsAreUtf16) {
+        if (auto problem = pathValueNotUtf8(config)) {
+            return *problem;
         }
     }
 
