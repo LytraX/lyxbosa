@@ -33,6 +33,7 @@
 // measured frame, dies on that same thread. Without it, a 128 KiB stack that had
 // quietly become a 128 MiB one would leave the depth case passing while blind.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "archive/ArchiveScanner.h"
@@ -76,10 +77,7 @@ namespace fs = std::filesystem;
 class TempTree {
 public:
     TempTree() {
-        path_ = fs::temp_directory_path() /
-                ("lyxbosa-walk-test-" + std::to_string(test::getpid_portable()) + "-" +
-                 std::to_string(counter_++));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-walk-test");
     }
     ~TempTree() {
         std::error_code ec;
@@ -162,7 +160,6 @@ private:
 
     fs::path path_;
     std::vector<fs::path> locked_;
-    static inline int counter_ = 0;
 };
 
 ScanConfig configFor(const fs::path& root) {

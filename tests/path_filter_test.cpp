@@ -54,6 +54,7 @@
 // Every suppression has a control path that must still fire, because a normalisation
 // that suppressed everything would satisfy a one-sided case.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "config/Config.h"
@@ -189,9 +190,7 @@ protected:
 
     void SetUp() override {
         PathFilterFixture::SetUp();
-        root = fs::temp_directory_path() /
-               ("lyxbosa-path-filter-" + std::to_string(std::random_device{}()));
-        fs::create_directories(root);
+        root = lyxbosa::test::makeUniqueTempDir("lyxbosa-path-filter");
     }
     void TearDown() override {
         std::error_code ec;

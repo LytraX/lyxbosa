@@ -6,6 +6,7 @@
 // *counted* source was never called: a predicate that returns "skip" is only
 // evidence if the thing it guards can be observed not to have run.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "config/Config.h"
@@ -135,11 +136,7 @@ public:
 class TempDir {
 public:
     TempDir() {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = fs::temp_directory_path() /
-                ("lyxbosa-update-test-" + std::to_string(tick) + "-" +
-                 std::to_string(counter_++));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-update-test");
     }
     ~TempDir() {
         std::error_code ec;
@@ -150,7 +147,6 @@ public:
 
 private:
     fs::path path_;
-    static inline int counter_ = 0;
 };
 
 // A context that would check, so each test can spoil exactly one thing.

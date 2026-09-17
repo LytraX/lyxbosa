@@ -1,3 +1,4 @@
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "archive/ArchiveFormat.h"
@@ -41,14 +42,7 @@ namespace fs = std::filesystem;
 class TempDir {
 public:
     TempDir() {
-        // A steady_clock tick rather than ::getpid(), which is POSIX-only and was the
-        // third unguarded assumption in this suite. The name only has to be unique
-        // among concurrent runs, and this is what tests/update_test.cpp already uses.
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = fs::temp_directory_path() /
-                ("lyxbosa-archive-test-" + std::to_string(tick) + "-" +
-                 std::to_string(counter_++));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-archive-test");
     }
     ~TempDir() {
         std::error_code ec;
@@ -59,7 +53,6 @@ public:
 
 private:
     fs::path path_;
-    static inline int counter_ = 0;
 };
 
 void writeFile(const fs::path& path, const std::string& bytes) {

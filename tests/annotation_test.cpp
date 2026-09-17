@@ -40,6 +40,7 @@
 //     configuration and under trust - loose files and members of a zip, because the
 //     archive scanner shares the engine and a member is as attacker-written as a file.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "config/Config.h"
@@ -423,9 +424,7 @@ protected:
     fs::path root;
 
     void SetUp() override {
-        root = fs::temp_directory_path() /
-               ("lyxbosa-annotation-" + std::to_string(std::random_device{}()));
-        fs::create_directories(root);
+        root = lyxbosa::test::makeUniqueTempDir("lyxbosa-annotation");
     }
     void TearDown() override {
         std::error_code ec;

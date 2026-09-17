@@ -34,6 +34,7 @@
 // passes there by observing the property, not by skipping it - and what it cannot do
 // there is fail for the Windows reason, so a green Linux run says nothing about Windows.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "config/Config.h"
@@ -68,8 +69,7 @@ constexpr size_t kAtLeast = 280;
 class LongPathTree {
 public:
     LongPathTree() {
-        root_ = fs::temp_directory_path() /
-                ("lyxbosa-long-path-" + std::to_string(std::random_device{}()));
+        root_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-long-path");
         fs::path dir = root_;
         while (pathToUtf8(dir / kLeaf).size() < kAtLeast) {
             dir /= "component-0123456789";

@@ -22,6 +22,7 @@
 //
 // Directives only. No fixture here carries a script body.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "analysis/HtaccessHandler.h"
@@ -359,9 +360,7 @@ namespace {
 class ScratchDir {
 public:
     ScratchDir() {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = fs::temp_directory_path() / ("lyxbosa-htaccess-" + std::to_string(tick));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-htaccess");
     }
     ~ScratchDir() {
         std::error_code ec;
