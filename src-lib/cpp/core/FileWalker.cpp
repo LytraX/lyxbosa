@@ -8,60 +8,7 @@
 #include <optional>
 #include <string_view>
 
-#ifdef _WIN32
-// Portable fnmatch replacement for Windows
-// Supports *, ?, and ** (recursive) glob patterns
-static bool portable_fnmatch(const char* pattern, const char* str) {
-    while (*pattern && *str) {
-        if (*pattern == '*') {
-            if (*(pattern + 1) == '*') {
-                // ** matches everything including path separators
-                pattern += 2;
-                if (*pattern == '/' || *pattern == '\\') pattern++;
-                if (!*pattern) return true;
-                for (const char* s = str; *s; ++s) {
-                    if (portable_fnmatch(pattern, s)) return true;
-                }
-                return false;
-            }
-            // * matches everything except path separators
-            pattern++;
-            if (!*pattern) {
-                // trailing * — match if no more separators
-                while (*str) {
-                    if (*str == '/' || *str == '\\') return false;
-                    str++;
-                }
-                return true;
-            }
-            for (const char* s = str; *s; ++s) {
-                if (*s == '/' || *s == '\\') return false;
-                if (portable_fnmatch(pattern, s)) return true;
-            }
-            return portable_fnmatch(pattern, str);
-        }
-        if (*pattern == '?') {
-            if (*str == '/' || *str == '\\') return false;
-            pattern++;
-            str++;
-            continue;
-        }
-        char pc = *pattern, sc = *str;
-        if (pc == '\\') pc = '/';
-        if (sc == '\\') sc = '/';
-        if (pc != sc) return false;
-        pattern++;
-        str++;
-    }
-    while (*pattern == '*') pattern++;
-    return !*pattern && !*str;
-}
-#else
-#include <fnmatch.h>
-#endif
-
-// For the directory identity and the link classification below. Separate from the block
-// above, which is about glob matching and nothing else.
+// For the directory identity and the link classification below.
 #ifdef _WIN32
 #include <windows.h>
 #include <winioctl.h>
@@ -815,6 +762,15 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
 
 FileWalker::FilterVerdict FileWalker::filterVerdict(
     const std::filesystem::path& path) const {
+    // The name as UTF-8, because that is what a pattern is: it was written in the
+    // configuration file or on the command line. path::string() is not an option on Windows
+    // twice over - it spells the name in the ANSI code page, so a pattern with a Greek letter
+    // in it could never match, and it throws on a character that code page cannot hold, which
+    // turned every file named in Japanese on a Greek host into an aborted scan.
+    return filterVerdictAt(diskPathWithSlashes(pathToUtf8(path)));
+}
+
+FileWalker::FilterVerdict FileWalker::filterVerdictAt(std::string_view slashPath) const {
     // An exclude pattern is asked first, because the two answers are not equal. Both keep the
     // file shut, and a skip tally cannot tell them apart; but NotIncluded lets the scanner read
     // the file's name and Excluded does not. Asked the other way round, a `.mdb` under a tree
@@ -822,7 +778,7 @@ FileWalker::FilterVerdict FileWalker::filterVerdict(
     // and its name was reported from inside the tree the operator had written down as not to
     // be looked at.
     for (const auto& pattern : config_.exclude) {
-        if (matchesGlob(pattern, path)) {
+        if (matchesPattern(pattern, slashPath)) {
             return FilterVerdict::Excluded;
         }
     }
@@ -833,7 +789,7 @@ FileWalker::FilterVerdict FileWalker::filterVerdict(
         return FilterVerdict::Accepted;
     }
     for (const auto& pattern : config_.include) {
-        if (matchesGlob(pattern, path)) {
+        if (matchesPattern(pattern, slashPath)) {
             return FilterVerdict::Accepted;
         }
     }
@@ -877,28 +833,10 @@ CountResult FileWalker::countFiles(const CountProgressCallback& onProgress,
     return result;
 }
 
-FileWalker::FilterVerdict FileWalker::memberFilterVerdict(std::string_view memberName) const {
-    // In filterVerdict()'s order and for its reason: an exclude pattern is asked first.
-    for (const auto& pattern : config_.exclude) {
-        if (matchesMemberGlob(pattern, memberName)) {
-            return FilterVerdict::Excluded;
-        }
-    }
-    if (config_.include.empty()) {
-        return FilterVerdict::Accepted;
-    }
-    for (const auto& pattern : config_.include) {
-        if (matchesMemberGlob(pattern, memberName)) {
-            return FilterVerdict::Accepted;
-        }
-    }
-    return FilterVerdict::NotIncluded;
-}
-
-bool FileWalker::matchesMemberGlob(const std::string& pattern, std::string_view memberName) {
-    const size_t slash = memberName.find_last_of('/');
+bool FileWalker::matchesPattern(const std::string& pattern, std::string_view slashPath) {
+    const size_t slash = slashPath.find_last_of('/');
     const std::string_view base =
-        slash == std::string_view::npos ? memberName : memberName.substr(slash + 1);
+        slash == std::string_view::npos ? slashPath : slashPath.substr(slash + 1);
 
     // "!ext" as std::filesystem::path::extension() reads a name: a dot that is not the
     // name's first character. `.htaccess` has none, and neither do `.` and `..`.
@@ -907,10 +845,11 @@ bool FileWalker::matchesMemberGlob(const std::string& pattern, std::string_view 
         return dot == std::string_view::npos || dot == 0 || base == "..";
     }
 
+    // The final component first, and the whole path only for a pattern holding `**`.
     if (globMatch(pattern, base)) {
         return true;
     }
-    return pattern.find("**") != std::string::npos && globMatch(pattern, memberName);
+    return pattern.find("**") != std::string::npos && globMatch(pattern, slashPath);
 }
 
 namespace {
@@ -1027,49 +966,6 @@ bool globMatchFrom(std::string_view p, size_t pi, std::string_view s, size_t si)
 
 bool FileWalker::globMatch(std::string_view pattern, std::string_view name) {
     return globMatchFrom(pattern, 0, name, 0);
-}
-
-bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::path& path) {
-    // Handle special "!ext" pattern (files without extension)
-    if (pattern == "!ext") {
-        return !path.has_extension();
-    }
-
-    // The name as UTF-8, because that is what a pattern is: it was written in the
-    // configuration file or on the command line. path::string() is not an option on Windows
-    // twice over - it spells the name in the ANSI code page, so a pattern with a Greek letter
-    // in it could never match, and it throws on a character that code page cannot hold, which
-    // turned every file named in Japanese on a Greek host into an aborted scan.
-    //
-    // Try matching against filename only first
-    const std::string filename = pathToUtf8(path.filename());
-#ifdef _WIN32
-    if (portable_fnmatch(pattern.c_str(), filename.c_str())) {
-        return true;
-    }
-
-    // For patterns with **, try matching against full path
-    if (pattern.find("**") != std::string::npos) {
-        const std::string fullPath = pathToUtf8(path);
-        if (portable_fnmatch(pattern.c_str(), fullPath.c_str())) {
-            return true;
-        }
-    }
-#else
-    if (fnmatch(pattern.c_str(), filename.c_str(), FNM_PATHNAME) == 0) {
-        return true;
-    }
-
-    // For patterns with **, try matching against full path
-    if (pattern.find("**") != std::string::npos) {
-        const std::string fullPath = pathToUtf8(path);
-        if (fnmatch(pattern.c_str(), fullPath.c_str(), FNM_PATHNAME) == 0) {
-            return true;
-        }
-    }
-#endif
-
-    return false;
 }
 
 }  // namespace lyxbosa

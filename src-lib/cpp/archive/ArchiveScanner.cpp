@@ -130,6 +130,7 @@ ArchiveScanner::ArchiveScanner(const ArchiveConfig& config, const ScanConfig& sc
 
 std::optional<SkipReason> ArchiveScanner::selectionSkip(const std::string& name,
                                                         std::string_view filterName,
+                                                        std::string_view patternPath,
                                                         uint64_t size,
                                                         bool directory,
                                                         const ArchiveConfig& config,
@@ -154,10 +155,13 @@ std::optional<SkipReason> ArchiveScanner::selectionSkip(const std::string& name,
         return SkipReason::Policy;
     }
 
-    // The same include/exclude the operator wrote for loose files. A tree
-    // excluded on disk must not come back through a backup of itself. Asked of the name as
-    // stored, where a backslash is a character: see FileWalker::memberFilterVerdict().
-    if (filters.memberFilterVerdict(filterName) != FileWalker::FilterVerdict::Accepted) {
+    // The same include/exclude the operator wrote for loose files, asked through the same
+    // function a loose file is asked through, of the path the member has beside its archive:
+    // the container's directory on disk, then the stored name, where a backslash is a
+    // character. A member and the file of that name in the archive's directory answer alike,
+    // so a tree excluded on disk does not come back through a backup of itself, and a
+    // pattern that names nothing on disk names nothing inside an archive either.
+    if (filters.filterVerdictAt(patternPath) != FileWalker::FilterVerdict::Accepted) {
         return SkipReason::Policy;
     }
 
@@ -188,12 +192,14 @@ ArchiveScanner::IndexCount ArchiveScanner::countMembers(const std::filesystem::p
 
     const FileWalker filters(scan);
     const uint64_t memberLimit = config.memberSizeLimit(scan.maxFileSize);
+    const std::string directory = MatchEngine::diskFilterPath(pathToUtf8(path.parent_path()));
 
     for (const auto& entry : reader->entries()) {
         if (interrupted()) break;
         const std::string name = normalizeMemberName(entry.name);
-        if (selectionSkip(name, memberFilterName(entry.name), entry.size, entry.directory,
-                          config, memberLimit, filters)) {
+        const std::string_view filterName = memberFilterName(entry.name);
+        if (selectionSkip(name, filterName, joinFilterPath(directory, filterName), entry.size,
+                          entry.directory, config, memberLimit, filters)) {
             continue;
         }
         ++count.files;
@@ -234,7 +240,7 @@ void ArchiveScanner::reportMember(const Context& ctx, std::string_view member,
 // Only a name the container stores is read. A single gzip has none: its member is named here
 // from the container's own file name, which has already been read as the file it is.
 std::vector<FileMatch> ArchiveScanner::nameFindings(const Entry& entry,
-                                                    std::string_view filterName) const {
+                                                    std::string_view patternPath) const {
     auto named = engine_.matchMemberName(
         entry.name, entry.backslashIsSeparator
                         ? rules::filename::MemberSeparators::SlashAndBackslash
@@ -242,7 +248,7 @@ std::vector<FileMatch> ArchiveScanner::nameFindings(const Entry& entry,
     // The pattern is asked only of a name that raised something. The examination allocates
     // nothing for an ordinary name, and a glob list over every member of a 28,000-member
     // backup would be the cost of this whole feature spent on names that say nothing.
-    if (!named.empty() && filters_.memberFilterVerdict(filterName) ==
+    if (!named.empty() && filters_.filterVerdictAt(patternPath) ==
                               FileWalker::FilterVerdict::Excluded) {
         named.clear();
     }
@@ -384,8 +390,9 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
 
         const std::string name = normalizeMemberName(entries[i].name);
         const std::string_view filterName = memberFilterName(entries[i].name);
-        std::vector<FileMatch> named = nameFindings(entries[i], filterName);
-        if (const auto skip = selectionSkip(name, filterName, entries[i].size,
+        const std::string patternPath = joinFilterPath(ctx.filterDirectory, filterName);
+        std::vector<FileMatch> named = nameFindings(entries[i], patternPath);
+        if (const auto skip = selectionSkip(name, filterName, patternPath, entries[i].size,
                                             entries[i].directory, config_, memberLimit_,
                                             filters_)) {
             ctx.stats->skip(*skip);
@@ -479,11 +486,13 @@ void ArchiveScanner::scanTar(ByteSource& stream, Context& ctx, ByteSource& raw) 
         ctx.summary->observe(entry.name);
         const std::string name = normalizeMemberName(entry.name);
         const std::string_view filterName = memberFilterName(entry.name);
+        const std::string patternPath = joinFilterPath(ctx.filterDirectory, filterName);
 
         reportMember(ctx, entry.name, delta, index, 0, false);
 
-        std::vector<FileMatch> named = nameFindings(entry, filterName);
-        if (const auto skip = selectionSkip(name, filterName, entry.size, entry.directory,
+        std::vector<FileMatch> named = nameFindings(entry, patternPath);
+        if (const auto skip = selectionSkip(name, filterName, patternPath, entry.size,
+                                            entry.directory,
                                             config_, memberLimit_, filters_)) {
             ctx.stats->skip(*skip);
             reportUnopened(ctx, entry.name, entry.size, std::move(named), *skip);
@@ -526,8 +535,10 @@ void ArchiveScanner::scanSingleGzip(ByteSource& source, Context& ctx,
     ctx.summary->observe(memberName);
 
     const std::string name = normalizeMemberName(memberName);
-    if (const auto skip = selectionSkip(name, memberFilterName(memberName), 0, false, config_, 0,
-                                        filters_)) {
+    const std::string_view filterName = memberFilterName(memberName);
+    if (const auto skip = selectionSkip(name, filterName,
+                                        joinFilterPath(ctx.filterDirectory, filterName), 0, false,
+                                        config_, 0, filters_)) {
         ctx.stats->skip(*skip);
         return;
     }

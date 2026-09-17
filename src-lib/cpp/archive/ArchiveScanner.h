@@ -105,10 +105,13 @@ private:
     //
     // `name` is normalizeMemberName() of the stored name, for the priority policy, which can
     // only decline to spend the budget on a non-code member; `filterName` is
-    // memberFilterName(), for the sidecar test and the operator's patterns, which leave a
-    // member shut whatever it holds and so read a backslash as the character it is.
+    // memberFilterName(), for the sidecar test, and `patternPath` is where the member sits
+    // beside its archive - the container's directory in filter spelling, then `filterName` -
+    // for the operator's patterns. Both leave a member shut whatever it holds and so read a
+    // backslash as the character it is.
     static std::optional<SkipReason> selectionSkip(const std::string& name,
                                                    std::string_view filterName,
+                                                   std::string_view patternPath,
                                                    uint64_t size,
                                                    bool directory,
                                                    const ArchiveConfig& config,
@@ -142,10 +145,10 @@ private:
 
     // What a member's stored name raises under the FN rules, unless the operator's exclude
     // patterns name the member. `entry` carries the name as the archive holds it and whether
-    // the name rules read a backslash in it as a separator; `filterName` is
-    // memberFilterName() of the name, which is what the patterns are asked about everywhere
-    // else in this class.
-    std::vector<FileMatch> nameFindings(const Entry& entry, std::string_view filterName) const;
+    // the name rules read a backslash in it as a separator; `patternPath` is where the member
+    // sits beside its archive, which is what the patterns are asked about everywhere else in
+    // this class.
+    std::vector<FileMatch> nameFindings(const Entry& entry, std::string_view patternPath) const;
 
     // The row for a member whose bytes were not read and whose name raised something.
     void reportUnopened(const Context& ctx, std::string_view member, uint64_t size,

@@ -1,4 +1,5 @@
 #include "MatchEngine.h"
+#include "infrastructure/PathUtils.h"
 #include "utils/SafeText.h"
 #include "analysis/StringAssembly.h"
 #include <algorithm>
@@ -1557,12 +1558,9 @@ std::string MatchEngine::diskFilterPath(std::string_view path) {
     // lets a live webshell signature through. The scanner runs on compromised hosts,
     // and a name the attacker spells must not be able to claim a suppression. So the
     // rewrite is conditional on the platform whose path grammar makes it exact, and on
-    // POSIX the filters see the path byte for byte as the platform gave it.
-#ifdef _WIN32
-    return filterPath(path);
-#else
-    return std::string(path);
-#endif
+    // POSIX the filters see the path byte for byte as the platform gave it. The rule is
+    // diskPathWithSlashes()'s, which the include and exclude patterns read through too.
+    return diskPathWithSlashes(path);
 }
 
 std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_view filePath) const {

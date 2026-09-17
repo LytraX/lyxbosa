@@ -125,6 +125,22 @@ inline std::FILE* openPathForStdio(const std::filesystem::path& p, const char* m
 #endif
 }
 
+// A path from this platform's disk, as UTF-8, in the spelling the location priors and the
+// include and exclude patterns read: `/` between components. On Windows a backslash cannot
+// be part of a name, so every one is a separator and turning it into `/` is exact. On POSIX
+// a backslash can be part of a name - `tests\shell.php` is one file - so the bytes are left
+// exactly as they are: rewriting them there would be a guess, and the guess would let a name
+// the attacker spells claim a directory. Never used for what a report prints.
+inline std::string diskPathWithSlashes(std::string_view utf8) {
+    std::string out(utf8);
+#ifdef _WIN32
+    for (char& c : out) {
+        if (c == '\\') c = '/';
+    }
+#endif
+    return out;
+}
+
 // Path rendered for a human. A directory or file name is attacker-controlled on a
 // compromised host and can carry ESC just as file *content* can, so anything headed
 // for a terminal, a report or a progress line goes through here. Scanner keeps the

@@ -44,11 +44,11 @@ enum class Bucket {
 // backslash there is a character the archive's writer chose - see memberFilterName().
 std::string normalizeMemberName(std::string_view raw);
 
-// The spelling of a stored member name that `scan.include` and `scan.exclude`, and the
-// sidecar test below, are asked about when they decide whether a member is opened: the
-// name as the archive holds it, without its leading "./" and "/". Every extractor measured
-// writes such a member beneath its destination, so taking them off is exact. A backslash is
-// left where it is.
+// The spelling of a stored member name that the sidecar test below, and - beneath the
+// container's directory - `scan.include` and `scan.exclude`, are asked about when they decide
+// whether a member is opened: the name as the archive holds it, without its leading "./" and
+// "/". Every extractor measured writes such a member beneath its destination, so taking them
+// off is exact. A backslash is left where it is.
 std::string_view memberFilterName(std::string_view stored);
 
 // Whether a zip's names read as backslash-separated for the name rules: every name that

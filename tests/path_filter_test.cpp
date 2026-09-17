@@ -527,7 +527,8 @@ protected:
     // prove nothing about a suppression. `label` keeps two archives of one case apart.
     std::map<std::string, std::set<std::string>> scanMembers(
         Container container, const std::vector<std::pair<std::string, std::string>>& members,
-        std::optional<size_t> opened = std::nullopt, const std::string& label = "") {
+        std::optional<size_t> opened = std::nullopt, const std::string& label = "",
+        const std::vector<std::string>& excludeUnderArchiveDirectory = {}) {
         const fs::path dir = root / (label + containerName(container));
         fs::create_directories(dir);
         const fs::path archive = dir / containerName(container);
@@ -553,6 +554,9 @@ protected:
         config.scan.directories = {pathToUtf8(dir)};
         config.scan.recursive = true;
         config.actions.quarantine.enabled = false;
+        for (const auto& pattern : excludeUnderArchiveDirectory) {
+            config.scan.exclude.push_back(diskPathWithSlashes(pathToUtf8(dir)) + "/" + pattern);
+        }
         Scanner scanner(config);
         scanner.setPreCount(false);
         const ScanResult result = scanner.scan();
@@ -663,30 +667,41 @@ TEST_P(EveryPathFragmentInAnArchiveTest, AMemberNamedWithBackslashesByALinuxArch
     }
 }
 
-// The default configuration excludes `vendor/**`, and a member is asked about it by name. A
-// member NAMED `vendor\w.php` at the top of an archive is one name in no directory: it is
-// opened and its rule fires. A genuine `vendor/` directory at the top is still excluded - and
-// only what sits directly in it, because `**` stops at a `/` on every platform, as fnmatch(3)
-// with FNM_PATHNAME stops it: `vendor/lib/w.php` is opened, on Windows as on Linux.
+// A member is asked the operator's patterns at the path it has beside its archive - the
+// archive's directory on disk, then the stored name - exactly as the file of that name in that
+// directory is asked them. So the default `vendor/**`, which names nothing on disk because a
+// file's path is absolute, names nothing inside an archive either; and a pattern that does name
+// the archive's `vendor/` - written from the archive's own directory - excludes a member under
+// a genuine `vendor/` directory, not a member NAMED `vendor\w.php`, and not one two directories
+// down, because `**` stops at a `/` on every platform, as fnmatch(3) with FNM_PATHNAME stops it.
 class ArchiveMemberExcludeTest : public ArchiveMemberFixture {};
 
 TEST_F(ArchiveMemberExcludeTest, AMemberNamedWithBackslashesIsNotInAnExcludedDirectory) {
     const std::string content(kFilesMan);
     for (const Container container : {Container::UnixZip, Container::DosZip, Container::TarGz}) {
         SCOPED_TRACE(containerName(container));
+        auto byDefault = scanMembers(container,
+                                     {{"vendor\\w.php", content}, {"vendor/w.php", content},
+                                      {"vendor/lib/w.php", content}},
+                                     std::nullopt, "default-");
+        EXPECT_EQ(byDefault["vendor/w.php"].count("WS006"), 1u)
+            << "the default `vendor/**` excluded a member it names nothing beside on disk";
+        EXPECT_EQ(byDefault["vendor\\w.php"].count("WS006"), 1u);
+        EXPECT_EQ(byDefault["vendor/lib/w.php"].count("WS006"), 1u);
+
         auto named = scanMembers(container, {{"vendor\\w.php", content}, {"ok.php", content}},
-                                 std::nullopt, "named-");
+                                 std::nullopt, "named-", {"vendor/**"});
         EXPECT_EQ(named["vendor\\w.php"].count("WS006"), 1u)
             << "a member NAMED vendor\\w.php was excluded as though vendor/ were a directory";
         EXPECT_EQ(named["ok.php"].count("WS006"), 1u);
 
         auto genuine = scanMembers(container, {{"vendor/w.php", content}, {"ok.php", content}},
-                                   size_t{1}, "genuine-");
+                                   size_t{1}, "genuine-", {"vendor/**"});
         EXPECT_TRUE(genuine["vendor/w.php"].empty()) << "the exclude no longer reaches vendor/";
         EXPECT_EQ(genuine["ok.php"].count("WS006"), 1u);
 
         auto deeper = scanMembers(container, {{"vendor/lib/w.php", content}, {"ok.php", content}},
-                                  std::nullopt, "deeper-");
+                                  std::nullopt, "deeper-", {"vendor/**"});
         EXPECT_EQ(deeper["vendor/lib/w.php"].count("WS006"), 1u)
             << "vendor/** excluded a member two directories down; `**` crossed a `/`";
     }
