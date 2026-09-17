@@ -30,13 +30,53 @@ commit list that CI generates per tag.
   named that way. The name comes from the archive's index or header, so a member the scan does
   not open — not code, over `archives.max_member_size`, past a budget — still has it read, and
   its row says why its bytes were not. `scan.exclude` keeps a member's name out as it keeps a
-  file's. A backslash in a zip entry's name separates directories when the entry records that
-  MS-DOS or Windows wrote it, and is a character of the name for any other writer and in a tar.
-  A name finding never moves the container. See *Names inside archives* in
-  [docs/SCANNING.md](docs/SCANNING.md).
+  file's. A backslash in a zip entry's name separates directories, for these rules only, when
+  the entry records that MS-DOS or Windows wrote it or when every separator in the archive's
+  names is a backslash; it is a character of the name otherwise and in a tar. A name finding
+  never moves the container. See *Names inside archives* in [docs/SCANNING.md](docs/SCANNING.md).
+- **FN007, a file name that climbs out of its directory** (High). It reads a `..` component, or
+  a leading `/`, `\` or drive letter and colon, splitting the name on `/` and on `\` alike: in a
+  member's whole stored name, in zip, tar and tar.gz, whatever the host byte, and in a loose
+  file's name, so that a file named `..\..\index.php` on Linux and the member a backup makes of
+  it answer the same. No reading of a zip's separators withholds it. Measured against the
+  extractors that write members to disk: PclZip called directly follows `../` on Linux and
+  `../` and `..\` on Windows. It fired on nothing in the stock WordPress 7.1 tree, twelve
+  widely installed plugins, seven backups of them and 83 hostile names observed on a
+  production server.
 
 ### Fixed
 
+- **A backslash in an archive member's name no longer makes a directory for a location prior or
+  a pattern.** A member's name was rewritten, every backslash to a slash, before the context
+  filters and `scan.include` and `scan.exclude` read it. So a file on Linux named
+  `src\tests\x.php` — which a backup made by PHP, Info-ZIP, 7-Zip, Python, Go or GNU tar
+  stores under that name — lost its content findings inside the backup to the `tests`, `vendor`,
+  `.ssh` and product-directory priors while the file on disk kept them; under a host byte of
+  MS-DOS it had no row at all; and one named `vendor\w.php` at an archive's top was not opened,
+  because the rewritten name met the default `vendor/**`. A member is now judged under the
+  directories its name has between forward slashes, on every platform and whatever the host
+  byte, and the patterns and the Mac sidecar test read the name the same way.
+- **An archive's own file name no longer grants its members a location prior.** The container's
+  name was read as a directory the members sit under, so an upload named `revslider-6.7.zip`
+  had OBF010 dropped for every member below its top while `other.zip` holding the same bytes
+  did not. Only the container's real directories on disk and the member's own directories
+  count now — including a member's top-level directory, which the container's name used to
+  hide.
+- **Two members of one archive are never reported under one address.** A member's address
+  carried its name rewritten — backslashes to slashes, a leading `./` or `/` removed — so
+  `src\vendor\x.php` and `src/vendor\x.php` were both reported as `src/vendor/x.php`, and
+  neither address was a name the archive stored. The address is now the stored name.
+- **`vendor/**` in `scan.exclude` answers the same for an archive member on Windows as on
+  Linux.** Windows' matcher let `**` cross a `/`, so it excluded everything under an archive's
+  top-level `vendor/`, while Linux excluded only what sits directly in it. Member names are now
+  matched by one implementation of `fnmatch(3)` with `FNM_PATHNAME` on every platform: `*` and
+  `**` stop at a `/`.
+- **A PHP backup made on Windows no longer raises FN002 on every member.** PHP's `ZipArchive`
+  records the Unix host byte on Windows and a backup script stores the paths the directory
+  iterator spells, so every member below the top raised FN002 for its separators, and a planted
+  leading-dash name in it did not raise FN004. A zip whose every separator is a backslash is now
+  read as backslash-separated by the name rules. The planted names in such a backup raise their
+  own rules; FN007 still reads a `..\` in one.
 - **A link that leads back to itself is no longer counted as an entry the scan could not
   read.** The scanner asked what a link led to before asking whether it was a link, and counted
   a refusal as `Entries unreadable` — with `scan.follow_symlinks` off too, when the scan would
@@ -141,14 +181,40 @@ commit list that CI generates per tag.
   exited 0**, with a row for that member addressed `archive!member`, and the member counts in
   `filesWithMatches` and `filesWithHostileNames`. `check` on such an archive exits 2 and prints
   the member. No container is quarantined for a member's name.
-- **A backslash in a member name is read the way the entry's writer meant it.** A zip entry whose
-  host byte records MS-DOS, Windows NTFS or VFAT is split on backslashes as well as slashes, and
-  raises no FN002 for them: a site backup made by Windows PowerShell 5.1's `Compress-Archive` or
-  .NET Framework's `ZipFile.CreateFromDirectory`, which store `site\wp-content\index.php` under
-  host byte 0, raises only what its final components raise. A zip entry from any other host, and
-  every tar member, raises FN002 on a backslash in its name. PHP's `ZipArchive` records the Unix
-  host byte on Windows too, so a backup a PHP script made there with backslash paths raises
-  FN002 on every member below its top level.
+- **A backslash in a member name is read, by the name rules, the way the archive's writer
+  meant it.** A zip entry whose host byte records MS-DOS, Windows NTFS or VFAT, and every entry
+  of a zip whose names use a backslash wherever they hold a separator, is split on backslashes
+  as well as slashes and raises no FN002 for them: a site backup made by Windows PowerShell
+  5.1's `Compress-Archive`, .NET Framework's `ZipFile.CreateFromDirectory` or a PHP script on
+  Windows raises only what its final components raise. Any other zip entry, and every tar
+  member, raises FN002 on a backslash in its name.
+- **New rule code `FN007`** in the `category` field of JSON and the rule column of CSV and text,
+  on a file or member whose name holds a `..` component or starts with `/`, `\` or a drive
+  letter and colon. A scan finding one exits 2; a name finding never moves a file.
+- **A member row's `path` is the name the archive stores.** A member whose stored name holds a
+  backslash, or starts with `./` or `/`, is addressed with it — `backup.zip!site\index.php`,
+  `backup.tar.gz!./wp-content/x.php` — where it was addressed with slashes and without the
+  prefix. `pathBytesHex` and `file_bytes_hex` follow the address. A consumer that joined rows
+  across reports by `path` sees these members under new addresses, and two members that shared
+  one address are two rows.
+- **New content findings inside Windows-made backups of vendored code.** A zip made by Windows
+  PowerShell 5.1's `Compress-Archive` or by PHP on Windows stores `vendor\phpseclib\...` as one
+  name, and its location priors no longer read those backslashes as directories. Over WordPress
+  7.1 with twelve widely installed plugins, each of those two backups gains 24 OBF003 findings in
+  six phpseclib files that a backup with forward slashes, and the tree on disk, keep suppressed.
+  With quarantine on, a backup whose only content findings are these is moved. A member at an
+  archive's top level that sits under `vendor/`, `tests/` or another prior's directory is
+  suppressed where it was reported.
+- **Members newly opened, and members newly excluded, by `scan.exclude`.** A member named with a
+  backslash that a pattern matched only after the backslash became a slash — `vendor\x.php`
+  under the default `vendor/**` - is opened and read. On Windows a member two or more
+  directories below an archive's top-level `vendor/` or `node_modules/` is opened where the
+  default patterns excluded it. None of the members of the seven WordPress backups measured
+  changed. A member named `uploads/__MACOSX\x.php` or `a\._x.php` is opened where it was left
+  shut as a Mac sidecar.
+- **A zip whose names use only backslashes raises no FN002 for its separators**, where it raised
+  FN002 on every member holding one; a member named `....\x.txt` in such a zip, which no
+  extractor measured wrote outside its destination, raises nothing.
 - **A member row can carry a skip reason**: `"skipped": true` and `"skipReason"` in JSON, the
   `skipped` and `skip_reason` CSV columns, and `(not scanned: …)` in the text report, with the
   values `policy`, `size`, `budget`, `ratio` and `corrupt` that `archives.membersSkipped`

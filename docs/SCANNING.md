@@ -151,7 +151,8 @@ Every row that says a file moved also says where to. `quarantinePath` in JSON, a
 verbose and the compact view.
 
 A finding inside an archive is reported as its own row, addressed
-`backup.zip!wp-content/uploads/shell.php`. Malware in a member quarantines the
+`backup.zip!wp-content/uploads/shell.php` — the container's path, `!`, and the member's name
+as the archive stores it (see *Where a member sits*). Malware in a member quarantines the
 **container**, which goes as a unit and carries every member with it, so such a row
 carries two paths and they answer different questions:
 
@@ -193,7 +194,7 @@ it: somebody wrote a command substitution into a name hoping that something down
 a backup script, a log pipeline, a cron job building an argument list — would hand it to a
 shell.
 
-Six rules read the name. They are ordinary findings: they carry a severity, they appear in
+Seven rules read the name. They are ordinary findings: they carry a severity, they appear in
 the text, JSON and CSV reports beside every other finding, and they move the exit code to
 `2` like any other match.
 
@@ -205,6 +206,21 @@ the text, JSON and CSV reports beside every other finding, and they move the exi
 | FN004 | Medium | a leading `-`, which a glob expansion hands to the next command as an option |
 | FN005 | High | a dot-dot against a character that resembles a separator without being one |
 | FN006 | High | `%00`, which truncates the name in anything that percent-decodes it |
+| FN007 | High | a `..` component, or a leading `/`, `\` or drive letter and colon, under either separator — extracting it writes outside the destination |
+
+**FN007 reads the name whole.** A file on Linux may be named `..\..\index.php`, and the
+backup that copies it stores exactly that member name; a Windows extractor splits it on the
+backslashes and writes `index.php` two directories above where it was asked to. So FN007
+splits a name on `/` and on `\` alike, on a loose file's name and on a member's whole stored
+name, and a file and a member with the same name answer the same. On Windows no file name
+holds a separator, a colon or a `..` component, so on disk FN007 reads nothing there; inside
+an archive it reads the same on every platform. Probe archives holding each shape were
+extracted with PHP's `ZipArchive`, PclZip, WordPress's `unzip_file`, Info-ZIP `unzip`, 7-Zip,
+Python, GNU tar and PharData on Linux, and with PHP, Expand-Archive, bsdtar and Python on
+Windows: PclZip called directly wrote outside its destination through `../` on Linux and
+through `../` and `..\` on Windows, and every hardened extractor refused or stripped each
+shape. A component of three or more dots is not a `..` component, and stayed inside the
+destination or failed with every extractor.
 
 Disable them like any other rule, by code or by category:
 
@@ -241,7 +257,7 @@ JSON carries the same count as `filesWithHostileNames`, always present.
 ### Names inside archives
 
 A member of an uploaded zip named `x$(sleep 20)y.mdb` is the same evidence as a file on
-disk named that way, so the same six rules read member names, in zip, tar and tar.gz, at
+disk named that way, so the same seven rules read member names, in zip, tar and tar.gz, at
 every depth the scan opens. A member whose name raises a finding gets a row addressed
 `upload.zip!docs/x$(sleep 20)y.mdb`, like any other member row.
 
@@ -259,34 +275,39 @@ scan never reaches has no name to read: one inside an archive nested past
 A single `.gz` stores no member name the scanner reads — its member is named from the
 container's own file name, which is read as the file it is.
 
-**Separators.** Only the final component is read, as for a file. What separates the
-components is decided by whoever wrote the entry, never by the platform the scan runs on:
+**Separators.** FN001 to FN006 read the final component, as for a file. Two readings decide
+what separates the components, and the platform the scan runs on is never one of them:
 
 | entry | separators |
 |---|---|
-| a zip entry written by MS-DOS, Windows NTFS or VFAT (host byte 0, 10 or 14) | `/` and `\` |
-| a zip entry written by Unix, macOS or any other host | `/` only |
+| a zip entry whose host byte is MS-DOS, Windows NTFS or VFAT (0, 10 or 14) | `/` and `\` |
+| any entry of a zip whose names use only backslashes | `/` and `\` |
+| any other zip entry | `/` only |
 | a tar member | `/` only |
 
-A zip records its writer per entry, in the host byte of "version made by", and it is asked
-per entry — one archive can hold entries two tools added — and for a zip inside a zip, of
-the inner zip's own entries. Windows PowerShell 5.1's `Compress-Archive` and .NET
-Framework's `ZipFile.CreateFromDirectory` store `site\wp-content\index.php` under host byte
-0, meaning directories, so a site backup made with either raises nothing for its
-separators and is still read for a hostile final component. Where the writer was not DOS
-or Windows the backslash is a character of the name and raises FN002: PHP's `ZipArchive`,
-7-Zip and Python's `zipfile` on Linux extract a Unix-made `a\zz.php` as one file with a
-backslash in its name. This is how Info-ZIP's `unzip` decides it too.
+A zip's names use only backslashes when no name in it holds a forward slash except as the
+trailing slash of a directory entry — the `sub/` PHP's `addEmptyDir()` writes beside
+backslash-spelled files — so that every separator any name holds is a backslash. The host
+byte is asked per entry, since one archive can hold entries two tools added; the names are
+asked per archive; and a zip inside a zip is asked about its own entries and names alone.
 
-The host byte follows the tool, not the machine. PHP's `ZipArchive` writes host byte 3
-(Unix) on Windows as well, so a PHP backup script on Windows that stores paths as the
-directory iterator spells them — `site\index.php` — raises FN002 on every member below its
-top level. Windows' own `tar.exe`, 7-Zip, pwsh 7's `Compress-Archive` and .NET 10's
-`ZipFile` store `/`, whichever host byte they record.
+Neither reading is what one extractor does, because no two platforms agree. Every Windows
+extractor measured — PHP's `ZipArchive`, PclZip, WordPress's `unzip_file`, Expand-Archive,
+bsdtar, Python — makes directories of backslashes whatever the host byte. On Linux, PHP's
+`ZipArchive`, PclZip, 7-Zip and Python keep a backslash as a character under every host byte,
+and Info-ZIP's `unzip` splits one only under host byte 0 and only in a name that holds no `/`.
+The readings are the writers' claims: Windows PowerShell 5.1's `Compress-Archive` and .NET
+Framework's `ZipFile.CreateFromDirectory` store `site\wp-content\index.php` under host byte 0,
+and PHP's `ZipArchive` records host byte 3 on Windows too while a PHP backup script there
+stores every path as the directory iterator spells it — `site\index.php` — so that nothing in
+the archive but its names says a Windows host wrote it. Read either way, such a backup raises
+nothing for its separators and is still read for a hostile final component. Where neither
+applies the backslash is a character and raises FN002: beside forward-slash names, a
+Unix-made `uploads/a\zz.php` extracts on Linux as one file with a backslash in its name.
 
-A row's address normalises backslashes to `/` for display, as it always has, whichever
-writer the entry had, so a Unix-made member reads `upload.zip!a/zz.php` with FN002 naming
-the backslash.
+No reading withholds FN007, which splits the whole stored name both ways whatever the
+readings say: a zip read as backslash-separated is exactly the one in which `..\..\` climbs.
+And no reading reaches anything but the name rules — see *Where a member sits*.
 
 A tar header stores a member's name as bytes, which need not be UTF-8. On Linux the address
 carries them as they are, escaped and with `pathBytesHex` beside it like a file name. On
@@ -297,6 +318,40 @@ well-formed UTF-8. The rules read the bytes the header holds either way.
 as it never moves a file; only hostile content inside does. A member row with a name
 finding moves the exit code to `2`, and counts in `Files with matches` and
 `Files with a hostile name` like a loose file's.
+
+### Where a member sits
+
+A member's name is written by whoever made the archive — or, in a backup, by whoever named
+the file the backup copied — so nothing about where a member sits may be read from it that
+the name does not really say.
+
+**The address.** A member row is addressed by the container's path, `!`, and the member's name
+exactly as the archive stores it: backslashes, a leading `./` and a leading `/` included. Two
+members the archive holds apart are two rows, in the JSON, CSV and text reports, the
+full-screen view and `check`: `src\vendor\x.php` and `src/vendor/x.php` are different entries,
+and so are `./src/x.php` and `src/x.php`. The name is escaped for printing like any file name,
+with `pathBytesHex` beside it when the escape lost something.
+
+**What a location prior reads.** A context filter that drops a finding because of where a file
+sits — under `vendor/`, `tests/`, `.ssh/`, a page builder's plugin directory — reads a member's
+location as the container's directories on disk followed by the member's stored name. Only
+directories that exist count: the ones the container sits in, and the ones the member's name
+has between its forward slashes. A backslash in a member's name is never one of them, on any
+platform, under any host byte and under either reading above. On Linux a file named
+`tests\shell.php` keeps that name in the backup a PHP, Info-ZIP, 7-Zip, Python, Go or tar
+archiver makes of it, and the backup is judged as the file is. The container's own file name
+is not a directory either: an upload named `revslider-6.7.zip` grants its members no prior,
+and a nested archive's name grants its members none. On Windows the container's path, where a
+backslash is always a separator, is the only part read with backslashes as slashes.
+
+**Patterns.** `scan.include` and `scan.exclude` are asked about a member's stored name without
+its leading `./` or `/`, with `/` as its only separator: a pattern is matched against the final
+component — everything after the last `/` — and, when it holds `**`, against the whole name. The
+matcher is `fnmatch(3)` with `FNM_PATHNAME` on every platform, so `*` and `**` alike stop at a
+`/`: the default `vendor/**` excludes what sits directly in a top-level `vendor/` of an archive
+and nothing below it, on Windows as on Linux, and `vendor\x.php` is not in `vendor/`. The same
+name decides the sidecar test: a Mac's `__MACOSX/` tree and `._name` stubs are left shut, and a
+member named `uploads/__MACOSX\x.php` is not one of them.
 
 ### How a name is printed, and how a program gets back to the file
 
