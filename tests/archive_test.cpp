@@ -106,7 +106,7 @@ TEST(ArchiveIndexTest, NormalisesSeparatorsAndPrefixes) {
     EXPECT_EQ(normalizeMemberName("site\\wp-content\\x.php"), "site/wp-content/x.php");
 }
 
-// The spelling the patterns and the sidecar test read: the prefixes every extractor measured
+// The spelling the patterns read: the prefixes every extractor measured
 // writes beneath its destination come off, and a backslash is left as the character it is.
 TEST(ArchiveIndexTest, TheFilterNameKeepsEveryBackslash) {
     EXPECT_EQ(memberFilterName("./site/wp-config.php"), "site/wp-config.php");
@@ -154,6 +154,37 @@ TEST(ArchiveIndexTest, ScriptsAndMarkupAreClassifiedSeparately) {
     EXPECT_FALSE(isScriptName("readme.txt"));
 }
 
+// A member's extension is read as `!ext` reads a file's, so a leading dot starts none. A name
+// without one is code to the priority policy - webshells routinely have none - and so are
+// `.DS_Store`, `._shell`, `.htaccess`, `.png` and a name that is nothing once its separators are
+// read, exactly as `!ext` accepts the file of each. `._x.png`, `x.` and `Thumbs.db` have one.
+TEST(ArchiveIndexTest, ANameWithoutAnExtensionIsReadAsTheIncludeListReadsIt) {
+    for (const char* name : {".DS_Store", "uploads/.DS_Store", "._shell", "uploads/.htaccess",
+                             ".png", "..", "", "uploads/", "a.b/c"}) {
+        EXPECT_TRUE(isScriptName(name)) << "'" << name << "'";
+        EXPECT_NE(classifyMember(name), Bucket::Other) << "'" << name << "'";
+    }
+    for (const char* name : {"._x.png", "x.", "Thumbs.db", "uploads/Thumbs.db"}) {
+        EXPECT_FALSE(isScriptName(name)) << name;
+        EXPECT_EQ(classifyMember(name), Bucket::Other) << name;
+    }
+    EXPECT_FALSE(isMediaName(".png")) << "a leading dot starts no extension";
+    EXPECT_TRUE(isMediaName("._x.png"));
+    EXPECT_TRUE(isScriptName("._x.php"));
+    EXPECT_TRUE(isMarkupName("__MACOSX/._x.svg"));
+
+    // One reading: for every name no extension list names, the policy and `!ext` agree.
+    ScanConfig onlyExtensionless;
+    onlyExtensionless.include = {"!ext"};
+    const FileWalker walker(onlyExtensionless);
+    for (const char* name : {".DS_Store", "._shell", ".htaccess", ".png", "..", "", "uploads/",
+                             "a.b/c", "x.", "Thumbs.db", "._x.png", "README", "cgi-bin/handler"}) {
+        EXPECT_EQ(isScriptName(name),
+                  walker.filterVerdictAt(name) == FileWalker::FilterVerdict::Accepted)
+            << "'" << name << "'";
+    }
+}
+
 TEST(ArchiveIndexTest, ScriptInAWritableDirectoryIsHot) {
     // wp-content/uploads is WordPress-only; the test is the directory's role,
     // not the platform's name for it.
@@ -184,6 +215,40 @@ TEST(ArchiveIndexTest, ASingleSqlDumpIsEnough) {
 
     EXPECT_TRUE(summary.siteBackup());
     EXPECT_EQ(summary.sqlDumps, 1u);
+}
+
+// A Mac-made copy of a site carries a `._x.php` beside every `x.php`, and those names are kept
+// out of the tally that decides whether an archive is a site backup: counted, eleven PHP files
+// and their stubs would clear the 20-entry threshold beside a platform marker. And a name planted
+// to look like metadata withholds nothing, because every one of the site's own files is still
+// counted - its credentials, its platform markers and its PHP.
+TEST(ArchiveIndexTest, MetadataNamesAreLeftOutOfTheBackupTallyAndWithholdNothing) {
+    IndexSummary mac;
+    mac.observe("site/wp-includes/version.php");
+    mac.observe("__MACOSX/site/wp-includes/._version.php");
+    for (int i = 0; i < 10; ++i) {
+        mac.observe("site/wp-content/file" + std::to_string(i) + ".php");
+        mac.observe("__MACOSX/site/wp-content/._file" + std::to_string(i) + ".php");
+        mac.observe("site/wp-content/._file" + std::to_string(i) + ".php");
+    }
+    EXPECT_EQ(mac.phpEntries, 11u);
+    EXPECT_EQ(mac.entries, 11u);
+    EXPECT_EQ(mac.platform(), "WordPress");
+    EXPECT_FALSE(mac.siteBackup()) << "stubs were counted as the PHP they sit beside";
+
+    IndexSummary planted;
+    planted.observe("site/wp-config.php");
+    planted.observe("site/wp-login.php");
+    planted.observe("site/db.sql");
+    for (const char* decoy : {"__MACOSX/site/wp-config.php", "site/._wp-config.php",
+                              "site/.DS_Store", "site/Thumbs.db", "__MACOSX/db.sql"}) {
+        planted.observe(decoy);
+    }
+    EXPECT_EQ(planted.credentials, (std::vector<std::string>{"site/wp-config.php"}));
+    EXPECT_EQ(planted.sqlDumps, 1u);
+    EXPECT_EQ(planted.phpEntries, 2u);
+    EXPECT_EQ(planted.platform(), "WordPress");
+    EXPECT_TRUE(planted.siteBackup());
 }
 
 // A PHP count measures size, not exposure. Three vendor plugin bundles in one
@@ -940,7 +1005,6 @@ TEST(FileSkipReasonTest, ArchiveReasonSpellingsAreStable) {
     EXPECT_EQ(skipReasonToString(SkipReason::Policy), "policy");
     EXPECT_EQ(skipReasonToString(SkipReason::Excluded), "excluded");
     EXPECT_EQ(skipReasonToString(SkipReason::Unreadable), "unreadable");
-    EXPECT_EQ(skipReasonToString(SkipReason::Sidecar), "sidecar");
 }
 
 TEST(FileSkipReasonTest, TallyFormatsInEnumOrderAndOmitsZeroes) {
@@ -965,12 +1029,11 @@ TEST(FileSkipReasonTest, TallyFormatsInEnumOrderAndOmitsZeroes) {
               "3980 not code, 118 over size limit, 9 compression ratio, "
               "5 too deeply nested, 4 corrupt");
 
-    // The selection reasons lead, the operator's patterns and then the sidecars, and each
-    // reads in the words the file level uses for it where the file level has it.
-    members.skip(SkipReason::Sidecar, 40);
+    // The selection reasons lead, not code and then the operator's patterns, and each reads in
+    // the words the file level uses for it where the file level has it.
     members.skip(SkipReason::Excluded, 12);
     EXPECT_EQ(formatSkipTally(members, kArchiveSkipOrder),
-              "3980 not code, 12 excluded by filters, 40 sidecar metadata, "
+              "3980 not code, 12 excluded by filters, "
               "118 over size limit, 9 compression ratio, 5 too deeply nested, 4 corrupt");
 }
 
@@ -979,7 +1042,7 @@ TEST(FileSkipReasonTest, TallyFormatsInEnumOrderAndOmitsZeroes) {
 //
 // A member left shut is counted under the reason the file of its name would be counted under,
 // where the two levels share one, and in the same words. The operator's patterns are one such
-// reason; the priority policy, the sidecar test and the guards are the archive's own.
+// reason; the priority policy and the guards are the archive's own.
 // ============================================================================
 
 namespace {
@@ -1092,9 +1155,10 @@ TEST(MemberSkipReasonTest, AFileAndTheMemberOfItsNameOnePatternExcludesAreCounte
         << "one reason, described in two different words at the two levels";
 }
 
-// The pre-count and the scan ask one function, so with exclusions, a sidecar, directory entries
-// and a member past the size cap in one zip they still promise the same members - in the default
-// selection and in exhaustive mode - and every entry that is a member is counted exactly once.
+// The pre-count and the scan ask one function, so with exclusions, a member named like Mac
+// metadata, directory entries and a member past the size cap in one zip they still promise the
+// same members - in the default selection and in exhaustive mode - and every entry that is a
+// member is counted exactly once.
 TEST(MemberSkipReasonTest, ThePreCountAndTheScanAgreeWithExclusionsPresent) {
     TempDir dir;
     const fs::path zip = dir.path() / "site.zip";
@@ -1104,7 +1168,7 @@ TEST(MemberSkipReasonTest, ThePreCountAndTheScanAgreeWithExclusionsPresent) {
         {"site/config-old.php", "<?php echo 2;\n"},       // excluded
         {"site/notes-old.txt", "old notes\n"},            // excluded
         {"site/readme.txt", "notes\n"},                   // not code; opened when exhaustive
-        {"__MACOSX/site/._index.php", "stub\n"},          // a sidecar
+        {"__MACOSX/site/._index.php", "stub\n"},          // opened, named like code
         {"site/big.php", std::string(64 * 1024, 'a')},    // past the member size cap
     });
 
@@ -1121,9 +1185,8 @@ TEST(MemberSkipReasonTest, ThePreCountAndTheScanAgreeWithExclusionsPresent) {
         const Stats& stats = result.archives;
 
         EXPECT_EQ(stats.membersScanned, counted.files) << "the pre-count disagrees with the scan";
-        EXPECT_EQ(counted.files, exhaustive ? 2u : 1u);
+        EXPECT_EQ(counted.files, exhaustive ? 3u : 2u);
         EXPECT_EQ(stats.skippedExcluded(), 2u);
-        EXPECT_EQ(stats.skippedSidecar(), 1u);
         EXPECT_EQ(stats.skippedSize(), 1u);
         EXPECT_EQ(stats.skippedPolicy(), exhaustive ? 0u : 1u);
         EXPECT_EQ(stats.membersScanned + stats.totalSkipped(), 6u) << membersNotScannedLine(stats);
@@ -1157,16 +1220,18 @@ TEST(MemberSkipReasonTest, ANonCodeMemberThePatternsAcceptIsStillCountedAsNotCod
     }
 }
 
-// A sidecar is counted as a sidecar, under its own key and in its own words, and never as not
-// code: a `._index.php` is named like code, and it stays shut in exhaustive mode too, where
-// nothing is left shut for not being code. A sidecar no include pattern names is counted as the
-// file of its name is - `Thumbs.db` - because the patterns are asked of a member first.
-TEST(MemberSkipReasonTest, ASidecarIsCountedAsASidecarAndNeverAsNotCode) {
+// A member named like Mac or Windows metadata is counted as the member it is, in the JSON report
+// and the text summary, and there is no reason of its own to count it under: a `._index.php` and
+// a `.DS_Store` are opened in either mode, a `._logo.png` is not code outside exhaustive mode as
+// any `.png` is, and `Thumbs.db` is excluded as the file of that name is, because no include
+// pattern names it. A zip and a tar.gz, because they reach the selection through different loops.
+TEST(MemberSkipReasonTest, AMemberNamedLikeMetadataIsCountedAsTheMemberItIs) {
     TempDir dir;
     const std::vector<std::pair<std::string, std::string>> members = {
         {"__MACOSX/site/._index.php", "stub\n"},
         {"__MACOSX/site/._logo.png", "stub\n"},
         {"site/._style.css", "stub\n"},
+        {"site/.DS_Store", "store\n"},
         {"site/Thumbs.db", "thumbnails\n"},
         {"site/index.php", "<?php echo 1;\n"},
     };
@@ -1180,19 +1245,24 @@ TEST(MemberSkipReasonTest, ASidecarIsCountedAsASidecarAndNeverAsNotCode) {
         const ScanResult result = scanOnce(config);
         const Stats& stats = result.archives;
 
-        EXPECT_EQ(stats.skippedSidecar(), 6u);
+        EXPECT_EQ(stats.membersScanned, exhaustive ? 10u : 8u);
+        EXPECT_EQ(stats.skippedPolicy(), exhaustive ? 0u : 2u);
         EXPECT_EQ(stats.skippedExcluded(), 2u);
-        EXPECT_EQ(stats.skippedPolicy(), 0u) << "a sidecar was counted as not code";
-        EXPECT_EQ(stats.membersScanned, 2u);
-        EXPECT_EQ(membersUnexamined(stats), 0u) << "a sidecar was counted as a member gone unread";
+        EXPECT_EQ(stats.totalSkipped(), exhaustive ? 2u : 4u);
+        EXPECT_EQ(membersUnexamined(stats), 0u);
 
         const Reported said = reported(result);
         const auto& skipped = said.json.at("archives").at("membersSkipped");
-        EXPECT_EQ(skipped.value("sidecar", -1), 6) << skipped.dump();
-        EXPECT_EQ(skipped.value("policy", -1), 0) << skipped.dump();
+        EXPECT_FALSE(skipped.contains("sidecar")) << skipped.dump();
+        EXPECT_EQ(skipped.size(), 7u) << skipped.dump();
+        EXPECT_EQ(said.json.at("archives").value("membersScanned", -1), exhaustive ? 10 : 8);
+        EXPECT_EQ(skipped.value("policy", -1), exhaustive ? 0 : 2) << skipped.dump();
+        EXPECT_EQ(skipped.value("excluded", -1), 2) << skipped.dump();
         EXPECT_EQ(lineStarting(said.summary, "Members not scanned:"),
-                  "Members not scanned: 8 (2 excluded by filters, 6 sidecar metadata)")
+                  exhaustive ? "Members not scanned: 2 (2 excluded by filters)"
+                             : "Members not scanned: 4 (2 not code, 2 excluded by filters)")
             << said.summary;
+        EXPECT_EQ(said.summary.find("sidecar"), std::string::npos) << said.summary;
     }
 }
 
@@ -1248,9 +1318,9 @@ TEST(MemberSkipReasonTest, ADirectoryEntryIsCountedNowhere) {
     }
 }
 
-// An archive with no exclusion and no sidecar is described by the reasons that occurred and by
-// no others: the two keys are in the JSON at zero, and the summary line names neither - it reads
-// "not code" first and the guards after it, in the words it has always used.
+// An archive with no exclusion is described by the reasons that occurred and by no others: the
+// key is in the JSON at zero, and the summary line does not name it - it reads "not code" first
+// and the guards after it, in the words it has always used.
 TEST(MemberSkipReasonTest, AReportWithNoExclusionsKeepsTheArchiveSummaryWording) {
     TempDir dir;
     writeZip(dir.path() / "site.zip", {{"site/logo.png", std::string(64, '\x89')},
@@ -1266,7 +1336,6 @@ TEST(MemberSkipReasonTest, AReportWithNoExclusionsKeepsTheArchiveSummaryWording)
         << said.summary;
     const auto& skipped = said.json.at("archives").at("membersSkipped");
     EXPECT_EQ(skipped.value("excluded", -1), 0) << skipped.dump();
-    EXPECT_EQ(skipped.value("sidecar", -1), 0) << skipped.dump();
     EXPECT_EQ(skipped.value("policy", -1), 1) << skipped.dump();
     EXPECT_EQ(skipped.value("size", -1), 1) << skipped.dump();
 }

@@ -108,13 +108,12 @@ private:
     // returned for it would be counted as one that was skipped.
     //
     // `name` is normalizeMemberName() of the stored name, for the priority policy, which can
-    // only decline to spend the budget on a non-code member; `filterName` is
-    // memberFilterName(), for the sidecar test, and `patternPath` is where the member sits
-    // beside its archive - the container's directory in filter spelling, then `filterName` -
-    // for the operator's patterns. Both leave a member shut whatever it holds and so read a
-    // backslash as the character it is.
+    // only decline to spend the budget on a non-code member; `patternPath` is where the member
+    // sits beside its archive - the container's directory in filter spelling, then
+    // memberFilterName() - for the operator's patterns, which leave a member shut whatever it
+    // holds and so read a backslash as the character it is. Nothing else about a member's name
+    // is asked here.
     static std::optional<SkipReason> selectionSkip(const std::string& name,
-                                                   std::string_view filterName,
                                                    std::string_view patternPath,
                                                    uint64_t size,
                                                    const ArchiveConfig& config,

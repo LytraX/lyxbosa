@@ -55,7 +55,7 @@ commit list that CI generates per tag.
   MS-DOS it had no row at all; and one named `vendor\w.php` at an archive's top was not opened,
   because the rewritten name met the default `vendor/**`. A member is now judged under the
   directories its name has between forward slashes, on every platform and whatever the host
-  byte, and the patterns and the Mac sidecar test read the name the same way.
+  byte, and the patterns read the name the same way.
 - **An archive's own file name no longer grants its members a location prior.** The container's
   name was read as a directory the members sit under, so an upload named `revslider-6.7.zip`
   had OBF010 dropped for every member below its top while `other.zip` holding the same bytes
@@ -152,12 +152,37 @@ commit list that CI generates per tag.
   scanner left shut for not being code, and a file and the member a backup makes of it were
   counted under two different reasons. The patterns are asked of a member before anything else
   about it, as they are of a file, so a member they reject is `excluded` whether or not it is
-  code, whether or not it is a sidecar and whatever `archives.exhaustive` says. `Members not
-  scanned` names it `excluded by filters`, the words `Files not scanned` uses.
-- **A Mac sidecar in an archive is counted as `sidecar` and printed as `sidecar metadata`**,
-  where it was counted as `policy` and printed as `not code`. A `._index.php` is named like
-  code, and it is left shut in exhaustive mode as well, where nothing is left shut for not
-  being code.
+  code and whatever `archives.exhaustive` says. `Members not scanned` names it `excluded by
+  filters`, the words `Files not scanned` uses.
+- **An archive member named like Mac or Windows metadata is opened.** A member under
+  `__MACOSX/`, or named `._name`, `.DS_Store` or `Thumbs.db`, was never read, whatever it held
+  and under `--exhaustive-archives` too, while the file of that name on disk was scanned: the
+  WS006 signature in `uploads/._shell.php` or `uploads/.DS_Store` was reported for the loose
+  file and not for the member a backup made of it. The attacker chooses the name, and a backup
+  copies it unchanged. Such a member is now selected exactly as the file of its name is — by
+  `scan.include` and `scan.exclude`, outside `archives.exhaustive` by whether it is code, and by
+  the size and budget guards — so with the shipped configuration a `._shell.php` and a
+  `.DS_Store` are opened in either mode, and `Thumbs.db` is excluded, as the file is, because
+  no include pattern names it. A real AppleDouble stub stays out of the report by its bytes,
+  as it does on disk.
+- **A member stored as `\`, or with no name at all, is opened.** Both were left shut and counted
+  as `policy`. A member named `\` is what unzip, 7-Zip, PHP's `ZipArchive`, PclZip, Python and
+  GNU tar write on Linux as a file of that name, which has no extension and is scanned; a
+  member with no name is written by 7-Zip to a file named after the archive, and by Python's
+  `tarfile` to the destination path when nothing is there yet. The one with no name is addressed `archive.zip!`.
+- **A member whose name's only dot is its first character has no extension to the archive
+  selection, as it has none to `!ext`.** A member named `.htaccess`, `.gitignore` or
+  `.DS_Store` was read as having the extension `htaccess`, `gitignore` or `DS_Store`, and so
+  was left shut as not code outside `archives.exhaustive`, while `!ext` put the file of that
+  name in the scan. A name without an extension is code to the selection, so it is opened.
+- **OBF036 no longer passes over PHP written behind the four bytes that begin an AppleDouble
+  stub.** A `._name` stub a Mac writes is a binary resource fork with the extension of the file
+  it describes, and OBF036 does not report a file that begins `00 05 16 07`. PHP prints the
+  bytes before an open tag and runs what follows it, so those four bytes in front of PHP
+  storing a binary payload kept the payload from being reported. A file that holds `<?`
+  anywhere — every form of PHP open tag begins with those two bytes: `<?php` in any case, `<?=`
+  and the short `<?` — is now judged as any other source file. None of 4,465 stubs in Mac-made
+  zips holds them, and none of them is reported.
 
 ### Compatibility
 
@@ -230,9 +255,8 @@ commit list that CI generates per tag.
   match nothing inside an archive either: a member directly in an archive's top-level `vendor/`
   or `node_modules/` is opened where it was excluded, on Linux, and one at any depth below them
   is opened on Windows. A member named with a backslash that a pattern matched only after the
-  backslash became a slash — `vendor\x.php` — is opened, and so is a member named
-  `uploads/__MACOSX\x.php` or `a\._x.php`, which was left shut as a Mac sidecar. No member of
-  the seven WordPress backups or the twelve plugin zips measured changed on Linux.
+  backslash became a slash — `vendor\x.php` — is opened. No member of the seven WordPress
+  backups or the twelve plugin zips measured changed on Linux.
 - **On Windows, an include or exclude pattern holding `**` or a bracket names fewer files.** `**`
   no longer crosses a `/`, a `/` in a pattern has to meet a separator rather than any character
   before it, a bracket expression is a character class, and a backslash in a pattern quotes the
@@ -253,7 +277,7 @@ commit list that CI generates per tag.
   extractor measured wrote outside its destination, raises nothing.
 - **A member row can carry a skip reason**: `"skipped": true` and `"skipReason"` in JSON, the
   `skipped` and `skip_reason` CSV columns, and `(not scanned: …)` in the text report, with the
-  values `policy`, `excluded`, `sidecar`, `size`, `budget`, `ratio` and `corrupt` that
+  values `policy`, `excluded`, `size`, `budget`, `ratio` and `corrupt` that
   `archives.membersSkipped` uses. It appears on a member reported for its name whose bytes were not read. Under
   such a member, `check` prints `Not scanned (…); the matches are about its name`. No count of
   skipped files or members changes.
@@ -284,18 +308,31 @@ commit list that CI generates per tag.
   these values are accepted on every platform.
 - **On Windows, `update` for a binary installed under a directory outside the ANSI code page
   exits by what it did**, 0 or 1, where it exited 3 without a word.
-- **`archives.membersSkipped` gains `excluded` and `sidecar`, after `corrupt`, and `policy` falls
-  by exactly what the two count.** The six existing keys keep their spellings; the object's
-  total, `membersScanned`, every finding and every exit code of `scan` and `check` are
-  unchanged. A consumer that read `policy` as every member the scan chose not to open, or summed
-  it into such a figure, adds `excluded` and `sidecar`. With the default configuration a member
-  is `excluded` when `*.min.js` names it or no include pattern does: over 136 stock WordPress
-  plugin and theme zips, 14,646 of 31,506 `policy` members became `excluded` — 8,505 minified
-  scripts and 6,141 members whose extensions the include list does not name, most of them
-  `.scss`, `.tsx`, `.mo`, `.md` and `.po` — and none became `sidecar`.
-- **`Members not scanned` names `excluded by filters` and `sidecar metadata` beside `not
-  code`**, in the scan summary and under `check`, with the same total. An archive with neither
-  reads as before.
+- **`archives.membersSkipped` gains `excluded`, after `corrupt`, and `policy` falls by exactly
+  what it counts.** The six existing keys keep their spellings. A consumer that read `policy`
+  as every member the scan chose not to open, or summed it into such a figure, adds `excluded`.
+  With the default configuration a member is `excluded` when `*.min.js` names it or no include
+  pattern does: over 136 stock WordPress plugin and theme zips, 14,646 of 31,506 `policy`
+  members became `excluded` — 8,505 minified scripts and 6,141 members whose extensions the
+  include list does not name, most of them `.scss`, `.tsx`, `.mo`, `.md` and `.po`.
+- **More archive members are opened, so `membersScanned` rises and `policy` falls by the same
+  number**: a member named like Mac or Windows metadata that the patterns accept and the
+  selection calls code, a member whose name's only dot is its first character, and a member
+  stored as `\` or with no name. Over 136 stock WordPress plugin and theme zips, which hold no
+  member named like metadata, 79 more members are opened and 79 fewer are `policy` — 52
+  `.htaccess`, 8 `.gitignore`, 8 `.stylelintignore`, 4 `.gitkeep` and 7 other dotfiles — and
+  every finding is unchanged. Over 18 zips from real sites that hold 4,509 members named like
+  metadata — 4,465 AppleDouble stubs, 20 `.DS_Store` and 24 `Thumbs.db` — 3,306 are opened with
+  the shipped configuration, 1,105 stubs named like images and other non-code are `policy`, and
+  98 that no include pattern names are `excluded`; with no include list and
+  `--exhaustive-archives`, 4,485 are opened. No finding changed in either.
+- **A scan of an archive holding web-shell content under a name like `._shell.php`,
+  `.DS_Store` or `__MACOSX/…` exits 2 where it exited 0**, with a row for that member, and so
+  does `check` on the archive. With quarantine on, the container is moved for it.
+- **OBF036 is reported for a file that begins with AppleDouble's four bytes and holds `<?`**,
+  loose or inside an archive, where it was not; such a scan exits 2 where it exited 0.
+- **`Members not scanned` names `excluded by filters` beside `not code`**, in the scan summary
+  and under `check`, with the same total. An archive with no excluded member reads as before.
 
 ## [3.2.0] - 2026-09-14
 

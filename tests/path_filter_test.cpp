@@ -47,8 +47,9 @@
 //   Inside an archive, on every platform: a member is judged under the container's real
 //     directories and its own stored name, so a genuine directory inside a zip or a tar.gz
 //     suppresses as a directory on disk does and the control beside it fires - while a
-//     backslash in a member's name, the container's own file name and a sidecar's spelling
-//     grant nothing, whatever the host byte, and a member's address is its stored name.
+//     backslash in a member's name and the container's own file name grant nothing, whatever the
+//     host byte, a name spelled like Mac or Windows metadata leaves no member shut, and a
+//     member's address is its stored name.
 //
 // Every suppression has a control path that must still fire, because a normalisation
 // that suppressed everything would satisfy a one-sided case.
@@ -866,29 +867,372 @@ TEST_F(ArchiveContainerNameTest, AnArchivesOwnNameIsNotADirectoryItsMembersSitUn
 }
 
 // ===========================================================================
-// A sidecar is named with slashes
+// A member named like metadata is a member
 // ===========================================================================
 //
-// A Mac writes `__MACOSX/` and `._name` into a zip, and those members are left shut. A member
-// NAMED `uploads/__MACOSX\x.php` is a file in `uploads` whose name holds a backslash, and so is
-// `uploads/a\._x.php`: neither is a sidecar, both are opened, and the WS006 signature in them
-// is reported.
+// A Mac writes `__MACOSX/` and `._name` into a zip, Finder leaves `.DS_Store` in a folder and
+// Windows Explorer leaves `Thumbs.db`. None of those names says what a file holds: the attacker
+// chooses a file's name, and a backup copies it unchanged. So a member spelled like one is
+// selected exactly as the file of that name is - the operator's patterns, the priority policy
+// outside exhaustive mode and the guards, and nothing else - and what keeps a real AppleDouble
+// stub out of the report is its bytes, inside an archive as on disk.
+//
+// Every zip here deflates what it holds, and every container is checked not to carry the bytes a
+// case looks for: a stored member is readable in its container, and a rule matching the container
+// would stand in for a member nobody opened.
 
-class ArchiveSidecarTest : public ArchiveMemberFixture {};
+namespace {
 
-TEST_F(ArchiveSidecarTest, AMemberNamedWithABackslashIsNotASidecar) {
-    const std::string content(kFilesMan);
-    for (const Container container : {Container::UnixZip, Container::DosZip, Container::TarGz}) {
-        SCOPED_TRACE(containerName(container));
-        auto raised = scanMembers(container,
-                                  {{"uploads/__MACOSX\\x.php", content},
-                                   {"uploads/a\\._x.php", content},
-                                   {"__MACOSX/uploads/x.php", content},
-                                   {"uploads/._x.php", content}},
-                                  size_t{2});
-        EXPECT_EQ(raised["uploads/__MACOSX\\x.php"].count("WS006"), 1u);
-        EXPECT_EQ(raised["uploads/a\\._x.php"].count("WS006"), 1u);
-        EXPECT_TRUE(raised["__MACOSX/uploads/x.php"].empty());
-        EXPECT_TRUE(raised["uploads/._x.php"].empty());
+using lyxbosa::test::fixtures::appleDoubleStub;
+using lyxbosa::test::fixtures::compressionMethodsOf;
+using lyxbosa::test::fixtures::readBytes;
+
+// `backslash`: the name holds one, so on Windows no file can carry it.
+struct MetadataName {
+    const char* name;
+    bool backslash;
+};
+
+constexpr MetadataName kMetadataNames[] = {
+    {"__MACOSX/uploads/shell.php", false},
+    {"__MACOSX/uploads/._shell.php", false},
+    {"uploads/__MACOSX/shell.php", false},
+    {"uploads/._shell.php", false},
+    {"uploads/._shell", false},
+    {"uploads/.DS_Store", false},
+    {"uploads/Thumbs.db", false},
+    {"uploads/__MACOSX\\shell.php", true},
+    {"uploads/a\\._shell.php", true},
+};
+
+constexpr std::string_view kZipInAZip = "zip in a zip";
+
+class ArchiveMetadataNameTest : public OnDiskFixture {
+protected:
+    // `members` written under `dir` in every shape a backup arrives in - a zip with a Unix host
+    // byte, one with a DOS host byte, a tar.gz, and a zip holding a zip that holds them - and,
+    // where the platform lets a file carry the name, as loose files under `dir/loose`. Returns
+    // each container's label and the prefix its members' addresses begin with.
+    //
+    // `absentFromContainers` is checked to be in no container's own bytes. Empty when a member is
+    // incompressible: deflate keeps such a member's bytes as they are, and the case then checks
+    // that no container raised anything of its own instead.
+    std::vector<std::pair<std::string, std::string>> writeEverywhere(
+        const fs::path& dir, const std::vector<std::pair<std::string, std::string>>& members,
+        std::string_view absentFromContainers) {
+        fs::create_directories(dir);
+
+        const auto deflatedZip = [&](const fs::path& path,
+                                     const std::vector<std::pair<std::string, std::string>>& held,
+                                     uint8_t host) {
+            writeZip(path, held, host, ZIP_CM_DEFLATE);
+            const auto methods = compressionMethodsOf(path);
+            EXPECT_EQ(methods.size(), held.size()) << path;
+            for (const auto& [name, method] : methods) {
+                EXPECT_EQ(method, 8u) << name << " in " << path << " is not deflated";
+            }
+        };
+
+        const fs::path unixZip = dir / "unix-host.zip";
+        const fs::path dosZip = dir / "dos-host.zip";
+        const fs::path tarGz = dir / "backup.tar.gz";
+        const fs::path outerZip = dir / "outer.zip";
+        deflatedZip(unixZip, members, ZIP_OPSYS_UNIX);
+        deflatedZip(dosZip, members, ZIP_OPSYS_DOS);
+
+        std::string tar;
+        for (const auto& [name, body] : members) {
+            appendTarMember(tar, name, body);
+        }
+        tar += endOfTar();
+        const std::string gz = gzipCompress(tar);
+        std::ofstream(tarGz, std::ios::binary).write(gz.data(), static_cast<std::streamsize>(gz.size()));
+
+        const fs::path built = root / ("built-" + pathToUtf8(dir.filename()));
+        fs::create_directories(built);
+        deflatedZip(built / "inner.zip", members, ZIP_OPSYS_UNIX);
+        deflatedZip(outerZip, {{"nested/inner.zip", readBytes(built / "inner.zip")}}, ZIP_OPSYS_UNIX);
+
+        for (const fs::path& container : {unixZip, dosZip, tarGz, outerZip}) {
+            if (absentFromContainers.empty()) break;
+            EXPECT_EQ(readBytes(container).find(absentFromContainers), std::string::npos)
+                << container << " carries its members' bytes in its own";
+        }
+
+        for (const auto& [name, body] : members) {
+            if (!looseFileCanCarry(name)) continue;
+            const fs::path file = dir / "loose" / pathFromUtf8(name);
+            fs::create_directories(file.parent_path());
+            std::ofstream(file, std::ios::binary).write(body.data(), static_cast<std::streamsize>(body.size()));
+        }
+
+        return {{"unix-host.zip", pathToUtf8(unixZip) + "!"},
+                {"dos-host.zip", pathToUtf8(dosZip) + "!"},
+                {"backup.tar.gz", pathToUtf8(tarGz) + "!"},
+                {std::string(kZipInAZip), pathToUtf8(outerZip) + "!nested/inner.zip!"}};
     }
+
+    static bool looseFileCanCarry(std::string_view name) {
+        return !name.empty() &&
+               (name.find('\\') == std::string_view::npos || !whyNoNameCanHoldABackslashHere());
+    }
+
+    // The address a walk gives the loose file of `name` under `dir/loose`.
+    static std::string looseAddress(const fs::path& dir, std::string_view name) {
+        return pathToUtf8((dir / "loose" / pathFromUtf8(name)).make_preferred());
+    }
+
+    static AppConfig configFor(const fs::path& dir, bool exhaustive, bool includeList) {
+        AppConfig config = Config::loadFromString(Config::generateDefault());
+        config.scan.directories = {pathToUtf8(dir)};
+        config.scan.recursive = true;
+        config.actions.quarantine.enabled = false;
+        config.archives.exhaustive = exhaustive;
+        if (!includeList) {
+            config.scan.include.clear();
+        }
+        return config;
+    }
+
+    static ScanResult scanWith(const AppConfig& config) {
+        Scanner scanner(config);
+        scanner.setPreCount(false);
+        return scanner.scan();
+    }
+
+    // Every row's rule codes, keyed by the row's address.
+    static std::map<std::string, std::set<std::string>> codesByAddress(const ScanResult& result) {
+        std::map<std::string, std::set<std::string>> codes;
+        for (const auto& file : result.files) {
+            auto& at = codes[pathToUtf8(file.path)];
+            for (const auto& match : file.matches) {
+                at.insert(match.category);
+            }
+        }
+        return codes;
+    }
+};
+
+}  // namespace
+
+// Each name holding the WS006 signature is opened and fires in every container, and the file of
+// that name fires alike: in the default selection, in exhaustive mode, and in exhaustive mode with
+// no include list. `Thumbs.db` is the one name the default include list does not name, so it is
+// left shut there as a file and as a member, and read once no include list stands in the way. A
+// zip inside a zip is not code, so outside exhaustive mode the inner zip is left shut whatever its
+// members are called.
+TEST_F(ArchiveMetadataNameTest, EachNameHoldingAWebshellIsOpenedAndFiresAsTheFileOfThatNameDoes) {
+    const std::string content(kFilesMan);
+    std::vector<std::pair<std::string, std::string>> members;
+    for (const MetadataName& n : kMetadataNames) {
+        members.emplace_back(n.name, content);
+    }
+    const fs::path dir = root / "metadata";
+    const auto containers = writeEverywhere(dir, members, "FilesMan");
+
+    struct Selection {
+        const char* label;
+        bool exhaustive;
+        bool includeList;
+        size_t membersScanned;
+    };
+    const size_t named = std::size(kMetadataNames);
+    for (const Selection& selection :
+         {Selection{"default selection", false, true, 3 * (named - 1)},
+          Selection{"exhaustive", true, true, 4 * (named - 1) + 1},
+          Selection{"exhaustive, no include list", true, false, 4 * named + 1}}) {
+        SCOPED_TRACE(selection.label);
+        const ScanResult result =
+            scanWith(configFor(dir, selection.exhaustive, selection.includeList));
+        EXPECT_EQ(result.archives.membersScanned, selection.membersScanned);
+        auto codes = codesByAddress(result);
+
+        for (const MetadataName& n : kMetadataNames) {
+            SCOPED_TRACE(n.name);
+            const bool selected =
+                !selection.includeList || std::string_view(n.name) != "uploads/Thumbs.db";
+
+            std::optional<bool> fileFires;
+            if (looseFileCanCarry(n.name)) {
+                fileFires = codes[looseAddress(dir, n.name)].count("WS006") == 1;
+                EXPECT_EQ(*fileFires, selected) << "the loose file";
+            }
+            for (const auto& [label, prefix] : containers) {
+                const bool reached = selection.exhaustive || label != kZipInAZip;
+                const bool memberFires = codes[prefix + n.name].count("WS006") == 1;
+                EXPECT_EQ(memberFires, selected && reached) << label;
+                if (fileFires && reached) {
+                    EXPECT_EQ(memberFires, *fileFires)
+                        << label << ": the member and the file of its name answer differently";
+                }
+            }
+        }
+    }
+}
+
+// A real AppleDouble stub named `._index.php` raises nothing, loose or as a member of any
+// container, in either mode - and it was read, which is what makes the silence mean something.
+// Beside it, the four bytes of AppleDouble magic in front of PHP carrying an OBF036 payload are
+// reported, loose and as a member: the exemption is for the stub's bytes, not for its magic and
+// not for its name.
+TEST_F(ArchiveMetadataNameTest, ARealStubRaisesNothingAndPhpBehindItsMagicIsReported) {
+    const std::string stub = appleDoubleStub(std::string_view("0081;66e8a1c0;Safari;\0", 22));
+    const std::string magicThenPhp =
+        std::string("\x00\x05\x16\x07\x00\x02\x00\x00" "Mac OS X        ", 24) + blobThenPhp();
+    const std::vector<std::pair<std::string, std::string>> members = {
+        {"__MACOSX/site/._index.php", stub},
+        {"site/._index.php", stub},
+        {"site/._shell.php", magicThenPhp},
+    };
+    const fs::path dir = root / "stubs";
+    // The stage in front of the payload is incompressible, so no container hides it; none of them
+    // is source, and each one's own row is checked to be empty below.
+    const auto containers = writeEverywhere(dir, members, "");
+
+    for (const bool exhaustive : {false, true}) {
+        SCOPED_TRACE(exhaustive ? "exhaustive" : "default selection");
+        const ScanResult result = scanWith(configFor(dir, exhaustive, true));
+        EXPECT_EQ(result.archives.membersScanned, exhaustive ? 13u : 9u)
+            << "a member these cases are about was not read";
+        auto codes = codesByAddress(result);
+
+        const auto expect = [&](const std::string& address, bool isStub, const char* where) {
+            SCOPED_TRACE(address);
+            if (isStub) {
+                EXPECT_TRUE(codes[address].empty()) << where << " raised something for a stub";
+            } else {
+                EXPECT_EQ(codes[address].count("OBF036"), 1u)
+                    << where << ": AppleDouble magic hid the stage behind a PHP open tag";
+            }
+        };
+        for (const auto& [label, prefix] : containers) {
+            if (label == kZipInAZip) continue;
+            const std::string container = prefix.substr(0, prefix.size() - 1);
+            EXPECT_TRUE(codes[container].empty()) << container << " raised something of its own";
+        }
+        for (const auto& [name, body] : members) {
+            const bool isStub = body == stub;
+            expect(looseAddress(dir, name), isStub, "the loose file");
+            for (const auto& [label, prefix] : containers) {
+                if (!exhaustive && label == kZipInAZip) continue;
+                expect(prefix + name, isStub, label.c_str());
+            }
+        }
+    }
+}
+
+// A member stored as `\` is a file of that one-character name on Linux: unzip, 7-Zip, PHP's
+// ZipArchive, PclZip, Python and GNU tar all write it so. It has no extension, and a name without
+// one is code to the priority policy as it is to `!ext`, so it is opened in either mode, and it
+// fires as the file of that name does. A member stored with no name at all is opened too: 7-Zip
+// writes its bytes to a file named after the archive, and Python's tarfile to the destination path
+// itself, so they can reach a disk, and nothing about them is a reason to leave them unread.
+TEST_F(ArchiveMetadataNameTest, AMemberStoredAsABackslashOrWithNoNameIsOpened) {
+    const std::string content(kFilesMan);
+    const std::vector<std::pair<std::string, std::string>> members = {
+        {"\\", content},
+        {"", content},
+        {"ok.php", content},
+    };
+    const fs::path dir = root / "unnamed";
+    const auto containers = writeEverywhere(dir, members, "FilesMan");
+
+    for (const bool exhaustive : {false, true}) {
+        SCOPED_TRACE(exhaustive ? "exhaustive" : "default selection");
+        const ScanResult result = scanWith(configFor(dir, exhaustive, true));
+        EXPECT_EQ(result.archives.membersScanned, exhaustive ? 13u : 9u);
+        EXPECT_EQ(result.archives.totalSkipped(), exhaustive ? 0u : 1u)
+            << archive::membersNotScannedLine(result.archives) << " - only the inner zip";
+        auto codes = codesByAddress(result);
+
+        if (looseFileCanCarry("\\")) {
+            EXPECT_EQ(codes[looseAddress(dir, "\\")].count("WS006"), 1u) << "the loose file";
+        }
+        for (const auto& [label, prefix] : containers) {
+            if (!exhaustive && label == kZipInAZip) continue;
+            SCOPED_TRACE(label);
+            EXPECT_EQ(codes[prefix + "\\"].count("WS006"), 1u);
+            EXPECT_EQ(codes[prefix].count("WS006"), 1u) << "no row for the member with no name";
+            EXPECT_EQ(codes[prefix + "ok.php"].count("WS006"), 1u);
+        }
+    }
+}
+
+// A member with no name is addressed by its container and the separator and nothing after it, and
+// that address is never the container's own. The container is a STORED zip here on purpose, so
+// its own bytes carry the signature and it has a row of its own; both rows are there, apart, in
+// the scan result, the JSON, the CSV, the text report and `check`.
+TEST_F(ArchiveMetadataNameTest, AMemberWithNoNameIsNeverTheContainersRow) {
+    const std::string content(kFilesMan);
+    const fs::path dir = root / "stored";
+    fs::create_directories(dir);
+    const fs::path zip = dir / "stored.zip";
+    writeZip(zip, {{"", content}}, ZIP_OPSYS_UNIX, ZIP_CM_STORE);
+    ASSERT_NE(readBytes(zip).find("FilesMan"), std::string::npos)
+        << "the container must carry the signature in its own bytes for this case to mean anything";
+
+    const std::string container = pathToUtf8(zip);
+    const std::string member = container + "!";
+    const ScanResult result = scanWith(configFor(dir, false, true));
+    auto codes = codesByAddress(result);
+    EXPECT_EQ(codes[container].count("WS006"), 1u) << "the container's own row";
+    EXPECT_EQ(codes[member].count("WS006"), 1u) << "the member's row";
+    EXPECT_EQ(result.files.size(), 2u);
+
+    const std::string containerShown = pathForDisplay(pathFromUtf8(container));
+    const std::string memberShown = pathForDisplay(pathFromUtf8(member));
+    ASSERT_NE(containerShown, memberShown);
+
+    std::ostringstream json;
+    {
+        JsonReportWriter writer(json);
+        writer.begin();
+        for (const auto& file : result.files) writer.onFile(file);
+        writer.end(result, false);
+    }
+    const nlohmann::json document = nlohmann::json::parse(json.str());
+    std::set<std::string> jsonPaths;
+    for (const auto& file : document.at("files")) {
+        jsonPaths.insert(file["path"].get<std::string>());
+    }
+    EXPECT_EQ(jsonPaths, (std::set<std::string>{containerShown, memberShown})) << json.str();
+
+    std::ostringstream csv;
+    {
+        CsvReportWriter writer(csv);
+        writer.begin();
+        for (const auto& file : result.files) writer.onFile(file);
+        writer.end(result, false);
+    }
+    std::set<std::string> csvPaths;
+    {
+        std::istringstream lines(csv.str());
+        std::string line;
+        std::getline(lines, line);   // the header
+        while (std::getline(lines, line)) {
+            csvPaths.insert(line.substr(0, line.find(',')));
+        }
+    }
+    EXPECT_EQ(csvPaths, (std::set<std::string>{containerShown, memberShown})) << csv.str();
+
+    std::ostringstream text;
+    {
+        ResultPrinter printer(text, /*color=*/false, /*width=*/400);
+        for (const auto& file : result.files) printer.printFileResult(file);
+    }
+    for (const std::string& shown : {containerShown, memberShown}) {
+        EXPECT_NE(text.str().find("[!] " + shown + " ["), std::string::npos)
+            << "no line of its own for " << shown << ":\n" << text.str();
+    }
+
+    CliArgs args;
+    args.checkFile = container;
+    const Terminal terminal(/*useAnsi=*/false);
+    const TerminalCaps caps = TerminalCaps::detect();
+    testing::internal::CaptureStdout();
+    const int code = CheckUseCase(terminal, caps).execute(args);
+    const std::string checked = testing::internal::GetCapturedStdout();
+    EXPECT_EQ(code, 2);
+    EXPECT_NE(checked.find("File: " + containerShown + "\n"), std::string::npos) << checked;
+    EXPECT_NE(checked.find("Member: " + memberShown + "\n"), std::string::npos) << checked;
 }

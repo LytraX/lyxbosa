@@ -95,7 +95,6 @@ struct Stats {
     size_t skippedCorrupt() const { return skips.count(SkipReason::Corrupt); }
     size_t skippedPolicy() const  { return skips.count(SkipReason::Policy); }
     size_t skippedExcluded() const { return skips.count(SkipReason::Excluded); }
-    size_t skippedSidecar() const { return skips.count(SkipReason::Sidecar); }
 
     size_t totalSkipped() const { return skips.total(); }
 
@@ -110,11 +109,11 @@ struct Stats {
 };
 
 // The reasons that are the scan deciding what to open, rather than a member it selected going
-// unread: a member the operator's include or exclude patterns reject, a sidecar metadata
-// entry, and - outside exhaustive mode - a member that is not code. The container-level
-// counterpart of an excluded loose file, which is also counted and also changes no exit code.
+// unread: a member the operator's include or exclude patterns reject, and - outside exhaustive
+// mode - a member that is not code. The container-level counterpart of an excluded loose file,
+// which is also counted and also changes no exit code.
 inline constexpr SkipReason kMemberSelectionReasons[] = {
-    SkipReason::Policy, SkipReason::Excluded, SkipReason::Sidecar,
+    SkipReason::Policy, SkipReason::Excluded,
 };
 
 // Members the scanner meant to read and did not.
