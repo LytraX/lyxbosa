@@ -206,6 +206,13 @@ public:
     // answers.
     static bool globMatch(std::string_view pattern, std::string_view name);
 
+    // Whether a final component has no extension, as `!ext` reads it and as
+    // std::filesystem::path::extension() reads one: no dot but a leading one, or `..`. So
+    // `.htaccess`, `.DS_Store`, `._shell` and an empty component have none, and `x.` has one.
+    // The archive layer's priority policy asks this too, so that a name the include list calls
+    // extension-less is extension-less to the policy that decides whether a member is code.
+    static bool hasNoExtension(std::string_view finalComponent);
+
 private:
     // Whether one include or exclude pattern names a path spelled with `/` separators.
     static bool matchesPattern(const std::string& pattern, std::string_view slashPath);

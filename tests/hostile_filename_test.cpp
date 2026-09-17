@@ -1328,7 +1328,7 @@ TEST(MemberNameTest, OrdinaryBusinessNamesInAnArchiveRaiseNothing) {
 }
 
 // Which members have their names read is the file level's answer. What decides what is opened -
-// the include list, a sidecar, the priority policy, the member size cap, the budget - does not
+// the include list, the priority policy, the member size cap, the budget - does not
 // decide what a name may say, and each such member's row carries the reason its bytes were not
 // read.
 TEST(MemberNameTest, AMemberThatIsNotOpenedStillHasItsNameReadAndSaysWhy) {
@@ -1338,7 +1338,6 @@ TEST(MemberNameTest, AMemberThatIsNotOpenedStillHasItsNameReadAndSaysWhy) {
         {"a.php", "<?php echo 1;\n"},                          // read first, spends the budget
         {"x$(id).txt", "notes\n"},                             // policy: not code
         {"x$(id).mdb", "db\n"},                                // excluded: no include names it
-        {"__MACOSX/._y$(id).php", "sidecar\n"},                // sidecar: container metadata
         {"big;id.php", std::string(64 * 1024, 'a')},           // size
         {"late`id`.php", "<?php echo 2;\n"},                   // budget
     });
@@ -1358,16 +1357,14 @@ TEST(MemberNameTest, AMemberThatIsNotOpenedStillHasItsNameReadAndSaysWhy) {
     };
     expect("x$(id).txt", SkipReason::Policy, "FN001");
     expect("x$(id).mdb", SkipReason::Excluded, "FN001");
-    expect("__MACOSX/._y$(id).php", SkipReason::Sidecar, "FN001");
     expect("big;id.php", SkipReason::Size, "FN002");
     expect("late`id`.php", SkipReason::Budget, "FN001");
 
     EXPECT_EQ(findMember(result, zip, "a.php"), nullptr) << "a clean name is not a row";
-    EXPECT_EQ(result.files.size(), 5u) << listRows(result);
+    EXPECT_EQ(result.files.size(), 4u) << listRows(result);
     // Counted once each where the archive layer counts them, and nowhere else.
     EXPECT_EQ(result.archives.skippedPolicy(), 1u);
     EXPECT_EQ(result.archives.skippedExcluded(), 1u);
-    EXPECT_EQ(result.archives.skippedSidecar(), 1u);
     EXPECT_EQ(result.archives.skippedSize(), 1u);
     EXPECT_EQ(result.archives.skippedBudget(), 1u);
     EXPECT_EQ(result.skips.total(), 0u) << "a member's reason became a file-level skip";

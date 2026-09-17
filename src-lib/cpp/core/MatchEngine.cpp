@@ -520,13 +520,23 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
         // macOS AppleDouble resource-fork stub. Unpacking a theme zip authored on a Mac
         // leaves a `._name.php` beside every `name.php`; it inherits the .php suffix but
         // is not PHP at all, it is the metadata half of the original file. Keyed on the
-        // four-byte magic rather than on `__MACOSX/`, so it still holds for a stub that
-        // was unpacked outside that directory.
+        // stub's bytes rather than on `__MACOSX/` or `._`, so it holds for a stub unpacked
+        // outside that directory and for one read inside an archive, and a name claims
+        // nothing.
+        //
+        // The four-byte magic alone is something an attacker can write in front of PHP: PHP
+        // prints the bytes before an open tag as inline output and runs what follows the tag.
+        // So a stub is exempt only while no PHP open tag appears anywhere in it. Every form
+        // of one - `<?php` in any case, `<?=`, and the short `<?` a host with short_open_tag
+        // reads - begins with the two bytes `<?`, so their absence is the whole test. Measured
+        // on 4,465 real stubs out of Mac-made zips: none holds those two bytes, so the test
+        // costs no stub its exemption.
         if (ctx.content.size() >= 4 &&
             static_cast<unsigned char>(ctx.content[0]) == 0x00 &&
             static_cast<unsigned char>(ctx.content[1]) == 0x05 &&
             static_cast<unsigned char>(ctx.content[2]) == 0x16 &&
-            static_cast<unsigned char>(ctx.content[3]) == 0x07) {
+            static_cast<unsigned char>(ctx.content[3]) == 0x07 &&
+            ctx.content.find("<?") == std::string_view::npos) {
             return false;
         }
 

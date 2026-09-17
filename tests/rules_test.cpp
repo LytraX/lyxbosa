@@ -6,6 +6,8 @@
 #include "core/LiteralPrefilter.h"
 #include "utils/SafeText.h"
 
+#include "ArchiveFixtures.h"
+
 using namespace lyxbosa::rules;
 using namespace lyxbosa;
 
@@ -697,7 +699,10 @@ protected:
     // not just the control-byte count: an earlier version of this fixture alternated one
     // control byte with one letter, which no real payload does and which the adjacency
     // test in the analyzer correctly rejects.
-    std::string blobThenPhp() {
+    std::string blobThenPhp() { return blobThen("<?php goto vSHrlRg; $x = 1; ?>"); }
+
+    // The same stage ahead of `source`, which may open PHP any way PHP opens it or not at all.
+    std::string blobThen(std::string_view source) {
         std::string s;
         // A cheap deterministic PRNG standing in for ciphertext. Every byte value is
         // equally likely, so control bytes land next to each other at the rate a real
@@ -707,7 +712,7 @@ protected:
             state = state * 1664525u + 1013904223u;
             s.push_back(static_cast<char>((state >> 16) & 0xFF));
         }
-        s += "<?php goto vSHrlRg; $x = 1; ?>";
+        s += source;
         return s;
     }
 
@@ -824,14 +829,61 @@ TEST_F(BinaryInTextTest, IgnoresCharsetTableWhereControlBytesAreIsolated) {
 
 // AppleDouble stubs: unpacking a Mac-authored theme zip leaves a `._name.php` beside every
 // `name.php`. It carries the .php suffix but is resource-fork metadata, not PHP.
+//
+// The stub these cases use is built from the format's definitions in ArchiveFixtures.h. These are
+// the 176 bytes ditto wrote on macOS 26.5.2 into `__MACOSX/site/._index.php` for a file carrying
+// the quarantine value below, so the exemption is held to the file a Mac writes rather than to a
+// reading of the specification.
+constexpr std::string_view kQuarantineDittoWrote{"q/0081;66e8a1c0;Safari;\0", 24};
+const std::string kStubDittoWrote(
+    "\x00\x05\x16\x07\x00\x02\x00\x00\x4d\x61\x63\x20\x4f\x53\x20\x58"
+    "\x20\x20\x20\x20\x20\x20\x20\x20\x00\x02\x00\x00\x00\x09\x00\x00"
+    "\x00\x32\x00\x00\x00\x7e\x00\x00\x00\x02\x00\x00\x00\xb0\x00\x00"
+    "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    "\x00\x00\x00\x00\x41\x54\x54\x52\x00\x00\x00\x00\x00\x00\x00\xb0"
+    "\x00\x00\x00\x98\x00\x00\x00\x18\x00\x00\x00\x00\x00\x00\x00\x00"
+    "\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x98\x00\x00\x00\x18"
+    "\x00\x00\x15\x63\x6f\x6d\x2e\x61\x70\x70\x6c\x65\x2e\x71\x75\x61"
+    "\x72\x61\x6e\x74\x69\x6e\x65\x00\x71\x2f\x30\x30\x38\x31\x3b\x36"
+    "\x36\x65\x38\x61\x31\x63\x30\x3b\x53\x61\x66\x61\x72\x69\x3b\x00",
+    176);
+
+TEST_F(BinaryInTextTest, TheAppleDoubleFixtureIsTheStubAMacWrites) {
+    EXPECT_EQ(lyxbosa::test::fixtures::appleDoubleStub(kQuarantineDittoWrote), kStubDittoWrote);
+}
+
 TEST_F(BinaryInTextTest, GateRejectsAppleDoubleStub) {
-    std::string stub("\x00\x05\x16\x07\x00\x02\x00\x00", 8);
-    stub += "Mac OS X        ";
-    stub += blobThenPhp();
+    const std::string stub = lyxbosa::test::fixtures::appleDoubleStub(kQuarantineDittoWrote);
     EXPECT_TRUE(fires(stub)) << "the analyzer still measures it; the gate is what rejects it";
     EXPECT_FALSE(gatedFor("/var/www/wp-content/themes/__MACOSX/x/._content.php", stub));
-    // The magic, not the path, is the test - a stub unpacked elsewhere is still a stub.
+    // The bytes, not the path, are the test - a stub unpacked elsewhere, or renamed, is still a
+    // stub.
     EXPECT_FALSE(gatedFor("/var/www/wp-content/themes/x/._content.php", stub));
+    EXPECT_FALSE(gatedFor("/var/www/wp-content/themes/x/content.php", stub));
+
+    // A stub with a stage-shaped resource fork and no PHP in it is still a stub.
+    EXPECT_FALSE(gatedFor("/var/www/x/._content.php", stub + blobThen("")));
+}
+
+// The magic alone is four bytes anybody can write in front of PHP, and PHP prints the bytes before
+// an open tag and runs what follows it. So a file that begins like a stub and opens PHP in any form
+// - `<?php` in any case, `<?=`, or the short `<?` - is judged as any other source file, and the
+// stage stored in it is a finding. Each form, behind a stub and behind the bare magic.
+TEST_F(BinaryInTextTest, GateKeepsAppleDoubleMagicInFrontOfPhp) {
+    const std::string stub = lyxbosa::test::fixtures::appleDoubleStub(kQuarantineDittoWrote);
+    const std::string magic("\x00\x05\x16\x07\x00\x02\x00\x00" "Mac OS X        ", 24);
+    for (const std::string_view tag : {"<?php ", "<?PHP ", "<?Php\n", "<?= ", "<? ", "<?\n"}) {
+        const std::string source = std::string(tag) + "goto vSHrlRg; $x = 1; ?>";
+        for (const auto& [label, head] : {std::pair{"stub", stub}, std::pair{"magic", magic}}) {
+            SCOPED_TRACE(std::string(label) + " then " + std::string(tag));
+            const std::string content = head + blobThen(source);
+            EXPECT_TRUE(fires(content));
+            EXPECT_TRUE(gatedFor("/var/www/x/._content.php", content))
+                << "four bytes of AppleDouble magic hid PHP opened with " << tag;
+        }
+    }
+    EXPECT_TRUE(gatedFor("/var/www/x/._content.php", magic + blobThenPhp()));
 }
 
 // `protoc --php_out` stores a serialised FileDescriptorProto in a single-quoted PHP string,

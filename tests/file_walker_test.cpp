@@ -1871,3 +1871,101 @@ TEST(FileWalkerMemberFilterTest, AFileAndTheMemberItBecomesGetOneVerdict) {
     EXPECT_GT(shut, 0u) << "no pattern kept any file out, so the comparison proved nothing";
     EXPECT_LT(shut, compared) << "every pattern kept every file out";
 }
+
+// A name spelled like Mac or Windows metadata is opened as the file of that name is: under
+// `__MACOSX/`, `._name`, `.DS_Store`, `Thumbs.db`, and on POSIX the same shapes with a backslash
+// and the one-character name `\`. For every recorded pattern as an exclude and as an include, and
+// for the shipped configuration's own patterns, a member stored under the name inside a zip beside
+// the file is opened in exhaustive mode exactly when the walk accepts the file, and the pre-count
+// agrees. Outside exhaustive mode the priority policy is the one thing that may leave shut a member
+// whose file the walk accepts, and only a member it calls not code - here `Thumbs.db` and
+// `._x.png`; `.DS_Store`, `._x` and `\` have no extension, and a name without one is code to the
+// policy exactly as it is to `!ext`.
+TEST(FileWalkerMemberFilterTest, AFileAndTheMemberItBecomesAreOpenedAlikeWhenNamedLikeMetadata) {
+    TempTree tree;
+    const fs::path root = tree.path();
+    struct Named {
+        std::string name;
+        bool code;   // what the priority policy calls it
+    };
+    std::vector<Named> names = {
+        {"__MACOSX/x.php", true}, {"__MACOSX/a/._x.php", true}, {"a/__MACOSX/x.php", true},
+        {"._x.php", true},        {"a/._x.php", true},          {"._x", true},
+        {".DS_Store", true},      {"a/.DS_Store", true},        {"__MACOSX/.DS_Store", true},
+        {"Thumbs.db", false},     {"a/Thumbs.db", false},       {"._x.png", false},
+    };
+#ifndef _WIN32
+    for (const char* posixOnly : {"a\\._x.php", "__MACOSX\\x.php", "\\", "a\\"}) {
+        names.push_back({posixOnly, true});
+    }
+#endif
+
+    std::vector<fs::path> zips;
+    for (size_t i = 0; i < names.size(); ++i) {
+        const fs::path file = root / pathFromUtf8(names[i].name);
+        fs::create_directories(file.parent_path());
+        std::ofstream(file, std::ios::binary) << "<?php echo 1;\n";
+        ASSERT_TRUE(fs::exists(file)) << names[i].name;
+        zips.push_back(root / ("member-" + std::to_string(i) + ".zip"));
+        lyxbosa::test::fixtures::writeZip(zips.back(), {{names[i].name, "<?php echo 1;\n"}},
+                                          ZIP_OPSYS_UNIX);
+    }
+
+    const AppConfig shipped = Config::loadFromString(Config::generateDefault());
+    std::vector<std::pair<std::string, ScanConfig>> selections;
+    selections.emplace_back("the shipped patterns", shipped.scan);
+    for (const auto& pattern : kGlobPatterns) {
+        for (const bool asExclude : {true, false}) {
+            ScanConfig scan = shipped.scan;
+            scan.include.clear();
+            scan.exclude.clear();
+            (asExclude ? scan.exclude : scan.include).push_back(pattern);
+            selections.emplace_back((asExclude ? "exclude '" : "include '") + pattern + "'", scan);
+        }
+    }
+
+    MatchEngine engine;
+    engine.loadAllBuiltinRules();
+    size_t compared = 0;
+    size_t shut = 0;
+    size_t notCode = 0;
+    for (const auto& [label, scan] : selections) {
+        SCOPED_TRACE(label);
+        std::map<std::string, bool> fileAccepted;
+        bool stopped = false;
+        FileWalker(scan).walkDirectory(root, [&](const FileInfo& info) {
+            fileAccepted[pathToUtf8(fs::path(info.path).make_preferred())] = !info.skip.has_value();
+            return true;
+        }, stopped);
+
+        for (const bool exhaustive : {true, false}) {
+            ArchiveConfig selection = shipped.archives;
+            selection.enabled = true;
+            selection.exhaustive = exhaustive;
+            archive::ArchiveScanner scanner(selection, scan, engine);
+            for (size_t i = 0; i < names.size(); ++i) {
+                const std::string file =
+                    pathToUtf8((root / pathFromUtf8(names[i].name)).make_preferred());
+                ASSERT_EQ(fileAccepted.count(file), 1u) << "the walk never reached " << file;
+                const bool opened =
+                    scanner.scan(zips[i], archive::Kind::Zip, {}).stats.membersScanned == 1;
+                const bool counted = archive::ArchiveScanner::countMembers(
+                                         zips[i], archive::Kind::Zip, selection, scan)
+                                         .files == 1;
+                const bool expected = fileAccepted[file] && (exhaustive || names[i].code);
+                EXPECT_EQ(opened, expected)
+                    << (exhaustive ? "exhaustive: " : "default selection: ") << "the file "
+                    << (fileAccepted[file] ? "was" : "was not") << " accepted and the member "
+                    << names[i].name << (opened ? " was" : " was not") << " opened";
+                EXPECT_EQ(opened, counted) << names[i].name << ": the pre-count disagrees";
+                shut += fileAccepted[file] ? 0 : 1;
+                notCode += (fileAccepted[file] && !exhaustive && !names[i].code) ? 1 : 0;
+                ++compared;
+            }
+        }
+    }
+    EXPECT_EQ(compared, selections.size() * 2 * names.size());
+    EXPECT_GT(shut, 0u) << "no pattern kept any file out, so the comparison proved nothing";
+    EXPECT_LT(shut, compared) << "every pattern kept every file out";
+    EXPECT_GT(notCode, 0u) << "the policy was never asked about a member it calls not code";
+}

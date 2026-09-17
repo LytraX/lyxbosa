@@ -1,5 +1,7 @@
 #include "ArchiveIndex.h"
 
+#include "core/FileWalker.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -10,14 +12,19 @@ namespace lyxbosa::archive {
 
 namespace {
 
-std::string_view extensionOf(std::string_view name) {
+std::string_view finalComponentOf(std::string_view name) {
     const size_t slash = name.find_last_of('/');
-    const std::string_view base =
-        slash == std::string_view::npos ? name : name.substr(slash + 1);
-    const size_t dot = base.find_last_of('.');
-    if (dot == std::string_view::npos || dot + 1 >= base.size()) {
+    return slash == std::string_view::npos ? name : name.substr(slash + 1);
+}
+
+// Read as FileWalker::hasNoExtension() reads a name, so a leading dot starts no extension:
+// `.png` is a name without one, not a PNG.
+std::string_view extensionOf(std::string_view name) {
+    const std::string_view base = finalComponentOf(name);
+    if (FileWalker::hasNoExtension(base)) {
         return {};
     }
+    const size_t dot = base.find_last_of('.');
     return base.substr(dot + 1);
 }
 
@@ -204,10 +211,7 @@ bool isContainerMetadata(std::string_view name) {
         return true;
     }
 
-    const size_t slash = name.find_last_of('/');
-    const std::string_view base =
-        slash == std::string_view::npos ? name : name.substr(slash + 1);
-
+    const std::string_view base = finalComponentOf(name);
     return base.starts_with("._") || base == ".DS_Store" || base == "Thumbs.db";
 }
 
@@ -215,11 +219,11 @@ bool isScriptName(std::string_view name) {
     if (extensionIn(name, kScriptExtensions)) return true;
 
     // No extension at all: webshells routinely have none, and so do the CGI
-    // scripts that live in a real cgi-bin.
-    const size_t slash = name.find_last_of('/');
-    const std::string_view base =
-        slash == std::string_view::npos ? name : name.substr(slash + 1);
-    return !base.empty() && base.find('.') == std::string_view::npos;
+    // scripts that live in a real cgi-bin. Read as `!ext` reads a file's name, so a member
+    // named `.DS_Store` or `._shell` is extension-less exactly as the file of that name is.
+    // An empty final component has none either - the whole name of a member stored as `\`
+    // or as nothing, which the extractors that write one to disk write as a file without one.
+    return FileWalker::hasNoExtension(finalComponentOf(name));
 }
 
 bool isMarkupName(std::string_view name) {
@@ -259,6 +263,16 @@ void IndexSummary::observe(std::string_view rawName) {
         // A zip written on a Mac carries a "._x.php" for every x.php. Counting
         // them would double the PHP tally that decides whether this is a site
         // backup, from files that hold no PHP at all.
+        //
+        // A name test, and not a byte test, for two reasons. There are no bytes here: this
+        // tally is taken from the index before any member is read - a zip's whole index
+        // first, a tar's header in front of its bytes - and a member the policy leaves shut
+        // is never read at all. And a name test here cannot be turned against the finding.
+        // Leaving a name out can only withhold, and every reading below is a name as well, so
+        // whoever writes the archive withholds ARC001 and ARC002 by renaming `wp-config.php`
+        // or `wp-login.php` to anything, with or without this line. A metadata-looking name
+        // planted beside a site's own files withholds nothing, because each of those files is
+        // still counted, and adds nothing, because it is left out.
         return;
     }
 

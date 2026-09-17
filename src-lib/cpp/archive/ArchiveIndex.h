@@ -39,16 +39,19 @@ enum class Bucket {
 // A member name with every backslash turned into a slash, no "./" prefix and no leading
 // slash. Only for the readings that can add a finding or a priority and never withhold
 // one: what an archive is a backup of, and which member to spend the budget on first. A
-// member's address, the patterns and sidecar test that decide whether it is opened, and the
-// location priors its content is judged under all read the name as stored, because a
-// backslash there is a character the archive's writer chose - see memberFilterName().
+// member's address, the patterns that decide whether it is opened, and the location priors
+// its content is judged under all read the name as stored, because a backslash there is a
+// character the archive's writer chose - see memberFilterName().
+//
+// Empty for a member stored as `\` or as a run of `./` and `/` with no name after them. That
+// is not a member without a name: whether a member has one is asked of the name as stored.
 std::string normalizeMemberName(std::string_view raw);
 
-// The spelling of a stored member name that the sidecar test below, and - beneath the
-// container's directory - `scan.include` and `scan.exclude`, are asked about when they decide
-// whether a member is opened: the name as the archive holds it, without its leading "./" and
-// "/". Every extractor measured writes such a member beneath its destination, so taking them
-// off is exact. A backslash is left where it is.
+// The spelling of a stored member name that - beneath the container's directory -
+// `scan.include` and `scan.exclude` are asked about when they decide whether a member is
+// opened: the name as the archive holds it, without its leading "./" and "/". Every extractor
+// measured writes such a member beneath its destination, so taking them off is exact. A
+// backslash is left where it is.
 std::string_view memberFilterName(std::string_view stored);
 
 // Whether a zip's names read as backslash-separated for the name rules: every name that
@@ -59,15 +62,19 @@ std::string_view memberFilterName(std::string_view stored);
 // rules::filename::memberFinalComponent() for what it decides and what it may not.
 bool namesUseOnlyBackslashes(const std::vector<Entry>& entries);
 
-// Entries the container carries about the other entries rather than about the
-// site: the __MACOSX sidecar tree a Mac writes into every zip, its AppleDouble
-// "._name" stubs, and .DS_Store. They are neither code nor content, and a
-// "._index.php" is a binary resource fork wearing a PHP extension - 1,499 of
-// them in one real theme's bundled plugin zips, every one of which trips the
-// binary-payload rule if it is read as source.
+// Whether a name is spelled like an entry a container carries about the other entries rather
+// than about the site: the __MACOSX tree a Mac writes into a zip, its AppleDouble "._name"
+// stubs, .DS_Store and Thumbs.db. Components are split on `/` alone.
 //
-// Components are split on `/` alone. Asked whether to leave a member shut, it is asked of
-// memberFilterName(), so a member NAMED `uploads/__MACOSX\shell.php` is not a sidecar.
+// A name, and so never a reason to leave a member shut: the attacker chooses file names, a
+// backup copies them unchanged, and the loose file of that name is scanned. A member spelled
+// this way is selected as any other member is and its bytes are read. What keeps a real
+// AppleDouble stub from being reported - a "._index.php" is a binary resource fork wearing a
+// PHP extension, and 1,499 of them in one real theme's bundled plugin zips each tripped the
+// binary-payload rule when read as source - is OBF036's exemption for the stub's own bytes in
+// MatchEngine, which a loose stub gets too. The one reading left is IndexSummary::observe(),
+// which keeps these names out of the tally that decides whether a container is a site backup;
+// the reason it is a name test there is written beside it.
 bool isContainerMetadata(std::string_view name);
 
 bool isScriptName(std::string_view name);

@@ -833,16 +833,20 @@ CountResult FileWalker::countFiles(const CountProgressCallback& onProgress,
     return result;
 }
 
+bool FileWalker::hasNoExtension(std::string_view finalComponent) {
+    // A dot that is not the name's first character. `.htaccess` has none, and neither do `.`
+    // and `..`.
+    const size_t dot = finalComponent.find_last_of('.');
+    return dot == std::string_view::npos || dot == 0 || finalComponent == "..";
+}
+
 bool FileWalker::matchesPattern(const std::string& pattern, std::string_view slashPath) {
     const size_t slash = slashPath.find_last_of('/');
     const std::string_view base =
         slash == std::string_view::npos ? slashPath : slashPath.substr(slash + 1);
 
-    // "!ext" as std::filesystem::path::extension() reads a name: a dot that is not the
-    // name's first character. `.htaccess` has none, and neither do `.` and `..`.
     if (pattern == "!ext") {
-        const size_t dot = base.find_last_of('.');
-        return dot == std::string_view::npos || dot == 0 || base == "..";
+        return hasNoExtension(base);
     }
 
     // The final component first, and the whole path only for a pattern holding `**`.

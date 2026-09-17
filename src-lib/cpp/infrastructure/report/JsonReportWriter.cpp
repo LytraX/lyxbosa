@@ -196,10 +196,10 @@ Json summary(const ScanResult& result, bool interrupted) {
         a["bytesExpanded"] = stats.bytesExpanded;
         // Every member-level reason, each under the spelling a member row's `skipReason` uses
         // for it. The priority policy's and the guards' six keep their places, and the
-        // operator's patterns and the sidecars follow them.
+        // operator's patterns follow them.
         static constexpr SkipReason kMemberKeys[] = {
             SkipReason::Policy, SkipReason::Size, SkipReason::Budget, SkipReason::Ratio,
-            SkipReason::Depth, SkipReason::Corrupt, SkipReason::Excluded, SkipReason::Sidecar,
+            SkipReason::Depth, SkipReason::Corrupt, SkipReason::Excluded,
         };
         Json members = Json::object();
         for (const SkipReason reason : kMemberKeys) {
