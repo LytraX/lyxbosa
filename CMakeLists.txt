@@ -240,6 +240,7 @@ set(RULE_SOURCES
 
 # Collect library sources from src-lib
 set(LIB_SOURCES
+    src-lib/cpp/analysis/HtaccessHandler.cpp
     src-lib/cpp/analysis/StringAssembly.cpp
     src-lib/cpp/config/Config.cpp
     src-lib/cpp/patterns/StringPattern.cpp
@@ -520,6 +521,7 @@ if(BUILD_TESTS)
     tests/update_apply_test.cpp
     tests/build_identity_test.cpp
     tests/hostile_filename_test.cpp
+    tests/htaccess_handler_test.cpp
     tests/path_encoding_test.cpp
     tests/json_report_test.cpp
     tests/stdout_delivery_test.cpp

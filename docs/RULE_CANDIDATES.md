@@ -19,6 +19,7 @@ number, because the measurement is the useful part and re-deriving it costs anot
 | 6 | `mail()` + `$_POST[…]` + a hardcoded address literal | open — reaches 1 file of a 7-file kit, 0 FPs, 175 at risk. §6 |
 | 7 | card CVC/CVV reaching a remote-fetch sink in one file | open — 1 FP in 465 at risk; the FP is a form builder. §7 |
 | 10 | a Windows-hostile file name: trailing space, trailing dot, reserved device name | **closed** — measured on NTFS: the platform strips the first two before they reach the disk, and the corpus holds none of the third. §10 |
+| 11 | a per-directory PHP setting that prepends a file: `auto_prepend_file` in `.user.ini`, `php_value` in `.htaccess` | open — 111 `.user.ini` directives in incident trees, targets unreviewed; 0 in any `.htaccess`. §11 |
 
 Candidates 4–7 come from review round 10, which characterised the five families holding 597
 of the 638 known misses. Every FP figure in this file from 2026-09-05 onward is produced by
@@ -877,6 +878,44 @@ Windows, which is why the cases covering them skip there with a sentence rather 
 blind; and that a name which is not valid UTF-8 cannot exist on Windows at all, because the
 filesystem stores UTF-16 and the narrow API converts on the way in — so the report's
 `pathBytesHex` is in practice a POSIX field.
+
+## 11. A per-directory PHP setting that prepends a file — **open, measured 2026-09-17**
+
+**Signal.** `auto_prepend_file` names a file PHP parses before the requested script, "included
+as if it was called with the require function". It is `INI_PERDIR`, so it can be set in two
+places a writer of a directory controls: `php_value auto_prepend_file` in an `.htaccess`, which
+works only where PHP runs as an Apache module (php.net, *configuration.changes*), and
+`auto_prepend_file` in a `.user.ini`, which the CGI and FastCGI SAPIs read from the requested
+script's directory up to the document root (php.net, *configuration.file.per-user*). Pointed
+at an uploaded file, either runs that file on every request in the directory, whatever its
+extension and without any handler directive — so `BD019`, which reads handler directives, does
+not see it. It is the sibling that measuring `BD019` turned up.
+
+**Evidence, over the same five trees `BD019` was measured on, counts only.**
+
+| where | directives | what they point at |
+|---|---|---|
+| `php_value` or `php_admin_value auto_prepend_file` in any `.htaccess` | 0 | — |
+| `.user.ini` in the sanitised site tree | 2 | Wordfence's WAF bootstrap, both |
+| `.user.ini` in the incident trees | 111 | 50 distinct files, 48 distinct target names; every value an absolute path; none names a known security product's bootstrap, and none sits under an uploads, temporary, cache or images directory |
+
+62 of the 111 targets were collected beside the `.user.ini` that names them, 41 distinct blobs.
+61 are unreviewed rows in the local half of the index and 1 is published as benign, and the
+scanner detects none of the 62.
+
+**Why it is open rather than a rule.** The directives are a count of a mechanism, not of a
+technique. Every target but one is unreviewed, so a rule keyed on "prepends a file not named
+like a WAF" would be measured against a population nobody has ruled on — its false positives
+and its detections would be the same unknown. What would move it is a verdict on the 41 target
+blobs; the discriminator to measure after that is what the target is and where it sits, not
+the directive, which a firewall and a loader write identically.
+
+**Measured beside it, and absent.** `php_flag engine on`, which re-enables PHP in a directory a
+parent disabled it in: 0 — all 10 `php_flag engine` lines found turn PHP off. Server-side
+include execution (`Options +Includes`, `AddOutputFilter INCLUDES`, `AddHandler server-parsed`):
+0 in any `.htaccess`. `Action` with a PHP interpreter as its target: 0. An `.htaccess` that maps
+the PHP handler onto `.htaccess` and so runs itself is not a candidate: `BD019` reports it,
+because `.htaccess` is not a script's extension.
 
 ## What this brief deliberately does not do
 

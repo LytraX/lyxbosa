@@ -1,0 +1,175 @@
+[
+ {
+  "name": "upload-probe-webshell-00e43e4d",
+  "file": "samples/upload-probe-webshell-00e43e4d.php",
+  "sha256": "00e43e4de88e95b11ba7e88ab0baac7c6eaac8d9e002a609a64fc3be46d3d74c",
+  "source_sha256": "00e43e4de88e95b11ba7e88ab0baac7c6eaac8d9e002a609a64fc3be46d3d74c",
+  "size": 37,
+  "verdict": "malicious",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "min_severity": "critical",
+   "must_detect": [
+    "RCE008"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "command-exec"
+  ],
+  "masked": false,
+  "note": "shipped as collected under a neutral name; the name the probe stored it under is withheld, because an upload-probe name can carry a live payload"
+ },
+ {
+  "name": "upload-probe-webshell-162b1162",
+  "file": "samples/upload-probe-webshell-162b1162.php",
+  "sha256": "162b1162490269f2540c9d52c9733c1f2220b70ef9c20dca9b7175664de21457",
+  "source_sha256": "162b1162490269f2540c9d52c9733c1f2220b70ef9c20dca9b7175664de21457",
+  "size": 67,
+  "verdict": "malicious",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "min_severity": "critical",
+   "must_detect": [
+    "RCE008"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "command-exec"
+  ],
+  "masked": false,
+  "note": "shipped as collected under a neutral name; the name the probe stored it under is withheld, because an upload-probe name can carry a live payload"
+ },
+ {
+  "name": "upload-probe-webshell-2fa74eb2",
+  "file": "samples/upload-probe-webshell-2fa74eb2.php",
+  "sha256": "2fa74eb20b6ac9adab8826871893a6f7594225de671fb1915ef3534cdb4fd6ea",
+  "source_sha256": "2fa74eb20b6ac9adab8826871893a6f7594225de671fb1915ef3534cdb4fd6ea",
+  "size": 48,
+  "verdict": "malicious",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "min_severity": "critical",
+   "must_detect": [
+    "RCE008"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "command-exec"
+  ],
+  "masked": false,
+  "note": "shipped as collected under a neutral name; the name the probe stored it under is withheld, because an upload-probe name can carry a live payload"
+ },
+ {
+  "name": "htaccess-data-extension-executable-5fbf2ee9",
+  "file": "samples/htaccess-data-extension-executable-5fbf2ee9/.htaccess",
+  "sha256": "5fbf2ee95866050a3091037b0c9cc764d9c626a567a20988fe8d25e1ea3c8772",
+  "source_sha256": "5fbf2ee95866050a3091037b0c9cc764d9c626a567a20988fe8d25e1ea3c8772",
+  "size": 37,
+  "verdict": "malicious",
+  "family": "htaccess-data-extension-executable",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [
+    "BD019"
+   ],
+   "must_not_detect": [],
+   "closed_known_miss": {
+    "date": "2026-09-17",
+    "rule": "BD019",
+    "was": "no content rule fires; the .htaccess handler-mapping technique is undetected. Measured per sample under a name no name-rule reads."
+   }
+  },
+  "technique": [
+   "htaccess-data-extension-executable"
+  ],
+  "masked": false,
+  "note": "shipped as collected, as the only file in its own directory and under the name the server reads: the directive applies to the directory it sits in, and BD019 reads only a file named .htaccess"
+ },
+ {
+  "name": "upload-probe-webshell-712cd4e2",
+  "file": "samples/upload-probe-webshell-712cd4e2.php",
+  "sha256": "712cd4e26c02e76a9a3a168b303d05321d36468232506a5edf76d6dcff23cf7c",
+  "source_sha256": "712cd4e26c02e76a9a3a168b303d05321d36468232506a5edf76d6dcff23cf7c",
+  "size": 126,
+  "verdict": "malicious",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "min_severity": "critical",
+   "must_detect": [
+    "RCE008"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "command-exec",
+   "request-gate"
+  ],
+  "masked": false,
+  "note": "shipped as collected under a neutral name; the name the probe stored it under is withheld, because an upload-probe name can carry a live payload"
+ },
+ {
+  "name": "htaccess-data-extension-executable-b895c44c",
+  "file": "samples/htaccess-data-extension-executable-b895c44c/.htaccess",
+  "sha256": "b895c44c0601c7fce3922c422e38af93832244884ed5a921d7a4dda49fffb394",
+  "source_sha256": "b895c44c0601c7fce3922c422e38af93832244884ed5a921d7a4dda49fffb394",
+  "size": 37,
+  "verdict": "malicious",
+  "family": "htaccess-data-extension-executable",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "must_detect": [
+    "BD019"
+   ],
+   "must_not_detect": [],
+   "closed_known_miss": {
+    "date": "2026-09-17",
+    "rule": "BD019",
+    "was": "no content rule fires; the .htaccess handler-mapping technique is undetected. Measured per sample under a name no name-rule reads."
+   }
+  },
+  "technique": [
+   "htaccess-data-extension-executable"
+  ],
+  "masked": false,
+  "note": "shipped as collected, as the only file in its own directory and under the name the server reads: the directive applies to the directory it sits in, and BD019 reads only a file named .htaccess"
+ },
+ {
+  "name": "upload-probe-webshell-e18cf8bb",
+  "file": "samples/upload-probe-webshell-e18cf8bb.php",
+  "sha256": "e18cf8bb8d52e31b1d8d56ab80bb7366a2ebbb462f70ee33316f08d25fc62762",
+  "source_sha256": "e18cf8bb8d52e31b1d8d56ab80bb7366a2ebbb462f70ee33316f08d25fc62762",
+  "size": 62,
+  "verdict": "malicious",
+  "sensitivity": [
+   "clean"
+  ],
+  "expect": {
+   "min_severity": "critical",
+   "must_detect": [
+    "RCE008"
+   ],
+   "must_not_detect": []
+  },
+  "technique": [
+   "command-exec",
+   "gif89a-magic-prefix"
+  ],
+  "masked": false,
+  "note": "shipped as collected under a neutral name; the name the probe stored it under is withheld, because an upload-probe name can carry a live payload"
+ }
+]

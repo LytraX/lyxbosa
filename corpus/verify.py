@@ -337,6 +337,39 @@ def unpack_shards(dest):
         shards.append(out)
     return shards
 
+def sample_label(r):
+    """What a failure line and a known-miss line call a shipped sample: its family, or the first
+    twelve hex digits of its sha256 when the review gave it none."""
+    return r.get("family") or r["sha256"][:12]
+
+
+def shipped_sample_path(r, shard_dirs):
+    """The shipped file for a row, matched by the manifest's source_sha256 - or, for a row that
+    carries a family, by an entry named exactly that. A row with no family never matches by
+    name: `None == None` would hand it whichever entry has no name."""
+    for d in shard_dirs:
+        mp = os.path.join(d, "MANIFEST.json")
+        if not os.path.exists(mp):
+            continue
+        for m in json.load(open(mp)):
+            if m.get("source_sha256") == r["sha256"] or (
+                    r.get("family") and m.get("name") == r.get("family")):
+                return os.path.join(d, m["file"])
+    return None
+
+
+def reconcile(res, detected, runnable):
+    """Compare what this run detected with what the summary records as runnable, and record a
+    failure when they differ. Here rather than where the result is printed, so a --json run
+    fails exactly as a text run does."""
+    res["detection"]["observed_by_rerun"] = detected
+    res["detection"]["reconciles"] = detected == runnable
+    if detected != runnable:
+        res["failures"].append({"sample": "detection", "why": "recorded figure does not "
+                                "reconcile with this run",
+                                "expected": runnable, "got": detected})
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", action="store_true")
@@ -380,8 +413,6 @@ def main():
         shard_dirs = unpack_shards(tmp)
         # ---- shipped samples ----
         for r in index:
-            if not r.get("family"):
-                continue
             # Select on the VERDICT, not on the presence of a family. A benign shipped sample
             # has a family too - the first one to exist, an attacker-written but inert artefact,
             # was scored here as a malicious sample that failed to be detected, which made the
@@ -406,22 +437,15 @@ def main():
             exp = r.get("expect") or {}
             want = sorted(exp.get("must_detect", []))
             known = bool(exp.get("known_miss"))
-            path = None
-            # match by the manifest's source_sha256, falling back to the family name
-            for d in shard_dirs:
-                mp = os.path.join(d, "MANIFEST.json")
-                if not os.path.exists(mp): continue
-                for m in json.load(open(mp)):
-                    if m.get("source_sha256") == r["sha256"] or m.get("name") == r.get("family"):
-                        path = os.path.join(d, m["file"]); break
-                if path: break
+            label = sample_label(r)
+            path = shipped_sample_path(r, shard_dirs)
             if not path:
-                res["failures"].append({"sample": r.get("family"), "why": "not present in any shard"})
+                res["failures"].append({"sample": label, "why": "not present in any shard"})
                 continue
             chk = check_sample(path)
             if chk["outcome"] == "error":
                 res["unscanned"] += 1
-                res["failures"].append(unscanned_failure(r.get("family"), chk))
+                res["failures"].append(unscanned_failure(label, chk))
                 continue
             got = chk["rules"]
             tested_techniques |= set(r.get("technique") or [])
@@ -430,7 +454,7 @@ def main():
                 res["known_miss"]["expected"] += 1
                 if got:
                     res["known_miss"]["newly_detected"] += 1
-                    res["known_miss"]["samples"].append({"sample": r["family"], "now_detects": got})
+                    res["known_miss"]["samples"].append({"sample": label, "now_detects": got})
                 else:
                     res["known_miss"]["still_missed"] += 1
                 continue
@@ -439,11 +463,11 @@ def main():
                 if got == want:
                     res["malicious"]["rule_exact"] += 1
                 else:
-                    res["failures"].append({"sample": r["family"], "why": "wrong rule",
+                    res["failures"].append({"sample": label, "why": "wrong rule",
                                             "expected": want, "got": got})
             else:
                 res["malicious"]["missed"] += 1
-                res["failures"].append({"sample": r["family"], "why": "not detected",
+                res["failures"].append({"sample": label, "why": "not detected",
                                         "expected": want})
 
         # ---- clean carriers: must_not_detect ----
@@ -621,9 +645,7 @@ def main():
     # the summary counts as detected-and-runnable is a row this run executed and expected to
     # detect. If they disagree, the recorded figure is not reproducible with this binary and
     # printing it unqualified would be asserting something this run did not establish.
-    res["detection"]["observed_by_rerun"] = mal["detected"]
-    res["detection"]["reconciles"] = (mal["detected"]
-                                      == summary.get("malicious_detected_runnable", 0))
+    reconcile(res, mal["detected"], summary.get("malicious_detected_runnable", 0))
     res["detection"]["rate"] = (round(res["detection"]["detected"]
                                       / float(res["detection"]["reviewed"]), 4)
                                 if res["detection"]["reviewed"] else None)
@@ -742,10 +764,6 @@ def main():
                   % d["observed_by_rerun"])
             print("                 from index-summary.json and is NOT what this binary does.")
             print("                 Rebuild, or point LYXBOSA_BIN at the build you mean.")
-            res["failures"].append({"sample": "detection", "why": "recorded figure does not "
-                                    "reconcile with this run",
-                                    "expected": d["verified_by_rerun"],
-                                    "got": d["observed_by_rerun"]})
         rc = res["regression_check"]
         print("  Regression     %4d / %-5d expected detections still firing"
               % (rc["still_firing"], rc["expected"]))
@@ -910,6 +928,55 @@ def inject():
                 d[k] = v
         return d
 
+    print("=== a shipped sample is chosen by what it is, and named whether or not it has a family ===")
+    fam = {"sha256": "a" * 64, "family": "some-family", "verdict": "malicious"}
+    bare = {"sha256": "b" * 64, "verdict": "malicious"}
+    case("a sample with a family is named by it", sample_label(fam) == "some-family")
+    case("a sample the review gave no family is named by its sha256, not skipped or None",
+         sample_label(bare) == "b" * 12)
+    stage = tempfile.mkdtemp(prefix="verify-inject-manifest-")
+    try:
+        os.makedirs(os.path.join(stage, "s"))
+        with open(os.path.join(stage, "s", "MANIFEST.json"), "w") as fh:
+            json.dump([{"file": "samples/nameless.php"},
+                       {"name": "some-family", "file": "samples/by-name.php"},
+                       {"name": "x", "source_sha256": "b" * 64, "file": "samples/by-hash.php"}], fh)
+        dirs = [os.path.join(stage, "s")]
+        got = shipped_sample_path(bare, dirs)
+        case("a sample with no family is found by its source_sha256",
+             bool(got) and got.endswith("by-hash.php"))
+        case("  ...and is never matched to an entry that has no name",
+             not (shipped_sample_path({"sha256": "c" * 64, "verdict": "malicious"}, dirs) or ""
+                  ).endswith("nameless.php"))
+        got = shipped_sample_path({"sha256": "d" * 64, "family": "some-family"}, dirs)
+        case("a sample with a family still falls back to the entry of that name",
+             bool(got) and got.endswith("by-name.php"))
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    # The selection itself, read from main()'s own loop rather than restated: a condition on
+    # the family ahead of the verdict test is what left five shipped rows unexecuted.
+    import inspect
+    loop = inspect.getsource(main)
+    loop = loop[loop.index("# ---- shipped samples ----"):loop.index("# ---- clean carriers")]
+    case("the shipped-sample loop does not skip a row for having no family",
+         'r.get("family")' not in loop.split("chk = check_sample")[0].replace(
+             "sample_label(r)", "").replace("shipped_sample_path(r, shard_dirs)", ""))
+
+    print()
+    print("=== the recorded figure against the run, in every output mode ===")
+    res = {"detection": {}, "failures": []}
+    reconcile(res, 133, 138)
+    case("a run that detects fewer than the summary records runnable fails",
+         res["detection"]["reconciles"] is False and len(res["failures"]) == 1
+         and res["failures"][0]["expected"] == 138 and res["failures"][0]["got"] == 133)
+    res = {"detection": {}, "failures": []}
+    reconcile(res, 138, 138)
+    case("  ...and one that agrees records no failure",
+         res["detection"]["reconciles"] is True and res["failures"] == [])
+    case("the failure is recorded before the output mode is chosen",
+         inspect.getsource(main).index("reconcile(res") < inspect.getsource(main).index("if a.json:"))
+
+    print()
     print("=== the refusal rule, one channel at a time ===")
     case("a clean report is not refused", coverage_refusal(report()) == [])
     why = coverage_refusal(report(unreadable=1))

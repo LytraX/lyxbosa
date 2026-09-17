@@ -1059,7 +1059,11 @@ def clearanceHygiene(rows):
 # ---------------------------------------------------------------------------
 
 def recompute(r):
-    """Write the computed answer onto a row. The ONLY writer of these three fields."""
+    """Write the computed answer onto a row. The only thing that COMPUTES these three fields.
+
+    One other tool removes an entry from them and computes nothing: `import-upload-probe.py
+    --confirm` deletes the blocker naming the hold it releases. `publishable` is written here
+    and nowhere else."""
     ok, why = evaluate(r)
     r["publishable"] = ok
     if ok:

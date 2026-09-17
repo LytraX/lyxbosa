@@ -66,7 +66,7 @@ be: 142 samples is small enough that a sampled answer would only be quoting its 
   corpus/shard-census.py --inject        prove each check can fail, then exit
 """
 import argparse, collections, hashlib, importlib.util, json, os, shutil, subprocess
-import sys, tempfile
+import re, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -537,8 +537,11 @@ def inject():
     # today's answer.
     with tempfile.TemporaryDirectory() as tmp:
         src = open(os.path.join(HERE, "make-summary.py")).read()
-        stale = src.replace('"doorway-kit-review", "undetected-pool-review"}',
-                            '"doorway-kit-review"}')
+        # The one quoted token and the separator after it, whatever its neighbours in the
+        # literal are: adding a code beside it must not be what breaks the control.
+        assert src.count('"undetected-pool-review"') == 1, \
+            "control could not find the SHIPPED entry uniquely; update the control"
+        stale = re.sub(r'"undetected-pool-review",?\s*', "", src, count=1)
         assert stale != src, "control could not edit the SHIPPED set; update the control"
         sp = os.path.join(tmp, "make-summary.py")
         open(sp, "w").write(stale)

@@ -38,6 +38,24 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ### Fixed
 
+- **`corpus/verify.py` never ran a shipped sample that carries no family, and a `--json` run
+  passed when the recorded figure did not reconcile.** The shipped-sample loop skipped any row
+  without a family before its verdict test, whose comment said it selects on the verdict. Until
+  `malicious-upload-probe-001` every published malicious row had one, so the two selections
+  agreed; its five webshells have none, and the suite executed 133 of the 138 rows the summary
+  records as runnable. The text run caught that as NOT RECONCILED and exited 1. The `--json`
+  run printed `reconciles: false` beside an empty failure list and exited 0, because the
+  failure was appended only where the text is printed. A row is now chosen by its verdict and
+  named by its family or its sha256, a row with no family is never matched to a manifest entry
+  by a missing name, and the reconciliation failure is recorded before the output mode is
+  chosen. `--inject` goes from 56 cases to 65; the four that assert the three repairs were each
+  watched failing against a copy with the old behaviour put back.
+
+- **`shard-census.py --inject` crashed when a reason code was added to `make-summary.SHIPPED`.**
+  Its control plants a stale set by rewriting the literal, and found the entry by its
+  neighbours, so adding `upload-endpoint-probe-review` beside it was what broke it. It now removes
+  the one quoted token whatever sits next to it, and still catches the stale set.
+
 - **`corpus/verify.py` reported a false-positive rate over a tree holding an entry the scanner
   did not read.** From v3.2.0 the scanner counts, as `entriesUnreadable`, an entry the host
   would not give the type of — on Linux a link into a directory the scanning user may not
@@ -181,6 +199,43 @@ are correct as of the round that recorded them and are deliberately never regene
   rebuilding, and reports anything raised before the read as that case's failure.
 
 ### Added
+
+- **`malicious-upload-probe-001`, seven samples from one upload-endpoint probe.** An automated
+  vulnerability scanner probing one host's file-upload endpoint left five minimal PHP
+  webshells and two `.htaccess` files mapping a data extension to the PHP handler (`.mdb`, and
+  `.zip` in two identical copies) — 13 files, 7 blobs. The operator inspected all seven rows'
+  files and confirmed them on 2026-09-17; every row is `sensitivity: clean`, shipped as
+  collected, and passed the plaintext and encoded-layer gates over its bytes and
+  `promote-gate.py` over its row against every pseudonym map. Each `.htaccess` ships as the
+  only file in its own directory under the name the server reads. The webshells expect
+  `RCE008`; the two `.htaccess` rows were recorded rule-gap misses and are promoted to
+  `BD019`, measured with `check` on the shipped bytes. Every row carries the collection frame
+  `upload-probe-2026-09-12`: a detection rate over them measures that one source, not the
+  scanner, and the two `.htaccess` rows are the samples `BD019` was written from.
+  `.tar.zst` sha256 `ceb7afca2b3788086cc112a4a55202045277378fb33ccba2cf9b5b070a6e2554`.
+
+- **`corpus/import-upload-probe.py --confirm` records a human's confirmation of that frame's
+  rows.** `publish-rows.py` refuses a row carrying `local_only`, because releasing a hold is
+  the confirmer's act; this is where that act is written down. It sets
+  `review.human_confirmed` with the date and a basis quoting the operator's words, removes the
+  hold the importer placed and the one blocker naming it, and never writes `publishable`. It
+  refuses a sha256 the review did not key, a row outside the frame, a row under any other hold
+  — the 2026-09-05 automated-review rows among them — and a published row, and writes nothing
+  while any named row is refused. `--inject` grows to 44 cases. Nine copies of the tool, each
+  with one refusal, one written field or the lock removed, were each caught by at least one
+  case; a row outside the frame under the 2026-09-05 hold is refused by three independent
+  checks, so no single removal reaches that case.
+
+- **`make-summary.py` counts `upload-endpoint-probe-review` as shipping bytes.** Without it the
+  seven would have been counted as reproducible from a pinned source. `shard-census.py` refused
+  the new shard until it was added, which is the check doing what it was written for.
+
+  Figures, each with its cause: published rows 44,573 → 44,580 and local 48,234 → 48,227, the
+  seven moved; shipped as bytes 169 → 176, the seven; known misses 571 → 569 and detection 735 →
+  737 of 1,306 (56.3% → 56.4%), the two `.htaccess` rows `BD019` closed; samples a stranger can
+  re-run 131 → 138, the seven; technique coverage 95 → 96 of 124, `htaccess-data-extension-
+  executable` now detected. `make-summary.py --check` and `doc-figures.py --check` failed from
+  the publication until both were regenerated.
 
 - **`corpus/release-assets.sh` refuses to print the commands that cut a corpus tag while
   the changelog still says `Unreleased` about what that tag would publish.** A corpus tag

@@ -47,8 +47,8 @@ and it is the one an operator should look at first.
 WHAT IT WILL NOT DO
 -------------------
 It sets no verdict and writes no index. Nothing leaves `unreviewed` without
-`review.human_confirmed`, which no tool can set, so the deliverable is the queue and the
-evidence, not an answer.
+`review.human_confirmed`, which this tool never sets and which is only ever written to record
+a confirmation a person gave, so the deliverable is the queue and the evidence, not an answer.
 
 USAGE
   corpus/quarantine-queue.py                     the queue, to stdout

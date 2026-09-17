@@ -79,8 +79,8 @@ The index is **split in two, and both halves matter**:
 <!-- BEGIN GENERATED index-halves — corpus/doc-figures.py writes this block; edit the tool, not the block -->
 | file | rows | tracked? | what it is |
 |---|---|---|---|
-| `index.jsonl` | 44,573 | yes | published samples — the ones a public suite can verify |
-| `local/index-local.jsonl` | 48,234 | no | everything held back, with each row's blockers |
+| `index.jsonl` | 44,580 | yes | published samples — the ones a public suite can verify |
+| `local/index-local.jsonl` | 48,227 | no | everything held back, with each row's blockers |
 | `index-summary.json` | — | yes | the counts, so the denominator survives without the rows |
 <!-- END GENERATED index-halves -->
 
@@ -1500,6 +1500,7 @@ the new path is clean cannot tell you the old path was the cause.
 | `media-clean-not-published` | structurally clean media: no code, so a false positive or customer content |
 | `staging-directory-review` | a human opened the whole directory, confirmed it is attacker staging, and the sample passed both gates |
 | `doorway-kit-review` | a human read one legacy-tree doorway kit end to end — deployers, generator, installed `.htaccess`, templates — and ruled on the whole kit |
+| `upload-endpoint-probe-review` | a human inspected the files an automated scanner left on one host's upload endpoint, a single-source collection frame, and confirmed each row |
 
 ### The derived SQLite read index
 
@@ -1688,10 +1689,10 @@ tags dropped is caught, and a faithful one reconciles clean.
 ## The benign half is fetched, not shipped
 
 <!-- BEGIN GENERATED shipped-vs-fetched — corpus/doc-figures.py writes this block; edit the tool, not the block -->
-Of the 44,573 published rows, **44,404 are reproducible from a pinned source or from the
+Of the 44,580 published rows, **44,404 are reproducible from a pinned source or from the
 stock CMS tree** and are therefore *not* shipped as blobs — they are an index row
-plus a lockfile entry. **169** ship as bytes in a public shard:
-87 undetected-pool-review, 66 staging-directory-review, 8 doorway-kit-review, 7 media-polyglot, 1 outside-webroot-sweep.
+plus a lockfile entry. **176** ship as bytes in a public shard:
+87 undetected-pool-review, 66 staging-directory-review, 8 doorway-kit-review, 7 media-polyglot, 7 upload-endpoint-probe-review, 1 outside-webroot-sweep.
 <!-- END GENERATED shipped-vs-fetched -->
 
 That is the point of §6: the benign half is a lockfile and a script, so anyone can
@@ -1858,6 +1859,17 @@ Every sample in it is a **generated carrier plus an extracted payload**: no cust
 or document bytes are present, verified by confirming no 64-byte run is shared with the
 original outside the payload itself. The clean carriers exist to pin the other direction —
 a valid PNG, GIF or PDF must produce no findings at all.
+
+`shards/malicious-upload-probe-001.tar.zst` — seven samples an automated vulnerability scanner
+left on one host's file-upload endpoint: five minimal PHP webshells, and two `.htaccess` files
+whose one directive maps a data extension to the PHP handler. Every row carries the collection
+frame `upload-probe-2026-09-12`, so a detection rate over them measures that one source and not
+the scanner, and the two `.htaccess` rows are the samples `BD019` was written from. Shipped as
+collected: the plaintext and encoded-layer gates found nothing to mask. Each `.htaccess` is the
+only file in its own directory under the name the server reads, because the directive applies
+to the directory it sits in and `BD019` reads only a file of that name — which also means an
+extracted copy under a web root would configure that directory. Expectations in
+`expect/malicious-upload-probe-001.json`.
 
 ### On the format
 
