@@ -42,7 +42,8 @@ WHERE IT WRITES, AND WHAT IT REFUSES
 It appends to the LOCAL half only, under `indexio.index_lock` with a re-read inside the lock
 (AGENTS.md, Index writes). Every row is `verdict: malicious` but `review.human_confirmed:
 false` with a `local_only` hold: nothing leaves the unreviewed state, or reaches the published
-half, without a human - this tool proposes, a person confirms with `publish-rows.py`.
+half, without a human. This tool proposes; a person confirms; `publish-rows.py` moves, and
+refuses any row still carrying the hold.
 
 It refuses rather than guessing:
 
@@ -54,7 +55,30 @@ It refuses rather than guessing:
   * bytes carrying any identifier from any pseudonym map (they would need masking and are not
     `clean`).
 
+RECORDING THE CONFIRMATION, AND WHOSE ACT IT IS
+------------------------------------------------
+`--confirm` records a confirmation a person has already given - it does not give one. The
+operator inspected the files of this frame's rows and confirmed them on the date and in the
+words `CONFIRMED_ON` and `CONFIRMATION_WORDS` hold; the mode writes exactly that onto the rows
+named by sha256, and nothing an agent concluded. It sets `review` to `human_confirmed: true`
+with that date and a basis quoting the words, removes the `local_only` hold THIS tool placed
+and the one `publish_blockers` entry that names it, and leaves `publishable` alone:
+`shard-gate.py --fix` recomputes that, and is the next step it prints.
+
+It refuses, and writes nothing while any row is refused:
+
+  * a sha256 this collection's review did not key - the confirmation covers these rows and
+    no others;
+  * a row whose `collection_frame` is not this frame, whatever its sha256;
+  * a row held by any other hold, such as the one a 2026-09-05 automated review pass placed:
+    releasing that is whoever confirms those rows, not this tool;
+  * a row already in the published half, or in neither.
+
+A frame row the operator did not name is not touched. The decision is taken inside the lock,
+over the rows as they are when the write happens.
+
   corpus/import-upload-probe.py --collection DIR [--write]
+  corpus/import-upload-probe.py --confirm --sha-file F [--apply]
   corpus/import-upload-probe.py --inject
 
 `DIR` is the out-of-repo collection directory. This file is tracked and names it nowhere; the
@@ -333,10 +357,18 @@ def main():
     ap.add_argument("--collection", help="the out-of-repo collection directory")
     ap.add_argument("--write", action="store_true", help="append to the local index")
     ap.add_argument("--inject", action="store_true", help="controls, both directions")
+    ap.add_argument("--confirm", action="store_true",
+                    help="record the operator's confirmation on the rows --sha-file names")
+    ap.add_argument("--sha-file", help="with --confirm: one sha256 per line, # comments")
+    ap.add_argument("--apply", action="store_true", help="with --confirm: write")
     a = ap.parse_args()
 
     if a.inject:
         return inject()
+    if a.confirm:
+        if not a.sha_file:
+            return ap.error("--confirm needs --sha-file")
+        return confirm_main(a.sha_file, a.apply)
     if not a.collection:
         return ap.error("--collection is required (or --inject)")
     if not os.path.exists(SCANNER):
@@ -406,6 +438,106 @@ def append_rows(rows, corpus_dir):
         fresh = [r for r in rows if r["sha256"] not in have]
         write_jsonl_atomic(path, current + fresh)
     return len(current), len(fresh), len(rows) - len(fresh)
+
+
+# --------------------------------------------------------------------------- confirmation
+# The operator's confirmation, as given. Recorded, never inferred: see the module docstring.
+CONFIRMED_ON = "2026-09-17"
+CONFIRMATION_WORDS = ("these have no clients or real information inside, just some attackers "
+                      "strings. we can publish all of these")
+CONFIRMED_BASIS = ("the operator inspected the files of every row in collection frame %s and "
+                   "confirmed them on %s, in their words: \"%s\". The verdicts were proposed on "
+                   "%s from the operator's collection notes and transcribed by an agent"
+                   % (FRAME_ID, CONFIRMED_ON, CONFIRMATION_WORDS, REVIEW_DATE))
+# The blocker shard-gate.py wrote for the hold this tool placed, and the only one it removes.
+HOLD_BLOCKER = "marked local_only: " + AWAITING
+
+
+def adjudicate_confirmation(named, local, published):
+    """(confirming, refused) for the sha256s the operator named. Writes nothing, raises
+    nothing: a refusal is a returned reason, so every problem is reported in one run."""
+    lmap = {r["sha256"]: r for r in local}
+    pmap = {r["sha256"]: r for r in published}
+    confirming, refused = [], []
+    for sha in named:
+        if sha not in CURATED:
+            refused.append((sha, "not one of the rows this collection's review keyed; the "
+                                 "confirmation recorded here covers those and no others"))
+            continue
+        r = lmap.get(sha)
+        if r is None:
+            refused.append((sha, "already in the published half" if sha in pmap
+                                 else "in neither half of the index"))
+            continue
+        frame = (r.get("collection_frame") or {}).get("frame_id")
+        if frame != FRAME_ID:
+            refused.append((sha, "its collection_frame is %r, not %s" % (frame, FRAME_ID)))
+            continue
+        if r.get("local_only") != AWAITING:
+            refused.append((sha, "not under the hold this tool placed (local_only: %r); "
+                                 "releasing any other hold is whoever placed it's act"
+                            % r.get("local_only")))
+            continue
+        confirming.append(sha)
+    return confirming, refused
+
+
+def confirmed_row(row):
+    """`row` with the confirmation recorded, and nothing else about it changed."""
+    out = {k: v for k, v in row.items() if k != "local_only"}
+    out["review"] = {"basis": CONFIRMED_BASIS, "date": CONFIRMED_ON, "human_confirmed": True}
+    if "publish_blockers" in row:
+        rest = [b for b in (row.get("publish_blockers") or []) if b != HOLD_BLOCKER]
+        out["publish_blockers"] = rest
+        if row.get("publish_blocker") == HOLD_BLOCKER:
+            if rest:
+                out["publish_blocker"] = rest[0]
+            else:
+                out.pop("publish_blocker", None)
+    return out
+
+
+def confirm_rows(named, corpus_dir, apply):
+    """(confirming, refused, written). Adjudicates inside the lock on the local half, over
+    the rows as they are at that moment, and writes only when nothing was refused."""
+    path = local_index(corpus_dir)
+    published_path = os.path.join(corpus_dir, "index.jsonl")
+    with index_lock(path):
+        local = read_jsonl(path)
+        published = read_jsonl(published_path) if os.path.exists(published_path) else []
+        confirming, refused = adjudicate_confirmation(named, local, published)
+        if not apply or refused or not confirming:
+            return confirming, refused, False
+        chosen = set(confirming)
+        write_jsonl_atomic(path, [confirmed_row(r) if r["sha256"] in chosen else r
+                                  for r in local])
+    return confirming, refused, True
+
+
+def confirm_main(sha_file, apply):
+    named = [l.split("#")[0].strip() for l in open(sha_file, encoding="utf-8")]
+    named = [s for s in named if s]
+    if len(set(named)) != len(named):
+        sys.exit("REFUSE: a sha256 is named twice in %s" % sha_file)
+    confirming, refused, written = confirm_rows(named, HERE, apply)
+    print("named      : %d" % len(named))
+    print("confirming : %d" % len(confirming))
+    print("refused    : %d" % len(refused))
+    for sha in confirming:
+        print("  %s  %s" % (sha[:12], CURATED[sha]["kind"]))
+    if refused:
+        print("\n=== REFUSED ===")
+        for sha, why in refused:
+            print("  %s  %s" % (sha[:12], why))
+        print("\nnothing written: a confirmation is recorded whole or not at all")
+        return 1
+    if not apply:
+        print("\n(dry run: nothing written. Pass --apply.)")
+        return 0
+    print("\nrecorded the confirmation of %s on %d row(s) of the local half"
+          % (CONFIRMED_ON, len(confirming)))
+    print("now run: corpus/shard-gate.py corpus/local/index-local.jsonl --fix")
+    return 0 if written else 1
 
 
 # --------------------------------------------------------------------------- controls
@@ -505,6 +637,10 @@ def inject():
     inject_write_path(case)
 
     print()
+    print("=== --confirm: the rows named, in this frame, under this hold - and nothing else ===")
+    inject_confirmation(case)
+
+    print()
     print("cases: %d · passed: %d · failed: %d"
           % (len(cases), len(cases) - len(fails), len(fails)))
     for f in fails:
@@ -602,6 +738,119 @@ def inject_write_path(case):
         case("the lock is free again afterwards", held(local) is False)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def inject_confirmation(case):
+    """confirm_rows() - the function --confirm calls - against a synthetic corpus in a
+    temporary directory. The rows carry the curated sha256s, because the refusal of a sha the
+    review did not key is one of the things under test, and no sample bytes at all."""
+    shas = sorted(CURATED)
+    held = lambda sha, **kw: dict({
+        "sha256": sha, "verdict": "malicious", "sensitivity": ["clean"], "publishable": False,
+        "collection_frame": frame_block(len(CURATED)), "local_only": AWAITING,
+        "review": {"by": REVIEW_BY, "date": REVIEW_DATE, "human_confirmed": False, "basis": "x"},
+        "publish_blocker": HOLD_BLOCKER, "publish_blockers": [HOLD_BLOCKER],
+        "expect": {"must_detect": ["RCE008"]}}, **kw)
+    lane = "verdict proposed by an automated review pass on 2026-09-05; awaiting human confirmation"
+    named, unnamed, other_frame, other_hold, published_sha = shas[:5]
+    unkeyed = "c" * 64      # carries this frame and this hold, and the review never keyed it
+    lane_row = "d" * 64     # the shape of a row held by the 2026-09-05 automated review pass
+
+    def corpus():
+        tmp = tempfile.mkdtemp(prefix="import-upload-probe-confirm-")
+        os.makedirs(os.path.dirname(local_index(tmp)))
+        local = [held(named), held(unnamed),
+                 held(other_frame, collection_frame=dict(frame_block(7), frame_id="other-frame")),
+                 held(other_hold, local_only=lane, publish_blockers=["marked local_only: " + lane],
+                      publish_blocker="marked local_only: " + lane),
+                 held(unkeyed),
+                 dict(held(lane_row), collection_frame={}, local_only=lane,
+                      publish_blockers=["marked local_only: " + lane])]
+        write_jsonl_atomic(local_index(tmp), local)
+        write_jsonl_atomic(os.path.join(tmp, "index.jsonl"),
+                           [{"sha256": published_sha, "verdict": "malicious"}])
+        return tmp
+
+    def run(names, apply=True):
+        tmp = corpus()
+        try:
+            local_path, pub_path = local_index(tmp), os.path.join(tmp, "index.jsonl")
+            before = open(local_path, "rb").read(), open(pub_path, "rb").read()
+            confirming, refused, written = confirm_rows(names, tmp, apply)
+            after = {r["sha256"]: r for r in read_jsonl(local_path)}
+            return dict(confirming=confirming, refused=dict(refused), written=written,
+                        local_unchanged=open(local_path, "rb").read() == before[0],
+                        published_unchanged=open(pub_path, "rb").read() == before[1],
+                        rows=after, before={r["sha256"]: r for r in
+                                            [json.loads(l) for l in before[0].decode().splitlines()]})
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    got = run([named])
+    row, was = got["rows"][named], got["before"][named]
+    case("a named row of this frame under this hold is confirmed and written",
+         got["confirming"] == [named] and not got["refused"] and got["written"])
+    case("  ...review is human-confirmed, dated, and quotes the operator's words",
+         row["review"] == {"basis": CONFIRMED_BASIS, "date": CONFIRMED_ON, "human_confirmed": True}
+         and CONFIRMATION_WORDS in row["review"]["basis"] and "inspected" in row["review"]["basis"])
+    case("  ...the hold and the blocker naming it are gone", "local_only" not in row
+         and row["publish_blockers"] == [] and "publish_blocker" not in row)
+    case("  ...publishable is left for shard-gate to recompute", row["publishable"] is False)
+    case("  ...and no other field of the row changed",
+         {k: v for k, v in row.items() if k not in ("review", "publish_blockers")} ==
+         {k: v for k, v in was.items() if k not in ("review", "publish_blockers",
+                                                    "local_only", "publish_blocker")})
+    case("a frame row that was not named is untouched",
+         got["rows"][unnamed] == got["before"][unnamed])
+    case("  ...and so is every row outside the frame",
+         all(got["rows"][s_] == got["before"][s_]
+             for s_ in (other_frame, other_hold, unkeyed, lane_row)))
+    case("the published half is never written", got["published_unchanged"])
+
+    got = run([lane_row])
+    case("a row outside the frame, held by the 2026-09-05 review pass, is REFUSED",
+         lane_row in got["refused"] and not got["written"] and got["local_unchanged"])
+    got = run([unkeyed])
+    case("a row the review did not key is REFUSED, even carrying this frame and hold",
+         "keyed" in got["refused"].get(unkeyed, "") and got["local_unchanged"])
+    got = run([other_frame])
+    case("a keyed sha256 whose row sits in another frame is REFUSED",
+         "collection_frame" in got["refused"].get(other_frame, "") and got["local_unchanged"])
+    got = run([other_hold])
+    case("a row under a different hold is REFUSED, not released",
+         "hold" in got["refused"].get(other_hold, "") and got["local_unchanged"])
+    got = run([published_sha])
+    case("a row already published is REFUSED",
+         "published" in got["refused"].get(published_sha, "") and got["local_unchanged"])
+    got = run([named, lane_row])
+    case("one refusal among the named rows writes NOTHING, the good row included",
+         not got["written"] and got["local_unchanged"] and "local_only" in got["rows"][named])
+    got = run([named], apply=False)
+    case("a dry run decides the same and writes nothing",
+         got["confirming"] == [named] and not got["written"] and got["local_unchanged"])
+
+    # The decision is taken inside the lock: a hold changed by another writer the instant
+    # before the lock is taken is seen, and the row is refused rather than confirmed.
+    tmp = corpus()
+    g = globals()
+    saved = g["index_lock"]
+    try:
+        @contextlib.contextmanager
+        def racing_lock(path, *args, **kwargs):
+            rows = read_jsonl(path)
+            for r in rows:
+                if r["sha256"] == named:
+                    r["local_only"] = lane
+            write_jsonl_atomic(path, rows)
+            with saved(path, *args, **kwargs):
+                yield
+        g["index_lock"] = racing_lock
+        _c, refused, written = confirm_rows([named], tmp, True)
+    finally:
+        g["index_lock"] = saved
+        shutil.rmtree(tmp, ignore_errors=True)
+    case("a hold another writer changed before the lock was taken is seen inside it",
+         dict(refused).get(named, "").startswith("not under the hold") and not written)
 
 
 if __name__ == "__main__":

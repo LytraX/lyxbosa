@@ -347,14 +347,14 @@ survives regeneration.
 <!-- BEGIN GENERATED corpus-figures — corpus/doc-figures.py writes this block; edit the tool, not the block -->
 | figure | value | denominator |
 |---|---|---|
-| **Detection** | **56.3%** | 735 of 1,306 reviewed malicious samples |
-| **Detection, excluding the rules' own source material** | **94.4%** | 670 of 710 samples |
-| Recorded known misses | 560 | 40 of them outside that source material |
+| **Detection** | **56.4%** | 737 of 1,306 reviewed malicious samples |
+| **Detection, excluding the rules' own source material** | **94.6%** | 672 of 710 samples |
+| Recorded known misses | 558 | 38 of them outside that source material |
 | Recorded, but detected: no shard carries the bytes | 3 | 0 outside it; the suite has nothing to run the assertion against |
 | Recorded, and not re-measurable here | 8 | 0 outside it; the bytes are not on this machine |
 | Largest single known-miss family | 495 | `seo-doorway-madxtube-2017` |
-| Samples a stranger can re-run | 131 | ship as bytes carrying a recorded expected rule |
-| Technique coverage | 95 of 124 | distinct techniques in the reviewed set |
+| Samples a stranger can re-run | 138 | ship as bytes carrying a recorded expected rule |
+| Technique coverage | 96 of 124 | distinct techniques in the reviewed set |
 | Corpus | 92,807 blobs | 46,023 classified, 46,784 unreviewed |
 | Of those, the tree the rules were written against | 1,131 blobs | excluded from the second detection figure |
 <!-- END GENERATED corpus-figures -->
@@ -434,19 +434,19 @@ and no customer identifier appears in this corpus's published index.*
 | **Sampling frame** | **sampling frame not recorded** | **detection-conditioned — 530 of 531 rows in the pool carry an expected rule** |
 | Campaign families | 39 | 7 |
 | Rows carrying the label | 709 | 180 |
-| Families fully detected | 10 | 7 |
+| Families fully detected | 11 | 7 |
 | Families partially detected | 5 | 0 |
-| Families completely missed | 24 | 0 |
-| Macro average — every family weighted equally | 32.0% | 100.0% |
-| Micro average — every sample weighted equally | 19.6% (139 of 709) | 100.0% (180 of 180) |
+| Families completely missed | 23 | 0 |
+| Macro average — every family weighted equally | 34.5% | 100.0% |
+| Micro average — every sample weighted equally | 19.9% (141 of 709) | 100.0% (180 of 180) |
 
 | figure | value | denominator |
 |---|---|---|
-| **Sample-weighted detection, whole reviewed set** | **56.3%** | 735 of 1,306 reviewed malicious samples — unchanged by any labelling |
+| **Sample-weighted detection, whole reviewed set** | **56.4%** | 737 of 1,306 reviewed malicious samples — unchanged by any labelling |
 | Reviewed malicious rows carrying no family | 356 | 355 of them detected — outside both columns above |
 | Rows under a provenance label rather than a campaign | 61 | `legacy-infected-tree-sample` — membership conditioned on detection, so excluded |
-| Technique coverage | 95 of 124 | distinct techniques; 531 reviewed malicious rows carry none |
-| Families a stranger can re-run in full | 24 | of 46; 18 have no re-runnable member, holding 714 rows |
+| Technique coverage | 96 of 124 | distinct techniques; 531 reviewed malicious rows carry none |
+| Families a stranger can re-run in full | 25 | of 46; 17 have no re-runnable member, holding 712 rows |
 <!-- END GENERATED family-detection -->
 
 **Neither column is the headline, and that refusal is deliberate.**

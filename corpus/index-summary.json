@@ -23,6 +23,7 @@
   "gif89a-dependency-injector": 1,
   "hex-digest-wrapper-outside-webroot-a": 1,
   "hex-digest-wrapper-outside-webroot-b": 1,
+  "htaccess-data-extension-executable": 2,
   "jpeg-injected-priv8-uploader": 1,
   "leaf-php-mailer-2.8": 29,
   "minified-nested-dir-filemanager": 1,
@@ -85,16 +86,16 @@
  },
  "family_bucket_suspects_note": "labelled families whose three or more detected members share no expected rule. Evidence that a label groups a pile rather than a campaign, recomputed from the rows every run so a bucket arriving under a new reason code is named rather than counted as a family. Reported, never auto-excluded: reclassifying a label is a human judgement",
  "family_detection": {
-  "completely_missed": 24,
-  "detected_rows": 319,
+  "completely_missed": 23,
+  "detected_rows": 321,
   "families": 46,
-  "fully_detected": 17,
-  "macro_rate": 0.423161,
-  "micro_rate": 0.35883,
+  "fully_detected": 18,
+  "macro_rate": 0.4449,
+  "micro_rate": 0.36108,
   "partially_detected": 5,
   "rows": 889,
-  "rows_completely_missed": 549,
-  "rows_fully_detected": 266,
+  "rows_completely_missed": 547,
+  "rows_fully_detected": 268,
   "rows_partially_detected": 74
  },
  "family_detection_by_frame": {
@@ -132,48 +133,48 @@
   "sampling_frame_not_recorded": {
    "frame": null,
    "metrics": {
-    "completely_missed": 24,
-    "detected_rows": 139,
+    "completely_missed": 23,
+    "detected_rows": 141,
     "families": 39,
-    "fully_detected": 10,
-    "macro_rate": 0.319625,
-    "micro_rate": 0.196051,
+    "fully_detected": 11,
+    "macro_rate": 0.345266,
+    "micro_rate": 0.198872,
     "partially_detected": 5,
     "rows": 709,
-    "rows_completely_missed": 549,
-    "rows_fully_detected": 86,
+    "rows_completely_missed": 547,
+    "rows_fully_detected": 88,
     "rows_partially_detected": 74
    }
   }
  },
  "family_detection_by_frame_note": "the same family metrics computed separately over each sampling frame, because a rate across both is a rate over a population nobody drew. NEITHER IS A HEADLINE. sampling_frame_detection_conditioned is fully detected by its pool rather than by the scanner. sampling_frame_not_recorded is NOT a clean control and must not be read as one: nothing recorded how those families were selected, and 602 of their 707 rows are known misses because a mass miss is what gets investigated and labelled - one 2017 doorway campaign supplies 495 of them, and dropping that one family alone takes the same micro rate from 14.9% to 49.5%. Both frames are contaminated, in opposite directions, and the honest form is both figures beside their frames rather than one of them promoted. `frame` carries the pool the writer measured at assignment time, or null when the rows do not agree on one",
  "family_detection_excl_predates_ruleset": {
-  "completely_missed": 18,
-  "detected_rows": 315,
+  "completely_missed": 17,
+  "detected_rows": 317,
   "families": 38,
-  "fully_detected": 16,
-  "macro_rate": 0.480668,
-  "micro_rate": 0.889831,
+  "fully_detected": 17,
+  "macro_rate": 0.506984,
+  "micro_rate": 0.89548,
   "partially_detected": 4,
   "rows": 354,
-  "rows_completely_missed": 22,
-  "rows_fully_detected": 263,
+  "rows_completely_missed": 20,
+  "rows_fully_detected": 265,
   "rows_partially_detected": 69
  },
  "family_detection_note": "the union across BOTH sampling frames, and NOT a figure to quote on its own - see family_detection_by_frame, which is what the documents render. Adding the first 180 byte-defined labels moves micro_rate here from 14.9% to 32.1% and macro_rate from 29.9% to 40.8% while every one of the seven new families is fully detected by its pool, so the movement measures the labelling backlog and not the scanner. macro_rate weights every family equally, micro_rate weights every sample equally, over the identical rows; they differ by a factor of two here and that gap is the result, not a discrepancy. A family is fully_detected only if every member carries an expected rule, completely_missed only if none does, and partially_detected otherwise - three states, because collapsing partial into either neighbour loses which families the scanner catches most of. Detection uses the same predicate as malicious_detected, so the family figures and the headline cannot drift apart",
  "family_rerun_power": {
-  "every_member_rerun": 24,
+  "every_member_rerun": 25,
   "families": 46,
-  "no_member_rerun": 18,
-  "rows_every_member_rerun": 106,
-  "rows_in_families_with_no_member_rerun": 714,
+  "no_member_rerun": 17,
+  "rows_every_member_rerun": 108,
+  "rows_in_families_with_no_member_rerun": 712,
   "rows_some_members_rerun": 69,
   "some_members_rerun": 4
  },
  "family_rerun_power_note": "a family's three-state verdict is read from a recorded rescan; verify.py re-executes only the members whose bytes ship in a public shard. These counts say how much of the family census a stranger can reproduce, and the families nothing re-runs are the largest ones",
  "generated_from": "corpus/make-summary.py over index.jsonl + local/index-local.jsonl",
- "known_miss": 571,
- "local_only": 48234,
+ "known_miss": 569,
+ "local_only": 48227,
  "local_only_blockers": {
   "carries content, which is not maskable and is never published": 4124,
   "carries content/pii, which is not maskable and is never published": 153,
@@ -198,7 +199,6 @@
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 5 members read; byte-masking a container corrupts it (5.5)": 2,
   "marked local_only: benign customer-site cache metadata: no rule fires on it and it is not reproducible from a pinned source, so it is accounted for but not published": 144,
   "marked local_only: permanent": 311,
-  "marked local_only: verdict proposed 2026-09-12 from the operator's collection notes; awaiting human confirmation before publication": 7,
   "marked local_only: verdict proposed by an automated review pass on 2026-09-05; awaiting human confirmation before publication": 757,
   "obfuscated and did not decode: held local-only permanently": 100,
   "plaintext gate did not pass": 5,
@@ -218,8 +218,8 @@
   },
   "single_source": {
    "upload-probe-2026-09-12": {
-    "detected": 5,
-    "detected_runnable": 0,
+    "detected": 7,
+    "detected_runnable": 7,
     "frame": {
      "frame_id": "upload-probe-2026-09-12",
      "kind": "single-source-collection",
@@ -230,7 +230,7 @@
      "source_distinct_blobs": 56,
      "source_files": 267
     },
-    "known_miss": 2,
+    "known_miss": 0,
     "recorded_rows_matches_indexed": true,
     "reviewed": 7,
     "rows_indexed": 7
@@ -238,21 +238,21 @@
   }
  },
  "malicious_by_collection_frame_note": "the reviewed-malicious figures partitioned by collection frame, read from the `collection_frame` block a writer records on every row it writes. collection_frame_not_recorded is every row that records no single-source frame; it is NOT a clean control and nothing measured how those rows were collected. Each single_source block is a collection drawn from one origin - one host, one directory, one writer - whose rows can be byte-clean and still be a sample of nothing wider than that origin, so a rate over it is a statement about that origin and never about the scanner. The blocks sum to malicious_reviewed, malicious_detected, malicious_known_miss and malicious_detected_runnable, so a move in any of those four that came from a collection arriving is attributable here rather than only in a changelog. rows_indexed counts every verdict under the frame; recorded_rows_matches_indexed compares it with rows_recorded, the count the frame recorded at write time, and is null when the rows do not agree on one frame",
- "malicious_detected": 735,
- "malicious_detected_excl_predates_ruleset": 670,
- "malicious_detected_runnable": 131,
+ "malicious_detected": 737,
+ "malicious_detected_excl_predates_ruleset": 672,
+ "malicious_detected_runnable": 138,
  "malicious_family_population": {
   "campaign_familied": 889,
   "provenance_bucketed": 61,
   "unfamilied": 356
  },
  "malicious_family_population_detected": {
-  "campaign_familied": 319,
+  "campaign_familied": 321,
   "provenance_bucketed": 61,
   "unfamilied": 355
  },
  "malicious_family_population_note": "the three populations partition the reviewed malicious set and sum to malicious_reviewed. campaign_familied carries an attacker-campaign label; provenance_bucketed carries a label whose membership is conditioned on the scanner having flagged the sample, so it is fully detected by construction and is kept out of every family rate; unfamilied carries no label at all. The unfamilied rows hold most of the recorded detections, so a family figure is silent about the part of the corpus that is doing best - which is why this key is published beside the rates and never folded into them. The unfamilied count FALLS as rows are labelled and that is not the gap closing: a census over all 95 rule-set clusters and all 531 rows on 2026-09-07 found 428 reachable by a shared distinctive literal and 103 that are not - 87 in three clusters whose only cluster-wide literal is carried by a fifth of the pool, 13 in one cluster sharing no literal at all, and 3 singletons - and those need the decoded payload rather than the stored bytes. They stay counted here rather than being moved out of the denominator, so this key keeps partitioning the reviewed malicious set exactly",
- "malicious_known_miss": 571,
+ "malicious_known_miss": 569,
  "malicious_known_miss_by_family": {
   "<unfamilied>": 1,
   "ddos-flood-toolkit": 7,
@@ -263,7 +263,6 @@
   "halmahera-rogue-admin-cloaker": 1,
   "hex-digest-wrapper-outside-webroot-a": 1,
   "hex-digest-wrapper-outside-webroot-b": 1,
-  "htaccess-data-extension-executable": 2,
   "image-named-php-payload": 4,
   "kilat-github-raw-eval-loader": 1,
   "minified-nested-dir-filemanager": 1,
@@ -287,13 +286,13 @@
  },
  "malicious_known_miss_by_kind": {
   "detected-not-shippable": 3,
-  "rule-gap": 560,
+  "rule-gap": 558,
   "unverified": 8
  },
  "malicious_known_miss_by_kind_excl_predates_ruleset": {
-  "rule-gap": 40
+  "rule-gap": 38
  },
- "malicious_known_miss_excl_predates_ruleset": 40,
+ "malicious_known_miss_excl_predates_ruleset": 38,
  "malicious_known_miss_kind_note": "rule-gap is the only one of the three that is a miss: bytes read, no rule fires. detected-not-shippable is bytes read, rules fire, and no shard carries them - a shipping gap, which promote-pending.py correctly refuses to promote because must_detect is compared to check's output over the shipped bytes. unverified is bytes that are not on this machine and were not re-measured. <unclassified> is a row classify-known-miss.py has not visited and is a defect: doc-figures.py refuses to render the split while any exists.",
  "malicious_no_expectation": 0,
  "malicious_reviewed": 1306,
@@ -301,7 +300,7 @@
  "malicious_rows_without_technique": 531,
  "note": "index.jsonl carries published samples only; the rest live in the gitignored local/index-local.jsonl. This file is the denominator, so the suite can say how much it is NOT testing. A suite that cannot say that overstates itself.",
  "predates_ruleset_blobs": 1131,
- "published": 44573,
+ "published": 44580,
  "published_cleared_by_human_rows": 2,
  "published_fetched_not_shipped": 44404,
  "published_reason_codes": {
@@ -312,15 +311,17 @@
   "staging-directory-review": 67,
   "stock-cms-hash": 2353,
   "stock-cms-hash-resolved-prior": 609,
-  "undetected-pool-review": 87
+  "undetected-pool-review": 87,
+  "upload-endpoint-probe-review": 7
  },
- "published_shipped_as_bytes": 169,
+ "published_shipped_as_bytes": 176,
  "published_shipped_by_reason": {
   "doorway-kit-review": 8,
   "media-polyglot": 7,
   "outside-webroot-sweep": 1,
   "staging-directory-review": 66,
-  "undetected-pool-review": 87
+  "undetected-pool-review": 87,
+  "upload-endpoint-probe-review": 7
  },
  "sensitivity_tags": {
   "c2": 791,
@@ -471,7 +472,7 @@
   "checkout-hook-removal": 6,
   "chr-arithmetic": 5,
   "chr-array-string-building": 1,
-  "command-exec": 5,
+  "command-exec": 10,
   "core-block-directory-placement": 1,
   "create_function": 2,
   "curl-stager": 1,
@@ -493,11 +494,12 @@
   "file-upload": 9,
   "forged-docblock": 2,
   "forged-plugin-header": 2,
-  "gif89a-magic-prefix": 1,
+  "gif89a-magic-prefix": 2,
   "gzuncompress": 1,
   "halt-compiler": 1,
   "hex-digest-directory-name": 2,
   "hex2bin-name-table": 2,
+  "htaccess-data-extension-executable": 2,
   "htaccess-replacement": 3,
   "html-ui": 1,
   "implemented-not-active:crawler-cloaking": 3,
@@ -537,7 +539,7 @@
   "remote-payload-fetch": 2,
   "remote-self-update": 6,
   "request-abort-survival": 3,
-  "request-gate": 37,
+  "request-gate": 38,
   "reverse-shell-launcher": 1,
   "reversed-base64": 52,
   "rot13-function-name": 2,
