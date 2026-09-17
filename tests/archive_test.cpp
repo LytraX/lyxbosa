@@ -113,6 +113,33 @@ TEST(ArchiveIndexTest, TheFilterNameKeepsEveryBackslash) {
     EXPECT_EQ(memberFilterName(""), "");
 }
 
+// The all-backslash reading, by its definition: no forward slash in any name but the trailing
+// slash of a directory entry. The `sub/` PHP's addEmptyDir() writes beside backslash-spelled
+// files keeps the reading; any other forward slash, in any one name, ends it.
+TEST(ArchiveIndexTest, NamesUseOnlyBackslashesByDefinition) {
+    const auto entries = [](std::initializer_list<const char*> names) {
+        std::vector<Entry> out;
+        for (const char* name : names) {
+            Entry entry;
+            entry.name = name;
+            entry.directory = !entry.name.empty() && entry.name.back() == '/';
+            out.push_back(entry);
+        }
+        return out;
+    };
+    EXPECT_TRUE(namesUseOnlyBackslashes(entries({"site\\index.php", "site\\wp-content\\x.php"})));
+    EXPECT_TRUE(namesUseOnlyBackslashes(entries({"sub/", "sub\\ro.txt", "sub\\rw.txt"})));
+    EXPECT_TRUE(namesUseOnlyBackslashes(entries({"sub\\inner/", "sub\\inner\\x.php"})));
+    EXPECT_TRUE(namesUseOnlyBackslashes(entries({"wp-content\\", "index.php"})));
+    EXPECT_TRUE(namesUseOnlyBackslashes(entries({"index.php", "readme.txt"})))
+        << "no separator at all: splitting on both changes nothing, and the definition holds";
+
+    EXPECT_FALSE(namesUseOnlyBackslashes(entries({"site\\index.php", "site/other.php"})));
+    EXPECT_FALSE(namesUseOnlyBackslashes(entries({"site/wp-content\\x.php"})));
+    EXPECT_FALSE(namesUseOnlyBackslashes(entries({"sub//", "sub\\x.php"})))
+        << "only one trailing slash is a directory marker";
+    EXPECT_FALSE(namesUseOnlyBackslashes(entries({"/abs\\x.php"})));
+}
 
 TEST(ArchiveIndexTest, ScriptsAndMarkupAreClassifiedSeparately) {
     EXPECT_TRUE(isScriptName("index.php"));

@@ -1,5 +1,7 @@
 #include "ZipReader.h"
 
+#include "ArchiveIndex.h"
+
 #include <algorithm>
 #include <zip.h>
 
@@ -117,6 +119,14 @@ void ZipReader::loadIndex() {
 
         entries_.push_back(std::move(entry));
         indices_.push_back(static_cast<uint64_t>(i));
+    }
+
+    // The archive's own names, the second reading. Per archive: a zip inside this one is its
+    // own ZipReader and is judged on its own entries.
+    if (namesUseOnlyBackslashes(entries_)) {
+        for (auto& entry : entries_) {
+            entry.backslashIsSeparator = true;
+        }
     }
 }
 

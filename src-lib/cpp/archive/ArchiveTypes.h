@@ -50,10 +50,14 @@ struct Entry {
     uint64_t compressedSize = 0;   // 0 when the format does not say (tar)
     bool directory = false;
 
-    // A backslash in `name` separates path components, which is true only of a zip entry the
-    // central directory says was written by MS-DOS, Windows NTFS or VFAT. Every other zip
-    // host and every tar header leave it false, and there a backslash is a character of the
-    // name. See rules::filename::memberFinalComponent() for why the writer decides it.
+    // A backslash in `name` separates path components for the name rules: true of a zip entry
+    // the central directory says was written by MS-DOS, Windows NTFS or VFAT, and of every
+    // entry of a zip whose names use only backslashes. Every other zip entry and every tar
+    // header leave it false. See rules::filename::memberFinalComponent() for both readings.
+    //
+    // Nothing else reads it. A member's address, the patterns that decide whether it is
+    // opened and the location priors its content is judged under take a backslash as a
+    // character whatever this says.
     bool backslashIsSeparator = false;
 };
 

@@ -51,6 +51,14 @@ std::string normalizeMemberName(std::string_view raw);
 // left where it is.
 std::string_view memberFilterName(std::string_view stored);
 
+// Whether a zip's names read as backslash-separated for the name rules: every name that
+// holds a separator uses a backslash, and no name uses a forward slash except as the
+// trailing slash of a directory entry - the `sub/` PHP's addEmptyDir() writes beside
+// backslash-spelled files. Judged on one archive's own entries, so a zip nested inside
+// another is judged on its names alone. A name reading only; see
+// rules::filename::memberFinalComponent() for what it decides and what it may not.
+bool namesUseOnlyBackslashes(const std::vector<Entry>& entries);
+
 // Entries the container carries about the other entries rather than about the
 // site: the __MACOSX sidecar tree a Mac writes into every zip, its AppleDouble
 // "._name" stubs, and .DS_Store. They are neither code nor content, and a
