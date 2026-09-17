@@ -97,10 +97,9 @@ public:
     std::vector<FileMatch> matchName(std::string_view pathUtf8) const;
 
     // The same findings about a member of an archive, from the name the archive stores for
-    // it. Only the final component is examined, split by rules::filename::
-    // memberFinalComponent() on what the entry's writer used as a separator - never on the
-    // platform the scan runs on. Which rules run, and the findings they raise, are exactly
-    // matchName()'s.
+    // it: rules::filename::examineMember(). FN001 to FN006 read its final component, split on
+    // what the archive's reading says separates - never on the platform the scan runs on -
+    // and FN007 reads the whole stored name. Which rules run is exactly matchName()'s.
     std::vector<FileMatch> matchMemberName(std::string_view storedName,
                                            rules::filename::MemberSeparators separators) const;
 
@@ -175,9 +174,10 @@ public:
     static std::span<const std::string_view> annotationMarkers();
 
 private:
-    // The findings matchName() and matchMemberName() raise, about a final component each of
-    // them has already split off.
-    std::vector<FileMatch> matchFinalName(std::string_view name) const;
+    // The findings matchName() and matchMemberName() raise, from what rules::filename found in
+    // the name each of them was asked about.
+    std::vector<FileMatch> raiseNameFindings(
+        const std::vector<rules::filename::NameFinding>& findings) const;
 
     // Lower `match` to Low with the original severity kept beside it, if a marker is in
     // reach AND the operator trusts the files. The decision is written at the definition.

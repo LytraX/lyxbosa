@@ -145,6 +145,19 @@ const Observed kObserved[] = {
     {"FN006", "a%00b-6a9fcae1-29.mdb",              "a percent-encoded NUL mid-name"},
 };
 
+// The names that climb, one per shape FN007 reads. None of the 83 observed names climbs, so
+// these are not from that server: each is a shape probe archives were extracted under, by the
+// extractors FN007's own comment names, and the plainest spelling of it.
+const Observed kClimbing[] = {
+    {"FN007", "../../index.php",                  "a dot-dot component between slashes"},
+    {"FN007", "..\\..\\index.php",                "a dot-dot component between backslashes"},
+    {"FN007", "uploads\\..\\..\\..\\index.php",     "a dot-dot component below a directory"},
+    {"FN007", "/var/www/html/index.php",          "a leading slash"},
+    {"FN007", "\\inetpub\\wwwroot\\index.php",      "a leading backslash"},
+    {"FN007", "C:\\inetpub\\wwwroot\\index.php",    "a drive letter"},
+    {"FN007", "C:index.php",                      "a drive-relative name"},
+};
+
 // ---------------------------------------------------------------------------
 // The benign corpus: ordinary business document names, every one of which carries an
 // apostrophe or an ampersand, plus the specific shapes that a looser rule would have
@@ -357,17 +370,29 @@ INSTANTIATE_TEST_SUITE_P(Observed, ObservedNameTest, ::testing::ValuesIn(kObserv
                          [](const ::testing::TestParamInfo<Observed>& info) {
                              return caseName(info.param.code, info.index, info.param.name);
                          });
+INSTANTIATE_TEST_SUITE_P(Climbing, ObservedNameTest, ::testing::ValuesIn(kClimbing),
+                         [](const ::testing::TestParamInfo<Observed>& info) {
+                             return caseName(info.param.code, info.index, info.param.name);
+                         });
 
-TEST(HostileFilenameTest, EveryRuleHasAnObservedControl) {
-    // The parameterised case above proves each name raises its rule. This one proves
-    // the table has not lost a rule: six rules ship, and a seventh added without a
-    // control would otherwise be watched by nothing at all.
-    std::set<std::string> covered;
-    for (const auto& observed : kObserved) {
-        covered.insert(observed.code);
+TEST(HostileFilenameTest, EveryRuleHasAControlThatFires) {
+    // The parameterised cases above prove each name raises its rule. This one proves the
+    // tables have not lost a rule: an eighth rule added without a control would otherwise be
+    // watched by nothing at all. Every rule but FN007 has a name observed on the server;
+    // FN007's controls are the measured shapes, and it is the only rule allowed to lean on
+    // them.
+    std::set<std::string> observed;
+    for (const auto& name : kObserved) {
+        observed.insert(name.code);
     }
-    EXPECT_EQ(covered.size(), fn::RULE_COUNT)
-        << "a rule ships with no observed name to watch it fire on";
+    std::set<std::string> covered = observed;
+    for (const auto& name : kClimbing) {
+        covered.insert(name.code);
+    }
+    EXPECT_EQ(covered.size(), fn::RULE_COUNT) << "a rule ships with no name to watch it fire on";
+    EXPECT_EQ(observed.size(), fn::RULE_COUNT - 1)
+        << "a rule other than FN007 has only a constructed control";
+    EXPECT_EQ(observed.count("FN007"), 0u);
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +500,10 @@ const SilentCase kSilent[] = {
     {"FN005", "archive..tar.gz"},
     {"FN006", "100% Cotton - spec sheet.pdf"},
     {"FN006", "Discount 15%25 applied.csv"},
+    {"FN007", "..draft - O'Neill.docx"},
+    {"FN007", "Minutes 10:30 - Smith & Co.pdf"},
+    {"FN007", "scan_0042_page_2_final..jpg"},
+    {"FN007", "...notes.txt"},
 };
 
 class SilentNameTest : public ::testing::TestWithParam<SilentCase> {};
@@ -516,6 +545,9 @@ TEST(HostileFilenameTest, EveryParameterisedCaseIsNamedForItsFileName) {
     }
     for (size_t i = 0; i < std::size(kSilent); ++i) {
         check(caseName(kSilent[i].code, i, kSilent[i].name));
+    }
+    for (size_t i = 0; i < std::size(kClimbing); ++i) {
+        check(caseName(kClimbing[i].code, i, kClimbing[i].name));
     }
 }
 
@@ -1523,6 +1555,97 @@ TEST(MemberNameTest, EachEntryAndEachNestedZipIsJudgedByItsOwnWriter) {
     EXPECT_EQ(codesOf(*innerUnix), (std::set<std::string>{"FN002"}));
     EXPECT_EQ(result.archives.archivesOpened, 5u) << "a nested zip was never opened";
     EXPECT_EQ(result.filesWithHostileNames, 2u) << listRows(result);
+}
+
+// A name that climbs is a finding in every container and under every host byte, and it is the
+// same finding a file with that name raises: each measured shape is the whole stored name of a
+// member at the top of a Unix-written zip, a Windows-written zip and a tar.gz.
+TEST(MemberNameTest, ANameThatClimbsIsAFindingInEveryContainer) {
+    TempDir root;
+    std::vector<std::pair<std::string, std::string>> members;
+    for (const auto& climbing : kClimbing) {
+        members.emplace_back(climbing.name, "<?php echo 1;\n");
+    }
+    const fs::path unixZip = root.path() / "unix-host.zip";
+    const fs::path dosZip = root.path() / "dos-host.zip";
+    const fs::path tgz = root.path() / "upload.tar.gz";
+    writeZip(unixZip, members, ZIP_OPSYS_UNIX);
+    writeZip(dosZip, members, ZIP_OPSYS_DOS);
+    writeTarGz(tgz, members);
+    for (const auto& [zip, host] : {std::pair{unixZip, uint8_t{ZIP_OPSYS_UNIX}},
+                                    std::pair{dosZip, uint8_t{ZIP_OPSYS_DOS}}}) {
+        const auto written = hostBytesOf(zip);
+        ASSERT_EQ(written.size(), members.size()) << "libzip did not store every name as given";
+        for (const auto& [name, byte] : written) {
+            ASSERT_EQ(byte, host) << safe_text::sanitize(name);
+        }
+    }
+
+    const ScanResult result = runScan(scanConfig(root.path()));
+    for (const fs::path& container : {unixZip, dosZip, tgz}) {
+        for (const auto& climbing : kClimbing) {
+            SCOPED_TRACE(pathToUtf8(container.filename()) + " " + climbing.name);
+            const FileResult* row = findMember(result, container, climbing.name);
+            ASSERT_NE(row, nullptr) << listRows(result);
+            EXPECT_EQ(codesOf(*row).count("FN007"), 1u) << climbing.what;
+            EXPECT_EQ(codesOf(*row).count("FN007"), codesFor(climbing.name).count("FN007"))
+                << "the member and a file of that name answer differently";
+            EXPECT_FALSE(hasHostileContent(*row));
+        }
+    }
+}
+
+// On disk FN007 reads a file's name and never the path the file sits at: a scan root is
+// absolute, so every path starts with a `/` or a drive letter, and on Windows every one is
+// spelled with backslashes. On POSIX a file NAMED with a climbing shape raises FN007 beside an
+// ordinary file that does not; Windows forbids those names, and there the ordinary file and a
+// path spelled the way Windows spells one are what is asked.
+TEST(MemberNameTest, AFileNamedToClimbIsAFindingOnDiskAndItsOwnPathIsNot) {
+    TempDir root;
+    writeFile(root.path() / "ordinary" / "index.php", "<?php echo 1;\n");
+
+    MatchEngine engine;
+    engine.loadAllBuiltinRules();
+    const auto nameCodes = [&engine](std::string_view path) {
+        std::set<std::string> codes;
+        for (const auto& match : engine.matchName(path)) codes.insert(match.category);
+        return codes;
+    };
+#ifdef _WIN32
+    EXPECT_EQ(nameCodes("C:\\inetpub\\wwwroot\\index.php").count("FN007"), 0u);
+    EXPECT_EQ(nameCodes("\\\\server\\share\\index.php").count("FN007"), 0u);
+#else
+    EXPECT_EQ(nameCodes("/var/www/html/index.php").count("FN007"), 0u);
+    EXPECT_EQ(nameCodes("/var/www/html/..\\..\\index.php").count("FN007"), 1u)
+        << "a POSIX name holding backslashes is read whole";
+    size_t created = 0;
+    for (const auto& climbing : kClimbing) {
+        if (std::string_view(climbing.name).find('/') != std::string_view::npos) {
+            continue;   // a POSIX name cannot hold a slash; only a member can
+        }
+        ASSERT_FALSE(whyCannotCreate(root.path(), climbing.name).has_value()) << climbing.name;
+        ++created;
+    }
+    ASSERT_EQ(created, 5u) << "the loose half no longer covers the shapes a name can hold";
+#endif
+
+    const ScanResult onDisk = runScan(scanConfig(root.path()));
+    for (const auto& file : onDisk.files) {
+        if (pathToUtf8(file.path.filename()) == "index.php") {
+            EXPECT_EQ(codesOf(file).count("FN007"), 0u)
+                << "a file's own path raised FN007: " << pathForDisplay(file.path);
+        }
+    }
+#ifndef _WIN32
+    for (const auto& climbing : kClimbing) {
+        if (std::string_view(climbing.name).find('/') != std::string_view::npos) continue;
+        SCOPED_TRACE(climbing.name);
+        const FileResult* row = findByName(onDisk, climbing.name);
+        ASSERT_NE(row, nullptr) << listRows(onDisk);
+        EXPECT_EQ(codesOf(*row).count("FN007"), 1u) << climbing.what;
+    }
+    EXPECT_EQ(onDisk.filesWithHostileNames, 5u) << listRows(onDisk);
+#endif
 }
 
 // A site backup made on Windows by Windows PowerShell 5.1's Compress-Archive: host byte 0 and

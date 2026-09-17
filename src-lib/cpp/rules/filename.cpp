@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 
 namespace lyxbosa::rules::filename {
 
@@ -77,7 +78,7 @@ const BuiltinRule FN003 {
 // but every command that takes options before it takes paths: `rm *`, `tar *`,
 // `grep pattern *` all expand the glob and hand the leading-dash name over as a flag.
 //
-// Medium, and the most likely of the six to fire on something an operator wrote
+// Medium, and the most likely of these rules to fire on something an operator wrote
 // themselves - `-draft.txt` is a name a person types. The finding is still correct:
 // the file is a hazard to the next glob run over that directory.
 const BuiltinRule FN004 {
@@ -131,8 +132,46 @@ const BuiltinRule FN006 {
     .patterns = {},
 };
 
+// FN007: a name that climbs out of the directory it is extracted into.
+//
+// A member is written to `<destination>/<name>`. A `..` component, or a name that begins at
+// a root - a slash, a backslash, a drive letter and a colon - points that write outside the
+// destination: over a web root's index.php, into whatever directory the server executes.
+// Either separator counts, because the extractor decides what separates and the archive
+// cannot: a Windows extractor splits `..\..\index.php` whatever the entry's host byte says,
+// and a file on Linux NAMED `..\..\index.php` becomes exactly that member the moment a backup
+// copies it. A loose file and a member with the same name answer the same.
+//
+// Measured against the extractors that write members to disk. Probe archives holding each
+// shape, under host bytes 0 and 3 and in a tar, were extracted into a sandbox with PHP's
+// ZipArchive::extractTo, PclZip, WordPress's unzip_file on both of its paths, Info-ZIP unzip,
+// 7-Zip, Python, GNU tar and PharData on Linux, and with the PHP ones, Expand-Archive 5.1 and
+// 7.6, bsdtar and Python on Windows. PclZip called directly, as plugins call it, wrote outside
+// the destination: through `../` on Linux, and through `../` and `..\` on Windows, under
+// either host byte. Every other extractor kept the file inside or refused it and said why -
+// `Path contains '..'`, `Removing leading drive letter`, `Can not process invalid archive
+// entry` - and WordPress's unzip_file turns backslashes into slashes and then skips both `..`
+// spellings and a drive letter. So every shape here is one a hardened extractor treats as an
+// escape, and the commonest one is followed by a library that is still called directly. A
+// component of three or four dots is not one: it stayed inside, or failed, everywhere. Over
+// the stock WordPress 7.1 tree, twelve widely installed plugins, seven backups of them and the
+// 83 observed hostile names, the rule fired on nothing.
+//
+// High, like FN005, and for a stronger reason: nothing stores `..\` or a drive letter at the
+// start of a name by accident, and this shape does its harm without a shell - the extractor
+// writes the file where the name points.
+const BuiltinRule FN007 {
+    .code = {Category::Filename, 7},
+    .name = "File name climbs out of its directory",
+    .description = "File name holds a '..' component or starts at a root - '/', '\\' or a "
+                   "drive letter - under either separator, so extracting it writes outside the "
+                   "destination",
+    .severity = Severity::High,
+    .patterns = {},
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
-    &FN001, &FN002, &FN003, &FN004, &FN005, &FN006
+    &FN001, &FN002, &FN003, &FN004, &FN005, &FN006, &FN007
 };
 
 const BuiltinRule* const* getAllRules() {
@@ -199,6 +238,37 @@ bool startsWithDotDot(std::string_view s) {
     return s.starts_with("..") || s.starts_with("%2e%2e");
 }
 
+// Whether `name`, split on `separator`, has a component that is exactly `..`.
+bool hasDotDotComponent(std::string_view name, char separator) {
+    size_t start = 0;
+    while (true) {
+        const size_t end = name.find(separator, start);
+        const std::string_view component =
+            name.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start);
+        if (component == "..") return true;
+        if (end == std::string_view::npos) return false;
+        start = end + 1;
+    }
+}
+
+// FN007's shapes, in the order a finding names the first one found.
+std::optional<std::string_view> climbingShape(std::string_view name) {
+    if (name.empty()) return std::nullopt;
+    if (hasDotDotComponent(name, '/'))  return "a '..' component between slashes";
+    if (hasDotDotComponent(name, '\\')) return "a '..' component between backslashes";
+    if (name.front() == '/')            return "a leading slash";
+    if (name.front() == '\\')           return "a leading backslash";
+    const unsigned char first = static_cast<unsigned char>(name.front());
+    if (name.size() >= 2 && name[1] == ':' &&
+        ((first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z'))) {
+        return "a leading drive letter";
+    }
+    return std::nullopt;
+}
+
+// FN001 to FN006 over one final component.
+std::vector<NameFinding> examineFinal(std::string_view name);
+
 }  // namespace
 
 std::string_view finalComponent(std::string_view pathUtf8) {
@@ -220,6 +290,24 @@ std::string_view memberFinalComponent(std::string_view storedName, MemberSeparat
 }
 
 std::vector<NameFinding> examine(std::string_view name) {
+    std::vector<NameFinding> found = examineFinal(name);
+    if (const auto shape = climbingShape(name)) {
+        found.push_back({"FN007", std::string(*shape)});
+    }
+    return found;
+}
+
+std::vector<NameFinding> examineMember(std::string_view storedName, MemberSeparators separators) {
+    std::vector<NameFinding> found = examineFinal(memberFinalComponent(storedName, separators));
+    if (const auto shape = climbingShape(storedName)) {
+        found.push_back({"FN007", std::string(*shape)});
+    }
+    return found;
+}
+
+namespace {
+
+std::vector<NameFinding> examineFinal(std::string_view name) {
     std::vector<NameFinding> found;
     if (name.empty()) {
         return found;
@@ -311,5 +399,7 @@ std::vector<NameFinding> examine(std::string_view name) {
 
     return found;
 }
+
+}  // namespace
 
 }  // namespace lyxbosa::rules::filename

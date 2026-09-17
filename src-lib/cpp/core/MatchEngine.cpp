@@ -1685,7 +1685,7 @@ std::vector<FileMatch> MatchEngine::matchName(std::string_view pathUtf8) const {
     if (nameRules_.empty() || pathUtf8.empty()) {
         return {};
     }
-    return matchFinalName(rules::filename::finalComponent(pathUtf8));
+    return raiseNameFindings(rules::filename::examine(rules::filename::finalComponent(pathUtf8)));
 }
 
 std::vector<FileMatch> MatchEngine::matchMemberName(
@@ -1693,12 +1693,13 @@ std::vector<FileMatch> MatchEngine::matchMemberName(
     if (nameRules_.empty() || storedName.empty()) {
         return {};
     }
-    return matchFinalName(rules::filename::memberFinalComponent(storedName, separators));
+    return raiseNameFindings(rules::filename::examineMember(storedName, separators));
 }
 
-std::vector<FileMatch> MatchEngine::matchFinalName(std::string_view name) const {
+std::vector<FileMatch> MatchEngine::raiseNameFindings(
+    const std::vector<rules::filename::NameFinding>& findings) const {
     std::vector<FileMatch> out;
-    for (const auto& finding : rules::filename::examine(name)) {
+    for (const auto& finding : findings) {
         // A finding whose rule the operator turned off is not raised. The lookup is
         // over the live list rather than over disabledRules_, so `builtin_rules.use`
         // - which selects rather than excludes - is honoured by the same line.

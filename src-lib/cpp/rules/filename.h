@@ -2,7 +2,7 @@
 
 // filename.h - Rules about a file's name rather than its bytes.
 //
-// Every other rule in this directory answers "what is inside this file". These six
+// Every other rule in this directory answers "what is inside this file". These seven
 // answer "what is this file called", and that is a different question with its own
 // evidence: on a compromised host the name is sometimes the attack. A file called
 // `x$(sleep 20)y.mdb` is evidence whatever is inside it - somebody uploaded a command
@@ -31,7 +31,12 @@
 //     a separator*. `photo_2_final..jpg` is a doubled extension dot and is the only
 //     name in 268,853 real files that a bare dot-dot rule fired on.
 //
-// Six rules and not one, because these are six intentions with six different next
+// FN007 was drawn a different way, because what it catches does its harm without a shell:
+// a name that climbs out of the directory it is extracted into. Its shapes were measured
+// against the extractors that write members to disk, and the rule's own comment in
+// filename.cpp says which of them follow each shape.
+//
+// Seven rules and not one, because these are seven intentions with seven different next
 // questions for an operator, and because a single rule cannot be turned off one shape
 // at a time: a tree of Makefile fragments has a reason to disable FN004 and none to
 // disable FN001.
@@ -50,13 +55,14 @@ extern const BuiltinRule FN003;
 extern const BuiltinRule FN004;
 extern const BuiltinRule FN005;
 extern const BuiltinRule FN006;
+extern const BuiltinRule FN007;
 
-inline constexpr size_t RULE_COUNT = 6;
+inline constexpr size_t RULE_COUNT = 7;
 const BuiltinRule* const* getAllRules();
 
 // One hostile shape found in a name.
 struct NameFinding {
-    std::string_view code;  // "FN001" ... "FN006"
+    std::string_view code;  // "FN001" ... "FN007"
 
     // What fired, named by construct rather than by echoing the payload: the whole
     // name is already in the row's `path` field, and repeating it here would put the
@@ -69,8 +75,13 @@ struct NameFinding {
 // The hostile shapes in one file's name. `name` is the final path component, spelled
 // in UTF-8, exactly as it is on disk - see finalComponent() for how to get one.
 //
+// FN007 reads the same component whole, splitting it on `/` and on `\` alike. On POSIX a
+// name can hold a backslash, and a file named `..\..\index.php` is, to the backup that
+// copies it and the Windows extractor that unpacks that backup, a name that climbs; on
+// Windows no name can hold a separator and FN007 has nothing to read.
+//
 // Pure, so that a test can drive it over thousands of names without a filesystem. The
-// order of the result is FN001 first through FN006 last, so a report row order does
+// order of the result is FN001 first through FN007 last, so a report row order does
 // not depend on how the name happened to be spelled.
 std::vector<NameFinding> examine(std::string_view name);
 
@@ -115,5 +126,12 @@ enum class MemberSeparators {
 // Windows too, so a PHP backup made there with backslash paths still raises FN002 on its
 // nested members.
 std::string_view memberFinalComponent(std::string_view storedName, MemberSeparators separators);
+
+// The hostile shapes in one member's stored name: FN001 to FN006 read its final component,
+// split by `separators`, exactly as examine() reads a file's; FN007 reads the whole stored
+// name, split on `/` and on `\` whatever `separators` says. A member named
+// `uploads/..\..\index.php` climbs on Windows from an archive read either way, and one read as
+// backslash-separated is precisely the archive in which it does.
+std::vector<NameFinding> examineMember(std::string_view storedName, MemberSeparators separators);
 
 }  // namespace lyxbosa::rules::filename
