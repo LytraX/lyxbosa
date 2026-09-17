@@ -10,6 +10,7 @@
 // header table, a section-name table and a .dynstr holding version names. It is not a
 // loadable object and does not need to be - nothing here runs it.
 
+#include "UniqueTempDir.h"
 #include "update/BuildIdentity.h"
 #include "update/ReleaseAssets.h"
 #include "update/UpdatePolicy.h"
@@ -121,11 +122,7 @@ protected:
         GTEST_SKIP() << "the glibc probe is compiled for Linux only, so a fake host has "
                         "nothing to prove here";
 #endif
-        root_ = fs::temp_directory_path() /
-                ("lyxbosa-host-" + std::to_string(::testing::UnitTest::GetInstance()
-                                                      ->random_seed()) +
-                 "-" + std::to_string(reinterpret_cast<uintptr_t>(this)));
-        fs::create_directories(root_);
+        root_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-host");
     }
     void TearDown() override {
         std::error_code ec;

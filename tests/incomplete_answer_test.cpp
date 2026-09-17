@@ -37,6 +37,7 @@
 // runs everywhere is the report path that cannot be *opened*, which guards the ordering
 // of the two branches.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "archive/ArchiveTypes.h"
@@ -82,11 +83,7 @@ namespace fs = std::filesystem;
 class TempDir {
 public:
     TempDir() {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = fs::temp_directory_path() /
-                ("lyxbosa-incomplete-test-" + std::to_string(tick) + "-" +
-                 std::to_string(counter_++));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-incomplete-test");
     }
     ~TempDir() {
         std::error_code ec;
@@ -101,7 +98,6 @@ public:
 
 private:
     fs::path path_;
-    static inline int counter_ = 0;
 };
 
 void writeFile(const fs::path& path, const std::string& bytes) {

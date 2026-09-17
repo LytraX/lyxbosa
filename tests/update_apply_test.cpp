@@ -60,6 +60,7 @@
 // zero, that the updater refuses before it fetches a byte - so that a suite which
 // silently contained nothing could never report no failures and read as green.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "update/Checksums.h"
@@ -113,11 +114,7 @@ namespace fs = std::filesystem;
 class TempDir {
 public:
     TempDir() {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = fs::temp_directory_path() /
-                ("lyxbosa-apply-test-" + std::to_string(tick) + "-" +
-                 std::to_string(counter_++));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-apply-test");
     }
     ~TempDir() {
         std::error_code ec;
@@ -132,7 +129,6 @@ public:
 
 private:
     fs::path path_;
-    static inline int counter_ = 0;
 };
 
 void writeFile(const fs::path& path, std::string_view content) {

@@ -44,6 +44,7 @@
 //     itself, read from disk when the trees are on this machine.
 //   Case folding on the shape that motivated it, both directions: Magento's Test/Unit/.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "config/Config.h"
@@ -231,9 +232,7 @@ protected:
 
     void SetUp() override {
         LocationPriorFixture::SetUp();
-        root = fs::temp_directory_path() /
-               ("lyxbosa-location-prior-" + std::to_string(std::random_device{}()));
-        fs::create_directories(root);
+        root = lyxbosa::test::makeUniqueTempDir("lyxbosa-location-prior");
     }
     void TearDown() override {
         std::error_code ec;

@@ -23,6 +23,7 @@
 // below the "the measured line" heading exists to make that failure impossible to
 // reintroduce quietly.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "archive/ArchiveIndex.h"
@@ -238,11 +239,7 @@ std::vector<std::string> benignNames() {
 class TempDir {
 public:
     TempDir() {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = fs::temp_directory_path() /
-                ("lyxbosa-hostile-name-test-" + std::to_string(tick) + "-" +
-                 std::to_string(counter_++));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-hostile-name-test");
     }
     ~TempDir() {
         std::error_code ec;
@@ -255,7 +252,6 @@ public:
 
 private:
     fs::path path_;
-    static inline int counter_ = 0;
 };
 
 // Why this platform cannot put a file with this name on disk, as a sentence, or

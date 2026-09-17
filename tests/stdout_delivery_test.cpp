@@ -36,6 +36,7 @@
 // of the way through. Each companion measures its own output, so a size that stopped being what
 // its case needs fails rather than quietly testing something else.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "config/Config.h"
@@ -98,9 +99,7 @@ constexpr ReportFormat kEveryFormat[] = {ReportFormat::Text, ReportFormat::Csv,
 class TempDir {
 public:
     TempDir() {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = fs::temp_directory_path() / ("lyxbosa-stdout-test-" + std::to_string(tick));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-stdout-test");
     }
     ~TempDir() {
         std::error_code ec;

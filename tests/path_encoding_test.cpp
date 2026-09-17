@@ -26,6 +26,7 @@
 // failures these cases exist for are passes there by construction. The hostile input that
 // belongs to those platforms is a name that is not UTF-8 at all, and it has cases of its own.
 
+#include "UniqueTempDir.h"
 #include <gtest/gtest.h>
 
 #include "archive/ArchiveScanner.h"
@@ -109,11 +110,7 @@ fs::path nativeName(const Name& name, std::string_view suffix = "") {
 class TempDir {
 public:
     TempDir() {
-        const auto tick = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = fs::temp_directory_path() /
-                ("lyxbosa-path-encoding-test-" + std::to_string(tick) + "-" +
-                 std::to_string(counter_++));
-        fs::create_directories(path_);
+        path_ = lyxbosa::test::makeUniqueTempDir("lyxbosa-path-encoding-test");
     }
     ~TempDir() {
         std::error_code ec;
@@ -126,7 +123,6 @@ public:
 
 private:
     fs::path path_;
-    static inline int counter_ = 0;
 };
 
 void writeFile(const fs::path& path, const std::string& bytes) {
