@@ -1214,7 +1214,9 @@ TEST(MemberNameTest, EveryObservedNameRaisesItsRulesAsAMember) {
     writeZip(zip, members);
     writeTarGz(tgz, members);
 
-    const ScanResult result = runScan(scanConfig(root.path()));
+    const AppConfig config = scanConfig(root.path());
+    const ScanResult result = runScan(config);
+    const FileWalker walk(config.scan);
 
     for (const fs::path& container : {zip, tgz}) {
         for (const auto& observed : kObserved) {
@@ -1226,14 +1228,18 @@ TEST(MemberNameTest, EveryObservedNameRaisesItsRulesAsAMember) {
             EXPECT_EQ(codesOf(*row).count(observed.code), 1u);
             EXPECT_TRUE(hasHostileName(*row));
             EXPECT_FALSE(hasHostileContent(*row));
-            // A `.mdb` or a `.htaccess` is not code, so the policy never opened it, and the
-            // row says so rather than reading as a member that was examined. A `.php` was
-            // opened, and its row carries no reason.
+            // A `.mdb` or a `.htaccess` is not code, so it is not opened, and the row says why
+            // rather than reading as a member that was examined: excluded when no include
+            // pattern names the file of that name, as that file is, and not code when one does -
+            // `*.php*` names `x.php%00-y.mdb`. A `.php` was opened, and its row carries no reason.
             const bool opened = archive::classifyMember(archive::normalizeMemberName(member)) !=
                                 archive::Bucket::Other;
+            const bool included =
+                walk.filterVerdict(root.path() / "uploads" / pathFromUtf8(observed.name)) ==
+                FileWalker::FilterVerdict::Accepted;
             EXPECT_EQ(row->skipReason.has_value(), !opened);
             if (!opened && row->skipReason) {
-                EXPECT_EQ(*row->skipReason, SkipReason::Policy);
+                EXPECT_EQ(*row->skipReason, included ? SkipReason::Policy : SkipReason::Excluded);
             }
         }
     }
@@ -1242,8 +1248,12 @@ TEST(MemberNameTest, EveryObservedNameRaisesItsRulesAsAMember) {
     EXPECT_EQ(result.files.size(), rows) << listRows(result);
     EXPECT_EQ(result.filesWithMatches, rows);
     EXPECT_EQ(result.filesWithHostileNames, rows);
-    // Every member is still counted where it was counted before, once: read, or left shut.
-    EXPECT_EQ(result.archives.membersScanned + result.archives.skippedPolicy(), rows);
+    // Every member is counted once: read, or left shut by the include list or by the policy.
+    const size_t shut = result.archives.skippedExcluded() + result.archives.skippedPolicy();
+    EXPECT_EQ(result.archives.membersScanned + shut, rows);
+    EXPECT_EQ(result.archives.totalSkipped(), shut)
+        << archive::membersNotScannedLine(result.archives);
+    EXPECT_GT(result.archives.skippedExcluded(), 0u);
     EXPECT_GT(result.archives.skippedPolicy(), 0u);
     EXPECT_GT(result.archives.membersScanned, 0u);
     EXPECT_EQ(result.filesQuarantined, 0u);
@@ -1300,11 +1310,11 @@ TEST(MemberNameTest, OrdinaryBusinessNamesInAnArchiveRaiseNothing) {
         EXPECT_EQ(result.filesWithHostileNames, 0u);
         // Every member is accounted for, read or left shut by selection alone - so every name
         // was read and nothing stopped part-way. Exhaustive mode opens every member the
-        // include list covers; the `.docx`, `.xlsx` and `.pptx` it does not cover stay shut
-        // there too, and their names are read all the same.
-        EXPECT_EQ(result.archives.membersScanned + result.archives.skippedPolicy(),
+        // include list covers; the ones it does not cover stay shut there too, counted as
+        // excluded, and their names are read all the same.
+        EXPECT_EQ(result.archives.membersScanned + result.archives.totalSkipped(),
                   2 * names.size());
-        EXPECT_EQ(result.archives.totalSkipped(), result.archives.skippedPolicy())
+        EXPECT_EQ(archive::membersUnexamined(result.archives), 0u)
             << archive::membersNotScannedLine(result.archives);
         EXPECT_EQ(result.archives.archivesTruncated, 0u);
         if (exhaustive) {
@@ -1318,15 +1328,17 @@ TEST(MemberNameTest, OrdinaryBusinessNamesInAnArchiveRaiseNothing) {
 }
 
 // Which members have their names read is the file level's answer. What decides what is opened -
-// the priority policy, a sidecar, the member size cap, the budget - does not decide what a name
-// may say, and each such member's row carries the reason its bytes were not read.
+// the include list, a sidecar, the priority policy, the member size cap, the budget - does not
+// decide what a name may say, and each such member's row carries the reason its bytes were not
+// read.
 TEST(MemberNameTest, AMemberThatIsNotOpenedStillHasItsNameReadAndSaysWhy) {
     TempDir root;
     const fs::path zip = root.path() / "upload.zip";
     writeZip(zip, {
         {"a.php", "<?php echo 1;\n"},                          // read first, spends the budget
-        {"x$(id).mdb", "db\n"},                                // policy: not code
-        {"__MACOSX/._y$(id).php", "sidecar\n"},                // policy: container metadata
+        {"x$(id).txt", "notes\n"},                             // policy: not code
+        {"x$(id).mdb", "db\n"},                                // excluded: no include names it
+        {"__MACOSX/._y$(id).php", "sidecar\n"},                // sidecar: container metadata
         {"big;id.php", std::string(64 * 1024, 'a')},           // size
         {"late`id`.php", "<?php echo 2;\n"},                   // budget
     });
@@ -1344,18 +1356,71 @@ TEST(MemberNameTest, AMemberThatIsNotOpenedStillHasItsNameReadAndSaysWhy) {
         EXPECT_EQ(*row->skipReason, why);
         EXPECT_EQ(codesOf(*row), (std::set<std::string>{code}));
     };
-    expect("x$(id).mdb", SkipReason::Policy, "FN001");
-    expect("__MACOSX/._y$(id).php", SkipReason::Policy, "FN001");
+    expect("x$(id).txt", SkipReason::Policy, "FN001");
+    expect("x$(id).mdb", SkipReason::Excluded, "FN001");
+    expect("__MACOSX/._y$(id).php", SkipReason::Sidecar, "FN001");
     expect("big;id.php", SkipReason::Size, "FN002");
     expect("late`id`.php", SkipReason::Budget, "FN001");
 
     EXPECT_EQ(findMember(result, zip, "a.php"), nullptr) << "a clean name is not a row";
-    EXPECT_EQ(result.files.size(), 4u) << listRows(result);
+    EXPECT_EQ(result.files.size(), 5u) << listRows(result);
     // Counted once each where the archive layer counts them, and nowhere else.
-    EXPECT_EQ(result.archives.skippedPolicy(), 2u);
+    EXPECT_EQ(result.archives.skippedPolicy(), 1u);
+    EXPECT_EQ(result.archives.skippedExcluded(), 1u);
+    EXPECT_EQ(result.archives.skippedSidecar(), 1u);
     EXPECT_EQ(result.archives.skippedSize(), 1u);
     EXPECT_EQ(result.archives.skippedBudget(), 1u);
     EXPECT_EQ(result.skips.total(), 0u) << "a member's reason became a file-level skip";
+}
+
+// A loose file and the member of its name, both left shut because no include pattern names them
+// and both rows because the name raises FN001, give one reason in one spelling and one set of
+// words: the JSON `skipReason`, and the line each printer writes after the path.
+TEST(MemberNameTest, AFileAndTheMemberOfItsNameThatNoIncludeNamesSayWhyInTheSameWords) {
+    TempDir root;
+    const std::string name = "x$(id).mdb";
+    writeFile(root.path() / name, "db\n");
+    const fs::path zip = root.path() / "upload.zip";
+    writeZip(zip, {{name, "db\n"}});
+
+    const ScanResult result = runScan(scanConfig(root.path()));
+    const FileResult* file = findByName(result, name);
+    const FileResult* member = findMember(result, zip, name);
+    ASSERT_NE(file, nullptr) << listRows(result);
+    ASSERT_NE(member, nullptr) << listRows(result);
+    ASSERT_TRUE(file->skipReason.has_value());
+    ASSERT_TRUE(member->skipReason.has_value());
+    EXPECT_EQ(*file->skipReason, SkipReason::Excluded);
+    EXPECT_EQ(*member->skipReason, *file->skipReason);
+
+    std::ostringstream json;
+    {
+        JsonReportWriter writer(json);
+        writer.begin();
+        writer.onFile(*file);
+        writer.onFile(*member);
+        writer.end(result, false);
+    }
+    const auto records = nlohmann::json::parse(json.str()).at("files");
+    ASSERT_EQ(records.size(), 2u);
+    EXPECT_EQ(records.at(0).value("skipReason", ""), "excluded");
+    EXPECT_EQ(records.at(1).value("skipReason", ""), "excluded");
+
+    // What each printer says after the path, which is the row's own path and differs.
+    const auto afterPath = [](const FileResult& row, bool compact) {
+        std::ostringstream text;
+        ResultPrinter printer(text, /*color=*/false, /*width=*/400);
+        compact ? printer.printFileResultCompact(row) : printer.printFileResult(row);
+        const std::string rendered = text.str();
+        const std::string path = pathForDisplay(row.path);
+        const size_t at = rendered.find(path);
+        const size_t end = rendered.find('\n', at);
+        return at == std::string::npos ? rendered
+                                        : rendered.substr(at + path.size(), end - at - path.size());
+    };
+    EXPECT_EQ(afterPath(*file, false), " (skipped - excluded by filters)");
+    EXPECT_EQ(afterPath(*member, false), afterPath(*file, false));
+    EXPECT_EQ(afterPath(*member, true), afterPath(*file, true));
 }
 
 // An opened member's name finding leads its row, ahead of what its bytes raised - one row per

@@ -132,19 +132,37 @@ std::optional<SkipReason> ArchiveScanner::selectionSkip(const std::string& name,
                                                         std::string_view filterName,
                                                         std::string_view patternPath,
                                                         uint64_t size,
-                                                        bool directory,
                                                         const ArchiveConfig& config,
                                                         uint64_t memberLimit,
                                                         const FileWalker& filters) {
-    if (directory || name.empty()) {
+    // The same include/exclude the operator wrote for loose files, asked through the same
+    // function a loose file is asked through, of the path the member has beside its archive:
+    // the container's directory on disk, then the stored name, where a backslash is a
+    // character. A member and the file of that name in the archive's directory answer alike,
+    // so a tree excluded on disk does not come back through a backup of itself, and a
+    // pattern that names nothing on disk names nothing inside an archive either.
+    //
+    // Asked first, as the walk asks it of a file before its size, and counted under the reason
+    // that file is counted under. A member the patterns keep out is `excluded` whatever else it
+    // is - code or not, a sidecar or not, in exhaustive mode or not - so an operator reading the
+    // counts can tell what they asked for from what the scanner chose, at both levels alike.
+    if (filters.filterVerdictAt(patternPath) != FileWalker::FilterVerdict::Accepted) {
+        return SkipReason::Excluded;
+    }
+
+    // A name that is nothing once its leading `./` and separators are read has no extension
+    // for the priority policy to read.
+    if (name.empty()) {
         return SkipReason::Policy;
     }
 
     // Sidecar metadata is about the archive, not about the site inside it. Asked of the name
     // as stored: a Mac writes `__MACOSX/` and `._name` with slashes, and a member NAMED
-    // `uploads/__MACOSX\shell.php` is a file in `uploads`, not a sidecar.
+    // `uploads/__MACOSX\shell.php` is a file in `uploads`, not a sidecar. Counted apart from
+    // the members that are not code, because a `._index.php` is named like code and is left
+    // shut in exhaustive mode too.
     if (isContainerMetadata(filterName)) {
-        return SkipReason::Policy;
+        return SkipReason::Sidecar;
     }
 
     // Sequential extraction spends the budget on whatever happens to be at the
@@ -152,16 +170,6 @@ std::optional<SkipReason> ArchiveScanner::selectionSkip(const std::string& name,
     // bytes that has never yet held a webshell in this corpus; exhaustive mode
     // is for operators who want them anyway.
     if (!config.exhaustive && classifyMember(name) == Bucket::Other) {
-        return SkipReason::Policy;
-    }
-
-    // The same include/exclude the operator wrote for loose files, asked through the same
-    // function a loose file is asked through, of the path the member has beside its archive:
-    // the container's directory on disk, then the stored name, where a backslash is a
-    // character. A member and the file of that name in the archive's directory answer alike,
-    // so a tree excluded on disk does not come back through a backup of itself, and a
-    // pattern that names nothing on disk names nothing inside an archive either.
-    if (filters.filterVerdictAt(patternPath) != FileWalker::FilterVerdict::Accepted) {
         return SkipReason::Policy;
     }
 
@@ -196,10 +204,14 @@ ArchiveScanner::IndexCount ArchiveScanner::countMembers(const std::filesystem::p
 
     for (const auto& entry : reader->entries()) {
         if (interrupted()) break;
+        // Not a member, here as in scanZip(), so neither a member to count nor one skipped.
+        if (entry.directory) {
+            continue;
+        }
         const std::string name = normalizeMemberName(entry.name);
         const std::string_view filterName = memberFilterName(entry.name);
         if (selectionSkip(name, filterName, joinFilterPath(directory, filterName), entry.size,
-                          entry.directory, config, memberLimit, filters)) {
+                          config, memberLimit, filters)) {
             continue;
         }
         ++count.files;
@@ -228,8 +240,8 @@ void ArchiveScanner::reportMember(const Context& ctx, std::string_view member,
 // the zip's central directory, or in the tar header in front of its bytes, so it is known
 // without opening the member - exactly as a loose file's name is known to the walk without
 // opening the file. So the rule is the one Scanner applies to files on disk. What decides
-// what gets OPENED - the priority policy that leaves non-code members shut, the include list
-// behind it, the sidecar filter, the member size cap and the budget - does not decide what a
+// what gets OPENED - the include list, the sidecar filter, the priority policy that leaves
+// non-code members shut, the member size cap and the budget - does not decide what a
 // name may say: 73 of the 83 hostile names measured on a production upload directory were
 // `.mdb`, which the policy never opens. An `exclude` pattern is the other intention, a tree
 // the operator has written down that they do not want looked at, and it is obeyed here as it
@@ -393,8 +405,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
         const std::string patternPath = joinFilterPath(ctx.filterDirectory, filterName);
         std::vector<FileMatch> named = nameFindings(entries[i], patternPath);
         if (const auto skip = selectionSkip(name, filterName, patternPath, entries[i].size,
-                                            entries[i].directory, config_, memberLimit_,
-                                            filters_)) {
+                                            config_, memberLimit_, filters_)) {
             ctx.stats->skip(*skip);
             reportUnopened(ctx, entries[i].name, entries[i].size, std::move(named), *skip);
             continue;
@@ -492,7 +503,6 @@ void ArchiveScanner::scanTar(ByteSource& stream, Context& ctx, ByteSource& raw) 
 
         std::vector<FileMatch> named = nameFindings(entry, patternPath);
         if (const auto skip = selectionSkip(name, filterName, patternPath, entry.size,
-                                            entry.directory,
                                             config_, memberLimit_, filters_)) {
             ctx.stats->skip(*skip);
             reportUnopened(ctx, entry.name, entry.size, std::move(named), *skip);
@@ -537,7 +547,7 @@ void ArchiveScanner::scanSingleGzip(ByteSource& source, Context& ctx,
     const std::string name = normalizeMemberName(memberName);
     const std::string_view filterName = memberFilterName(memberName);
     if (const auto skip = selectionSkip(name, filterName,
-                                        joinFilterPath(ctx.filterDirectory, filterName), 0, false,
+                                        joinFilterPath(ctx.filterDirectory, filterName), 0,
                                         config_, 0, filters_)) {
         ctx.stats->skip(*skip);
         return;

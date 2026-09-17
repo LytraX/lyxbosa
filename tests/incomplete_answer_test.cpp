@@ -373,6 +373,26 @@ TEST(CheckCoverageTest, MembersThePolicyDidNotSelectAreNamedAndStillExitZero) {
     EXPECT_TRUE(contains(run.text, "not code")) << run.text;
 }
 
+// The same line for a member the operator's own pattern keeps out, and for a sidecar: counted
+// under their own reasons, named in the words the scan summary uses, and the exit code stays
+// 0, as it does for the excluded loose file of that name.
+TEST(CheckCoverageTest, AnExcludedMemberAndASidecarAreNamedAndStillExitZero) {
+    TempDir dir;
+    writeFile(dir.file("patterns.yaml"), "scan:\n  exclude:\n    - \"*-old.php\"\n");
+    writeZip(dir.file("site.zip"), {{"config-old.php", "<?php echo 1;\n"},
+                                    {"__MACOSX/._page.php", "stub\n"},
+                                    {"page.php", "<?php echo 1;\n"}});
+
+    const CheckRun run = check(dir.file("site.zip"), dir.file("patterns.yaml"));
+
+    EXPECT_EQ(run.code, 0) << run.text;
+    EXPECT_TRUE(contains(run.text, "No matches found in what was scanned of:")) << run.text;
+    EXPECT_TRUE(contains(run.text,
+                         "Members not scanned: 2 (1 excluded by filters, 1 sidecar metadata)"))
+        << run.text;
+    EXPECT_FALSE(contains(run.text, "not code")) << run.text;
+}
+
 // Findings and incomplete coverage at once. The findings are printed - losing them
 // would be a worse defect than the one being fixed - and the exit code still says the
 // answer is partial, which is what `scan` already does for a root that was gone.
@@ -445,8 +465,9 @@ TEST(CheckCoverageTest, AnOversizeContainerIsNotCalledASkippedFileByEitherComman
 // The coverage predicate itself
 // ===========================================================================
 
-// Policy is the one reason that is not a member going unread, and the whole exit code
-// rests on that. Asserted directly so the distinction cannot drift without a failure.
+// The selection reasons - not code, the operator's patterns, a sidecar - are the ones that
+// are not a member going unread, and the whole exit code rests on that. Asserted directly so
+// the distinction cannot drift without a failure.
 TEST(ArchiveCoverageTest, PolicyIsCountedAndIsNotAMemberThatWentUnread) {
     archive::Stats stats;
     stats.skip(SkipReason::Policy, 874);
@@ -455,6 +476,23 @@ TEST(ArchiveCoverageTest, PolicyIsCountedAndIsNotAMemberThatWentUnread) {
     EXPECT_EQ(archive::membersUnexamined(stats), 0u);
     EXPECT_FALSE(archive::coverageIncomplete(stats));
     EXPECT_EQ(archive::membersNotScannedLine(stats), "Members not scanned: 874 (874 not code)");
+}
+
+TEST(ArchiveCoverageTest, AnExcludedMemberAndASidecarAreCountedAndAreNotMembersThatWentUnread) {
+    archive::Stats stats;
+    stats.skip(SkipReason::Excluded, 12);
+    stats.skip(SkipReason::Sidecar, 40);
+
+    EXPECT_EQ(stats.totalSkipped(), 52u);
+    EXPECT_EQ(archive::membersUnexamined(stats), 0u);
+    EXPECT_FALSE(archive::coverageIncomplete(stats));
+    EXPECT_EQ(archive::membersNotScannedLine(stats),
+              "Members not scanned: 52 (12 excluded by filters, 40 sidecar metadata)");
+
+    // The companion: a member that went unread beside them is still one, and only it.
+    stats.skip(SkipReason::Corrupt);
+    EXPECT_EQ(archive::membersUnexamined(stats), 1u);
+    EXPECT_TRUE(archive::coverageIncomplete(stats));
 }
 
 TEST(ArchiveCoverageTest, EveryOtherReasonIsAMemberThatWentUnread) {

@@ -22,9 +22,10 @@ namespace lyxbosa {
 enum class SkipReason : uint8_t {
     // Both levels
     Size,        // over the per-file / per-member cap
+    Excluded,    // did not survive scan.include / scan.exclude, asked of a file's path or
+                 // of the path a member has beside its archive
 
     // File level only
-    Excluded,    // did not survive scan.include / scan.exclude
     Unreadable,  // stat or open failed: permissions, a race, a dead mount
 
     // Archive member level only
@@ -32,18 +33,21 @@ enum class SkipReason : uint8_t {
     Ratio,       // archive expands faster than max_ratio
     Budget,      // time or total-expansion budget spent
     Corrupt,     // truncated, encrypted or otherwise unreadable
-    Policy,      // not selected by the priority policy (see exhaustive)
+    Policy,      // not code, outside exhaustive mode; or a member with no name at all
+    Sidecar,     // metadata an archiver writes beside the members: __MACOSX/, ._name,
+                 // .DS_Store, Thumbs.db
 };
 
-inline constexpr size_t kSkipReasonCount = 8;
+inline constexpr size_t kSkipReasonCount = 9;
 
 inline constexpr size_t skipReasonIndex(SkipReason reason) {
     return static_cast<size_t>(reason);
 }
 
-// The machine-readable name. The six archive spellings are load-bearing: they are
-// the keys of the `archives.membersSkipped` JSON object, and changing one would
-// silently break every consumer of an existing report.
+// The machine-readable name. Every spelling is load-bearing: the member-level ones are the
+// keys of the `archives.membersSkipped` JSON object, the file-level ones the keys of
+// `filesSkipped`, and all of them the `skipReason` of a row. Changing one would silently
+// break every consumer of an existing report.
 constexpr std::string_view skipReasonToString(SkipReason reason) {
     switch (reason) {
         case SkipReason::Size:       return "size";
@@ -54,14 +58,16 @@ constexpr std::string_view skipReasonToString(SkipReason reason) {
         case SkipReason::Budget:     return "budget";
         case SkipReason::Corrupt:    return "corrupt";
         case SkipReason::Policy:     return "policy";
+        case SkipReason::Sidecar:    return "sidecar";
     }
     return "unknown";
 }
 
 // The human-readable label, for the summary and the per-file lines. Phrased to
 // read after a count: "487 over size limit, 18 excluded by filters".
-// The six archive spellings are the ones printArchiveSummary already used, verbatim,
-// so the summary line an operator has been reading does not silently change wording.
+// One label per reason at both levels, so a file and a member an operator's pattern kept
+// out are described in the same words. "not code" and the guards' labels are the words
+// the archive summary line has always used.
 constexpr std::string_view skipReasonLabel(SkipReason reason) {
     switch (reason) {
         case SkipReason::Size:       return "over size limit";
@@ -72,6 +78,7 @@ constexpr std::string_view skipReasonLabel(SkipReason reason) {
         case SkipReason::Budget:     return "budget spent";
         case SkipReason::Corrupt:    return "corrupt";
         case SkipReason::Policy:     return "not code";
+        case SkipReason::Sidecar:    return "sidecar metadata";
     }
     return "unknown";
 }
@@ -124,13 +131,17 @@ private:
 // Two arrays rather than enum order, because the archive line is pre-existing output:
 // it has always led with "not code", which is both the largest and the least alarming
 // reason, and reordering it would change what an operator reads for no gain. The file
-// level is new and leads with the size cap for the same reason - it is the common case.
+// level leads with the size cap for the same reason - it is the common case.
+//
+// A member's three selection reasons - not code, the operator's patterns, a sidecar - come
+// before the guards. A reason that did not occur is left out of the line, so a reason an
+// archive has none of changes nothing about how that archive is described.
 inline constexpr SkipReason kFileSkipOrder[] = {
     SkipReason::Size, SkipReason::Excluded, SkipReason::Unreadable,
 };
 inline constexpr SkipReason kArchiveSkipOrder[] = {
-    SkipReason::Policy, SkipReason::Size, SkipReason::Budget,
-    SkipReason::Ratio, SkipReason::Depth, SkipReason::Corrupt,
+    SkipReason::Policy, SkipReason::Excluded, SkipReason::Sidecar, SkipReason::Size,
+    SkipReason::Budget, SkipReason::Ratio, SkipReason::Depth, SkipReason::Corrupt,
 };
 
 // "487 over size limit, 18 excluded by filters, 7 unreadable" - the reasons that

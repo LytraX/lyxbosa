@@ -103,6 +103,10 @@ private:
     // countMembers() so the pre-count and the scan cannot disagree about what
     // the total means.
     //
+    // Asked only of a member. Every caller passes a directory entry by before it gets here:
+    // it holds no content, so it is not a member that could have been scanned, and a reason
+    // returned for it would be counted as one that was skipped.
+    //
     // `name` is normalizeMemberName() of the stored name, for the priority policy, which can
     // only decline to spend the budget on a non-code member; `filterName` is
     // memberFilterName(), for the sidecar test, and `patternPath` is where the member sits
@@ -113,7 +117,6 @@ private:
                                                    std::string_view filterName,
                                                    std::string_view patternPath,
                                                    uint64_t size,
-                                                   bool directory,
                                                    const ArchiveConfig& config,
                                                    uint64_t memberLimit,
                                                    const FileWalker& filters);
