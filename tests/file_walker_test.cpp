@@ -1702,7 +1702,7 @@ TEST(FileWalkerMemberFilterTest, GlobMatchAnswersAsFnmatchWithPathnameDoes) {
 // The two shapes POSIX leaves undefined and C libraries answer differently, stated directly so
 // that a build on any C library checks what the scanner answers for them: glibc's answer, both
 // times.
-TEST(FileWalkerMemberFilterTest, TheShapesPosixLeavesUndefinedAreAnsweredOneWay) {
+TEST(FileWalkerMemberFilterTest, TheTwoUndefinedShapesAnswerAsGlibcDoes) {
     EXPECT_FALSE(FileWalker::globMatch("a\\", "a\\"))
         << "a trailing backslash in a pattern quotes nothing, and matches nothing";
     EXPECT_TRUE(FileWalker::globMatch("[\\]]x", "]x"))
