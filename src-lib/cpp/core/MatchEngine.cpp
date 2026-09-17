@@ -1,6 +1,7 @@
 #include "MatchEngine.h"
 #include "infrastructure/PathUtils.h"
 #include "utils/SafeText.h"
+#include "analysis/HtaccessHandler.h"
 #include "analysis/StringAssembly.h"
 #include <algorithm>
 #include <array>
@@ -652,6 +653,31 @@ bool MatchEngine::applyContextFilter(const std::string& ruleCode, const MatchCon
             }
         }
         return false;
+    }
+
+    // BD019 and BD020: a script handler attached to names that are not scripts
+    //
+    // A handler directive does something only in the file the server reads per directory, so
+    // the two rules report only a file of that name: the same lines in a PHP string, a readme
+    // or an `htaccess.txt` template raise nothing. The name is the final component with a
+    // backslash read as a separator as well as a slash - on Windows it is one, and an archiver
+    // there can store `uploads\.htaccess` - because this gate grants a finding rather than
+    // withholding one, so reading more names as `.htaccess` never lets an attacker's spelling
+    // claim a suppression. Which names the directive reaches, and so which of the two rules
+    // it is, is analysis::htaccess's answer; see BD019's header for both decisions.
+    if (ruleCode == "BD019" || ruleCode == "BD020") {
+        const auto slash = ctx.filePath.find_last_of("/\\");
+        const std::string_view name =
+            slash == std::string_view::npos ? ctx.filePath : ctx.filePath.substr(slash + 1);
+        if (!analysis::htaccess::isAccessFileName(name)) {
+            return false;
+        }
+        const auto executed = analysis::htaccess::executedClass(ctx.content, ctx.matchOffset);
+        if (!executed) {
+            return false;
+        }
+        return *executed == (ruleCode == "BD019" ? analysis::htaccess::ExtensionClass::Data
+                                                 : analysis::htaccess::ExtensionClass::Document);
     }
 
     // BD013: Embedded private key

@@ -19,7 +19,7 @@ custom rules can be defined alongside them.
 
 | Code | Category | Description |
 |------|----------|-------------|
-| BD | Backdoor | Hidden admin creation, cron persistence, plugin/theme backdoors, credential harvesting |
+| BD | Backdoor | Hidden admin creation, cron persistence, plugin/theme backdoors, credential harvesting, `.htaccess` handlers that run uploaded data as code |
 | WS | Webshell | Remote shell access and command execution interfaces |
 | RCE | Code Execution | Shell commands, eval() injection, dynamic code execution |
 | OBF | Obfuscation | Base64 concatenation, variable function calls, goto obfuscation, encoded strings |

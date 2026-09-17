@@ -43,6 +43,24 @@ commit list that CI generates per tag.
   `../` and `..\` on Windows. It fired on nothing in the stock WordPress 7.1 tree, twelve
   widely installed plugins, seven backups of them and 83 hostile names observed on a
   production server.
+- **`BD019` (critical), an `.htaccess` that runs a data file as a script.** An `AddType` or
+  `AddHandler` that attaches a PHP handler to an extension that is not a script's —
+  `AddType application/x-httpd-php .mdb`, which an upload-endpoint probe planted beside
+  webshells it stored under `.mdb` names — and the rest of the family the Apache, LiteSpeed
+  and cPanel documentation defines: `SetHandler` or `ForceType` at the top of the file or
+  inside a `<Files>` or `<FilesMatch>` block that selects such names, PHP-FPM through a
+  `proxy:…fcgi://` handler, every handler name cPanel, CloudLinux, LiteSpeed and 1&1 write,
+  and `cgi-script` or `fcgid-script` in a file whose `Options` enable ExecCGI. Silent on a
+  handler mapped onto PHP's own extensions (`.php`, `.php81`, `.phtml`, …), on the blocks
+  cPanel, LiteSpeed and Debian generate, on the source-highlighting handler, and on the
+  `Options -ExecCGI` guard plugins ship. Reported only for a file named `.htaccess`, loose
+  or as an archive member, compared without regard to case on every platform. 0 false
+  positives over 836,751 files read, 16,348 of them `.htaccess`; it fired on 11 attacker
+  `.htaccess` files in incident trees and nothing else.
+- **`BD020` (medium), the same directive on `.html` or `.htm`.** Hosting providers document
+  parsing HTML as PHP for legacy sites, so it is not reported as critical, and an operator
+  whose sites do it can disable `BD020` without losing `BD019`. A directive reaching both
+  kinds of name is `BD019` alone.
 
 ### Fixed
 

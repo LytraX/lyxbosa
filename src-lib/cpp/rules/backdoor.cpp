@@ -417,11 +417,159 @@ const BuiltinRule BD018 {
     .patterns = detail_BD018::patterns,
 };
 
+// BD019 and BD020: an .htaccess that makes the server run, as a script, a file whose name is
+// not a script's
+//
+// An upload endpoint that refuses `.php` usually accepts an image, an archive or a database,
+// and an .htaccess in the same directory decides what the server does with those names:
+//
+//     AddType application/x-httpd-php .mdb
+//
+// An automated vulnerability scanner probing one host's upload endpoint uploaded exactly that
+// directive, for `.mdb` and for `.zip`, and stored its webshells under `.mdb` names beside it.
+// The directive is not the shell. It is the directory being prepared to run one, and it
+// survives the shell's removal.
+//
+// THE FAMILY, FROM THE SERVERS' OWN DOCUMENTATION. Every form below is allowed in an .htaccess
+// under AllowOverride FileInfo, or Options for ExecCGI.
+//
+//   * AddType and AddHandler (mod_mime). "The extension argument is case-insensitive and can
+//     be specified with or without a leading dot", and a file with several extensions is
+//     compared against each (httpd.apache.org/docs/2.4/mod/mod_mime.html).
+//   * SetHandler and ForceType (core). SetHandler "forces all matching files to be processed by
+//     the handler" - every file in the directory at the top of the file, and what a <Files>,
+//     <Files ~> or <FilesMatch> block selects inside one (docs/2.4/mod/core.html). php.net
+//     recommends exactly that block, <FilesMatch \.php$>, to keep exploit.php.jpg from running
+//     (php.net/manual/en/install.unix.apache2.php).
+//   * PHP-FPM, `SetHandler "proxy:unix:/path/php-fpm.sock|fcgi://localhost"`: a SetHandler, so
+//     allowed where ProxyPass is not (docs/2.4/mod/mod_proxy_fcgi.html). FPM itself refuses a
+//     script outside security.limit_extensions, `.php .phar` by default (php-src
+//     sapi/fpm/fpm/fpm_conf.c); the directive is reported because it is the attempt, and a
+//     pool can be widened.
+//   * The handler names the hosting stacks write: mod_php's application/x-httpd-php and its
+//     php-script, php5-script and php7-script tokens (php-src sapi/apache2handler/php_apache.h);
+//     cPanel MultiPHP's application/x-httpd-ea-phpNN, in the block it generates -
+//     `AddHandler application/x-httpd-ea-php81 .php .php81 .phtml` - and in the older AddType
+//     form LiteSpeed's cPanel documentation reproduces (docs.litespeedtech.com/lsws/cp/cpanel/
+//     php-selector/); CloudLinux's application/x-httpd-alt-phpNN___lsphp; LiteSpeed's
+//     application/x-httpd-lsphp and application/x-httpd-phpNN, since "the script handlers use
+//     MIME types, not suffixes" and AddType and ForceType in .htaccess choose them
+//     (litespeedtech.com/docs/webserver/config/scripthandler); 1&1's x-mapp-php. Any handler
+//     token naming PHP, less application/x-httpd-php-source, which highlights a file instead
+//     of running it, and less a text/ media type, which is never a handler. OpenLiteSpeed
+//     reads only rewrite rules from an .htaccess and ignores every directive here
+//     (docs.openlitespeed.org/config/rewriterules/).
+//   * cgi-script and fcgid-script, WITH ExecCGI. mod_cgi runs the file itself, and needs both
+//     "the cgi-script handler ... activated using the AddHandler or SetHandler directive" and
+//     "ExecCGI ... specified in the Options directive" (docs/2.4/howto/cgi.html); mod_fcgid
+//     checks ExecCGI the same way. It belongs in the family on evidence rather than on the
+//     documentation alone: every attacker .htaccess with a CGI handler in the incident trees
+//     measured below - 11 files, 3 distinct - maps cgi-script onto an invented extension under
+//     an Options list naming ExecCGI, and every legitimate CGI mapping found - 7 copies of one
+//     guard, in stock and customer trees, in .htaccess files and in code that writes one -
+//     turns ExecCGI off and lists .htm beside the script extensions.
+//     So the CGI handlers count only in a file whose Options enable ExecCGI. A server whose own
+//     configuration already enables it is not seen, and that is the gap this condition costs.
+//
+// Left out, each with a reason. `Action` binds a handler name to a CGI program, and a PHP
+// interpreter published at a URL is what it needs; no .htaccess measured carries one. `<If>`
+// is not read as a selector, so a handler inside one counts as reaching the whole directory.
+// `php_value auto_prepend_file` and `.user.ini` run a file by a different mechanism: see
+// docs/RULE_CANDIDATES.md.
+//
+// WHICH NAMES ARE SCRIPTS. PHP's own extensions (.php with any version digits, .phtml, .pht,
+// .phtm, .phps, .phar) and the PHP source conventions OBF036 and SEO008 already read as PHP;
+// CGI, Perl, Python, Ruby and shell; ASP, JSP and ColdFusion; server-side includes. A PHP
+// handler on any of them adds nothing an upload filter did not already have to refuse.
+// Everything else is data, including no extension and `.htaccess` itself, which is how an
+// .htaccess that holds its own PHP runs.
+//
+// A SELECTOR IS ASKED, NOT PARSED. A <FilesMatch> regex or <Files> glob is tried against names
+// of every class and against the names its own literal runs spell, and an extension it spells
+// at the end of an alternative counts whether a name reached it or not. One RE2 cannot compile,
+// or one that no name tried reaches, is read as reaching data.
+//
+// THE NAME. Apache opens the configured AccessFileName - `.htaccess` everywhere but OS/2
+// (include/httpd.h) - by joining it to the directory and handing it to APR
+// (server/config.c ap_open_htaccess), so whether `.HTACCESS` is read is the filesystem's
+// answer: no on ext4, yes on NTFS and on a case-insensitive APFS volume, and Apache matches
+// <FilesMatch> without case on Windows (server/core.c, USE_ICASE). The platform the scanner
+// runs on is not the filesystem the site is served from - a Linux scan reads Windows shares,
+// DrvFs mounts and backups made on either - so the name is folded on every platform, and the
+// trailing dots and spaces Windows drops from a name are dropped. Scoped in the engine's
+// context filter, loose and as an archive member alike.
+//
+// THE FALSE-POSITIVE MEASUREMENT. `tests/rule-fp-measure.py --rules BD019,BD020 --archives`,
+// which loads the two rules alone, reads every file whatever its type, opens archives with no
+// time budget, and carries a control that has to fire on a loose file and on a member:
+//
+//   population                          files read   of them members   .htaccess   at risk   BD019   BD020
+//   trail-data/CMS, stock CMS trees         54,428               450          35         1       0       0
+//   trail-data/CMS-ext: pinned benign
+//     trees and their 136 archives         298,711           137,877         104         0       0       0
+//   customer trees under trail-data        483,612           162,544      16,209        13      11       0
+//
+// "At risk" is an .htaccess carrying a live AddType, AddHandler, SetHandler or ForceType with a
+// PHP, PHP-FPM or CGI handler. The 11 are the attacker CGI files above, all of them, and no
+// other file fired. The 13 at risk in the customer trees are those 11, one ExecCGI guard, and
+// one cPanel-generated handler block mapping PHP's own extensions inside an archive, which
+// `check` reads as clean. Across all 16,348 .htaccess files no PHP or FPM handler is mapped
+// onto any extension that is not a script's, and nothing fired that was not an attack: a
+// per-file false-positive rate of at most 0.019% at 95%. That bound is over .htaccess files; over
+// the 14 at risk it is only 21%, and the silence the rule owes the lines hosting stacks write
+// is pinned by tests/htaccess_handler_test.cpp rather than by this population, which holds
+// almost none of them.
+//
+// Recall is not measured here. The two corpus rows are the samples that taught the technique,
+// and the CGI condition was drawn from the 11 attacker files and the guards beside them.
+//
+// .HTML AND .HTM, AND WHY THEY ARE BD020. Measured, a finding on them costs nothing: 2 of the
+// 16,348 map a handler onto .htm, both the ExecCGI guard and silent for that reason, and none
+// maps a PHP or FPM handler onto .html or .htm. But hosting providers document it as a
+// supported configuration for legacy sites - `AddHandler application/x-httpd-php .html .htm`
+// in AccuWebHosting's, ICDSoft's and Ultra Web Hosting's knowledge bases - which no provider
+// does for an image, an archive or a database, and a finding that says there is no honest
+// reading of it would be wrong about them. So they are neither silent, which the measurement
+// does not support, nor Critical: BD020, Medium, which an operator whose sites do this can turn
+// off by code without losing BD019. A directive reaching both is BD019 alone.
+//
+// BD019 IS CRITICAL for the reason BD017 and BD018 are. No documentation describes mapping a
+// script handler onto a data extension as a configuration, php.net describes preventing it,
+// and none of 16,348 real .htaccess files does it outside an attack.
+namespace detail_htaccess_handler {
+    static constexpr Pattern patterns[] = {
+        { R"((?m)^[ \t]*(?:AddType|AddHandler)[ \t]+["']?[^\s"']*(?:php|proxy:[^\s"']*fcgi:|cgi-script|fcgid-script)(?:\\\r?\n|[^\r\n])*)",
+          "Script handler mapped onto an extension", true,
+          {"addtype|addhandler", "php|fcgi:|cgi-script|fcgid-script"} },
+        { R"((?m)^[ \t]*(?:SetHandler|ForceType)[ \t]+["']?[^\s"']*(?:php|proxy:[^\s"']*fcgi:|cgi-script|fcgid-script)[^\r\n]*)",
+          "Script handler set on the files a block selects", true,
+          {"sethandler|forcetype", "php|fcgi:|cgi-script|fcgid-script"} },
+    };
+}
+const BuiltinRule BD019 {
+    .code = {Category::Backdoor, 19},
+    .name = "htaccess runs a data file as a script",
+    .description = "Detects an .htaccess directive that attaches a PHP, PHP-FPM or CGI handler to "
+                   "file names that are not scripts, so an uploaded image, archive or database runs "
+                   "as code",
+    .severity = Severity::Critical,
+    .patterns = detail_htaccess_handler::patterns,
+};
+const BuiltinRule BD020 {
+    .code = {Category::Backdoor, 20},
+    .name = "htaccess runs HTML as a script",
+    .description = "Detects an .htaccess directive that attaches a PHP, PHP-FPM or CGI handler to "
+                   ".html or .htm, which hosting providers document for legacy sites and which "
+                   "an upload directory has no use for",
+    .severity = Severity::Medium,
+    .patterns = detail_htaccess_handler::patterns,
+};
+
 static const std::array<const BuiltinRule*, RULE_COUNT> ALL_RULES = {
     &BD001, &BD002, &BD003, &BD004, &BD005,
     &BD006, &BD007, &BD008, &BD009,
     &BD011, &BD012, &BD013, &BD014, &BD015,
-    &BD016, &BD017, &BD018
+    &BD016, &BD017, &BD018, &BD019, &BD020
 };
 
 const BuiltinRule* const* getAllRules() {
