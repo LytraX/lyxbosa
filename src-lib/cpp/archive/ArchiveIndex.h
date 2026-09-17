@@ -36,9 +36,20 @@ enum class Bucket {
     Other = 3        // everything else - exhaustive mode only
 };
 
-// Normalise a member name for comparison: forward slashes, no "./" prefix, no
-// leading slash. Display sanitising happens later and separately.
+// A member name with every backslash turned into a slash, no "./" prefix and no leading
+// slash. Only for the readings that can add a finding or a priority and never withhold
+// one: what an archive is a backup of, and which member to spend the budget on first. A
+// member's address, the patterns and sidecar test that decide whether it is opened, and the
+// location priors its content is judged under all read the name as stored, because a
+// backslash there is a character the archive's writer chose - see memberFilterName().
 std::string normalizeMemberName(std::string_view raw);
+
+// The spelling of a stored member name that `scan.include` and `scan.exclude`, and the
+// sidecar test below, are asked about when they decide whether a member is opened: the
+// name as the archive holds it, without its leading "./" and "/". Every extractor measured
+// writes such a member beneath its destination, so taking them off is exact. A backslash is
+// left where it is.
+std::string_view memberFilterName(std::string_view stored);
 
 // Entries the container carries about the other entries rather than about the
 // site: the __MACOSX sidecar tree a Mac writes into every zip, its AppleDouble
@@ -46,7 +57,10 @@ std::string normalizeMemberName(std::string_view raw);
 // "._index.php" is a binary resource fork wearing a PHP extension - 1,499 of
 // them in one real theme's bundled plugin zips, every one of which trips the
 // binary-payload rule if it is read as source.
-bool isContainerMetadata(std::string_view normalizedName);
+//
+// Components are split on `/` alone. Asked whether to leave a member shut, it is asked of
+// memberFilterName(), so a member NAMED `uploads/__MACOSX\shell.php` is not a sidecar.
+bool isContainerMetadata(std::string_view name);
 
 bool isScriptName(std::string_view name);
 bool isMarkupName(std::string_view name);

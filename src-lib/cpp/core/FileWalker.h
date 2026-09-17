@@ -3,6 +3,7 @@
 #include "config/Rules.h"
 #include "SkipReason.h"
 #include <filesystem>
+#include <string_view>
 #include <vector>
 #include <string>
 #include <functional>
@@ -181,9 +182,32 @@ public:
     // never drift into disagreeing about whether a file is in the scan.
     FilterVerdict filterVerdict(const std::filesystem::path& path) const;
 
+    // The same question about an archive member, asked of its name as a string rather than
+    // as a path, and answered the same on every platform.
+    //
+    // A pattern reads the member's final component - everything after its last `/` - and,
+    // when it holds `**`, the whole name, exactly as filterVerdict() reads a file's name and
+    // path. `/` is the only separator. A backslash in a member name is a character, because
+    // the archive's writer chose it: an exclude pattern withholds a scan, and a name that
+    // could claim `vendor\x.php` is under `vendor/` would claim the exclusion with it. And
+    // the matcher is fnmatch(3) with FNM_PATHNAME on every platform - globMatch() below -
+    // so `*` and `**` alike stop at a `/`: `vendor/**` names what sits directly in a
+    // top-level `vendor/`, on Windows as on Linux.
+    FilterVerdict memberFilterVerdict(std::string_view memberName) const;
+
+    // fnmatch(pattern, name, FNM_PATHNAME) as glibc answers it in the C locale, written out
+    // so that it gives that answer on every platform: `*` and `?` never match `/`, a
+    // bracket expression takes `!` or `^`, ranges and the `[:class:]` names, and a backslash
+    // in the pattern quotes the character after it. Public so a test can hold it against
+    // fnmatch(3) itself where that exists.
+    static bool globMatch(std::string_view pattern, std::string_view name);
+
 private:
     // Check if path matches a glob pattern
     static bool matchesGlob(const std::string& pattern, const std::filesystem::path& path);
+
+    // The member counterpart of matchesGlob(), over a name whose separator is `/` alone.
+    static bool matchesMemberGlob(const std::string& pattern, std::string_view memberName);
 
     ScanConfig config_;
     DirectoryCallback dirCallback_;

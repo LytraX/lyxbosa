@@ -102,7 +102,13 @@ private:
     // Whether a member is worth opening, and why not when it is not. Shared with
     // countMembers() so the pre-count and the scan cannot disagree about what
     // the total means.
+    //
+    // `name` is normalizeMemberName() of the stored name, for the priority policy, which can
+    // only decline to spend the budget on a non-code member; `filterName` is
+    // memberFilterName(), for the sidecar test and the operator's patterns, which leave a
+    // member shut whatever it holds and so read a backslash as the character it is.
     static std::optional<SkipReason> selectionSkip(const std::string& name,
+                                                   std::string_view filterName,
                                                    uint64_t size,
                                                    bool directory,
                                                    const ArchiveConfig& config,
@@ -111,6 +117,12 @@ private:
 
     struct Context {
         std::string display;   // "backup.zip" or "outer.zip!inner.zip"
+
+        // The directories this archive's members sit under, as a location prior reads them:
+        // the outermost container's directory on disk through MatchEngine::diskFilterPath(),
+        // then, for a nested archive, the directories its stored name has - never a
+        // container's own file name. See scanMemberBytes().
+        std::string filterDirectory;
         size_t depth = 1;
         Budget* budget = nullptr;
         Stats* stats = nullptr;
@@ -123,16 +135,17 @@ private:
                         const std::string& memberName);
 
     // Run the rules over one member's bytes, recursing when the member is itself
-    // an archive and the depth allows it. `named` is what its name raised, which leads
-    // the row.
-    void scanMemberBytes(const std::string& memberDisplay, std::string& bytes,
+    // an archive and the depth allows it. `storedName` is the member's name as the archive
+    // holds it, and `named` is what that name raised, which leads the row.
+    void scanMemberBytes(const std::string& storedName, std::string& bytes,
                          Context& ctx, std::vector<FileMatch> named);
 
     // What a member's stored name raises under the FN rules, unless the operator's exclude
     // patterns name the member. `entry` carries the name as the archive holds it and whether
-    // its writer used a backslash as a separator; `normalized` is normalizeMemberName() of the
-    // name, which is what the patterns are asked about everywhere else in this class.
-    std::vector<FileMatch> nameFindings(const Entry& entry, const std::string& normalized) const;
+    // the name rules read a backslash in it as a separator; `filterName` is
+    // memberFilterName() of the name, which is what the patterns are asked about everywhere
+    // else in this class.
+    std::vector<FileMatch> nameFindings(const Entry& entry, std::string_view filterName) const;
 
     // The row for a member whose bytes were not read and whose name raised something.
     void reportUnopened(const Context& ctx, std::string_view member, uint64_t size,

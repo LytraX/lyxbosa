@@ -551,6 +551,11 @@ scan:
   # webshells dropped in `vendor/psr/log/Psr/Log/index.php` and the like. The broken
   # glob is protecting coverage by accident.
   #
+  # Inside an archive a member's name is relative, so there these patterns do match: a
+  # member is matched by its name as stored, with fnmatch(3) and FNM_PATHNAME on every
+  # platform, so `vendor/**` excludes what sits directly in an archive's top-level
+  # `vendor/` and nothing below it, and a backslash in a member's name is not a `/`.
+  #
   # The `excluded` count in the skip tally is dominated by the *include* allow-list
   # rejecting file types, not by these patterns, so it will not tell you they are dead.
   exclude:

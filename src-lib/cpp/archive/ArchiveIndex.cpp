@@ -169,6 +169,20 @@ std::string normalizeMemberName(std::string_view raw) {
     return out.substr(start);
 }
 
+std::string_view memberFilterName(std::string_view stored) {
+    size_t start = 0;
+    while (true) {
+        if (stored.substr(start).starts_with("./")) {
+            start += 2;
+        } else if (start < stored.size() && stored[start] == '/') {
+            ++start;
+        } else {
+            break;
+        }
+    }
+    return stored.substr(start);
+}
+
 bool isContainerMetadata(std::string_view name) {
     if (name.starts_with("__MACOSX/") || name.find("/__MACOSX/") != std::string_view::npos) {
         return true;

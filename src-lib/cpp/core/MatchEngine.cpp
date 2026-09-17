@@ -1544,10 +1544,7 @@ std::string MatchEngine::filterPath(std::string_view path) {
     return normalised;
 }
 
-std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_view filePath) const {
-    std::vector<FileMatch> allMatches;
-
-    // The one place a MatchContext is built, so the one place the separator is decided.
+std::string MatchEngine::diskFilterPath(std::string_view path) {
     // Every fragment a filter tests - `/vendor/`, `/tests/`, `/.ssh/`, `/wflogs/` - is
     // spelled with forward slashes, and a Windows path arrives with backslashes.
     //
@@ -1561,22 +1558,21 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
     // and a name the attacker spells must not be able to claim a suppression. So the
     // rewrite is conditional on the platform whose path grammar makes it exact, and on
     // POSIX the filters see the path byte for byte as the platform gave it.
-    //
-    // Archive members come through here too, as `<archive>!/<member>`, and a member
-    // name is attacker-controlled as surely as a file name. The same rule holds and
-    // grants nothing new: on Windows a member spelled `tests\x.php` is suppressed
-    // exactly as one spelled `tests/x.php` already is on every platform, and on POSIX
-    // it is not rewritten. What a Windows-written zip loses on POSIX is the vendor and
-    // fixture suppressions for its backslash-named members - a benign finding an
-    // operator looks at, which is the cheaper side of that trade.
-    //
-    // What a report prints is untouched either way: this string goes into the context
-    // and nowhere else.
 #ifdef _WIN32
-    const std::string contextPath = filterPath(filePath);
+    return filterPath(path);
 #else
-    const std::string_view contextPath = filePath;
+    return std::string(path);
 #endif
+}
+
+std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_view filePath) const {
+    // What a report prints is untouched: this string goes into the context and nowhere else.
+    return matchWithFilterPath(content, diskFilterPath(filePath));
+}
+
+std::vector<FileMatch> MatchEngine::matchWithFilterPath(std::string_view content,
+                                                        std::string_view contextPath) const {
+    std::vector<FileMatch> allMatches;
 
     // Match custom YAML rules
     for (const auto& rule : rules_) {

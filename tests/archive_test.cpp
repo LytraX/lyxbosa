@@ -101,6 +101,19 @@ TEST(ArchiveIndexTest, NormalisesSeparatorsAndPrefixes) {
     EXPECT_EQ(normalizeMemberName("site\\wp-content\\x.php"), "site/wp-content/x.php");
 }
 
+// The spelling the patterns and the sidecar test read: the prefixes every extractor measured
+// writes beneath its destination come off, and a backslash is left as the character it is.
+TEST(ArchiveIndexTest, TheFilterNameKeepsEveryBackslash) {
+    EXPECT_EQ(memberFilterName("./site/wp-config.php"), "site/wp-config.php");
+    EXPECT_EQ(memberFilterName("/var/www/x.php"), "var/www/x.php");
+    EXPECT_EQ(memberFilterName(".///./x.php"), "x.php");
+    EXPECT_EQ(memberFilterName("site\\wp-content\\x.php"), "site\\wp-content\\x.php");
+    EXPECT_EQ(memberFilterName(".\\x.php"), ".\\x.php");
+    EXPECT_EQ(memberFilterName("\\x.php"), "\\x.php");
+    EXPECT_EQ(memberFilterName(""), "");
+}
+
+
 TEST(ArchiveIndexTest, ScriptsAndMarkupAreClassifiedSeparately) {
     EXPECT_TRUE(isScriptName("index.php"));
     EXPECT_TRUE(isScriptName("cgi-bin/handler"));      // no extension at all

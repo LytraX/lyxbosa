@@ -22,11 +22,32 @@ namespace {
 // The separator between an archive and a member, as it appears in every report.
 // Separator for the human-readable member path, "backup.zip!wp-content/shell.php".
 //
+// What follows it is the member's name exactly as the archive stores it - a backslash, a
+// leading "./", a leading "/" and all - so two members the archive holds apart are never
+// reported under one address. `site\x.php` and `site/x.php` are two rows.
+//
 // NOT escaped, and therefore ambiguous in two cases - a nested container yields
 // "outer.zip!css/c!s", and a filename may legitimately contain "!". Treat this string as
 // display only; it cannot be parsed back into (container, member) reliably. See
 // docs/KNOWN_ISSUES.md #1 before changing this or before writing anything that consumes it.
 constexpr std::string_view kMemberSeparator = "!";
+
+// `name` beneath `directory`, in the spelling the context filters read: a `/` between
+// them, and nothing else touched.
+std::string joinFilterPath(std::string_view directory, std::string_view name) {
+    if (directory.empty()) return std::string(name);
+    std::string out(directory);
+    if (out.back() != '/') out += '/';
+    out.append(name);
+    return out;
+}
+
+// What a stored member name holds before its last `/`: the directories it really has, as
+// a location prior is allowed to read them. "" for a member at the top.
+std::string_view slashDirectoryOf(std::string_view stored) {
+    const size_t slash = stored.find_last_of('/');
+    return slash == std::string_view::npos ? std::string_view{} : stored.substr(0, slash);
+}
 
 // Directory of a normalised member name, "" for a member at the root.
 std::string_view directoryOf(std::string_view name) {
@@ -108,6 +129,7 @@ ArchiveScanner::ArchiveScanner(const ArchiveConfig& config, const ScanConfig& sc
       memberLimit_(config.memberSizeLimit(scan.maxFileSize)) {}
 
 std::optional<SkipReason> ArchiveScanner::selectionSkip(const std::string& name,
+                                                        std::string_view filterName,
                                                         uint64_t size,
                                                         bool directory,
                                                         const ArchiveConfig& config,
@@ -117,8 +139,10 @@ std::optional<SkipReason> ArchiveScanner::selectionSkip(const std::string& name,
         return SkipReason::Policy;
     }
 
-    // Sidecar metadata is about the archive, not about the site inside it.
-    if (isContainerMetadata(name)) {
+    // Sidecar metadata is about the archive, not about the site inside it. Asked of the name
+    // as stored: a Mac writes `__MACOSX/` and `._name` with slashes, and a member NAMED
+    // `uploads/__MACOSX\shell.php` is a file in `uploads`, not a sidecar.
+    if (isContainerMetadata(filterName)) {
         return SkipReason::Policy;
     }
 
@@ -131,8 +155,9 @@ std::optional<SkipReason> ArchiveScanner::selectionSkip(const std::string& name,
     }
 
     // The same include/exclude the operator wrote for loose files. A tree
-    // excluded on disk must not come back through a backup of itself.
-    if (!filters.matchesFilters(pathFromUtf8(name))) {
+    // excluded on disk must not come back through a backup of itself. Asked of the name as
+    // stored, where a backslash is a character: see FileWalker::memberFilterVerdict().
+    if (filters.memberFilterVerdict(filterName) != FileWalker::FilterVerdict::Accepted) {
         return SkipReason::Policy;
     }
 
@@ -167,7 +192,8 @@ ArchiveScanner::IndexCount ArchiveScanner::countMembers(const std::filesystem::p
     for (const auto& entry : reader->entries()) {
         if (interrupted()) break;
         const std::string name = normalizeMemberName(entry.name);
-        if (selectionSkip(name, entry.size, entry.directory, config, memberLimit, filters)) {
+        if (selectionSkip(name, memberFilterName(entry.name), entry.size, entry.directory,
+                          config, memberLimit, filters)) {
             continue;
         }
         ++count.files;
@@ -208,7 +234,7 @@ void ArchiveScanner::reportMember(const Context& ctx, std::string_view member,
 // Only a name the container stores is read. A single gzip has none: its member is named here
 // from the container's own file name, which has already been read as the file it is.
 std::vector<FileMatch> ArchiveScanner::nameFindings(const Entry& entry,
-                                                    const std::string& normalized) const {
+                                                    std::string_view filterName) const {
     auto named = engine_.matchMemberName(
         entry.name, entry.backslashIsSeparator
                         ? rules::filename::MemberSeparators::SlashAndBackslash
@@ -216,7 +242,7 @@ std::vector<FileMatch> ArchiveScanner::nameFindings(const Entry& entry,
     // The pattern is asked only of a name that raised something. The examination allocates
     // nothing for an ordinary name, and a glob list over every member of a 28,000-member
     // backup would be the cost of this whole feature spent on names that say nothing.
-    if (!named.empty() && filters_.filterVerdict(pathFromUtf8(normalized)) ==
+    if (!named.empty() && filters_.memberFilterVerdict(filterName) ==
                               FileWalker::FilterVerdict::Excluded) {
         named.clear();
     }
@@ -233,7 +259,7 @@ void ArchiveScanner::reportUnopened(const Context& ctx, std::string_view member,
     onFinding_(display, size, std::move(named), why);
 }
 
-void ArchiveScanner::scanMemberBytes(const std::string& memberDisplay, std::string& bytes,
+void ArchiveScanner::scanMemberBytes(const std::string& storedName, std::string& bytes,
                                      Context& ctx, std::vector<FileMatch> named) {
     ++ctx.stats->membersScanned;
     ctx.stats->bytesExpanded += bytes.size();
@@ -242,8 +268,25 @@ void ArchiveScanner::scanMemberBytes(const std::string& memberDisplay, std::stri
     // as the archive stores it - and becomes a path here for the report. Built with the narrow
     // constructor it was decoded in the ANSI code page on Windows, so a member named with a
     // Greek alpha was reported under two characters of mojibake. See PathUtils.h.
+    const std::string memberDisplay = ctx.display + std::string(kMemberSeparator) + storedName;
     const std::filesystem::path display = pathFromUtf8(memberDisplay);
-    auto matches = engine_.match(bytes, memberDisplay);
+
+    // WHERE A MEMBER SITS, AS A LOCATION PRIOR MAY READ IT. The directories the container sits
+    // in on disk, then the member's stored name: the directories that name really has, and its
+    // final component. Two things are left out on purpose, and each would let a name the
+    // attacker chooses claim a suppression.
+    //
+    // The container's own file name is not a directory. Read as one, an upload called
+    // `revslider-6.7.zip` put every member below its top under a `revslider` directory, and
+    // OBF010's product prior dropped them; `other.zip` holding the same bytes did not.
+    //
+    // A backslash in the member's name is a character, on every platform and whatever the
+    // host byte. A Linux file NAMED `tests\shell.php` keeps that name in the backup a PHP,
+    // Info-ZIP, 7-Zip, Python, Go or tar archiver makes of it, and read as a directory it lost
+    // its content findings there while the loose file kept them. Only the container's disk
+    // path, where a Windows backslash is exact, goes through diskFilterPath().
+    const std::string contextPath = joinFilterPath(ctx.filterDirectory, storedName);
+    auto matches = engine_.matchWithFilterPath(bytes, contextPath);
     // In front of the content findings, as Scanner::addNameFindings() puts a loose file's.
     matches.insert(matches.begin(), std::make_move_iterator(named.begin()),
                    std::make_move_iterator(named.end()));
@@ -270,6 +313,10 @@ void ArchiveScanner::scanMemberBytes(const std::string& memberDisplay, std::stri
 
     Context inner;
     inner.display = memberDisplay;
+    const std::string_view innerDirectories = slashDirectoryOf(storedName);
+    inner.filterDirectory = innerDirectories.empty()
+                                ? ctx.filterDirectory
+                                : joinFilterPath(ctx.filterDirectory, innerDirectories);
     inner.depth = ctx.depth + 1;
     inner.budget = ctx.budget;
     inner.stats = ctx.stats;
@@ -301,7 +348,7 @@ void ArchiveScanner::scanMemberBytes(const std::string& memberDisplay, std::stri
     if (nested == Kind::TarGz) {
         scanTar(gzip, inner, source);
     } else {
-        scanSingleGzip(gzip, inner, gzipMemberName(pathFromUtf8(memberDisplay)));
+        scanSingleGzip(gzip, inner, gzipMemberNameOf(storedName));
     }
 }
 
@@ -336,11 +383,13 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
         }
 
         const std::string name = normalizeMemberName(entries[i].name);
-        std::vector<FileMatch> named = nameFindings(entries[i], name);
-        if (const auto skip = selectionSkip(name, entries[i].size, entries[i].directory,
-                                            config_, memberLimit_, filters_)) {
+        const std::string_view filterName = memberFilterName(entries[i].name);
+        std::vector<FileMatch> named = nameFindings(entries[i], filterName);
+        if (const auto skip = selectionSkip(name, filterName, entries[i].size,
+                                            entries[i].directory, config_, memberLimit_,
+                                            filters_)) {
             ctx.stats->skip(*skip);
-            reportUnopened(ctx, name, entries[i].size, std::move(named), *skip);
+            reportUnopened(ctx, entries[i].name, entries[i].size, std::move(named), *skip);
             continue;
         }
 
@@ -375,7 +424,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
             // of 100% on every archive a guard ever stops.
             for (size_t rest = position - 1; rest < work.size(); ++rest) {
                 ctx.stats->skip(*spent);
-                const std::string restName = normalizeMemberName(entries[work[rest].index].name);
+                const std::string& restName = entries[work[rest].index].name;
                 reportMember(ctx, restName, 0, rest + 1, work.size(), ctx.depth == 1);
                 reportUnopened(ctx, restName, work[rest].size, std::move(work[rest].named),
                                *spent);
@@ -383,7 +432,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
             return;
         }
 
-        const std::string name = normalizeMemberName(entries[item.index].name);
+        const std::string& name = entries[item.index].name;
 
         // Progress before the work, exactly as the loose-file path does it: the
         // display should name what is being read, not what has just been read.
@@ -399,8 +448,7 @@ void ArchiveScanner::scanZip(ZipReader& reader, Context& ctx) {
         ctx.budget->addExpanded(bytes.size());
         ctx.budget->addConsumed(entries[item.index].compressedSize);
 
-        const std::string display = ctx.display + std::string(kMemberSeparator) + name;
-        scanMemberBytes(display, bytes, ctx, std::move(item.named));
+        scanMemberBytes(name, bytes, ctx, std::move(item.named));
     }
 }
 
@@ -430,29 +478,29 @@ void ArchiveScanner::scanTar(ByteSource& stream, Context& ctx, ByteSource& raw) 
 
         ctx.summary->observe(entry.name);
         const std::string name = normalizeMemberName(entry.name);
+        const std::string_view filterName = memberFilterName(entry.name);
 
-        reportMember(ctx, name, delta, index, 0, false);
+        reportMember(ctx, entry.name, delta, index, 0, false);
 
-        std::vector<FileMatch> named = nameFindings(entry, name);
-        if (const auto skip = selectionSkip(name, entry.size, entry.directory,
+        std::vector<FileMatch> named = nameFindings(entry, filterName);
+        if (const auto skip = selectionSkip(name, filterName, entry.size, entry.directory,
                                             config_, memberLimit_, filters_)) {
             ctx.stats->skip(*skip);
-            reportUnopened(ctx, name, entry.size, std::move(named), *skip);
+            reportUnopened(ctx, entry.name, entry.size, std::move(named), *skip);
             continue;
         }
 
         if (!tar.readCurrent(bytes, memberLimit_)) {
             const SkipReason why = tar.stopReason().value_or(SkipReason::Corrupt);
             ctx.stats->skip(why);
-            reportUnopened(ctx, name, entry.size, std::move(named), why);
+            reportUnopened(ctx, entry.name, entry.size, std::move(named), why);
             if (tar.stopped() || tar.corrupt()) {
                 break;
             }
             continue;
         }
 
-        const std::string display = ctx.display + std::string(kMemberSeparator) + name;
-        scanMemberBytes(display, bytes, ctx, std::move(named));
+        scanMemberBytes(entry.name, bytes, ctx, std::move(named));
     }
 
     if (tar.corrupt()) {
@@ -478,7 +526,8 @@ void ArchiveScanner::scanSingleGzip(ByteSource& source, Context& ctx,
     ctx.summary->observe(memberName);
 
     const std::string name = normalizeMemberName(memberName);
-    if (const auto skip = selectionSkip(name, 0, false, config_, 0, filters_)) {
+    if (const auto skip = selectionSkip(name, memberFilterName(memberName), 0, false, config_, 0,
+                                        filters_)) {
         ctx.stats->skip(*skip);
         return;
     }
@@ -512,10 +561,9 @@ void ArchiveScanner::scanSingleGzip(ByteSource& source, Context& ctx,
 
     // Progress through a stream is measured in the compressed bytes it came
     // from, which are the bytes the container actually occupies on disk.
-    reportMember(ctx, name, source.consumed(), 1, 1, false);
+    reportMember(ctx, memberName, source.consumed(), 1, 1, false);
 
-    const std::string display = ctx.display + std::string(kMemberSeparator) + name;
-    scanMemberBytes(display, bytes, ctx, {});
+    scanMemberBytes(memberName, bytes, ctx, {});
 }
 
 std::vector<FileMatch> ArchiveScanner::exposureFindings(const IndexSummary& summary,
@@ -582,6 +630,7 @@ ArchiveScanner::Outcome ArchiveScanner::scan(const std::filesystem::path& path, 
 
     Context ctx;
     ctx.display = pathToUtf8(path);
+    ctx.filterDirectory = MatchEngine::diskFilterPath(pathToUtf8(path.parent_path()));
     ctx.depth = 1;
     ctx.budget = &budget;
     ctx.stats = &outcome.stats;

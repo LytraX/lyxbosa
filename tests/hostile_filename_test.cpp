@@ -1117,18 +1117,17 @@ using lyxbosa::test::fixtures::hostBytesOf;
 using lyxbosa::test::fixtures::readBytes;
 using lyxbosa::test::fixtures::writeZip;
 
-// The row for the member stored as `stored` inside `container`. Its address is built the way
-// the archive scanner builds it - the container's UTF-8 path, `!`, and the normalised name -
-// so that the comparison is of one construction with itself on every platform.
+// The row for the member stored as `stored` inside `container`. Its address is the container's
+// UTF-8 path, `!`, and the name exactly as the archive stores it.
+//
+// Compared as UTF-8 strings, not as paths. On Windows path equality compares components and
+// takes `/` and `\` for the same separator, so `site\x.php` and `site/x.php` - two members -
+// would each find the other's row.
 const FileResult* findMember(const ScanResult& result, const fs::path& container,
                              const std::string& stored) {
-    // Through pathFromUtf8(), as the scanner builds it. Built with the narrow constructor, this
-    // helper decoded the address in the code page on Windows exactly as the scanner once did,
-    // and the two wrong spellings compared equal.
-    const fs::path address =
-        pathFromUtf8(pathToUtf8(container) + "!" + archive::normalizeMemberName(stored));
+    const std::string address = pathToUtf8(container) + "!" + stored;
     for (const auto& file : result.files) {
-        if (file.path == address) {
+        if (pathToUtf8(file.path) == address) {
             return &file;
         }
     }
@@ -1437,7 +1436,7 @@ TEST(MemberNameTest, ABackslashInAZipEntryIsASeparatorOnlyWhenADosOrWindowsHostW
             ASSERT_EQ(byte, host.byte) << "the fixture does not carry the host byte it claims";
         }
 
-        // Every row keeps the address member rows have always had, backslashes shown as `/`.
+        // Every row is addressed by the name as the zip stores it, backslashes and all.
         const FileResult* index = findMember(result, zip, "site\\wp-content\\index.php");
         const FileResult* db = findMember(result, zip, "site\\wp-content\\uploads\\x$(id).mdb");
         const FileResult* zz = findMember(result, zip, "uploads/a\\zz-1.php");
@@ -1515,7 +1514,7 @@ TEST(MemberNameTest, EachEntryAndEachNestedZipIsJudgedByItsOwnWriter) {
     EXPECT_EQ(codesOf(*unixRow), (std::set<std::string>{"FN002"}));
 
     const fs::path insideUnix(pathToUtf8(unixOuter) + "!nested/from-windows.zip");
-    const fs::path insideWindows(pathToUtf8(windowsOuter) + "!nested/from-unix.zip");
+    const fs::path insideWindows(pathToUtf8(windowsOuter) + "!nested\\from-unix.zip");
     EXPECT_EQ(findMember(result, insideUnix, "site\\inner.php"), nullptr)
         << "a Windows-made zip was judged by the Unix-made zip around it\n" << listRows(result);
     const FileResult* innerUnix = findMember(result, insideWindows, "site\\inner.php");

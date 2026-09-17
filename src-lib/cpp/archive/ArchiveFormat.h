@@ -40,4 +40,8 @@ bool hasArchiveExtension(const std::filesystem::path& path);
 // "dump.sql".
 std::string gzipMemberName(const std::filesystem::path& path);
 
+// The same for a gzip that is itself a member, from its stored name: what follows the last
+// `/` of it, a backslash kept as a character, as every member name is.
+std::string gzipMemberNameOf(std::string_view storedName);
+
 }  // namespace lyxbosa::archive

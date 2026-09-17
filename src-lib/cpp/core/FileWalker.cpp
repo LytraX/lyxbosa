@@ -3,7 +3,10 @@
 #include "infrastructure/PathUtils.h"
 #include <algorithm>
 #include <cstdint>
+#include <cctype>
 #include <cstring>
+#include <optional>
+#include <string_view>
 
 #ifdef _WIN32
 // Portable fnmatch replacement for Windows
@@ -872,6 +875,158 @@ CountResult FileWalker::countFiles(const CountProgressCallback& onProgress,
     });
 
     return result;
+}
+
+FileWalker::FilterVerdict FileWalker::memberFilterVerdict(std::string_view memberName) const {
+    // In filterVerdict()'s order and for its reason: an exclude pattern is asked first.
+    for (const auto& pattern : config_.exclude) {
+        if (matchesMemberGlob(pattern, memberName)) {
+            return FilterVerdict::Excluded;
+        }
+    }
+    if (config_.include.empty()) {
+        return FilterVerdict::Accepted;
+    }
+    for (const auto& pattern : config_.include) {
+        if (matchesMemberGlob(pattern, memberName)) {
+            return FilterVerdict::Accepted;
+        }
+    }
+    return FilterVerdict::NotIncluded;
+}
+
+bool FileWalker::matchesMemberGlob(const std::string& pattern, std::string_view memberName) {
+    const size_t slash = memberName.find_last_of('/');
+    const std::string_view base =
+        slash == std::string_view::npos ? memberName : memberName.substr(slash + 1);
+
+    // "!ext" as std::filesystem::path::extension() reads a name: a dot that is not the
+    // name's first character. `.htaccess` has none, and neither do `.` and `..`.
+    if (pattern == "!ext") {
+        const size_t dot = base.find_last_of('.');
+        return dot == std::string_view::npos || dot == 0 || base == "..";
+    }
+
+    if (globMatch(pattern, base)) {
+        return true;
+    }
+    return pattern.find("**") != std::string::npos && globMatch(pattern, memberName);
+}
+
+namespace {
+
+// One bracket expression starting at pattern[at] == '['. Sets `next` past the closing ']'
+// and returns whether `c` is in the set; returns nullopt when the bracket never closes, in
+// which case fnmatch(3) reads the '[' as an ordinary character.
+std::optional<bool> matchBracket(std::string_view pattern, size_t at, unsigned char c,
+                                 size_t& next) {
+    size_t i = at + 1;
+    bool negate = false;
+    if (i < pattern.size() && (pattern[i] == '!' || pattern[i] == '^')) {
+        negate = true;
+        ++i;
+    }
+    bool matched = false;
+    bool first = true;
+    while (i < pattern.size()) {
+        unsigned char lo = static_cast<unsigned char>(pattern[i]);
+        if (lo == ']' && !first) {
+            next = i + 1;
+            return matched != negate;
+        }
+        first = false;
+        if (lo == '[' && i + 1 < pattern.size() && pattern[i + 1] == ':') {
+            const size_t close = pattern.find(":]", i + 2);
+            if (close != std::string_view::npos) {
+                const std::string_view cls = pattern.substr(i + 2, close - i - 2);
+                bool in = false;
+                if (cls == "alpha") in = std::isalpha(c);
+                else if (cls == "digit") in = std::isdigit(c);
+                else if (cls == "alnum") in = std::isalnum(c);
+                else if (cls == "upper") in = std::isupper(c);
+                else if (cls == "lower") in = std::islower(c);
+                else if (cls == "space") in = std::isspace(c);
+                else if (cls == "punct") in = std::ispunct(c);
+                else if (cls == "xdigit") in = std::isxdigit(c);
+                else if (cls == "blank") in = c == ' ' || c == '\t';
+                else if (cls == "cntrl") in = std::iscntrl(c);
+                else if (cls == "print") in = std::isprint(c);
+                else if (cls == "graph") in = std::isgraph(c);
+                else return std::nullopt;   // an unknown class makes the whole pattern invalid
+                matched = matched || in;
+                i = close + 2;
+                continue;
+            }
+        }
+        if (lo == '\\' && i + 1 < pattern.size()) {
+            lo = static_cast<unsigned char>(pattern[++i]);
+        }
+        unsigned char hi = lo;
+        if (i + 2 < pattern.size() && pattern[i + 1] == '-' && pattern[i + 2] != ']') {
+            size_t h = i + 2;
+            if (pattern[h] == '\\' && h + 1 < pattern.size()) ++h;
+            hi = static_cast<unsigned char>(pattern[h]);
+            i = h;
+        }
+        if (c >= lo && c <= hi) matched = true;
+        ++i;
+    }
+    return std::nullopt;
+}
+
+bool globMatchFrom(std::string_view p, size_t pi, std::string_view s, size_t si) {
+    while (pi < p.size()) {
+        const char pc = p[pi];
+        if (pc == '*') {
+            while (pi < p.size() && p[pi] == '*') ++pi;
+            if (pi == p.size()) {
+                return s.find('/', si) == std::string_view::npos;
+            }
+            for (size_t k = si; k <= s.size(); ++k) {
+                if (globMatchFrom(p, pi, s, k)) return true;
+                if (k < s.size() && s[k] == '/') return false;
+            }
+            return false;
+        }
+        if (si == s.size()) return false;
+        const unsigned char sc = static_cast<unsigned char>(s[si]);
+        if (pc == '?') {
+            if (sc == '/') return false;
+            ++pi;
+            ++si;
+            continue;
+        }
+        if (pc == '[') {
+            size_t next = 0;
+            if (sc != '/') {
+                if (const auto in = matchBracket(p, pi, sc, next)) {
+                    if (!*in) return false;
+                    pi = next;
+                    ++si;
+                    continue;
+                }
+            } else {
+                size_t unused = 0;
+                if (matchBracket(p, pi, 'a', unused)) return false;   // a bracket never matches '/'
+            }
+            // An unclosed bracket is a literal '['.
+        }
+        char want = pc;
+        if (pc == '\\') {
+            if (pi + 1 == p.size()) return false;   // a trailing backslash loses
+            want = p[++pi];
+        }
+        if (static_cast<unsigned char>(want) != sc) return false;
+        ++pi;
+        ++si;
+    }
+    return si == s.size();
+}
+
+}  // namespace
+
+bool FileWalker::globMatch(std::string_view pattern, std::string_view name) {
+    return globMatchFrom(pattern, 0, name, 0);
 }
 
 bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::path& path) {

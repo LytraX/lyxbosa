@@ -39,6 +39,10 @@
 #include "core/FileWalker.h"
 #include "core/Interrupt.h"
 
+#ifndef _WIN32
+#include <fnmatch.h>
+#endif
+
 #include "PlatformSkips.h"
 
 #include <algorithm>
@@ -1583,4 +1587,137 @@ TEST(FileWalkerInterruptTest, ACountThatIsNotInterruptedCountsEveryFile) {
     EXPECT_FALSE(counted.boundHit);
     EXPECT_EQ(counted.entered, 11u);
     EXPECT_EQ(counted.result.files, 10u);
+}
+
+// ---------------------------------------------------------------------------
+// An archive member's name against the operator's patterns
+// ---------------------------------------------------------------------------
+//
+// A member name is a string whose only separator is `/`, and FileWalker::globMatch() is the one
+// matcher that reads it, on every platform - so its answers are held to fnmatch(3)'s, over every
+// pattern below and every name below.
+
+
+namespace {
+
+const std::vector<std::string> kGlobPatterns = {
+    "*", "**", "*.php", "*.min.js", "*.php*", "vendor/**", "vendor/*", "node_modules/**",
+    "*/vendor/*", "wp-content/*/x.php", "?", "??.php", "a?c", "[abc].php", "[!abc].php",
+    "[^abc].php", "[a-c]*", "[]a]x", "[!]a]x", "[a-]x", "[[:digit:]]*", "[[:alpha:]][[:alnum:]]*",
+    "[[:upper:]]*", "x[", "x[a", "\\*.php", "a\\?c", "a\\", "vendor\\*", "*\\*", "[\\]]x",
+    ".*", "*.", "", "a/b", "a*/b", "**/x.php", "*x.php", "vendor/**/x.php",
+};
+
+const std::vector<std::string> kGlobNames = {
+    "", "x.php", "a.b.php", ".htaccess", "vendor/x.php", "vendor/lib/x.php", "vendor\\x.php",
+    "vendor\\lib\\x.php", "src\\vendor\\x.php", "wp-content/plugins/x.php", "wp-content/a/x.php",
+    "a/b", "ab/b", "abc", "a?c", "a*c", "*.php", "b.php", "d.php", "]x", "ax", "-x", "!x",
+    "1x", "Ax", "x[", "x[a", "a\\", "a\\b", "jquery.min.js", "x.php.bak", "node_modules/a/b.js",
+    "src/vendor/lib", "./x.php", "/x.php", "..\\..\\x.php", "a/vendor/b", ".x", "x.", "[a]x",
+};
+
+}  // namespace
+
+// fnmatch(3)'s answers over the two tables above with FNM_PATHNAME, as glibc gives them: one row
+// per pattern, one column per name, '1' where the name matches. Recorded, so that every platform
+// is held to the same answers; where fnmatch(3) exists the case asks it as well, so the record
+// cannot drift away from what it records.
+constexpr std::string_view kFnmatchAnswers[] = {
+    "1111001110000111111111111111111000010111",
+    "1111001110000111111111111111111000010111",
+    "0110001110000000111000000000000000010000",
+    "0000000000000000000000000000010000000000",
+    "0110001110000000111000000000001000010000",
+    "0000100000000000000000000000000000000000",
+    "0000100000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000000000000000010001000",
+    "0000000001100000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000111000000000000000000000000",
+    "0000000000000000010000000000000000000000",
+    "0100000000000000101000000000000000000000",
+    "0100000000000000101000000000000000000000",
+    "0010000000000111010010000001100000000000",
+    "0000000000000000000110000000000000000000",
+    "0000000000000000000001111000000000000100",
+    "0000000000000000000011000000000000000000",
+    "0000000000000000000000010000000000000000",
+    "0000001110000100000010001000010000000000",
+    "0000000000000000000000001000000000000000",
+    "0000000000000000000000000100000000000000",
+    "0000000000000000000000000010000000000000",
+    "0000000000000000100000000000000000000000",
+    "0000000000000010000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000100000000000000000000",
+    "0001000000000000000000000000000000010100",
+    "0000000000000000000000000000000000000010",
+    "1000000000000000000000000000000000000000",
+    "0000000000010000000000000000000000000000",
+    "0000000000011000000000000000000000000000",
+    "0000100000000000000000000000000001100000",
+    "0100001110000000000000000000000000010000",
+    "0000010000000000000000000000000000000000",
+};
+
+TEST(FileWalkerMemberFilterTest, GlobMatchAnswersAsFnmatchWithPathnameDoes) {
+    ASSERT_EQ(std::size(kFnmatchAnswers), kGlobPatterns.size());
+    size_t compared = 0;
+    for (size_t i = 0; i < kGlobPatterns.size(); ++i) {
+        ASSERT_EQ(kFnmatchAnswers[i].size(), kGlobNames.size()) << "row " << i;
+        for (size_t j = 0; j < kGlobNames.size(); ++j) {
+            const bool expected = kFnmatchAnswers[i][j] == '1';
+            EXPECT_EQ(FileWalker::globMatch(kGlobPatterns[i], kGlobNames[j]), expected)
+                << "pattern '" << kGlobPatterns[i] << "' name '" << kGlobNames[j] << "'";
+#ifndef _WIN32
+            EXPECT_EQ(fnmatch(kGlobPatterns[i].c_str(), kGlobNames[j].c_str(), FNM_PATHNAME) == 0,
+                      expected)
+                << "the recorded answer is not fnmatch(3)'s: pattern '" << kGlobPatterns[i]
+                << "' name '" << kGlobNames[j] << "'";
+#endif
+            ++compared;
+        }
+    }
+    EXPECT_EQ(compared, 1560u);
+}
+
+// The answers the default patterns give, stated directly so every platform checks them.
+TEST(FileWalkerMemberFilterTest, AStarNeverCrossesASlashAndABackslashIsACharacter) {
+    EXPECT_TRUE(FileWalker::globMatch("vendor/**", "vendor/x.php"));
+    EXPECT_FALSE(FileWalker::globMatch("vendor/**", "vendor/lib/x.php"));
+    EXPECT_FALSE(FileWalker::globMatch("vendor/**", "vendor\\x.php"));
+    EXPECT_TRUE(FileWalker::globMatch("*.min.js", "wp-includes\\js\\jquery.min.js"))
+        << "a backslash is a character, which `*` matches like any other";
+    EXPECT_FALSE(FileWalker::globMatch("*.php", "a/b.php"));
+    EXPECT_TRUE(FileWalker::globMatch("*.php", "a\\b.php"));
+    EXPECT_TRUE(FileWalker::globMatch("[!a]x", "\\x"));
+    EXPECT_FALSE(FileWalker::globMatch("?", "/"));
+    EXPECT_FALSE(FileWalker::globMatch("[/]", "/"));
+}
+
+// The verdict for a member, with the default patterns: a directory the name really has is
+// excluded as the pattern says, a backslash-spelled one is not, and the include list reads the
+// final component after the last `/` only.
+TEST(FileWalkerMemberFilterTest, AMembersVerdictReadsItsNameWithSlashesAsTheOnlySeparator) {
+    ScanConfig scan = Config::loadFromString(Config::generateDefault()).scan;
+    const FileWalker walker(scan);
+    using Verdict = FileWalker::FilterVerdict;
+
+    EXPECT_EQ(walker.memberFilterVerdict("vendor/x.php"), Verdict::Excluded);
+    EXPECT_EQ(walker.memberFilterVerdict("node_modules/x.js"), Verdict::Excluded);
+    EXPECT_EQ(walker.memberFilterVerdict("vendor/lib/x.php"), Verdict::Accepted);
+    EXPECT_EQ(walker.memberFilterVerdict("vendor\\x.php"), Verdict::Accepted);
+    EXPECT_EQ(walker.memberFilterVerdict("site\\wp-includes\\js\\jquery.min.js"), Verdict::Excluded);
+    EXPECT_EQ(walker.memberFilterVerdict("site/x.php"), Verdict::Accepted);
+    EXPECT_EQ(walker.memberFilterVerdict("site/uploads/table.mdb"), Verdict::NotIncluded);
+
+    // `!ext`, the include pattern for a file with no extension, reads the final component as
+    // std::filesystem reads a name: `id_rsa` has none, `deploy\.ssh\id_rsa` has `.ssh\id_rsa`.
+    EXPECT_EQ(walker.memberFilterVerdict("home/deploy/.ssh/id_rsa"), Verdict::Accepted);
+    EXPECT_EQ(walker.memberFilterVerdict("home/deploy\\.ssh\\id_rsa"), Verdict::NotIncluded);
+    EXPECT_EQ(walker.memberFilterVerdict("cgi-bin/handler"), Verdict::Accepted);
 }
