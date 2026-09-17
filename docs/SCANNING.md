@@ -344,14 +344,24 @@ is not a directory either: an upload named `revslider-6.7.zip` grants its member
 and a nested archive's name grants its members none. On Windows the container's path, where a
 backslash is always a separator, is the only part read with backslashes as slashes.
 
-**Patterns.** `scan.include` and `scan.exclude` are asked about a member's stored name without
-its leading `./` or `/`, with `/` as its only separator: a pattern is matched against the final
-component — everything after the last `/` — and, when it holds `**`, against the whole name. The
-matcher is `fnmatch(3)` with `FNM_PATHNAME` on every platform, so `*` and `**` alike stop at a
-`/`: the default `vendor/**` excludes what sits directly in a top-level `vendor/` of an archive
-and nothing below it, on Windows as on Linux, and `vendor\x.php` is not in `vendor/`. The same
-name decides the sidecar test: a Mac's `__MACOSX/` tree and `._name` stubs are left shut, and a
-member named `uploads/__MACOSX\x.php` is not one of them.
+**Patterns.** `scan.include` and `scan.exclude` are asked about a file and about a member by one
+matcher, the same on every platform and against every C library, so that a file and the member
+a backup makes of it answer every pattern alike. A file is asked about its path with `/` as the
+separator: on Windows every backslash in it has become `/`, which is exact there, and on Linux
+the path is the name's own bytes, a backslash included. A member is asked about the path it has
+beside its archive: the archive's directory, then the member's stored name without its leading
+`./` or `/`, a backslash in it a character. A pattern is matched against the final component —
+everything after the last `/` — and, when it holds `**`, against the whole path. The matcher
+answers as glibc's `fnmatch(3)` does with `FNM_PATHNAME`, so `*` and `**` alike stop at a `/`,
+a bracket expression is a character class, and a backslash quotes the character after it. The
+scanner carries it rather than calling the C library's: musl's `fnmatch(3)` answers two shapes
+POSIX leaves undefined differently — a trailing backslash, and a backslash inside a bracket
+expression — and Windows has none. Because a path is absolute, `vendor/**` names nothing on disk
+and nothing inside an archive; a pattern that begins with a directory, such as
+`/var/www/site/vendor/**`, names what sits directly in that directory, as a file or as a member
+of an archive stored there, and `vendor\x.php` is not in it. The stored name alone decides the
+sidecar test: a Mac's `__MACOSX/` tree and `._name` stubs are left shut, and a member named
+`uploads/__MACOSX\x.php` is not one of them.
 
 ### How a name is printed, and how a program gets back to the file
 

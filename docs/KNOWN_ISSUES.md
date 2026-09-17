@@ -48,16 +48,18 @@ than assuming depth 1.
 
 ## 2. `node_modules/**` and `vendor/**` in the default excludes match nothing
 
-**Where:** `FileWalker::matchesGlob`, and the generated config in
+**Where:** `FileWalker::matchesPattern`, and the generated config in
 `src-lib/cpp/config/Config.cpp` (which carries a longer warning inline).
 
-`matchesGlob` compares a pattern against the *filename* first, and against the full path
-only when the pattern contains `**`, using `fnmatch` with `FNM_PATHNAME` — under which `*`
-does not cross a `/`. So `vendor/**` can only match a path that *begins* with `vendor/`,
-and every path the walker produces is absolute. Verified directly against `fnmatch(3)`.
-Only filename patterns such as `*.min.js` do anything.
+`matchesPattern` compares a pattern against the *filename* first, and against the full path
+only when the pattern contains `**`, with the scanner's own matcher, which answers as glibc's
+`fnmatch(3)` with `FNM_PATHNAME` on every platform — under which `*` does not cross a `/`. So
+`vendor/**` can only match a path that *begins* with `vendor/`, and every path the walker
+produces is absolute. An archive member is matched at the path it has beside its archive,
+which is absolute in the same way. Only filename patterns such as `*.min.js` do anything.
 
-**Impact:** the two path excludes shipped in the default configuration are inert.
+**Impact:** the two path excludes shipped in the default configuration are inert, on disk and
+inside archives.
 
 **Why it is not fixed:** the bug is currently protective. Making the patterns live would
 silently stop scanning `vendor/` and `node_modules/`, and on the production host this was
@@ -71,8 +73,9 @@ types rather than by these patterns. On a 1.3 M-file host it read 100,932 while 
 exclude patterns contributed nothing.
 
 **Fix when it is worth doing:** decide the intended default excludes first, then make the
-matcher do what the patterns say — most simply by matching `**` against the full path
-without `FNM_PATHNAME`, or by translating globs to a regex.
+patterns do what they say — for instance by matching a path relative to the scan root, which a
+member's location beside its archive would then have to follow so that a file and the member a
+backup makes of it keep answering alike.
 
 ---
 

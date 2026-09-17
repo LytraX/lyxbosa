@@ -66,11 +66,18 @@ commit list that CI generates per tag.
   carried its name rewritten — backslashes to slashes, a leading `./` or `/` removed — so
   `src\vendor\x.php` and `src/vendor\x.php` were both reported as `src/vendor/x.php`, and
   neither address was a name the archive stored. The address is now the stored name.
-- **`vendor/**` in `scan.exclude` answers the same for an archive member on Windows as on
-  Linux.** Windows' matcher let `**` cross a `/`, so it excluded everything under an archive's
-  top-level `vendor/`, while Linux excluded only what sits directly in it. Member names are now
-  matched by one implementation of `fnmatch(3)` with `FNM_PATHNAME` on every platform: `*` and
-  `**` stop at a `/`.
+- **`scan.include` and `scan.exclude` give one answer on every platform, against every C
+  library, and for a file and the member a backup makes of it.** A file was matched by the C
+  library's `fnmatch(3)` on Linux and by an older matcher of the scanner's own on Windows, and an
+  archive member by a third. musl's `fnmatch(3)` answers a pattern ending in a backslash, and a
+  backslash inside a bracket expression, differently from glibc's, so the glibc and musl builds
+  of one commit could exclude different files. Windows' matcher let `**` cross a `/` and found
+  `vendor/` after any character, so `**/vendor/**` also excluded `jetpack_vendor/`. And a member
+  was matched by its stored name while a file was matched by its absolute path, so one pattern
+  could answer two ways for a file and for the same file inside a backup of its directory. One
+  matcher now answers them all as glibc's `fnmatch(3)` does with `FNM_PATHNAME`: a Windows file's
+  backslashes read as `/`, a Linux file's name as its bytes, and a member at the path it has
+  beside its archive.
 - **A PHP backup made on Windows no longer raises FN002 on every member.** PHP's `ZipArchive`
   records the Unix host byte on Windows and a backup script stores the paths the directory
   iterator spells, so every member below the top raised FN002 for its separators, and a planted
@@ -205,13 +212,30 @@ commit list that CI generates per tag.
   With quarantine on, a backup whose only content findings are these is moved. A member at an
   archive's top level that sits under `vendor/`, `tests/` or another prior's directory is
   suppressed where it was reported.
-- **Members newly opened, and members newly excluded, by `scan.exclude`.** A member named with a
-  backslash that a pattern matched only after the backslash became a slash — `vendor\x.php`
-  under the default `vendor/**` - is opened and read. On Windows a member two or more
-  directories below an archive's top-level `vendor/` or `node_modules/` is opened where the
-  default patterns excluded it. None of the members of the seven WordPress backups measured
-  changed. A member named `uploads/__MACOSX\x.php` or `a\._x.php` is opened where it was left
-  shut as a Mac sidecar.
+- **Archive members newly opened by `scan.include` and `scan.exclude`.** A member is matched at
+  the path it has beside its archive, as a file of that name in the archive's directory is, so
+  `vendor/**` and `node_modules/**` in the default configuration, which match nothing on disk,
+  match nothing inside an archive either: a member directly in an archive's top-level `vendor/`
+  or `node_modules/` is opened where it was excluded, on Linux, and one at any depth below them
+  is opened on Windows. A member named with a backslash that a pattern matched only after the
+  backslash became a slash — `vendor\x.php` — is opened, and so is a member named
+  `uploads/__MACOSX\x.php` or `a\._x.php`, which was left shut as a Mac sidecar. No member of
+  the seven WordPress backups or the twelve plugin zips measured changed on Linux.
+- **On Windows, an include or exclude pattern holding `**` or a bracket names fewer files.** `**`
+  no longer crosses a `/`, a `/` in a pattern has to meet a separator rather than any character
+  before it, a bracket expression is a character class, and a backslash in a pattern quotes the
+  character after it instead of standing for a separator. Measured by adding `**/node_modules/**`,
+  `**/vendor/**`, `**/cache/**`, `**/*.min.js`, `wp-content/uploads/**` and `**/languages/**` to the
+  default excludes: over WordPress 7.1, 16 files that were excluded are scanned, all under
+  `wp-includes/js/dist/vendor/`; with twelve widely installed plugins, 5,877 are — 3,443 under a
+  `vendor/` directory, 2,061 under `jetpack_vendor/`, 281 under directories whose names end in
+  `cache` and 68 under `cache/`, and 24 under `languages/`. Those patterns exclude nothing on
+  Linux, before or after, and now exclude nothing on Windows either. With the default
+  configuration no file changed on Windows, Linux or the portable Linux build, and after the
+  change all three exclude exactly the same files over both trees.
+- **On the portable Linux build, a pattern ending in a backslash, or holding a backslash inside
+  a bracket expression, answers as it does on the glibc build.** Neither shape occurred in the
+  trees measured.
 - **A zip whose names use only backslashes raises no FN002 for its separators**, where it raised
   FN002 on every member holding one; a member named `....\x.txt` in such a zip, which no
   extractor measured wrote outside its destination, raises nothing.
