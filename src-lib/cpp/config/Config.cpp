@@ -539,17 +539,23 @@ scan:
   # Exclusions.
   #
   # CAREFUL: `node_modules/**` and `vendor/**` match nothing, and that is currently
-  # load-bearing. matchesFilters compares a pattern against the *filename* first and
-  # against the full path only when the pattern contains `**`, using fnmatch with
-  # FNM_PATHNAME - under which `*` does not cross a `/`. So `vendor/**` can only match
-  # a path that *begins* with `vendor/`, and every path here is absolute. Verified
-  # directly against fnmatch(3). Only filename patterns like `*.min.js` do anything.
+  # load-bearing. A pattern is compared against the *filename* first and against the
+  # full path only when it contains `**`, answering as glibc's fnmatch(3) does with
+  # FNM_PATHNAME - under which `*` does not cross a `/` - on every platform. So
+  # `vendor/**` can only match a path that *begins* with `vendor/`, and every path here
+  # is absolute. Only filename patterns like `*.min.js` do anything.
   #
   # Do not "fix" this without deciding what should happen next. Making these live would
   # silently stop scanning `vendor/` and `node_modules/`, and on the production host this
   # was measured against, a large share of the real malware sits under vendored paths -
   # webshells dropped in `vendor/psr/log/Psr/Log/index.php` and the like. The broken
   # glob is protecting coverage by accident.
+  #
+  # An archive member is matched at the path it has beside its archive - the archive's
+  # directory, then the member's stored name - so it answers exactly as the file of that
+  # name in that directory would, and these two patterns match nothing inside an archive
+  # either. On Windows a file's backslashes are read as `/`; a backslash in a member's name,
+  # and in a file's name on Linux, is a character.
   #
   # The `excluded` count in the skip tally is dominated by the *include* allow-list
   # rejecting file types, not by these patterns, so it will not tell you they are dead.

@@ -3,62 +3,12 @@
 #include "infrastructure/PathUtils.h"
 #include <algorithm>
 #include <cstdint>
+#include <cctype>
 #include <cstring>
+#include <optional>
+#include <string_view>
 
-#ifdef _WIN32
-// Portable fnmatch replacement for Windows
-// Supports *, ?, and ** (recursive) glob patterns
-static bool portable_fnmatch(const char* pattern, const char* str) {
-    while (*pattern && *str) {
-        if (*pattern == '*') {
-            if (*(pattern + 1) == '*') {
-                // ** matches everything including path separators
-                pattern += 2;
-                if (*pattern == '/' || *pattern == '\\') pattern++;
-                if (!*pattern) return true;
-                for (const char* s = str; *s; ++s) {
-                    if (portable_fnmatch(pattern, s)) return true;
-                }
-                return false;
-            }
-            // * matches everything except path separators
-            pattern++;
-            if (!*pattern) {
-                // trailing * — match if no more separators
-                while (*str) {
-                    if (*str == '/' || *str == '\\') return false;
-                    str++;
-                }
-                return true;
-            }
-            for (const char* s = str; *s; ++s) {
-                if (*s == '/' || *s == '\\') return false;
-                if (portable_fnmatch(pattern, s)) return true;
-            }
-            return portable_fnmatch(pattern, str);
-        }
-        if (*pattern == '?') {
-            if (*str == '/' || *str == '\\') return false;
-            pattern++;
-            str++;
-            continue;
-        }
-        char pc = *pattern, sc = *str;
-        if (pc == '\\') pc = '/';
-        if (sc == '\\') sc = '/';
-        if (pc != sc) return false;
-        pattern++;
-        str++;
-    }
-    while (*pattern == '*') pattern++;
-    return !*pattern && !*str;
-}
-#else
-#include <fnmatch.h>
-#endif
-
-// For the directory identity and the link classification below. Separate from the block
-// above, which is about glob matching and nothing else.
+// For the directory identity and the link classification below.
 #ifdef _WIN32
 #include <windows.h>
 #include <winioctl.h>
@@ -812,6 +762,15 @@ size_t FileWalker::walkDirectory(const std::filesystem::path& dir, FileCallback 
 
 FileWalker::FilterVerdict FileWalker::filterVerdict(
     const std::filesystem::path& path) const {
+    // The name as UTF-8, because that is what a pattern is: it was written in the
+    // configuration file or on the command line. path::string() is not an option on Windows
+    // twice over - it spells the name in the ANSI code page, so a pattern with a Greek letter
+    // in it could never match, and it throws on a character that code page cannot hold, which
+    // turned every file named in Japanese on a Greek host into an aborted scan.
+    return filterVerdictAt(diskPathWithSlashes(pathToUtf8(path)));
+}
+
+FileWalker::FilterVerdict FileWalker::filterVerdictAt(std::string_view slashPath) const {
     // An exclude pattern is asked first, because the two answers are not equal. Both keep the
     // file shut, and a skip tally cannot tell them apart; but NotIncluded lets the scanner read
     // the file's name and Excluded does not. Asked the other way round, a `.mdb` under a tree
@@ -819,7 +778,7 @@ FileWalker::FilterVerdict FileWalker::filterVerdict(
     // and its name was reported from inside the tree the operator had written down as not to
     // be looked at.
     for (const auto& pattern : config_.exclude) {
-        if (matchesGlob(pattern, path)) {
+        if (matchesPattern(pattern, slashPath)) {
             return FilterVerdict::Excluded;
         }
     }
@@ -830,7 +789,7 @@ FileWalker::FilterVerdict FileWalker::filterVerdict(
         return FilterVerdict::Accepted;
     }
     for (const auto& pattern : config_.include) {
-        if (matchesGlob(pattern, path)) {
+        if (matchesPattern(pattern, slashPath)) {
             return FilterVerdict::Accepted;
         }
     }
@@ -874,47 +833,139 @@ CountResult FileWalker::countFiles(const CountProgressCallback& onProgress,
     return result;
 }
 
-bool FileWalker::matchesGlob(const std::string& pattern, const std::filesystem::path& path) {
-    // Handle special "!ext" pattern (files without extension)
+bool FileWalker::matchesPattern(const std::string& pattern, std::string_view slashPath) {
+    const size_t slash = slashPath.find_last_of('/');
+    const std::string_view base =
+        slash == std::string_view::npos ? slashPath : slashPath.substr(slash + 1);
+
+    // "!ext" as std::filesystem::path::extension() reads a name: a dot that is not the
+    // name's first character. `.htaccess` has none, and neither do `.` and `..`.
     if (pattern == "!ext") {
-        return !path.has_extension();
+        const size_t dot = base.find_last_of('.');
+        return dot == std::string_view::npos || dot == 0 || base == "..";
     }
 
-    // The name as UTF-8, because that is what a pattern is: it was written in the
-    // configuration file or on the command line. path::string() is not an option on Windows
-    // twice over - it spells the name in the ANSI code page, so a pattern with a Greek letter
-    // in it could never match, and it throws on a character that code page cannot hold, which
-    // turned every file named in Japanese on a Greek host into an aborted scan.
-    //
-    // Try matching against filename only first
-    const std::string filename = pathToUtf8(path.filename());
-#ifdef _WIN32
-    if (portable_fnmatch(pattern.c_str(), filename.c_str())) {
+    // The final component first, and the whole path only for a pattern holding `**`.
+    if (globMatch(pattern, base)) {
         return true;
     }
+    return pattern.find("**") != std::string::npos && globMatch(pattern, slashPath);
+}
 
-    // For patterns with **, try matching against full path
-    if (pattern.find("**") != std::string::npos) {
-        const std::string fullPath = pathToUtf8(path);
-        if (portable_fnmatch(pattern.c_str(), fullPath.c_str())) {
-            return true;
+namespace {
+
+// One bracket expression starting at pattern[at] == '['. Sets `next` past the closing ']'
+// and returns whether `c` is in the set; returns nullopt when the bracket never closes, in
+// which case fnmatch(3) reads the '[' as an ordinary character.
+std::optional<bool> matchBracket(std::string_view pattern, size_t at, unsigned char c,
+                                 size_t& next) {
+    size_t i = at + 1;
+    bool negate = false;
+    if (i < pattern.size() && (pattern[i] == '!' || pattern[i] == '^')) {
+        negate = true;
+        ++i;
+    }
+    bool matched = false;
+    bool first = true;
+    while (i < pattern.size()) {
+        unsigned char lo = static_cast<unsigned char>(pattern[i]);
+        if (lo == ']' && !first) {
+            next = i + 1;
+            return matched != negate;
         }
-    }
-#else
-    if (fnmatch(pattern.c_str(), filename.c_str(), FNM_PATHNAME) == 0) {
-        return true;
-    }
-
-    // For patterns with **, try matching against full path
-    if (pattern.find("**") != std::string::npos) {
-        const std::string fullPath = pathToUtf8(path);
-        if (fnmatch(pattern.c_str(), fullPath.c_str(), FNM_PATHNAME) == 0) {
-            return true;
+        first = false;
+        if (lo == '[' && i + 1 < pattern.size() && pattern[i + 1] == ':') {
+            const size_t close = pattern.find(":]", i + 2);
+            if (close != std::string_view::npos) {
+                const std::string_view cls = pattern.substr(i + 2, close - i - 2);
+                bool in = false;
+                if (cls == "alpha") in = std::isalpha(c);
+                else if (cls == "digit") in = std::isdigit(c);
+                else if (cls == "alnum") in = std::isalnum(c);
+                else if (cls == "upper") in = std::isupper(c);
+                else if (cls == "lower") in = std::islower(c);
+                else if (cls == "space") in = std::isspace(c);
+                else if (cls == "punct") in = std::ispunct(c);
+                else if (cls == "xdigit") in = std::isxdigit(c);
+                else if (cls == "blank") in = c == ' ' || c == '\t';
+                else if (cls == "cntrl") in = std::iscntrl(c);
+                else if (cls == "print") in = std::isprint(c);
+                else if (cls == "graph") in = std::isgraph(c);
+                else return std::nullopt;   // an unknown class makes the whole pattern invalid
+                matched = matched || in;
+                i = close + 2;
+                continue;
+            }
         }
+        if (lo == '\\' && i + 1 < pattern.size()) {
+            lo = static_cast<unsigned char>(pattern[++i]);
+        }
+        unsigned char hi = lo;
+        if (i + 2 < pattern.size() && pattern[i + 1] == '-' && pattern[i + 2] != ']') {
+            size_t h = i + 2;
+            if (pattern[h] == '\\' && h + 1 < pattern.size()) ++h;
+            hi = static_cast<unsigned char>(pattern[h]);
+            i = h;
+        }
+        if (c >= lo && c <= hi) matched = true;
+        ++i;
     }
-#endif
+    return std::nullopt;
+}
 
-    return false;
+bool globMatchFrom(std::string_view p, size_t pi, std::string_view s, size_t si) {
+    while (pi < p.size()) {
+        const char pc = p[pi];
+        if (pc == '*') {
+            while (pi < p.size() && p[pi] == '*') ++pi;
+            if (pi == p.size()) {
+                return s.find('/', si) == std::string_view::npos;
+            }
+            for (size_t k = si; k <= s.size(); ++k) {
+                if (globMatchFrom(p, pi, s, k)) return true;
+                if (k < s.size() && s[k] == '/') return false;
+            }
+            return false;
+        }
+        if (si == s.size()) return false;
+        const unsigned char sc = static_cast<unsigned char>(s[si]);
+        if (pc == '?') {
+            if (sc == '/') return false;
+            ++pi;
+            ++si;
+            continue;
+        }
+        if (pc == '[') {
+            size_t next = 0;
+            if (sc != '/') {
+                if (const auto in = matchBracket(p, pi, sc, next)) {
+                    if (!*in) return false;
+                    pi = next;
+                    ++si;
+                    continue;
+                }
+            } else {
+                size_t unused = 0;
+                if (matchBracket(p, pi, 'a', unused)) return false;   // a bracket never matches '/'
+            }
+            // An unclosed bracket is a literal '['.
+        }
+        char want = pc;
+        if (pc == '\\') {
+            if (pi + 1 == p.size()) return false;   // a trailing backslash loses
+            want = p[++pi];
+        }
+        if (static_cast<unsigned char>(want) != sc) return false;
+        ++pi;
+        ++si;
+    }
+    return si == s.size();
+}
+
+}  // namespace
+
+bool FileWalker::globMatch(std::string_view pattern, std::string_view name) {
+    return globMatchFrom(pattern, 0, name, 0);
 }
 
 }  // namespace lyxbosa

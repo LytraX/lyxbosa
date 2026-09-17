@@ -35,16 +35,26 @@
 
 #include <gtest/gtest.h>
 
+#include "archive/ArchiveScanner.h"
 #include "config/Config.h"
 #include "core/FileWalker.h"
 #include "core/Interrupt.h"
+#include "core/MatchEngine.h"
+#include "infrastructure/PathUtils.h"
 
+#include <cstdlib>   // before the test below: it is what defines __GLIBC__ on glibc
+#ifdef __GLIBC__
+#include <fnmatch.h>
+#endif
+
+#include "ArchiveFixtures.h"
 #include "PlatformSkips.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <functional>
 #include <string>
 #include <utility>
@@ -1583,4 +1593,281 @@ TEST(FileWalkerInterruptTest, ACountThatIsNotInterruptedCountsEveryFile) {
     EXPECT_FALSE(counted.boundHit);
     EXPECT_EQ(counted.entered, 11u);
     EXPECT_EQ(counted.result.files, 10u);
+}
+
+// ---------------------------------------------------------------------------
+// An archive member's name against the operator's patterns
+// ---------------------------------------------------------------------------
+//
+// A member name is a string whose only separator is `/`, and FileWalker::globMatch() is the one
+// matcher that reads it, on every platform - so its answers are held to fnmatch(3)'s, over every
+// pattern below and every name below.
+
+
+namespace {
+
+const std::vector<std::string> kGlobPatterns = {
+    "*", "**", "*.php", "*.min.js", "*.php*", "vendor/**", "vendor/*", "node_modules/**",
+    "*/vendor/*", "wp-content/*/x.php", "?", "??.php", "a?c", "[abc].php", "[!abc].php",
+    "[^abc].php", "[a-c]*", "[]a]x", "[!]a]x", "[a-]x", "[[:digit:]]*", "[[:alpha:]][[:alnum:]]*",
+    "[[:upper:]]*", "x[", "x[a", "\\*.php", "a\\?c", "a\\", "vendor\\*", "*\\*", "[\\]]x",
+    ".*", "*.", "", "a/b", "a*/b", "**/x.php", "*x.php", "vendor/**/x.php",
+};
+
+const std::vector<std::string> kGlobNames = {
+    "", "x.php", "a.b.php", ".htaccess", "vendor/x.php", "vendor/lib/x.php", "vendor\\x.php",
+    "vendor\\lib\\x.php", "src\\vendor\\x.php", "wp-content/plugins/x.php", "wp-content/a/x.php",
+    "a/b", "ab/b", "abc", "a?c", "a*c", "*.php", "b.php", "d.php", "]x", "ax", "-x", "!x",
+    "1x", "Ax", "x[", "x[a", "a\\", "a\\b", "jquery.min.js", "x.php.bak", "node_modules/a/b.js",
+    "src/vendor/lib", "./x.php", "/x.php", "..\\..\\x.php", "a/vendor/b", ".x", "x.", "[a]x",
+};
+
+}  // namespace
+
+// fnmatch(3)'s answers over the two tables above with FNM_PATHNAME, as glibc gives them: one row
+// per pattern, one column per name, '1' where the name matches. Recorded, so that every platform
+// and every C library is held to the same answers; where the C library is glibc the case asks it
+// as well, so the record cannot drift away from what it records.
+constexpr std::string_view kFnmatchAnswers[] = {
+    "1111001110000111111111111111111000010111",
+    "1111001110000111111111111111111000010111",
+    "0110001110000000111000000000000000010000",
+    "0000000000000000000000000000010000000000",
+    "0110001110000000111000000000001000010000",
+    "0000100000000000000000000000000000000000",
+    "0000100000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000000000000000010001000",
+    "0000000001100000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000111000000000000000000000000",
+    "0000000000000000010000000000000000000000",
+    "0100000000000000101000000000000000000000",
+    "0100000000000000101000000000000000000000",
+    "0010000000000111010010000001100000000000",
+    "0000000000000000000110000000000000000000",
+    "0000000000000000000001111000000000000100",
+    "0000000000000000000011000000000000000000",
+    "0000000000000000000000010000000000000000",
+    "0000001110000100000010001000010000000000",
+    "0000000000000000000000001000000000000000",
+    "0000000000000000000000000100000000000000",
+    "0000000000000000000000000010000000000000",
+    "0000000000000000100000000000000000000000",
+    "0000000000000010000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000",
+    "0000000000000000000100000000000000000000",
+    "0001000000000000000000000000000000010100",
+    "0000000000000000000000000000000000000010",
+    "1000000000000000000000000000000000000000",
+    "0000000000010000000000000000000000000000",
+    "0000000000011000000000000000000000000000",
+    "0000100000000000000000000000000001100000",
+    "0100001110000000000000000000000000010000",
+    "0000010000000000000000000000000000000000",
+};
+
+TEST(FileWalkerMemberFilterTest, GlobMatchAnswersAsFnmatchWithPathnameDoes) {
+    ASSERT_EQ(std::size(kFnmatchAnswers), kGlobPatterns.size());
+    size_t compared = 0;
+    for (size_t i = 0; i < kGlobPatterns.size(); ++i) {
+        ASSERT_EQ(kFnmatchAnswers[i].size(), kGlobNames.size()) << "row " << i;
+        for (size_t j = 0; j < kGlobNames.size(); ++j) {
+            const bool expected = kFnmatchAnswers[i][j] == '1';
+            EXPECT_EQ(FileWalker::globMatch(kGlobPatterns[i], kGlobNames[j]), expected)
+                << "pattern '" << kGlobPatterns[i] << "' name '" << kGlobNames[j] << "'";
+#ifdef __GLIBC__
+            // glibc only. musl's fnmatch(3) answers two of these differently, both shapes POSIX
+            // leaves undefined: pattern `a\` against the name `a\`, a trailing backslash, which
+            // musl matches and glibc does not; and pattern `[\]]x` against `]x`, a backslash
+            // inside a bracket expression, which glibc matches and musl does not. That is why the
+            // scanner carries globMatch() instead of calling fnmatch(3): with the C library's
+            // matcher the glibc and musl builds of one commit excluded different files, and a file
+            // on disk and the member a backup made of it could answer one pattern two ways. The
+            // case below holds globMatch() to glibc's answers for those two on every platform.
+            EXPECT_EQ(fnmatch(kGlobPatterns[i].c_str(), kGlobNames[j].c_str(), FNM_PATHNAME) == 0,
+                      expected)
+                << "the recorded answer is not fnmatch(3)'s: pattern '" << kGlobPatterns[i]
+                << "' name '" << kGlobNames[j] << "'";
+#endif
+            ++compared;
+        }
+    }
+    EXPECT_EQ(compared, 1560u);
+}
+
+// The two shapes POSIX leaves undefined and C libraries answer differently, stated directly so
+// that a build on any C library checks what the scanner answers for them: glibc's answer, both
+// times.
+TEST(FileWalkerMemberFilterTest, TheTwoUndefinedShapesAnswerAsGlibcDoes) {
+    EXPECT_FALSE(FileWalker::globMatch("a\\", "a\\"))
+        << "a trailing backslash in a pattern quotes nothing, and matches nothing";
+    EXPECT_TRUE(FileWalker::globMatch("[\\]]x", "]x"))
+        << "a backslash inside a bracket expression quotes the ']' after it";
+    EXPECT_FALSE(FileWalker::globMatch("[\\]]x", "\\]x"));
+}
+
+// The answers the default patterns give, stated directly so every platform checks them.
+TEST(FileWalkerMemberFilterTest, AStarNeverCrossesASlashAndABackslashIsACharacter) {
+    EXPECT_TRUE(FileWalker::globMatch("vendor/**", "vendor/x.php"));
+    EXPECT_FALSE(FileWalker::globMatch("vendor/**", "vendor/lib/x.php"));
+    EXPECT_FALSE(FileWalker::globMatch("vendor/**", "vendor\\x.php"));
+    EXPECT_TRUE(FileWalker::globMatch("*.min.js", "wp-includes\\js\\jquery.min.js"))
+        << "a backslash is a character, which `*` matches like any other";
+    EXPECT_FALSE(FileWalker::globMatch("*.php", "a/b.php"));
+    EXPECT_TRUE(FileWalker::globMatch("*.php", "a\\b.php"));
+    EXPECT_TRUE(FileWalker::globMatch("[!a]x", "\\x"));
+    EXPECT_FALSE(FileWalker::globMatch("?", "/"));
+    EXPECT_FALSE(FileWalker::globMatch("[/]", "/"));
+}
+
+// The verdict for a member, with the default patterns: a directory the name really has is
+// excluded as the pattern says, a backslash-spelled one is not, and the include list reads the
+// final component after the last `/` only.
+TEST(FileWalkerMemberFilterTest, AVerdictReadsAPathWithSlashesAsTheOnlySeparator) {
+    ScanConfig scan = Config::loadFromString(Config::generateDefault()).scan;
+    const FileWalker walker(scan);
+    using Verdict = FileWalker::FilterVerdict;
+
+    EXPECT_EQ(walker.filterVerdictAt("vendor/x.php"), Verdict::Excluded);
+    EXPECT_EQ(walker.filterVerdictAt("node_modules/x.js"), Verdict::Excluded);
+    EXPECT_EQ(walker.filterVerdictAt("vendor/lib/x.php"), Verdict::Accepted);
+    EXPECT_EQ(walker.filterVerdictAt("/var/www/vendor/x.php"), Verdict::Accepted)
+        << "`vendor/**` is matched against the whole path, from its start";
+    EXPECT_EQ(walker.filterVerdictAt("vendor\\x.php"), Verdict::Accepted);
+    EXPECT_EQ(walker.filterVerdictAt("site\\wp-includes\\js\\jquery.min.js"), Verdict::Excluded);
+    EXPECT_EQ(walker.filterVerdictAt("site/x.php"), Verdict::Accepted);
+    EXPECT_EQ(walker.filterVerdictAt("site/uploads/table.mdb"), Verdict::NotIncluded);
+
+    // `!ext`, the include pattern for a file with no extension, reads the final component as
+    // std::filesystem reads a name: `id_rsa` has none, `deploy\.ssh\id_rsa` has `.ssh\id_rsa`.
+    EXPECT_EQ(walker.filterVerdictAt("home/deploy/.ssh/id_rsa"), Verdict::Accepted);
+    EXPECT_EQ(walker.filterVerdictAt("home/deploy\\.ssh\\id_rsa"), Verdict::NotIncluded);
+    EXPECT_EQ(walker.filterVerdictAt("cgi-bin/handler"), Verdict::Accepted);
+}
+
+// A file's path reaches the patterns with `/` as its separator: on Windows every backslash has
+// become one, and on POSIX the path is the name's bytes. The two things matchesPattern() was
+// before, it still is. `!ext` answers what std::filesystem answers about the file's own name,
+// for every name below. A pattern without `**` reads only the file's name, so a `/` in it
+// matches nothing; a pattern with `**` reads the whole path, and its `*`s stop at a `/`.
+TEST(FileWalkerMemberFilterTest, TheExtensionPatternAndThePathSplitKeepTheirMeaning) {
+    TempTree tree;
+    const fs::path root = tree.path();
+    std::vector<std::string> names = {"id_rsa", "x.php", ".htaccess", ".profile.d", "..x",
+                                      "a.b.c", "Makefile", "archive.tar.gz", "x.PHP"};
+#ifndef _WIN32
+    names.push_back("x.");
+    names.push_back("deploy\\.ssh\\id_rsa");
+#endif
+    ScanConfig extOnly;
+    extOnly.include = {"!ext"};
+    const FileWalker extWalker(extOnly);
+    for (const auto& name : names) {
+        const fs::path file = root / pathFromUtf8(name);
+        EXPECT_EQ(extWalker.filterVerdict(file) == FileWalker::FilterVerdict::Accepted,
+                  !file.filename().has_extension())
+            << "`!ext` and std::filesystem disagree about " << name;
+    }
+
+    const std::string rootWithSlashes = diskPathWithSlashes(pathToUtf8(root));
+    ScanConfig split;
+    split.include = {"site/*.php", rootWithSlashes + "/site/*.php", rootWithSlashes + "/deep/**"};
+    const FileWalker splitWalker(split);
+    using Verdict = FileWalker::FilterVerdict;
+    EXPECT_EQ(splitWalker.filterVerdict(root / "site" / "x.php"), Verdict::NotIncluded)
+        << "a pattern without `**` matched a path rather than a name";
+    EXPECT_EQ(splitWalker.filterVerdict(root / "deep" / "x.php"), Verdict::Accepted)
+        << "a pattern with `**` did not read the whole path";
+    EXPECT_EQ(splitWalker.filterVerdict(root / "deep" / "more" / "x.php"), Verdict::NotIncluded)
+        << "`**` crossed a `/`";
+}
+
+// A file and the member a backup makes of it answer every pattern alike. For every recorded
+// pattern, as an exclude and as an include, a file under a scan root and a member stored under
+// the same name inside a zip in that root get the same verdict: the file as the walk judges it,
+// and the member as the archive scan and its pre-count judge it. The names that only POSIX can
+// hold carry the shapes C libraries answer differently, and the patterns with `**` the shapes
+// Windows' matcher once answered differently, so a file matched by anything but the matcher a
+// member is matched by fails here on the platform where the two disagree.
+TEST(FileWalkerMemberFilterTest, AFileAndTheMemberItBecomesGetOneVerdict) {
+    TempTree tree;
+    const fs::path root = tree.path();
+    std::vector<std::string> names = {
+        "x.php", "a.b.php", ".htaccess", "b.php", "vendor/x.php", "vendor/lib/x.php",
+        "wp-content/plugins/x.php", "wp-content/a/x.php", "a/b", "ab/b", "abc", "]x", "ax", "-x",
+        "!x", "1x", "x[", "[a]x", "jquery.min.js", "x.php.bak", "node_modules/a/b.js",
+        "src/vendor/lib", ".x",
+    };
+#ifndef _WIN32
+    // Names no Windows file can have beside the ones above: a backslash, `?`, `*`, a trailing
+    // dot, and a name differing from another only in case.
+    for (const char* posixOnly : {"a\\", "a\\b", "vendor\\x.php", "src\\vendor\\x.php", "a?c",
+                                  "a*c", "*.php", "x.", "Ax"}) {
+        names.push_back(posixOnly);
+    }
+#endif
+
+    std::vector<fs::path> archives;
+    for (size_t i = 0; i < names.size(); ++i) {
+        const fs::path file = root / pathFromUtf8(names[i]);
+        fs::create_directories(file.parent_path());
+        std::ofstream(file, std::ios::binary) << "<?php echo 1;\n";
+        ASSERT_TRUE(fs::exists(file)) << names[i];
+        archives.push_back(root / ("member-" + std::to_string(i) + ".zip"));
+        lyxbosa::test::fixtures::writeZip(archives.back(), {{names[i], "<?php echo 1;\n"}},
+                                          ZIP_OPSYS_UNIX);
+    }
+
+    AppConfig base = Config::loadFromString(Config::generateDefault());
+    base.archives.enabled = true;
+    base.archives.exhaustive = true;   // every member opened unless a pattern says otherwise
+    MatchEngine engine;
+    engine.loadAllBuiltinRules();
+
+    size_t compared = 0;
+    size_t shut = 0;
+    for (const auto& pattern : kGlobPatterns) {
+        for (const bool asExclude : {true, false}) {
+            ScanConfig scan = base.scan;
+            scan.include.clear();
+            scan.exclude.clear();
+            (asExclude ? scan.exclude : scan.include).push_back(pattern);
+
+            // The files, as the walk judges them.
+            std::map<std::string, bool> fileAccepted;
+            bool stopped = false;
+            FileWalker(scan).walkDirectory(root, [&](const FileInfo& info) {
+                fileAccepted[pathToUtf8(fs::path(info.path).make_preferred())] =
+                    !info.skip.has_value();
+                return true;
+            }, stopped);
+
+            archive::ArchiveScanner scanner(base.archives, scan, engine);
+            for (size_t i = 0; i < names.size(); ++i) {
+                // In the platform's own separators, as the walk spells what it reaches.
+                const std::string file =
+                    pathToUtf8((root / pathFromUtf8(names[i])).make_preferred());
+                ASSERT_EQ(fileAccepted.count(file), 1u) << "the walk never reached " << file;
+                const auto outcome = scanner.scan(archives[i], archive::Kind::Zip, {});
+                const bool memberOpened = outcome.stats.membersScanned == 1;
+                const bool memberCounted =
+                    archive::ArchiveScanner::countMembers(archives[i], archive::Kind::Zip,
+                                                          base.archives, scan).files == 1;
+                EXPECT_EQ(fileAccepted[file], memberOpened)
+                    << (asExclude ? "exclude '" : "include '") << pattern << "': the file "
+                    << (fileAccepted[file] ? "was" : "was not") << " accepted and the member "
+                    << names[i] << (memberOpened ? " was" : " was not") << " opened";
+                EXPECT_EQ(memberOpened, memberCounted) << "the pre-count disagrees with the scan";
+                shut += fileAccepted[file] ? 0 : 1;
+                ++compared;
+            }
+        }
+    }
+    EXPECT_EQ(compared, kGlobPatterns.size() * 2 * names.size());
+    EXPECT_GT(shut, 0u) << "no pattern kept any file out, so the comparison proved nothing";
+    EXPECT_LT(shut, compared) << "every pattern kept every file out";
 }

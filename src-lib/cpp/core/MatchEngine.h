@@ -27,12 +27,18 @@ struct MatchContext {
     // applyContextFilter goes through MatchEngine::underDirectoryNamed() or
     // underDirectoryContaining(), which read directory components only - never the
     // file name - and fold case. On Windows, where a backslash cannot be part of a name
-    // and so is always a separator, MatchEngine::match() puts the path through
-    // filterPath() ONCE, here, before any of them runs. On POSIX a backslash is a
+    // and so is always a separator, a path from the disk is put through filterPath()
+    // ONCE, by diskFilterPath(), before any of them runs. On POSIX a backslash is a
     // character in a name and the path arrives byte for byte: rewriting it there would
-    // let a file NAMED `tests\shell.php` claim a suppression meant for a directory. A
-    // filter reads its path from this field and from nowhere else - that is what keeps
-    // a fragment added later from having to know about Windows at all.
+    // let a file NAMED `tests\shell.php` claim a suppression meant for a directory.
+    //
+    // For an archive member it is the container's directory on disk in that spelling,
+    // then the member's stored name with nothing rewritten, on every platform: a
+    // backslash in a member name is a character the archive's writer chose, and the
+    // container's own file name is not a directory its members sit under. See
+    // ArchiveScanner::scanMemberBytes(). A filter reads its path from this field and from
+    // nowhere else - that is what keeps a fragment added later from having to know about
+    // Windows or archives at all.
     std::string_view filePath;
     size_t matchOffset;             // Byte offset of match
     size_t matchLine;               // Line number (1-based)
@@ -67,9 +73,16 @@ public:
     // Add a single custom rule
     void addRule(std::unique_ptr<Rule> rule);
 
-    // Match content against all rules (built-in + custom)
-    // Returns all matches from all rules
+    // Match content against all rules (built-in + custom), for a file whose path on this
+    // platform's disk is `filePath`. Returns all matches from all rules.
     std::vector<FileMatch> match(std::string_view content, std::string_view filePath = "") const;
+
+    // The same, for bytes whose location is not one path on this disk: an archive member.
+    // `contextPath` is what the context filters read, already in their spelling - the
+    // container's directory through diskFilterPath(), then the member's stored name as the
+    // archive holds it. Nothing here rewrites it.
+    std::vector<FileMatch> matchWithFilterPath(std::string_view content,
+                                               std::string_view contextPath) const;
 
     // Findings about the file's NAME, from the FN rules. A separate entry point rather
     // than a branch inside match(), because the two ask different questions of
@@ -84,10 +97,9 @@ public:
     std::vector<FileMatch> matchName(std::string_view pathUtf8) const;
 
     // The same findings about a member of an archive, from the name the archive stores for
-    // it. Only the final component is examined, split by rules::filename::
-    // memberFinalComponent() on what the entry's writer used as a separator - never on the
-    // platform the scan runs on. Which rules run, and the findings they raise, are exactly
-    // matchName()'s.
+    // it: rules::filename::examineMember(). FN001 to FN006 read its final component, split on
+    // what the archive's reading says separates - never on the platform the scan runs on -
+    // and FN007 reads the whole stored name. Which rules run is exactly matchName()'s.
     std::vector<FileMatch> matchMemberName(std::string_view storedName,
                                            rules::filename::MemberSeparators separators) const;
 
@@ -121,10 +133,14 @@ public:
     // into a forward slash and nothing else touched, so a mixed path - a root the
     // operator typed one way joined to components the walk spelled the other - comes
     // out uniform. Pure, and public so the tests can drive every fragment through it
-    // on any platform. match() applies it under _WIN32 only, for the reason given
+    // on any platform. diskFilterPath() applies it under _WIN32 only, for the reason given
     // there: it is exact where a backslash cannot be part of a name and a guess
-    // everywhere else. Never applied to what a report prints.
+    // everywhere else. Never applied to what a report prints, nor to a member's name.
     static std::string filterPath(std::string_view path);
+
+    // A path from this platform's disk in the spelling the filters read: filterPath() under
+    // _WIN32, and the path byte for byte everywhere else.
+    static std::string diskFilterPath(std::string_view path);
 
     // The two ways a context filter may read a location, and the only two. Both look
     // at directory components - every `/`-separated piece of `path` except the last,
@@ -158,9 +174,10 @@ public:
     static std::span<const std::string_view> annotationMarkers();
 
 private:
-    // The findings matchName() and matchMemberName() raise, about a final component each of
-    // them has already split off.
-    std::vector<FileMatch> matchFinalName(std::string_view name) const;
+    // The findings matchName() and matchMemberName() raise, from what rules::filename found in
+    // the name each of them was asked about.
+    std::vector<FileMatch> raiseNameFindings(
+        const std::vector<rules::filename::NameFinding>& findings) const;
 
     // Lower `match` to Low with the original severity kept beside it, if a marker is in
     // reach AND the operator trusts the files. The decision is written at the definition.

@@ -1,4 +1,5 @@
 #include "MatchEngine.h"
+#include "infrastructure/PathUtils.h"
 #include "utils/SafeText.h"
 #include "analysis/StringAssembly.h"
 #include <algorithm>
@@ -1544,10 +1545,7 @@ std::string MatchEngine::filterPath(std::string_view path) {
     return normalised;
 }
 
-std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_view filePath) const {
-    std::vector<FileMatch> allMatches;
-
-    // The one place a MatchContext is built, so the one place the separator is decided.
+std::string MatchEngine::diskFilterPath(std::string_view path) {
     // Every fragment a filter tests - `/vendor/`, `/tests/`, `/.ssh/`, `/wflogs/` - is
     // spelled with forward slashes, and a Windows path arrives with backslashes.
     //
@@ -1560,23 +1558,19 @@ std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_
     // lets a live webshell signature through. The scanner runs on compromised hosts,
     // and a name the attacker spells must not be able to claim a suppression. So the
     // rewrite is conditional on the platform whose path grammar makes it exact, and on
-    // POSIX the filters see the path byte for byte as the platform gave it.
-    //
-    // Archive members come through here too, as `<archive>!/<member>`, and a member
-    // name is attacker-controlled as surely as a file name. The same rule holds and
-    // grants nothing new: on Windows a member spelled `tests\x.php` is suppressed
-    // exactly as one spelled `tests/x.php` already is on every platform, and on POSIX
-    // it is not rewritten. What a Windows-written zip loses on POSIX is the vendor and
-    // fixture suppressions for its backslash-named members - a benign finding an
-    // operator looks at, which is the cheaper side of that trade.
-    //
-    // What a report prints is untouched either way: this string goes into the context
-    // and nowhere else.
-#ifdef _WIN32
-    const std::string contextPath = filterPath(filePath);
-#else
-    const std::string_view contextPath = filePath;
-#endif
+    // POSIX the filters see the path byte for byte as the platform gave it. The rule is
+    // diskPathWithSlashes()'s, which the include and exclude patterns read through too.
+    return diskPathWithSlashes(path);
+}
+
+std::vector<FileMatch> MatchEngine::match(std::string_view content, std::string_view filePath) const {
+    // What a report prints is untouched: this string goes into the context and nowhere else.
+    return matchWithFilterPath(content, diskFilterPath(filePath));
+}
+
+std::vector<FileMatch> MatchEngine::matchWithFilterPath(std::string_view content,
+                                                        std::string_view contextPath) const {
+    std::vector<FileMatch> allMatches;
 
     // Match custom YAML rules
     for (const auto& rule : rules_) {
@@ -1689,7 +1683,7 @@ std::vector<FileMatch> MatchEngine::matchName(std::string_view pathUtf8) const {
     if (nameRules_.empty() || pathUtf8.empty()) {
         return {};
     }
-    return matchFinalName(rules::filename::finalComponent(pathUtf8));
+    return raiseNameFindings(rules::filename::examine(rules::filename::finalComponent(pathUtf8)));
 }
 
 std::vector<FileMatch> MatchEngine::matchMemberName(
@@ -1697,12 +1691,13 @@ std::vector<FileMatch> MatchEngine::matchMemberName(
     if (nameRules_.empty() || storedName.empty()) {
         return {};
     }
-    return matchFinalName(rules::filename::memberFinalComponent(storedName, separators));
+    return raiseNameFindings(rules::filename::examineMember(storedName, separators));
 }
 
-std::vector<FileMatch> MatchEngine::matchFinalName(std::string_view name) const {
+std::vector<FileMatch> MatchEngine::raiseNameFindings(
+    const std::vector<rules::filename::NameFinding>& findings) const {
     std::vector<FileMatch> out;
-    for (const auto& finding : rules::filename::examine(name)) {
+    for (const auto& finding : findings) {
         // A finding whose rule the operator turned off is not raised. The lookup is
         // over the live list rather than over disabledRules_, so `builtin_rules.use`
         // - which selects rather than excludes - is honoured by the same line.

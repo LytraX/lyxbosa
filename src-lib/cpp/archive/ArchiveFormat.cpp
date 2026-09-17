@@ -117,10 +117,9 @@ bool hasArchiveExtension(const std::filesystem::path& path) {
     return false;
 }
 
-std::string gzipMemberName(const std::filesystem::path& path) {
-    // A member name is UTF-8 like every other, and becomes part of an address that is turned
-    // back into a path with pathFromUtf8().
-    std::string name = pathToUtf8(path.filename());
+namespace {
+
+std::string gzipInnerName(std::string name) {
     if (name.size() > 3 && name.compare(name.size() - 3, 3, ".gz") == 0) {
         name.resize(name.size() - 3);
     } else if (name.size() > 4 && name.compare(name.size() - 4, 4, ".tgz") == 0) {
@@ -128,6 +127,20 @@ std::string gzipMemberName(const std::filesystem::path& path) {
         name += ".tar";
     }
     return name.empty() ? "content" : name;
+}
+
+}  // namespace
+
+std::string gzipMemberName(const std::filesystem::path& path) {
+    // A member name is UTF-8 like every other, and becomes part of an address that is turned
+    // back into a path with pathFromUtf8().
+    return gzipInnerName(pathToUtf8(path.filename()));
+}
+
+std::string gzipMemberNameOf(std::string_view storedName) {
+    const size_t slash = storedName.find_last_of('/');
+    return gzipInnerName(std::string(
+        slash == std::string_view::npos ? storedName : storedName.substr(slash + 1)));
 }
 
 }  // namespace lyxbosa::archive

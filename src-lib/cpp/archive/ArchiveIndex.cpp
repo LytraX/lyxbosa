@@ -169,6 +169,36 @@ std::string normalizeMemberName(std::string_view raw) {
     return out.substr(start);
 }
 
+std::string_view memberFilterName(std::string_view stored) {
+    size_t start = 0;
+    while (true) {
+        if (stored.substr(start).starts_with("./")) {
+            start += 2;
+        } else if (start < stored.size() && stored[start] == '/') {
+            ++start;
+        } else {
+            break;
+        }
+    }
+    return stored.substr(start);
+}
+
+bool namesUseOnlyBackslashes(const std::vector<Entry>& entries) {
+    // No forward slash but a directory entry's trailing one leaves a backslash as the only
+    // separator any name can hold, which is the whole definition. An archive whose names hold
+    // no separator at all passes too, and reading it split on both changes nothing.
+    for (const auto& entry : entries) {
+        std::string_view name = entry.name;
+        if (!name.empty() && name.back() == '/') {
+            name.remove_suffix(1);   // a directory entry's marker, not a separator
+        }
+        if (name.find('/') != std::string_view::npos) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool isContainerMetadata(std::string_view name) {
     if (name.starts_with("__MACOSX/") || name.find("/__MACOSX/") != std::string_view::npos) {
         return true;

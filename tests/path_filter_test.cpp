@@ -44,6 +44,11 @@
 //     no such file can exist.
 //   The other direction on disk: a genuine directory named `tests` or `vendor` still
 //     suppresses, on every platform.
+//   Inside an archive, on every platform: a member is judged under the container's real
+//     directories and its own stored name, so a genuine directory inside a zip or a tar.gz
+//     suppresses as a directory on disk does and the control beside it fires - while a
+//     backslash in a member's name, the container's own file name and a sidecar's spelling
+//     grant nothing, whatever the host byte, and a member's address is its stored name.
 //
 // Every suppression has a control path that must still fire, because a normalisation
 // that suppressed everything would satisfy a one-sided case.
@@ -53,13 +58,26 @@
 #include "config/Config.h"
 #include "core/MatchEngine.h"
 #include "core/Scanner.h"
+#include "infrastructure/PathUtils.h"
+#include "infrastructure/ResultPrinter.h"
+#include "infrastructure/report/CsvReportWriter.h"
+#include "infrastructure/report/JsonReportWriter.h"
+#include "system/CliArgs.h"
+#include "use-cases/CheckUseCase.h"
+
+#include <nlohmann/json.hpp>
+
+#include "ArchiveFixtures.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <random>
+#include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -466,3 +484,411 @@ INSTANTIATE_TEST_SUITE_P(Fragments, EveryPathFragmentOnDiskTest,
                          [](const ::testing::TestParamInfo<FragmentCase>& info) {
                              return std::string(info.param.rule);
                          });
+
+// ===========================================================================
+// Every fragment, inside an archive
+// ===========================================================================
+//
+// A member is matched under its address, `<archive>!<member>`, and that address is the path
+// the fragments are tested against: a vendored library inside a site backup is judged as the
+// loose copy of it is. Each row's content goes into one archive under every path the row
+// suppresses and under its control path, and the archive is scanned the way `scan` scans it.
+//
+// No suppressed path starts with its fragment. The address has no separator after `!`, so a
+// member's first component is spelled together with the archive's own name and is not a
+// directory the filters can see.
+
+namespace {
+
+using lyxbosa::test::fixtures::appendTarMember;
+using lyxbosa::test::fixtures::endOfTar;
+using lyxbosa::test::fixtures::gzipCompress;
+using lyxbosa::test::fixtures::hostBytesOf;
+using lyxbosa::test::fixtures::writeZip;
+
+// The three shapes a site backup arrives in: a zip written on Unix, a zip written on Windows,
+// and a tar.gz, whose headers name no writer.
+enum class Container { UnixZip, DosZip, TarGz };
+
+const char* containerName(Container container) {
+    switch (container) {
+        case Container::UnixZip: return "unix-host.zip";
+        case Container::DosZip:  return "dos-host.zip";
+        case Container::TarGz:   return "backup.tar.gz";
+    }
+    return "?";
+}
+
+class ArchiveMemberFixture : public OnDiskFixture {
+protected:
+    // `members` written as one archive of `container`, scanned, and the rules raised against
+    // each member, keyed by the name as stored. `opened` members must have been read, all of
+    // them unless the case says otherwise: a finding missing from a member nobody read would
+    // prove nothing about a suppression. `label` keeps two archives of one case apart.
+    std::map<std::string, std::set<std::string>> scanMembers(
+        Container container, const std::vector<std::pair<std::string, std::string>>& members,
+        std::optional<size_t> opened = std::nullopt, const std::string& label = "",
+        const std::vector<std::string>& excludeUnderArchiveDirectory = {}) {
+        const fs::path dir = root / (label + containerName(container));
+        fs::create_directories(dir);
+        const fs::path archive = dir / containerName(container);
+
+        if (container == Container::TarGz) {
+            std::string tar;
+            for (const auto& [name, body] : members) {
+                appendTarMember(tar, name, body);
+            }
+            tar += endOfTar();
+            const std::string bytes = gzipCompress(tar);
+            std::ofstream out(archive, std::ios::binary);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        } else {
+            const uint8_t host = container == Container::DosZip ? ZIP_OPSYS_DOS : ZIP_OPSYS_UNIX;
+            writeZip(archive, members, host);
+            for (const auto& [name, byte] : hostBytesOf(archive)) {
+                EXPECT_EQ(byte, host) << "the fixture does not carry the host byte it claims";
+            }
+        }
+
+        AppConfig config = Config::loadFromString(Config::generateDefault());
+        config.scan.directories = {pathToUtf8(dir)};
+        config.scan.recursive = true;
+        config.actions.quarantine.enabled = false;
+        for (const auto& pattern : excludeUnderArchiveDirectory) {
+            config.scan.exclude.push_back(diskPathWithSlashes(pathToUtf8(dir)) + "/" + pattern);
+        }
+        Scanner scanner(config);
+        scanner.setPreCount(false);
+        const ScanResult result = scanner.scan();
+        EXPECT_EQ(result.archives.membersScanned, opened.value_or(members.size()))
+            << containerName(container) << ": not the members this case expects were opened";
+
+        // Keyed by the address a row carries, which is the stored name, compared as a string:
+        // on Windows two paths spelled with either separator compare equal.
+        std::map<std::string, std::set<std::string>> raised;
+        for (const auto& [name, body] : members) {
+            const std::string address = pathToUtf8(archive) + "!" + name;
+            auto& codes = raised[name];
+            for (const auto& file : result.files) {
+                if (pathToUtf8(file.path) != address) continue;
+                for (const auto& match : file.matches) {
+                    codes.insert(match.category);
+                }
+            }
+        }
+        return raised;
+    }
+};
+
+class EveryPathFragmentInAnArchiveTest : public ArchiveMemberFixture,
+                                         public ::testing::WithParamInterface<FragmentCase> {};
+
+}  // namespace
+
+// Any platform, any writer: a genuine directory inside an archive suppresses exactly as the
+// same directory on disk does, and the control path beside it in the same archive fires.
+TEST_P(EveryPathFragmentInAnArchiveTest, AGenuineDirectoryInsideAnArchiveStillSuppresses) {
+    const FragmentCase& c = GetParam();
+
+    std::vector<std::pair<std::string, std::string>> members;
+    for (const char* path : c.suppressed) {
+        members.emplace_back(path, c.content);
+    }
+    members.emplace_back(c.control, c.content);
+
+    for (const Container container : {Container::UnixZip, Container::DosZip, Container::TarGz}) {
+        SCOPED_TRACE(containerName(container));
+        auto raised = scanMembers(container, members);
+        for (const char* path : c.suppressed) {
+            EXPECT_EQ(raised[path].count(c.rule), 0u)
+                << c.rule << " should be suppressed for a member under " << path;
+        }
+        EXPECT_EQ(raised[c.control].count(c.rule), 1u)
+            << c.rule << " must still fire for a member at " << c.control;
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(Fragments, EveryPathFragmentInAnArchiveTest,
+                         ::testing::ValuesIn(kFragmentCases),
+                         [](const ::testing::TestParamInfo<FragmentCase>& info) {
+                             return std::string(info.param.rule);
+                         });
+
+// ===========================================================================
+// A member NAMED with backslashes is not under a directory
+// ===========================================================================
+//
+// The shape: a file whose name holds backslashes, as POSIX lets anybody who can write one
+// file name it, carried into a site backup by a trusted archiver running on Linux. PHP's
+// ZipArchive, Info-ZIP zip, 7-Zip, Python and Go's FileInfoHeader store that name under host
+// byte 3 (Unix); Go's Create() stores it under host byte 0 (MS-DOS); GNU tar stores it with no
+// writer to ask. Every Linux extractor measured but one - PHP's extractTo, WordPress's
+// unzip_file on ZipArchive and on PclZip, Python, 7-Zip, GNU tar - recreates it as ONE file
+// whose name holds the backslashes, which the scan of the loose file reports. So no host byte
+// makes a backslash a directory for a location prior or a pattern, and the scan of the backup
+// judges the member as the scan of the file judges the file.
+
+namespace {
+
+// Every separator after the first rewritten to a backslash: the first component stays a real
+// directory, and everything below it is one name.
+std::string backslashedAfterFirst(std::string_view path) {
+    std::string out(path);
+    const size_t slash = out.find('/');
+    if (slash != std::string::npos) {
+        std::replace(out.begin() + static_cast<std::ptrdiff_t>(slash) + 1, out.end(), '/', '\\');
+    }
+    return out;
+}
+
+}  // namespace
+
+TEST_P(EveryPathFragmentInAnArchiveTest, AMemberNamedWithBackslashesByALinuxArchiverStillFires) {
+    const FragmentCase& c = GetParam();
+
+    // A path whose file has no extension of its own is left out. Named with backslashes it has
+    // one - `deploy\.ssh\id_rsa` ends in `.ssh\id_rsa` - which the include list does not
+    // name, so it is not opened, in an archive or on disk: a walk of that one file reports FN002
+    // and leaves it shut. That is the include list's answer, not a directory's.
+    std::vector<std::pair<std::string, std::string>> members;
+    for (const char* path : c.suppressed) {
+        if (fs::path(path).extension().empty()) continue;
+        members.emplace_back(backslashedAfterFirst(path), c.content);
+    }
+    members.emplace_back(c.control, c.content);
+
+    for (const Container container : {Container::UnixZip, Container::DosZip, Container::TarGz}) {
+        SCOPED_TRACE(containerName(container));
+        auto raised = scanMembers(container, members);
+        for (const auto& [name, body] : members) {
+            EXPECT_EQ(raised[name].count(c.rule), 1u)
+                << c.rule << " was suppressed for a member NAMED " << name;
+        }
+    }
+}
+
+// A member is asked the operator's patterns at the path it has beside its archive - the
+// archive's directory on disk, then the stored name - exactly as the file of that name in that
+// directory is asked them. So the default `vendor/**`, which names nothing on disk because a
+// file's path is absolute, names nothing inside an archive either; and a pattern that does name
+// the archive's `vendor/` - written from the archive's own directory - excludes a member under
+// a genuine `vendor/` directory, not a member NAMED `vendor\w.php`, and not one two directories
+// down, because `**` stops at a `/` on every platform, as fnmatch(3) with FNM_PATHNAME stops it.
+class ArchiveMemberExcludeTest : public ArchiveMemberFixture {};
+
+TEST_F(ArchiveMemberExcludeTest, AMemberNamedWithBackslashesIsNotInAnExcludedDirectory) {
+    const std::string content(kFilesMan);
+    for (const Container container : {Container::UnixZip, Container::DosZip, Container::TarGz}) {
+        SCOPED_TRACE(containerName(container));
+        auto byDefault = scanMembers(container,
+                                     {{"vendor\\w.php", content}, {"vendor/w.php", content},
+                                      {"vendor/lib/w.php", content}},
+                                     std::nullopt, "default-");
+        EXPECT_EQ(byDefault["vendor/w.php"].count("WS006"), 1u)
+            << "the default `vendor/**` excluded a member it names nothing beside on disk";
+        EXPECT_EQ(byDefault["vendor\\w.php"].count("WS006"), 1u);
+        EXPECT_EQ(byDefault["vendor/lib/w.php"].count("WS006"), 1u);
+
+        auto named = scanMembers(container, {{"vendor\\w.php", content}, {"ok.php", content}},
+                                 std::nullopt, "named-", {"vendor/**"});
+        EXPECT_EQ(named["vendor\\w.php"].count("WS006"), 1u)
+            << "a member NAMED vendor\\w.php was excluded as though vendor/ were a directory";
+        EXPECT_EQ(named["ok.php"].count("WS006"), 1u);
+
+        auto genuine = scanMembers(container, {{"vendor/w.php", content}, {"ok.php", content}},
+                                   size_t{1}, "genuine-", {"vendor/**"});
+        EXPECT_TRUE(genuine["vendor/w.php"].empty()) << "the exclude no longer reaches vendor/";
+        EXPECT_EQ(genuine["ok.php"].count("WS006"), 1u);
+
+        auto deeper = scanMembers(container, {{"vendor/lib/w.php", content}, {"ok.php", content}},
+                                  std::nullopt, "deeper-", {"vendor/**"});
+        EXPECT_EQ(deeper["vendor/lib/w.php"].count("WS006"), 1u)
+            << "vendor/** excluded a member two directories down; `**` crossed a `/`";
+    }
+}
+
+// ===========================================================================
+// A member's address is its stored name
+// ===========================================================================
+//
+// Two members the archive holds apart are two rows, in every report and in `check`, each
+// addressed by the name the archive stores. `src\vendor\x.php` and `src/vendor/x.php` are
+// different entries - one of them, on Linux, extracts to a single file with backslashes in
+// its name - and so are `./src/x.php` and `src/x.php`. The content is the WS006 signature,
+// which no location prior drops, so every one of the four is a row whatever it is called.
+
+class ArchiveMemberAddressTest : public ArchiveMemberFixture {};
+
+TEST_F(ArchiveMemberAddressTest, MembersTheArchiveHoldsApartAreNeverOneAddress) {
+    const std::string content(kFilesMan);
+    const std::vector<std::pair<std::string, std::string>> members = {
+        {"src\\vendor\\x.php", content},
+        {"src/vendor/x.php", content},
+        {"./src/x.php", content},
+        {"src/x.php", content},
+    };
+
+    for (const Container container : {Container::UnixZip, Container::DosZip, Container::TarGz}) {
+        SCOPED_TRACE(containerName(container));
+        auto raised = scanMembers(container, members);
+        for (const auto& [name, body] : members) {
+            EXPECT_EQ(raised[name].count("WS006"), 1u) << "no row addressed " << name;
+        }
+
+        const fs::path archive = root / containerName(container) / containerName(container);
+        std::vector<std::string> addresses;
+        for (const auto& [name, body] : members) {
+            addresses.push_back(pathForDisplay(pathFromUtf8(pathToUtf8(archive) + "!" + name)));
+        }
+
+        AppConfig config = Config::loadFromString(Config::generateDefault());
+        config.scan.directories = {pathToUtf8(archive.parent_path())};
+        config.actions.quarantine.enabled = false;
+        Scanner scanner(config);
+        scanner.setPreCount(false);
+        const ScanResult result = scanner.scan();
+
+        std::ostringstream json;
+        {
+            JsonReportWriter writer(json);
+            writer.begin();
+            for (const auto& file : result.files) writer.onFile(file);
+            writer.end(result, false);
+        }
+        const nlohmann::json document = nlohmann::json::parse(json.str());
+        std::set<std::string> jsonPaths;
+        for (const auto& file : document.at("files")) {
+            jsonPaths.insert(file["path"].get<std::string>());
+        }
+        for (const auto& address : addresses) {
+            EXPECT_EQ(jsonPaths.count(address), 1u) << "JSON has no row addressed " << address;
+        }
+        EXPECT_EQ(jsonPaths.size(), members.size()) << json.str();
+
+        std::ostringstream csv;
+        {
+            CsvReportWriter writer(csv);
+            writer.begin();
+            for (const auto& file : result.files) writer.onFile(file);
+            writer.end(result, false);
+        }
+        std::ostringstream text;
+        {
+            ResultPrinter printer(text, /*color=*/false, /*width=*/400);
+            for (const auto& file : result.files) printer.printFileResult(file);
+        }
+
+        CliArgs args;
+        args.checkFile = pathToUtf8(archive);
+        const Terminal terminal(/*useAnsi=*/false);
+        const TerminalCaps caps = TerminalCaps::detect();
+        testing::internal::CaptureStdout();
+        const int code = CheckUseCase(terminal, caps).execute(args);
+        const std::string checked = testing::internal::GetCapturedStdout();
+        EXPECT_EQ(code, 2);
+
+        for (const auto& [label, written] : {std::pair{"CSV", csv.str()},
+                                             std::pair{"text", text.str()},
+                                             std::pair{"check", checked}}) {
+            for (const auto& address : addresses) {
+                EXPECT_NE(written.find(address), std::string::npos)
+                    << label << " never names " << address << ":\n" << written;
+            }
+        }
+    }
+}
+
+// ===========================================================================
+// An archive's own name is not a directory
+// ===========================================================================
+//
+// The directories a location prior reads for a member are the container's real directories
+// on disk and the directories the member's stored name really has. The container's file
+// name is neither: an upload called `revslider-6.7.zip` is one file somebody named, and the
+// OBF010 product prior it once granted to every member below its top was a name claiming a
+// directory. A nested archive's name is no more a directory than the outer one's.
+
+class ArchiveContainerNameTest : public ArchiveMemberFixture {};
+
+TEST_F(ArchiveContainerNameTest, AnArchivesOwnNameIsNotADirectoryItsMembersSitUnder) {
+    const std::string gz(kGzuncompressEval);
+    const std::string pack(kPackHex);
+    const fs::path scanned = root / "scanned";
+    fs::create_directories(scanned / "revslider");
+    fs::create_directories(root / "built");
+
+    const fs::path named = scanned / "revslider-6.7.zip";
+    writeZip(named, {{"x/y.php", gz}}, ZIP_OPSYS_UNIX);
+    const fs::path other = scanned / "other.zip";
+    writeZip(other, {{"x/y.php", gz}, {"a/revslider/y.php", gz}, {"revslider/y.php", gz}},
+             ZIP_OPSYS_UNIX);
+    const fs::path inRealDirectory = scanned / "revslider" / "other.zip";
+    writeZip(inRealDirectory, {{"x/y.php", gz}}, ZIP_OPSYS_UNIX);
+    const fs::path inner = root / "built" / "revslider-6.7.zip";
+    writeZip(inner, {{"x/y.php", gz}}, ZIP_OPSYS_UNIX);
+    const fs::path outer = scanned / "outer.zip";
+    writeZip(outer, {{"revslider-6.7.zip", lyxbosa::test::fixtures::readBytes(inner)}},
+             ZIP_OPSYS_UNIX);
+    const fs::path vendorAtTop = scanned / "vendor-at-top.zip";
+    writeZip(vendorAtTop, {{"vendor/lib/x.php", pack}, {"lib/x.php", pack}}, ZIP_OPSYS_UNIX);
+
+    AppConfig config = Config::loadFromString(Config::generateDefault());
+    config.scan.directories = {pathToUtf8(scanned)};
+    config.scan.recursive = true;
+    config.archives.exhaustive = true;   // the nested zip is not code and is otherwise shut
+    config.actions.quarantine.enabled = false;
+    Scanner scanner(config);
+    scanner.setPreCount(false);
+    const ScanResult result = scanner.scan();
+
+    const auto codesAt = [&result](const std::string& address) {
+        std::set<std::string> codes;
+        for (const auto& file : result.files) {
+            if (pathToUtf8(file.path) != address) continue;
+            for (const auto& match : file.matches) codes.insert(match.category);
+        }
+        return codes;
+    };
+    EXPECT_EQ(codesAt(pathToUtf8(named) + "!x/y.php").count("OBF010"), 1u)
+        << "the archive's own name was read as a directory its member sits under";
+    EXPECT_EQ(codesAt(pathToUtf8(other) + "!x/y.php").count("OBF010"), 1u);
+    EXPECT_EQ(codesAt(pathToUtf8(outer) + "!revslider-6.7.zip!x/y.php").count("OBF010"), 1u)
+        << "a nested archive's name was read as a directory its member sits under";
+
+    // The directories that are real still count.
+    EXPECT_EQ(codesAt(pathToUtf8(other) + "!a/revslider/y.php").count("OBF010"), 0u);
+    EXPECT_EQ(codesAt(pathToUtf8(other) + "!revslider/y.php").count("OBF010"), 0u)
+        << "a member's first directory is a directory it really has";
+    EXPECT_EQ(codesAt(pathToUtf8(inRealDirectory) + "!x/y.php").count("OBF010"), 0u)
+        << "the container's own directory on disk is a real directory";
+    EXPECT_EQ(codesAt(pathToUtf8(vendorAtTop) + "!vendor/lib/x.php").count("OBF003"), 0u);
+    EXPECT_EQ(codesAt(pathToUtf8(vendorAtTop) + "!lib/x.php").count("OBF003"), 1u);
+}
+
+// ===========================================================================
+// A sidecar is named with slashes
+// ===========================================================================
+//
+// A Mac writes `__MACOSX/` and `._name` into a zip, and those members are left shut. A member
+// NAMED `uploads/__MACOSX\x.php` is a file in `uploads` whose name holds a backslash, and so is
+// `uploads/a\._x.php`: neither is a sidecar, both are opened, and the WS006 signature in them
+// is reported.
+
+class ArchiveSidecarTest : public ArchiveMemberFixture {};
+
+TEST_F(ArchiveSidecarTest, AMemberNamedWithABackslashIsNotASidecar) {
+    const std::string content(kFilesMan);
+    for (const Container container : {Container::UnixZip, Container::DosZip, Container::TarGz}) {
+        SCOPED_TRACE(containerName(container));
+        auto raised = scanMembers(container,
+                                  {{"uploads/__MACOSX\\x.php", content},
+                                   {"uploads/a\\._x.php", content},
+                                   {"__MACOSX/uploads/x.php", content},
+                                   {"uploads/._x.php", content}},
+                                  size_t{2});
+        EXPECT_EQ(raised["uploads/__MACOSX\\x.php"].count("WS006"), 1u);
+        EXPECT_EQ(raised["uploads/a\\._x.php"].count("WS006"), 1u);
+        EXPECT_TRUE(raised["__MACOSX/uploads/x.php"].empty());
+        EXPECT_TRUE(raised["uploads/._x.php"].empty());
+    }
+}

@@ -3,6 +3,7 @@
 #include "config/Rules.h"
 #include "SkipReason.h"
 #include <filesystem>
+#include <string_view>
 #include <vector>
 #include <string>
 #include <functional>
@@ -179,11 +180,35 @@ public:
 
     // The same question, answered with its reason. One definition, so the two can
     // never drift into disagreeing about whether a file is in the scan.
+    //
+    // A file's path is spelled by diskPathWithSlashes() - backslashes become `/` on Windows,
+    // where that is exact, and stay characters on POSIX - and asked as filterVerdictAt().
     FilterVerdict filterVerdict(const std::filesystem::path& path) const;
 
+    // The question for a path already spelled with `/` as its only separator: a file's path
+    // through diskPathWithSlashes(), or an archive member's location, which ArchiveScanner
+    // builds from its container's directory and the member's stored name. Files and members
+    // are asked here and nowhere else, so a file and the member a backup makes of it answer
+    // alike, on every platform and against every C library.
+    //
+    // A pattern reads the final component - everything after the last `/` - and, when it
+    // holds `**`, the whole path. `!ext` names a final component with no extension, read as
+    // std::filesystem reads one: a dot that is not the name's first character.
+    FilterVerdict filterVerdictAt(std::string_view slashPath) const;
+
+    // fnmatch(pattern, name, FNM_PATHNAME) as glibc answers it in the C locale, written out
+    // so that it gives that answer on every platform and against every C library: `*` and
+    // `?` never match `/`, a bracket expression takes `!` or `^`, ranges and the `[:class:]`
+    // names, and a backslash in the pattern quotes the character after it. The scanner does
+    // not call fnmatch(3) itself because C libraries disagree about the shapes POSIX leaves
+    // undefined: musl's answers two of them differently from glibc's, so the glibc and musl
+    // builds of one commit excluded different files. Public so a test can hold it to glibc's
+    // answers.
+    static bool globMatch(std::string_view pattern, std::string_view name);
+
 private:
-    // Check if path matches a glob pattern
-    static bool matchesGlob(const std::string& pattern, const std::filesystem::path& path);
+    // Whether one include or exclude pattern names a path spelled with `/` separators.
+    static bool matchesPattern(const std::string& pattern, std::string_view slashPath);
 
     ScanConfig config_;
     DirectoryCallback dirCallback_;
