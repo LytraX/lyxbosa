@@ -22,6 +22,10 @@ commit list that CI generates per tag.
 
 ## Unreleased
 
+## [4.0.0] - 2026-09-17
+
+An archive member is read like the file it backs up, Windows reads names outside its code page, and FN007 and BD019 are new.
+
 ### Added
 
 - **A hostile name inside an archive is a finding.** FN001 to FN006 read the names of members
@@ -1830,7 +1834,8 @@ because the writer emitted one row per match.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/LytraX/lyxbosa/compare/v3.2.0...v4.0.0
 [3.2.0]: https://github.com/LytraX/lyxbosa/compare/v3.1.1...v3.2.0
 [3.1.1]: https://github.com/LytraX/lyxbosa/compare/v3.1.0...v3.1.1
 [3.1.0]: https://github.com/LytraX/lyxbosa/compare/v3.0.0...v3.1.0

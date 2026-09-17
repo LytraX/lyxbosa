@@ -36,6 +36,8 @@ are correct as of the round that recorded them and are deliberately never regene
 
 ## Unreleased
 
+## [corpus-2026.09.3] - 2026-09-17
+
 ### Fixed
 
 - **`corpus/verify.py` never ran a shipped sample that carries no family, and a `--json` run
@@ -3112,6 +3114,7 @@ a human assessment and the row waits for one.
 
 ---
 
-[Unreleased]: https://github.com/LytraX/lyxbosa/compare/corpus-2026.09.2...HEAD
+[Unreleased]: https://github.com/LytraX/lyxbosa/compare/corpus-2026.09.3...HEAD
+[corpus-2026.09.3]: https://github.com/LytraX/lyxbosa/compare/corpus-2026.09.2...corpus-2026.09.3
 [corpus-2026.09.2]: https://github.com/LytraX/lyxbosa/compare/corpus-2026.09.1...corpus-2026.09.2
 [corpus-2026.09.1]: https://github.com/LytraX/lyxbosa/releases/tag/corpus-2026.09.1

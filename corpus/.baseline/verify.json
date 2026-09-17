@@ -1,15 +1,16 @@
 {
  "benign": {
-  "clean": 197515,
+  "clean": 197517,
   "coverage": {
    "archives": {
-    "bytesExpanded": 6187644,
-    "membersScanned": 207,
+    "bytesExpanded": 6189118,
+    "membersScanned": 209,
     "membersSkipped": {
      "budget": 0,
      "corrupt": 0,
      "depth": 0,
-     "policy": 441,
+     "excluded": 408,
+     "policy": 31,
      "ratio": 0,
      "size": 0
     },
@@ -18,6 +19,7 @@
     "unreadable": 0
    },
    "directoriesUnreadable": 0,
+   "entriesUnreadable": 0,
    "filesSkipped": {
     "excluded": 17330,
     "size": 0,
@@ -25,8 +27,9 @@
     "unreadable": 0
    },
    "interrupted": false,
+   "linksNotFollowed": 0,
    "rootsMissing": [],
-   "totalFilesScanned": 197553
+   "totalFilesScanned": 197555
   },
   "false_positive_rules": {
    "EXP006": 11,
@@ -39,28 +42,28 @@
   },
   "false_positives": 44,
   "refused": null,
-  "samples": 197559
+  "samples": 197561
  },
  "corpus": {
-  "local_only": 48234,
-  "published": 44573,
-  "reviewed_fraction": 0.4803,
+  "local_only": 48227,
+  "published": 44580,
+  "reviewed_fraction": 0.4804,
   "total_blobs": 92807
  },
  "detection": {
-  "detected": 735,
-  "known_miss": 571,
+  "detected": 737,
+  "known_miss": 569,
   "known_miss_detected_not_shippable": 3,
-  "known_miss_rule_gap": 560,
+  "known_miss_rule_gap": 558,
   "known_miss_unclassified": 0,
   "known_miss_unverified": 8,
   "no_expectation": 0,
-  "observed_by_rerun": 131,
-  "rate": 0.5628,
+  "observed_by_rerun": 138,
+  "rate": 0.5643,
   "reconciles": true,
-  "recorded_only": 604,
+  "recorded_only": 599,
   "reviewed": 1306,
-  "verified_by_rerun": 131
+  "verified_by_rerun": 138
  },
  "failures": [],
  "false_positive_rate": 0.000223,
@@ -98,7 +101,6 @@
   "marked local_only: archive container: 2.3 says members are the corpus data and the container never is. 5 members read; byte-masking a container corrupts it (5.5)": 2,
   "marked local_only: benign customer-site cache metadata: no rule fires on it and it is not reproducible from a pinned source, so it is accounted for but not published": 144,
   "marked local_only: permanent": 311,
-  "marked local_only: verdict proposed 2026-09-12 from the operator's collection notes; awaiting human confirmation before publication": 7,
   "marked local_only: verdict proposed by an automated review pass on 2026-09-05; awaiting human confirmation before publication": 757,
   "obfuscated and did not decode: held local-only permanently": 100,
   "plaintext gate did not pass": 5,
@@ -113,30 +115,30 @@
   "still_missed": 36
  },
  "malicious": {
-  "detected": 131,
+  "detected": 138,
   "missed": 0,
-  "rule_exact": 131,
-  "samples": 167
+  "rule_exact": 138,
+  "samples": 174
  },
  "not_shipped": 2,
  "precision_not_reported": "by design. Precision needs the malicious-to-benign ratio of a real host (measured here: about 1 in 35,000); a curated corpus cannot supply it, so the figure would describe the corpus's composition rather than the scanner. False-positive rate and recall are each computed within one population and are reported instead. Precision belongs to field measurement, against a named host and scan.",
  "recall": 1.0,
  "regression_check": {
   "broken": 0,
-  "expected": 131,
-  "still_firing": 131
+  "expected": 138,
+  "still_firing": 138
  },
  "regressions": {
   "known_miss_newly_detected": 0,
   "new_failures": 0,
-  "recall_delta": 0.0,
-  "recall_delta_note": null,
+  "recall_delta": null,
+  "recall_delta_note": "withheld: the reviewed malicious set changed by +7 samples (131 -> 138), so this run's recall is over a different population than the baseline's. The two figures are not comparable; re-baseline deliberately, or compare only the samples present in both runs.",
   "reviewed_malicious_before": 131,
-  "reviewed_malicious_delta": 0,
-  "reviewed_malicious_now": 131
+  "reviewed_malicious_delta": 7,
+  "reviewed_malicious_now": 138
  },
  "techniques": {
-  "covered_by_tested_samples": 95,
+  "covered_by_tested_samples": 96,
   "known": 124,
   "uncovered": [
    "bcrypt-password-gate",
@@ -152,7 +154,6 @@
    "generated-spam-page",
    "hex-escaped-function-names",
    "host-keyed-option",
-   "htaccess-data-extension-executable",
    "mail-exfil",
    "mass-deployment",
    "obfuscated-php-payload",

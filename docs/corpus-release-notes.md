@@ -1,6 +1,6 @@
-# LyxBoSa malware corpus — `corpus-2026.09.2`
+# LyxBoSa malware corpus — `corpus-2026.09.3`
 
-A set of nine archives of real web-server malware, collected from live incident response,
+A set of ten archives of real web-server malware, collected from live incident response,
 masked, and published so that a scanner's detection and false-positive figures can be checked
 by somebody who did not produce them.
 
@@ -10,26 +10,24 @@ by somebody who did not produce them.
 
 ## What this is
 
-Nine `.tar.zst` shards, each wrapped in a password-protected `.zip`, plus a checksum file.
-Together they carry **169 samples and 4 generated carrier files**, with one JSON manifest per
-shard describing every member and what a scanner is expected to do with it. 167 of the samples
+Ten `.tar.zst` shards, each wrapped in a password-protected `.zip`, plus a checksum file.
+Together they carry **176 samples and 4 generated carrier files**, with one JSON manifest per
+shard describing every member and what a scanner is expected to do with it. 174 of the samples
 are malicious; 2 are benign and carry `must_not_detect: ["*"]`, so a scanner that fires on
 them fails the suite.
 
-**Seven of the nine shards are byte-identical to `corpus-2026.09.1`** — checked against that
+**Nine of the ten shards are byte-identical to `corpus-2026.09.2`** — checked against that
 release's own published `SHA256SUMS`, not against a local copy. The new samples are in a new
 shard rather than appended to an existing one, so a consumer who already holds the previous
-release keeps seven files and their checksums unchanged.
+release keeps nine files and their checksums unchanged.
 
-Two differ. `malicious-bulk-mailer-001` is new. `malicious-staging-001` changed and **none of
-its 66 sample files did**: only its `MANIFEST.json` moved, to carry an expectation the index
-had already recorded — see *What changed since `corpus-2026.09.1`* below.
+One differs: `malicious-upload-probe-001` is new — see *What changed since `corpus-2026.09.2`*
+below.
 
-| | `corpus-2026.09.1` | `corpus-2026.09.2` |
+| | `corpus-2026.09.2` | `corpus-2026.09.3` |
 |---|---|---|
-| `malicious-staging-001.tar.zst` | `af01239ec59e…` | `e2ddf4fb2239…` |
-| `malicious-bulk-mailer-001.tar.zst` | — | `18d35782439c…` |
-| the other seven | unchanged | unchanged |
+| `malicious-upload-probe-001.tar.zst` | — | `ceb7afca2b37…` |
+| the other nine | unchanged | unchanged |
 
 | shard | samples | carriers | what is in it |
 |---|---:|---:|---|
@@ -38,6 +36,7 @@ had already recorded — see *What changed since `corpus-2026.09.1`* below.
 | `malicious-bulk-mailer-001` | 29 | — | Leaf PHP Mailer 2.8, a public bulk-spam mailer with an embedded PHPMailer, dropped into random deep directories across six accounts |
 | `malicious-uploaders-001` | 11 | — | file uploaders and session-stub droppers; one of the eleven is an inert orphaned stub, published as a must-not-detect case |
 | `malicious-doorway-kit-001` | 8 | — | an SEO doorway-page generator kit |
+| `malicious-upload-probe-001` | 7 | — | what an automated probe of one host's file-upload endpoint left behind: five minimal PHP webshells, and two `.htaccess` files that hand a data extension to the PHP handler |
 | `malicious-polyglots-001` | 6 | 3 | files that are simultaneously a valid image or PDF and executable PHP |
 | `malicious-outside-webroot-001` | 1 | — | a wrapper that rewrites a plugin inside the webroot while keeping its state outside it |
 | `malicious-polyglots-002` | 1 | 1 | a JPEG with an injected uploader |
@@ -130,7 +129,7 @@ disposition saying what it is and why it was kept. **None of these is a customer
 the distinction was not mechanical it was adjudicated by hand and the argument is recorded in
 the index.
 
-**Two samples were dropped from this release rather than published.** Each carried a short
+**Two samples were dropped from the first release rather than published.** Each carried a short
 token — three and four characters — that a customer-name predicate matched inside a longer
 random-looking run. Both are almost certainly coincidences, and neither could be repaired by
 the masker, so the files were removed from their shards. Losing a sample is recoverable;
@@ -138,67 +137,62 @@ publishing a customer identifier is not.
 
 ---
 
-## What changed since `corpus-2026.09.1`
+## What changed since `corpus-2026.09.2`
 
-**29 samples were added, and the scanner did not change.** The 29 are one family —
-Leaf PHP Mailer 2.8 — and this scanner already detected every one of them at the previous
-tag. What they were missing was not a rule but a shard: their bytes were held locally, so the
-suite had nothing to run its assertion against and the index recorded them under
-`expect.known_miss` alongside genuine rule gaps. Publishing the bytes lets the corpus assert
-what the scanner was already doing. **Read the detection figures below as a change in what is
-provable, not as an improvement in detection.**
+**Seven samples were added, in one new shard.** An automated vulnerability scanner probing one
+host's file-upload endpoint left five minimal PHP webshells and two `.htaccess` files that hand
+a data extension — `.mdb`, and `.zip` — to the PHP handler: 13 files and 7 distinct blobs. A
+person inspected all seven and confirmed them. None carries customer content, so each ships as
+collected, after passing the plaintext and encoded-layer gates over its bytes. Each `.htaccess`
+ships as the only file in its own directory, under the name a web server reads.
 
-**They are 29 distinct files and close to one file.** Every one is the same source with a
-different embedded password: 28 of the 29 are the same length and differ from each other in
-nine to eleven byte positions, and the twenty-ninth differs only in line endings. They are
-published as 29 rows because per-deployment literal substitution is the technique under test
-(`polymorphic-literal`) — but a reader counting distinct artefacts should count one, not 29,
-and the shard compresses 4.9 MB to 44 KB for exactly that reason.
+**Every one of the seven was collected from that one probe**, and carries the collection frame
+`upload-probe-2026-09-12`. A detection rate over them measures that source, not the scanner.
 
-**`malicious-staging-001` changed and none of its samples did.** Five of its members were
-promoted from `known_miss` to `must_detect: ["OBF042"]` in an earlier round, and that
-promotion never reached the shipped `MANIFEST.json`: the archive was still telling a consumer
-those five were expected misses. All 66 sample files are byte-for-byte what they were; only
-the manifest moved, so the shard's sha256 changed and its contents did not.
+**Two of the seven are detected because a rule was written from them.** The two `.htaccess`
+files were recorded rule gaps. `BD019`, new in scanner v4.0.0, was written from them and
+detects both. That shows the rule matches what it was written from and says nothing about how
+it generalises. The five webshells expect `RCE008`, which was already recorded as firing on
+them. Together the seven move detection over the reviewed set from 730 of 1,299 to 737 of
+1,306, and technique coverage from 95 of 123 to 96 of 124.
 
-**The false-positive rate did not move, and could not have.** It is a function of the rule set
-and the benign population, and neither changed in this round: no scanner source, no
-`corpus/benign/sources.jsonl` entry and no recorded false-positive was touched.
+**The false-positive rate did not move.** It is 44 files, as it was at `corpus-2026.09.2`.
+The benign denominator is two larger, because scanner v4.0.0 opens two archive members in the
+pinned benign trees that earlier versions left shut, and neither raised a finding.
 
 ---
 
 ## What the figures mean
 
-Measured with the scanner build `eb611749bd80`, on 2026-09-08, over the corpus **as it stood
-at this tag**. These are release figures and are deliberately frozen: they describe the nine
-shards you just downloaded, not the corpus as it is today. For the current figures, read the
+Measured with the scanner built from `a6916bfcc42e`, on 2026-09-17, over the corpus **as it
+stood at this tag**. These are release figures and are deliberately frozen: they describe the
+ten shards you just downloaded, not the corpus as it is today. For the current figures, read the
 generated table in the repository's `README.md`, which is written from `index-summary.json`
 and moves when the corpus does.
 
 | | |
 |---|---|
-| samples the suite executed | **131 of 131 detected**, all matching the exact expected rule |
-| detection over all reviewed malicious samples | **730 of 1,299 — 56.2%** |
-| detection excluding the rules' own source material | **665 of 703 — 94.6%** |
-| false-positive rate | **0.0223%** — 44 files of 197,559 benign, unchanged from `corpus-2026.09.1` |
+| samples the suite executed | **138 of 138 detected**, all matching the exact expected rule |
+| detection over all reviewed malicious samples | **737 of 1,306 — 56.4%** |
+| detection excluding the rules' own source material | **672 of 710 — 94.6%** |
+| false-positive rate | **0.0223%** — 44 of 197,561 benign files read, the same 44 as `corpus-2026.09.2` |
 | recorded rule gaps | 558 — bytes read, no rule fired |
 | recorded as detected but unshippable | 3 — rules fired, no shard carries the bytes |
 | recorded as unverified | 8 — the bytes are not on the machine that measured |
-| technique coverage | 95 of 123 known techniques have a tested sample |
+| technique coverage | 96 of 124 known techniques have a tested sample |
 
 The three known-miss lines are given apart and never as their union. 569 is their sum and it
 is not a miss count: it adds rows the scanner misses to rows it detects and nothing ships.
-Publishing the union under a heading that says "misses" is the mistake the previous release
-made with 603, and 29 of that 603 are in this release's new shard precisely because the
-scanner was detecting them all along.
+Publishing the union under a heading that says "misses" is the mistake the first release made
+with 603, 29 of which the scanner was detecting all along.
 
-**Read the two detection figures together, and prefer the second.** The 56.2% denominator
+**Read the two detection figures together, and prefer the second.** The 56.4% denominator
 includes 1,131 samples from the tree the first version of these rules was *written against*.
 Measuring a rule set against its own source material tells you how well it memorised that
 tree, not how well it generalises. The 94.6% figure excludes that tree; it is the honest one,
 and it is lower-bounded by the same reviewing process that produced it.
 
-**The 131-of-131 is not a recall figure.** It is a regression check: those are the samples whose
+**The 138-of-138 is not a recall figure.** It is a regression check: those are the samples whose
 bytes ship here and whose expected rule is recorded, so a stranger can re-run them. The other
 599 reviewed malicious samples are held locally — most carry customer content that cannot be
 masked — and their results come from a recorded scan rather than from a run you can repeat.
@@ -211,7 +205,7 @@ reported as its own state rather than folded in as "not detected".
 
 ### What a consumer may conclude, and what they may not
 
-**You may** re-run the 131 shipped, expectation-carrying samples against any scanner and compare
+**You may** re-run the 138 shipped, expectation-carrying samples against any scanner and compare
 rule-for-rule; check the false-positive rate against the pinned benign sources; use the
 manifests' technique lists to see which classes of attack are represented; and audit the
 masking, because the gates' predicates are in the repository and the published index records
@@ -229,9 +223,9 @@ does not fire on shipped vendor code. It says nothing about a rate on hand-writt
 code, on minified JavaScript bundles, or on a customer's own theme — and those are where
 false positives on a real host actually come from.
 
-**You may not** conclude that 53.6% or 89.8% is what this scanner would achieve on your
+**You may not** conclude that 56.4% or 94.6% is what this scanner would achieve on your
 server. The malicious half is a curated set of families from a specific set of incidents, and
-48% of the whole collection is still unreviewed. Detection is reported over the reviewed set
+half of the whole collection is still unreviewed. Detection is reported over the reviewed set
 and says so.
 
 ---
