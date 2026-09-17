@@ -9,6 +9,8 @@
 #include "archive/ZipReader.h"
 #include "config/Config.h"
 #include "core/Scanner.h"
+#include "infrastructure/ResultPrinter.h"
+#include "infrastructure/report/JsonReportWriter.h"
 
 #include "ArchiveFixtures.h"
 #include "PlatformSkips.h"
@@ -17,8 +19,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include <zip.h>
 #include <zlib.h>
@@ -924,8 +929,8 @@ TEST(FileSkipReasonTest, UnreadableDirectoryIsCounted) {
     EXPECT_EQ(result.directoriesUnreadable, 1u);
 }
 
-// The reasons the archive JSON object is keyed by must keep their spellings, or
-// every existing consumer of a report breaks silently.
+// The reasons the JSON objects are keyed by must keep their spellings, or every existing
+// consumer of a report breaks silently.
 TEST(FileSkipReasonTest, ArchiveReasonSpellingsAreStable) {
     EXPECT_EQ(skipReasonToString(SkipReason::Size), "size");
     EXPECT_EQ(skipReasonToString(SkipReason::Depth), "depth");
@@ -935,6 +940,7 @@ TEST(FileSkipReasonTest, ArchiveReasonSpellingsAreStable) {
     EXPECT_EQ(skipReasonToString(SkipReason::Policy), "policy");
     EXPECT_EQ(skipReasonToString(SkipReason::Excluded), "excluded");
     EXPECT_EQ(skipReasonToString(SkipReason::Unreadable), "unreadable");
+    EXPECT_EQ(skipReasonToString(SkipReason::Sidecar), "sidecar");
 }
 
 TEST(FileSkipReasonTest, TallyFormatsInEnumOrderAndOmitsZeroes) {
@@ -958,4 +964,309 @@ TEST(FileSkipReasonTest, TallyFormatsInEnumOrderAndOmitsZeroes) {
     EXPECT_EQ(formatSkipTally(members, kArchiveSkipOrder),
               "3980 not code, 118 over size limit, 9 compression ratio, "
               "5 too deeply nested, 4 corrupt");
+
+    // The selection reasons lead, the operator's patterns and then the sidecars, and each
+    // reads in the words the file level uses for it where the file level has it.
+    members.skip(SkipReason::Sidecar, 40);
+    members.skip(SkipReason::Excluded, 12);
+    EXPECT_EQ(formatSkipTally(members, kArchiveSkipOrder),
+              "3980 not code, 12 excluded by filters, 40 sidecar metadata, "
+              "118 over size limit, 9 compression ratio, 5 too deeply nested, 4 corrupt");
+}
+
+// ============================================================================
+// Skip reasons at the member level
+//
+// A member left shut is counted under the reason the file of its name would be counted under,
+// where the two levels share one, and in the same words. The operator's patterns are one such
+// reason; the priority policy, the sidecar test and the guards are the archive's own.
+// ============================================================================
+
+namespace {
+
+void writeTarGz(const fs::path& path,
+                const std::vector<std::pair<std::string, std::string>>& members) {
+    std::string tar;
+    for (const auto& [name, body] : members) {
+        appendTarMember(tar, name, body);
+    }
+    tar += endOfTar();
+    writeFile(path, gzipCompress(tar));
+}
+
+ScanResult scanOnce(const AppConfig& config) {
+    Scanner scanner(config);
+    scanner.setPreCount(false);
+    return scanner.scan();
+}
+
+// What a scan's JSON report and its text summary say, each rendered by the writer an operator
+// is handed.
+struct Reported {
+    nlohmann::ordered_json json;
+    std::string summary;
+};
+
+Reported reported(const ScanResult& result) {
+    std::ostringstream json;
+    JsonReportWriter writer(json);
+    writer.begin();
+    for (const auto& file : result.files) {
+        writer.onFile(file);
+    }
+    writer.end(result, false);
+
+    std::ostringstream text;
+    ResultPrinter(text, /*color=*/false, /*width=*/200).printSummary(result);
+    return {nlohmann::ordered_json::parse(json.str()), text.str()};
+}
+
+// The line of `text` that begins with `prefix`, without its newline; empty when there is none.
+std::string lineStarting(const std::string& text, std::string_view prefix) {
+    std::istringstream in(text);
+    for (std::string line; std::getline(in, line);) {
+        if (line.starts_with(prefix)) {
+            return line;
+        }
+    }
+    return {};
+}
+
+// The words a one-reason summary line says after the reason's count:
+// "Files not scanned: 2 (2 excluded by filters)" says "excluded by filters".
+std::string wordsOfTheOnlyReason(const std::string& line) {
+    const size_t open = line.find('(');
+    const size_t space = line.find(' ', open);
+    const size_t close = line.rfind(')');
+    if (open == std::string::npos || space == std::string::npos || close == std::string::npos ||
+        close < space || line.find(',', open) != std::string::npos) {
+        return {};
+    }
+    return line.substr(space + 1, close - space - 1);
+}
+
+}  // namespace
+
+// THE GUARANTEE. A loose file under a scan root and the member stored under the same name inside
+// an archive in that root, rejected by one exclude pattern, are counted as excluded at their own
+// levels - in the JSON report and in the text summary, in the same words - and neither is counted
+// as not code. Two names, because the patterns are asked of a member before the priority policy
+// is: a script, and a name the policy would leave shut as not code if it were asked first. Two
+// containers, because a zip and a tar reach the question through different loops.
+TEST(MemberSkipReasonTest, AFileAndTheMemberOfItsNameOnePatternExcludesAreCountedAlike) {
+    TempDir dir;
+    const std::vector<std::pair<std::string, std::string>> tree = {
+        {"site/index.php", "<?php echo 1;\n"},
+        {"site/config-old.php", "<?php echo 2;\n"},
+        {"site/notes-old.txt", "old notes\n"},
+    };
+    for (const auto& [name, body] : tree) {
+        writeFile(dir.path() / name, body);
+    }
+    writeZip(dir.path() / "backup.zip", tree);
+    writeTarGz(dir.path() / "backup.tar.gz", tree);
+
+    AppConfig config = testConfig(dir.path());
+    config.scan.exclude.push_back("*-old.*");
+    const ScanResult result = scanOnce(config);
+
+    EXPECT_EQ(result.skips.count(SkipReason::Excluded), 2u);
+    EXPECT_EQ(result.skips.total(), 2u);
+    EXPECT_EQ(result.archives.membersScanned, 2u) << "the control: each container was read";
+    EXPECT_EQ(result.archives.skippedExcluded(), 4u);
+    EXPECT_EQ(result.archives.skippedPolicy(), 0u) << "an excluded member was counted as not code";
+    EXPECT_EQ(result.archives.totalSkipped(), 4u);
+
+    const Reported said = reported(result);
+    EXPECT_EQ(said.json.at("filesSkipped").at("excluded"), 2);
+    const auto& members = said.json.at("archives").at("membersSkipped");
+    EXPECT_EQ(members.value("excluded", -1), 4) << members.dump();
+    EXPECT_EQ(members.value("policy", -1), 0) << members.dump();
+
+    const std::string files = lineStarting(said.summary, "Files not scanned:");
+    const std::string archived = lineStarting(said.summary, "Members not scanned:");
+    EXPECT_EQ(files, "Files not scanned: 2 (2 excluded by filters)") << said.summary;
+    EXPECT_EQ(archived, "Members not scanned: 4 (4 excluded by filters)") << said.summary;
+    EXPECT_FALSE(wordsOfTheOnlyReason(files).empty()) << files;
+    EXPECT_EQ(wordsOfTheOnlyReason(archived), wordsOfTheOnlyReason(files))
+        << "one reason, described in two different words at the two levels";
+}
+
+// The pre-count and the scan ask one function, so with exclusions, a sidecar, directory entries
+// and a member past the size cap in one zip they still promise the same members - in the default
+// selection and in exhaustive mode - and every entry that is a member is counted exactly once.
+TEST(MemberSkipReasonTest, ThePreCountAndTheScanAgreeWithExclusionsPresent) {
+    TempDir dir;
+    const fs::path zip = dir.path() / "site.zip";
+    writeZip(zip, {
+        {"site/", ""},                                    // a directory entry, not a member
+        {"site/index.php", "<?php echo 1;\n"},            // opened
+        {"site/config-old.php", "<?php echo 2;\n"},       // excluded
+        {"site/notes-old.txt", "old notes\n"},            // excluded
+        {"site/readme.txt", "notes\n"},                   // not code; opened when exhaustive
+        {"__MACOSX/site/._index.php", "stub\n"},          // a sidecar
+        {"site/big.php", std::string(64 * 1024, 'a')},    // past the member size cap
+    });
+
+    for (const bool exhaustive : {false, true}) {
+        SCOPED_TRACE(exhaustive ? "exhaustive" : "default selection");
+        AppConfig config = testConfig(dir.path());
+        config.scan.exclude.push_back("*-old.*");
+        config.archives.maxMemberSize = 32 * 1024;
+        config.archives.exhaustive = exhaustive;
+
+        const auto counted =
+            ArchiveScanner::countMembers(zip, Kind::Zip, config.archives, config.scan);
+        const ScanResult result = scanOnce(config);
+        const Stats& stats = result.archives;
+
+        EXPECT_EQ(stats.membersScanned, counted.files) << "the pre-count disagrees with the scan";
+        EXPECT_EQ(counted.files, exhaustive ? 2u : 1u);
+        EXPECT_EQ(stats.skippedExcluded(), 2u);
+        EXPECT_EQ(stats.skippedSidecar(), 1u);
+        EXPECT_EQ(stats.skippedSize(), 1u);
+        EXPECT_EQ(stats.skippedPolicy(), exhaustive ? 0u : 1u);
+        EXPECT_EQ(stats.membersScanned + stats.totalSkipped(), 6u) << membersNotScannedLine(stats);
+    }
+}
+
+// The companion to the guarantee. A member the patterns accept and the priority policy leaves
+// shut is still counted as not code, in a zip and in a tar.gz, and exhaustive mode opens it - so
+// the operator's reason has not swallowed the policy's.
+TEST(MemberSkipReasonTest, ANonCodeMemberThePatternsAcceptIsStillCountedAsNotCode) {
+    TempDir dir;
+    const std::vector<std::pair<std::string, std::string>> members = {
+        {"site/readme.txt", "notes\n"},
+        {"site/logo.png", std::string(64, '\x89')},
+        {"site/index.php", "<?php echo 1;\n"},
+    };
+    writeZip(dir.path() / "assets.zip", members);
+    writeTarGz(dir.path() / "assets.tar.gz", members);
+
+    for (const bool exhaustive : {false, true}) {
+        SCOPED_TRACE(exhaustive ? "exhaustive" : "default selection");
+        AppConfig config = testConfig(dir.path());
+        config.archives.exhaustive = exhaustive;
+        const Stats stats = scanOnce(config).archives;
+
+        EXPECT_EQ(stats.skippedPolicy(), exhaustive ? 0u : 4u);
+        EXPECT_EQ(stats.skippedExcluded(), 0u) << membersNotScannedLine(stats);
+        EXPECT_EQ(stats.membersScanned, exhaustive ? 6u : 2u);
+        EXPECT_EQ(membersNotScannedLine(stats),
+                  exhaustive ? "" : "Members not scanned: 4 (4 not code)");
+    }
+}
+
+// A sidecar is counted as a sidecar, under its own key and in its own words, and never as not
+// code: a `._index.php` is named like code, and it stays shut in exhaustive mode too, where
+// nothing is left shut for not being code. A sidecar no include pattern names is counted as the
+// file of its name is - `Thumbs.db` - because the patterns are asked of a member first.
+TEST(MemberSkipReasonTest, ASidecarIsCountedAsASidecarAndNeverAsNotCode) {
+    TempDir dir;
+    const std::vector<std::pair<std::string, std::string>> members = {
+        {"__MACOSX/site/._index.php", "stub\n"},
+        {"__MACOSX/site/._logo.png", "stub\n"},
+        {"site/._style.css", "stub\n"},
+        {"site/Thumbs.db", "thumbnails\n"},
+        {"site/index.php", "<?php echo 1;\n"},
+    };
+    writeZip(dir.path() / "mac.zip", members);
+    writeTarGz(dir.path() / "mac.tar.gz", members);
+
+    for (const bool exhaustive : {false, true}) {
+        SCOPED_TRACE(exhaustive ? "exhaustive" : "default selection");
+        AppConfig config = testConfig(dir.path());
+        config.archives.exhaustive = exhaustive;
+        const ScanResult result = scanOnce(config);
+        const Stats& stats = result.archives;
+
+        EXPECT_EQ(stats.skippedSidecar(), 6u);
+        EXPECT_EQ(stats.skippedExcluded(), 2u);
+        EXPECT_EQ(stats.skippedPolicy(), 0u) << "a sidecar was counted as not code";
+        EXPECT_EQ(stats.membersScanned, 2u);
+        EXPECT_EQ(membersUnexamined(stats), 0u) << "a sidecar was counted as a member gone unread";
+
+        const Reported said = reported(result);
+        const auto& skipped = said.json.at("archives").at("membersSkipped");
+        EXPECT_EQ(skipped.value("sidecar", -1), 6) << skipped.dump();
+        EXPECT_EQ(skipped.value("policy", -1), 0) << skipped.dump();
+        EXPECT_EQ(lineStarting(said.summary, "Members not scanned:"),
+                  "Members not scanned: 8 (2 excluded by filters, 6 sidecar metadata)")
+            << said.summary;
+    }
+}
+
+// A directory entry holds no content, so it is not a member that could have been scanned, and it
+// is counted nowhere - not as scanned, not as skipped, not in the pre-count - in a zip, in a tar
+// under both of the ways a tar says it, and inside a nested zip. Asked with no include list and
+// in exhaustive mode as well, where a directory entry that reached the selection would be opened
+// rather than left shut, so that neither answer can hide one.
+TEST(MemberSkipReasonTest, ADirectoryEntryIsCountedNowhere) {
+    TempDir build;
+    const fs::path inner = build.path() / "inner.zip";
+    writeZip(inner, {{"a/", ""}, {"a/b/", ""}, {"a/x.php", "<?php echo 1;\n"}});
+
+    TempDir dir;
+    const fs::path zip = dir.path() / "site.zip";
+    writeZip(zip, {{"site/", ""},
+                   {"site/sub/", ""},
+                   {"site/index.php", "<?php echo 1;\n"},
+                   {"site/inner.zip", readBytes(inner)}});
+    std::string tar;
+    appendTarMember(tar, "site", "", '5');          // a directory by its type
+    appendTarMember(tar, "site/sub/", "", '0');     // and by its trailing slash
+    appendTarMember(tar, "site/index.php", "<?php echo 1;\n");
+    tar += endOfTar();
+    writeFile(dir.path() / "site.tar", tar);
+
+    struct Case {
+        const char* label;
+        bool everything;              // exhaustive, with no include list
+        size_t scanned;
+        size_t skipped;
+        size_t countedInTheZip;
+    };
+    for (const Case& c : {
+             // index.php in each; the nested zip is not code, so it is left shut unopened
+             Case{"default selection", false, 2, 1, 1},
+             // index.php in each, the nested zip, and a/x.php inside it
+             Case{"exhaustive, no include list", true, 4, 0, 2},
+         }) {
+        SCOPED_TRACE(c.label);
+        AppConfig config = testConfig(dir.path());
+        if (c.everything) {
+            config.archives.exhaustive = true;
+            config.scan.include.clear();
+        }
+
+        const ScanResult result = scanOnce(config);
+        EXPECT_EQ(result.archives.membersScanned, c.scanned);
+        EXPECT_EQ(result.archives.totalSkipped(), c.skipped)
+            << membersNotScannedLine(result.archives);
+        EXPECT_EQ(ArchiveScanner::countMembers(zip, Kind::Zip, config.archives, config.scan).files,
+                  c.countedInTheZip);
+    }
+}
+
+// An archive with no exclusion and no sidecar is described by the reasons that occurred and by
+// no others: the two keys are in the JSON at zero, and the summary line names neither - it reads
+// "not code" first and the guards after it, in the words it has always used.
+TEST(MemberSkipReasonTest, AReportWithNoExclusionsKeepsTheArchiveSummaryWording) {
+    TempDir dir;
+    writeZip(dir.path() / "site.zip", {{"site/logo.png", std::string(64, '\x89')},
+                                       {"site/big.php", std::string(64 * 1024, 'a')},
+                                       {"site/index.php", "<?php echo 1;\n"}});
+
+    AppConfig config = testConfig(dir.path());
+    config.archives.maxMemberSize = 32 * 1024;
+    const Reported said = reported(scanOnce(config));
+
+    EXPECT_EQ(lineStarting(said.summary, "Members not scanned:"),
+              "Members not scanned: 2 (1 not code, 1 over size limit)")
+        << said.summary;
+    const auto& skipped = said.json.at("archives").at("membersSkipped");
+    EXPECT_EQ(skipped.value("excluded", -1), 0) << skipped.dump();
+    EXPECT_EQ(skipped.value("sidecar", -1), 0) << skipped.dump();
+    EXPECT_EQ(skipped.value("policy", -1), 1) << skipped.dump();
+    EXPECT_EQ(skipped.value("size", -1), 1) << skipped.dump();
 }

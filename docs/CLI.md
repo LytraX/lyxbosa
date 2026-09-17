@@ -93,7 +93,7 @@ not read changes the verdict:
 | What happened | Prints | Exit |
 |---|---|---|
 | The file was read and nothing matched | `No matches found in: FILE` | `0` |
-| Members the selection policy did not open — non-code outside `--exhaustive-archives`, or a member the configured filters reject | `No matches found in what was scanned of: FILE`, then `Members not scanned: N (...)` | `0` |
+| Members left shut by selection — non-code outside `--exhaustive-archives`, a member the configured filters reject, or a Mac sidecar | `No matches found in what was scanned of: FILE`, then `Members not scanned: N (...)` | `0` |
 | The file itself was not read — over `scan.max_file_size`, or unreadable | `Not scanned (REASON): FILE` | `1` |
 | The container would not open, a guard stopped it part-way, or a member it selected went unread — corrupt, over `archives.max_member_size`, budget, ratio, depth | `Not fully examined: FILE`, then what was not covered | `1` |
 | Matches were found and everything selected was read | the findings | `2` |

@@ -51,8 +51,9 @@ buffer, so a scan never writes malware onto the analyst's filesystem.
 Every guard is expressed in decompressed bytes or wall-clock time, never in the size of
 the archive — `42.zip` is 42 KB and expands to 4.5 PB, so a cap on the file protects
 nothing. And nothing is skipped silently: every member that was not read is counted by
-reason (`not code`, `over size limit`, `budget spent`, `compression ratio`,
-`too deeply nested`, `corrupt`) in the summary and in the JSON report.
+reason (`not code`, `excluded by filters`, `sidecar metadata`, `over size limit`,
+`budget spent`, `compression ratio`, `too deeply nested`, `corrupt`) in the summary and in
+the JSON report. The reasons are described under [Skipped files](#skipped-files).
 
 ```yaml
 archives:
@@ -267,9 +268,10 @@ whether a member is *opened* — the selection that leaves non-code members shut
 `scan.include`, the sidecar entries a Mac writes, `archives.max_member_size` and the
 expansion, ratio and time budgets — does not hide its name. Such a row carries the reason
 its bytes were not read, in the same field a loose file's does: `skipReason` in JSON, the
-`skip_reason` column in CSV, and `(not scanned: policy)` in the text report, where
-`policy`, `size`, `budget`, `ratio` and `corrupt` are the reasons the archive summary
-already counts. `scan.exclude` is obeyed for a member's name as for a file's. A member the
+`skip_reason` column in CSV, and `(not scanned: policy)` in the text report, in the
+spellings the archive summary counts it under — `policy`, `excluded`, `sidecar`, `size`,
+`budget`, `ratio` and `corrupt`. A member `scan.include` does not name reads `excluded`, as
+the file of its name does. `scan.exclude` is obeyed for a member's name as for a file's. A member the
 scan never reaches has no name to read: one inside an archive nested past
 `archives.max_depth`, one after a guard stopped a tar stream, and one after an interrupt.
 A single `.gz` stores no member name the scanner reads — its member is named from the
@@ -359,8 +361,11 @@ POSIX leaves undefined differently — a trailing backslash, and a backslash ins
 expression — and Windows has none. Because a path is absolute, `vendor/**` names nothing on disk
 and nothing inside an archive; a pattern that begins with a directory, such as
 `/var/www/site/vendor/**`, names what sits directly in that directory, as a file or as a member
-of an archive stored there, and `vendor\x.php` is not in it. The stored name alone decides the
-sidecar test: a Mac's `__MACOSX/` tree and `._name` stubs are left shut, and a member named
+of an archive stored there, and `vendor\x.php` is not in it. The patterns are asked of a member
+before anything else about it, as they are of a file, so a member they keep shut is counted as
+`excluded` whether or not it is code and whether or not it is a sidecar, and a member and the
+file of its name are counted alike. The stored name alone decides the sidecar test: a Mac's
+`__MACOSX/` tree and `._name` stubs are left shut and counted as `sidecar`, and a member named
 `uploads/__MACOSX\x.php` is not one of them.
 
 ### How a name is printed, and how a program gets back to the file
@@ -442,9 +447,30 @@ without opening anything, so a file past the size limit, one that would not open
 no include pattern covers can each raise an FN rule; the row then names the finding *and*
 says the bytes were not read.
 
-Archive members carry their own reasons (`not code`, `over size limit`, `budget spent`,
-`compression ratio`, `too deeply nested`, `corrupt`), and both levels read the same way
-in the summary:
+An archive member that is not scanned is counted under one of eight reasons, in
+`archives.membersSkipped` and in the `Members not scanned` line. The first three are the
+selection, asked in the order shown before any size or guard, so a member more than one of
+them fits is counted under the first:
+
+| reason | summary | meaning |
+|---|---|---|
+| `excluded` | `excluded by filters` | rejected by `scan.include` / `scan.exclude`, asked of the path the member has beside its archive |
+| `sidecar` | `sidecar metadata` | an entry an archiver writes about the files rather than a file: `__MACOSX/`, `._name`, `.DS_Store`, `Thumbs.db` |
+| `policy` | `not code` | neither a script nor markup, outside `archives.exhaustive`; or a member whose name is empty once its leading `./` and separators are read |
+| `size` | `over size limit` | larger than `archives.max_member_size` |
+| `budget` | `budget spent` | `archives.max_expansion` or `archives.time_budget` ran out |
+| `ratio` | `compression ratio` | the archive expanded faster than `archives.max_ratio` |
+| `depth` | `too deeply nested` | an archive nested deeper than `archives.max_depth` |
+| `corrupt` | `corrupt` | truncated, encrypted or otherwise unreadable |
+
+`excluded` is the file-level reason, in the file level's words: a file and a member one
+pattern rejects are counted alike, each at its own level. A sidecar is counted apart from
+`not code` because a `._index.php` is named like code, and it is left shut in exhaustive
+mode too. A directory entry is not a member and is counted nowhere — not as scanned, not
+as skipped, and not in the progress total.
+
+Both levels read the same way in the summary, and a reason that did not occur is left out of
+its line:
 
 ```
 Files scanned: 482013
@@ -453,7 +479,7 @@ Files with matches: 12
 Files not scanned: 208 (183 over size limit, 18 excluded by filters, 7 unreadable)
 Directories unreadable: 2
 Archives opened: 41 (18022 members scanned, 3.1 GB expanded)
-Members not scanned: 906 (874 not code, 30 over size limit, 2 corrupt)
+Members not scanned: 906 (862 not code, 12 excluded by filters, 30 over size limit, 2 corrupt)
 ```
 
 `Directories unreadable` is a coverage fact too: a directory the scanner was pointed at
@@ -557,7 +583,8 @@ rather than looping: the walk polls for it as it reads each directory entry, not
 between files, so a tree holding no regular file at all still stops.
 
 In JSON, a skipped file carries the reason alongside the flag, and the totals appear as
-an object shaped like `archives.membersSkipped`:
+an object shaped like `archives.membersSkipped`, which carries every member-level reason
+at zero or more whenever an archive was opened:
 
 ```json
 {
@@ -574,6 +601,11 @@ an object shaped like `archives.membersSkipped`:
 "filesSkipped": { "total": 208, "size": 183, "excluded": 18, "unreadable": 7 },
 "directoriesUnreadable": 2,
 "entriesUnreadable": 3
+```
+
+```json
+"membersSkipped": { "policy": 862, "size": 30, "budget": 0, "ratio": 0, "depth": 0,
+                    "corrupt": 2, "excluded": 12, "sidecar": 0 }
 ```
 
 CSV carries `skipped`, `skip_reason`, `quarantine_failed`, `quarantine_path` and
@@ -596,11 +628,11 @@ bytes were read.
 That holds one level down as well. A container `check` opened and could not read whole —
 a truncated gzip, a member past `archives.max_member_size`, a guard that stopped the
 stream — prints `Not fully examined`, names what was not covered in the scan summary's
-own words, and exits `1`. Members the selection policy did not open are the one reason
-that does not: they are the container-level counterpart of an excluded loose file, so
-they are counted and named and the exit code stays `0`, with the verdict reading `No
-matches found in what was scanned of:` rather than claiming the container was read
-whole. The full table is in [docs/CLI.md](CLI.md#check--check-a-single-file).
+own words, and exits `1`. Members left shut by selection — `not code`, `excluded by
+filters` and `sidecar metadata` — are the reasons that do not: they are the
+container-level counterpart of an excluded loose file, so they are counted and named and
+the exit code stays `0`, with the verdict reading `No matches found in what was scanned
+of:` rather than claiming the container was read whole. The full table is in [docs/CLI.md](CLI.md#check--check-a-single-file).
 
 An oversize *container* is not a skipped file in either command: its index is read and
 its members are scanned, which is why raising `scan.max_file_size` to reach a large

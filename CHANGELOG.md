@@ -146,6 +146,18 @@ commit list that CI generates per tag.
   which fails on such a character, and the first of them ended the process. The file that
   records when updates were last checked for is also found under such a profile, where the
   environment variable naming it was read in the code page as well.
+- **An archive member that `scan.include` or `scan.exclude` keeps shut is counted as excluded,
+  as the file of its name is.** It was counted in `archives.membersSkipped.policy` and printed
+  as `not code`, so a member the operator's own pattern rejected could not be told from one the
+  scanner left shut for not being code, and a file and the member a backup makes of it were
+  counted under two different reasons. The patterns are asked of a member before anything else
+  about it, as they are of a file, so a member they reject is `excluded` whether or not it is
+  code, whether or not it is a sidecar and whatever `archives.exhaustive` says. `Members not
+  scanned` names it `excluded by filters`, the words `Files not scanned` uses.
+- **A Mac sidecar in an archive is counted as `sidecar` and printed as `sidecar metadata`**,
+  where it was counted as `policy` and printed as `not code`. A `._index.php` is named like
+  code, and it is left shut in exhaustive mode as well, where nothing is left shut for not
+  being code.
 
 ### Compatibility
 
@@ -241,8 +253,8 @@ commit list that CI generates per tag.
   extractor measured wrote outside its destination, raises nothing.
 - **A member row can carry a skip reason**: `"skipped": true` and `"skipReason"` in JSON, the
   `skipped` and `skip_reason` CSV columns, and `(not scanned: …)` in the text report, with the
-  values `policy`, `size`, `budget`, `ratio` and `corrupt` that `archives.membersSkipped`
-  already uses. It appears on a member reported for its name whose bytes were not read. Under
+  values `policy`, `excluded`, `sidecar`, `size`, `budget`, `ratio` and `corrupt` that
+  `archives.membersSkipped` uses. It appears on a member reported for its name whose bytes were not read. Under
   such a member, `check` prints `Not scanned (…); the matches are about its name`. No count of
   skipped files or members changes.
 - **A file that `scan.include` does not cover and a `scan.exclude` pattern names no longer
@@ -272,6 +284,18 @@ commit list that CI generates per tag.
   these values are accepted on every platform.
 - **On Windows, `update` for a binary installed under a directory outside the ANSI code page
   exits by what it did**, 0 or 1, where it exited 3 without a word.
+- **`archives.membersSkipped` gains `excluded` and `sidecar`, after `corrupt`, and `policy` falls
+  by exactly what the two count.** The six existing keys keep their spellings; the object's
+  total, `membersScanned`, every finding and every exit code of `scan` and `check` are
+  unchanged. A consumer that read `policy` as every member the scan chose not to open, or summed
+  it into such a figure, adds `excluded` and `sidecar`. With the default configuration a member
+  is `excluded` when `*.min.js` names it or no include pattern does: over 136 stock WordPress
+  plugin and theme zips, 14,646 of 31,506 `policy` members became `excluded` — 8,505 minified
+  scripts and 6,141 members whose extensions the include list does not name, most of them
+  `.scss`, `.tsx`, `.mo`, `.md` and `.po` — and none became `sidecar`.
+- **`Members not scanned` names `excluded by filters` and `sidecar metadata` beside `not
+  code`**, in the scan summary and under `check`, with the same total. An archive with neither
+  reads as before.
 
 ## [3.2.0] - 2026-09-14
 

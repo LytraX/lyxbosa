@@ -123,6 +123,8 @@ ScanResult everything() {
     result.archives.skip(SkipReason::Ratio, 16);
     result.archives.skip(SkipReason::Depth, 17);
     result.archives.skip(SkipReason::Corrupt, 18);
+    result.archives.skip(SkipReason::Excluded, 19);
+    result.archives.skip(SkipReason::Sidecar, 20);
     return result;
 }
 
@@ -279,7 +281,9 @@ const char* const kEverything = R"JSON({
       "budget": 15,
       "ratio": 16,
       "depth": 17,
-      "corrupt": 18
+      "corrupt": 18,
+      "excluded": 19,
+      "sidecar": 20
     }
   },
   "durationMs": 0
@@ -428,7 +432,10 @@ TEST(JsonReportTest, EverySummaryCountIsPresentAtZeroAndArchivesIsNot) {
                                         "membersScanned", "bytesExpanded", "membersSkipped"}));
     EXPECT_EQ(keysOf(opened.at("archives").at("membersSkipped")),
               (std::vector<std::string>{"policy", "size", "budget", "ratio", "depth",
-                                        "corrupt"}));
+                                        "corrupt", "excluded", "sidecar"}));
+    for (const auto& [key, count] : opened.at("archives").at("membersSkipped").items()) {
+        EXPECT_EQ(count, 0) << key;
+    }
 }
 
 // Each optional key, present when and only when it has something to say, and never with a

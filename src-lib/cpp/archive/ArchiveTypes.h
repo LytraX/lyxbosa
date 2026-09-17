@@ -65,10 +65,9 @@ struct Entry {
 // goto-obfuscation family stayed invisible for so long, and an archive is exactly
 // the place where a scanner is tempted to give up quietly.
 //
-// This enum now lives in core/SkipReason.h, shared with the file level, which grew
-// the same need. The names below are unqualified aliases so the reasons still read
-// as `SkipReason::Policy` throughout this layer, and the six spellings that reach
-// the `archives.membersSkipped` JSON object are unchanged.
+// This enum lives in core/SkipReason.h, shared with the file level, which has the same
+// need. The names below are unqualified aliases so the reasons read as
+// `SkipReason::Policy` throughout this layer.
 using SkipReason = lyxbosa::SkipReason;
 using lyxbosa::skipReasonToString;
 using lyxbosa::skipReasonLabel;
@@ -83,8 +82,8 @@ struct Stats {
     size_t membersScanned = 0;
     uint64_t bytesExpanded = 0;
 
-    // One tally instead of six counters. The named accessors are kept because the
-    // JSON writer and the archive tests read them by name.
+    // One tally rather than a counter per reason. The named accessors are kept because the
+    // archive tests read them by name.
     lyxbosa::SkipTally skips;
 
     void skip(SkipReason reason, size_t count = 1) { skips.skip(reason, count); }
@@ -95,6 +94,8 @@ struct Stats {
     size_t skippedBudget() const  { return skips.count(SkipReason::Budget); }
     size_t skippedCorrupt() const { return skips.count(SkipReason::Corrupt); }
     size_t skippedPolicy() const  { return skips.count(SkipReason::Policy); }
+    size_t skippedExcluded() const { return skips.count(SkipReason::Excluded); }
+    size_t skippedSidecar() const { return skips.count(SkipReason::Sidecar); }
 
     size_t totalSkipped() const { return skips.total(); }
 
@@ -108,17 +109,26 @@ struct Stats {
     }
 };
 
+// The reasons that are the scan deciding what to open, rather than a member it selected going
+// unread: a member the operator's include or exclude patterns reject, a sidecar metadata
+// entry, and - outside exhaustive mode - a member that is not code. The container-level
+// counterpart of an excluded loose file, which is also counted and also changes no exit code.
+inline constexpr SkipReason kMemberSelectionReasons[] = {
+    SkipReason::Policy, SkipReason::Excluded, SkipReason::Sidecar,
+};
+
 // Members the scanner meant to read and did not.
 //
-// Policy is the one reason that is not one of them, and the distinction is what the
-// exit code turns on. A sidecar metadata entry, a member the operator's own exclude
-// globs reject, and - outside exhaustive mode - a member that is not code are the
-// scanner deciding what to open: the container-level counterpart of an excluded loose
-// file, which is also counted and also changes no exit code. Every other reason is a
-// member that was selected to be read and then was not, so nothing can be said about
-// its bytes.
+// The selection reasons above are not among them, and the distinction is what the exit code
+// turns on. Every other reason is a member that was selected to be read and then was not, so
+// nothing can be said about its bytes. Written as what remains once selection is taken out,
+// so a reason added later is a gap until someone decides it is not.
 inline size_t membersUnexamined(const Stats& stats) {
-    return stats.totalSkipped() - stats.skippedPolicy();
+    size_t selected = 0;
+    for (const SkipReason reason : kMemberSelectionReasons) {
+        selected += stats.skips.count(reason);
+    }
+    return stats.totalSkipped() - selected;
 }
 
 // True when this container cannot be spoken for: it would not open, a guard stopped it
@@ -129,10 +139,11 @@ inline bool coverageIncomplete(const Stats& stats) {
            membersUnexamined(stats) > 0;
 }
 
-// "Members not scanned: 906 (874 not code, 30 over size limit, 2 corrupt)" - the one
-// sentence that says what a container did not cover, empty when it covered everything.
-// Written once so the scan summary and `check` cannot describe the same archive two
-// different ways; that disagreement is what makes an operator stop trusting the tool.
+// "Members not scanned: 906 (862 not code, 12 excluded by filters, 30 over size limit,
+// 2 corrupt)" - the one sentence that says what a container did not cover, empty when it
+// covered everything. Written once so the scan summary and `check` cannot describe the same
+// archive two different ways; that disagreement is what makes an operator stop trusting the
+// tool.
 inline std::string membersNotScannedLine(const Stats& stats) {
     if (stats.totalSkipped() == 0) {
         return {};

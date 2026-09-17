@@ -194,13 +194,17 @@ Json summary(const ScanResult& result, bool interrupted) {
         a["stoppedEarly"] = stats.archivesTruncated;
         a["membersScanned"] = stats.membersScanned;
         a["bytesExpanded"] = stats.bytesExpanded;
+        // Every member-level reason, each under the spelling a member row's `skipReason` uses
+        // for it. The priority policy's and the guards' six keep their places, and the
+        // operator's patterns and the sidecars follow them.
+        static constexpr SkipReason kMemberKeys[] = {
+            SkipReason::Policy, SkipReason::Size, SkipReason::Budget, SkipReason::Ratio,
+            SkipReason::Depth, SkipReason::Corrupt, SkipReason::Excluded, SkipReason::Sidecar,
+        };
         Json members = Json::object();
-        members["policy"] = stats.skippedPolicy();
-        members["size"] = stats.skippedSize();
-        members["budget"] = stats.skippedBudget();
-        members["ratio"] = stats.skippedRatio();
-        members["depth"] = stats.skippedDepth();
-        members["corrupt"] = stats.skippedCorrupt();
+        for (const SkipReason reason : kMemberKeys) {
+            members[std::string(skipReasonToString(reason))] = stats.skips.count(reason);
+        }
         a["membersSkipped"] = std::move(members);
         s["archives"] = std::move(a);
     }
